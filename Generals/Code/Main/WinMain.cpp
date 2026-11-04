@@ -323,6 +323,23 @@ LRESULT CALLBACK WndProc( HWND hWnd, UINT message,
 				break;
 
 			//-------------------------------------------------------------------------
+			case WM_WINDOWPOSCHANGING:
+				// The fullscreen window is a borderless window covering the monitor. Keep it at the
+				// monitor's corner when something outside the game moves it back to its old position.
+				if( TheGlobalData && !TheGlobalData->m_windowed )
+				{
+					WINDOWPOS *pos = (WINDOWPOS *)lParam;
+					if( !(pos->flags & SWP_NOMOVE) )
+					{
+						MONITORINFO mi = { sizeof(MONITORINFO) };
+						GetMonitorInfo( MonitorFromWindow( hWnd, MONITOR_DEFAULTTOPRIMARY ), &mi );
+						pos->x = mi.rcMonitor.left;
+						pos->y = mi.rcMonitor.top;
+					}
+				}
+				break;
+
+			//-------------------------------------------------------------------------
 			case WM_POWERBROADCAST:
 				switch( wParam )
 				{
