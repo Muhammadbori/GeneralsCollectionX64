@@ -527,7 +527,74 @@ public:
 	static const Vector3&		Get_Ambient() { return Ambient_Color; }
 	// shader system updates KJM ^
 
+	/*
+	** Pass-through device access
+	**
+	** Each of these forwards 1:1 to the IDirect3DDevice8 method of the same name so that code
+	** outside WW3D2 never needs the raw device pointer.
+	**
+	** The *_Raw functions deliberately bypass the wrapper's shadow state (RenderStates[],
+	** TextureStageStates[][], Textures[], Pixel_Shader, the shader constant shadows and the
+	** deferred render_state) and leave it untouched, exactly like a direct device call.
+	** Callers must keep calling Invalidate_Cached_Render_States() wherever they did before.
+	**
+	** Functions returning HRESULT do not assert or log on failure; the caller checks the result.
+	** The cursor functions may be called from the mouse thread and do no thread checks.
+	*/
+	static void Set_DX8_Render_State_Raw(D3DRENDERSTATETYPE state, unsigned value);
+	static HRESULT Get_DX8_Render_State_Raw(D3DRENDERSTATETYPE state, DWORD* value);
+	static void Set_DX8_Texture_Stage_State_Raw(unsigned stage, D3DTEXTURESTAGESTATETYPE state, unsigned value);
+	static void Set_DX8_Texture_Raw(unsigned int stage, IDirect3DBaseTexture8* texture);
+	static void Set_Pixel_Shader_Raw(DWORD pixel_shader);
+	static void Set_Vertex_Shader_Constant_Raw(int reg, const void* data, int count);
+	static void Set_Pixel_Shader_Constant_Raw(int reg, const void* data, int count);
+	static void Set_Stream_Source_Raw(unsigned stream, IDirect3DVertexBuffer8* vertex_buffer, unsigned stride);
+	static void Set_Indices_Raw(IDirect3DIndexBuffer8* index_buffer, unsigned base_vertex_index);
+	static void Get_Viewport(D3DVIEWPORT8* pViewport);
 
+	// Draw with whatever is currently bound on the device. No deferred state is applied.
+	static void Draw_Primitive_Raw(unsigned primitive_type, unsigned start_vertex, unsigned primitive_count);
+	static void Draw_Indexed_Primitive_Raw(
+		unsigned primitive_type,
+		unsigned min_index,
+		unsigned vertex_count,
+		unsigned start_index,
+		unsigned primitive_count);
+	static void Draw_Primitive_UP(unsigned primitive_type, unsigned primitive_count, const void* vertex_data, unsigned vertex_stride);
+
+	static HRESULT Create_Vertex_Shader(const DWORD* declaration, const DWORD* function, DWORD* handle, DWORD usage);
+	static HRESULT Create_Pixel_Shader(const DWORD* function, DWORD* handle);
+	static HRESULT Delete_Vertex_Shader(DWORD handle);
+	static HRESULT Delete_Pixel_Shader(DWORD handle);
+	static HRESULT Create_Texture_Raw(
+		unsigned width,
+		unsigned height,
+		unsigned levels,
+		DWORD usage,
+		D3DFORMAT format,
+		D3DPOOL pool,
+		IDirect3DTexture8** texture);
+	static HRESULT Create_Image_Surface(unsigned width, unsigned height, D3DFORMAT format, IDirect3DSurface8** surface);
+	static HRESULT Create_Vertex_Buffer_Raw(unsigned length, DWORD usage, DWORD fvf, D3DPOOL pool, IDirect3DVertexBuffer8** vertex_buffer);
+	static HRESULT Create_Index_Buffer_Raw(unsigned length, DWORD usage, D3DFORMAT format, D3DPOOL pool, IDirect3DIndexBuffer8** index_buffer);
+
+	// Returned surfaces are AddRef'd by the device; the caller must Release them.
+	static HRESULT Get_Render_Target_Surface(IDirect3DSurface8** surface);
+	static HRESULT Get_Depth_Stencil_Surface(IDirect3DSurface8** surface);
+	static HRESULT Set_Render_Target_Raw(IDirect3DSurface8* render_target, IDirect3DSurface8* depth_buffer);
+	static HRESULT Copy_Rects(
+		IDirect3DSurface8* pSourceSurface,
+		CONST RECT* pSourceRectsArray,
+		UINT cRects,
+		IDirect3DSurface8* pDestinationSurface,
+		CONST POINT* pDestPointsArray);
+
+	static bool Has_D3D_Device() { return D3DDevice != nullptr; }
+	static HRESULT Test_Cooperative_Level();
+
+	static BOOL Show_DX8_Cursor(BOOL show);
+	static HRESULT Set_DX8_Cursor_Properties(unsigned hot_spot_x, unsigned hot_spot_y, IDirect3DSurface8* cursor_bitmap);
+	static void Set_DX8_Cursor_Position(unsigned x, unsigned y, DWORD flags);
 
 
 	static IDirect3DDevice8* _Get_D3D_Device8() { return D3DDevice; }
@@ -938,6 +1005,73 @@ WWINLINE void DX8Wrapper::_Copy_DX8_Rects(
   cRects,
   pDestinationSurface,
   pDestPointsArray));
+}
+
+// ----------------------------------------------------------------------------
+//
+// Pass-through state setters and draws. These always reach the device and do
+// not read or write any of the wrapper's shadow state.
+//
+// ----------------------------------------------------------------------------
+
+WWINLINE void DX8Wrapper::Set_DX8_Render_State_Raw(D3DRENDERSTATETYPE state, unsigned value)
+{
+	DX8CALL(SetRenderState( state, value ));
+}
+
+WWINLINE void DX8Wrapper::Set_DX8_Texture_Stage_State_Raw(unsigned stage, D3DTEXTURESTAGESTATETYPE state, unsigned value)
+{
+	DX8CALL(SetTextureStageState( stage, state, value ));
+}
+
+WWINLINE void DX8Wrapper::Set_DX8_Texture_Raw(unsigned int stage, IDirect3DBaseTexture8* texture)
+{
+	DX8CALL(SetTexture( stage, texture ));
+}
+
+WWINLINE void DX8Wrapper::Set_Pixel_Shader_Raw(DWORD pixel_shader)
+{
+	DX8CALL(SetPixelShader( pixel_shader ));
+}
+
+WWINLINE void DX8Wrapper::Set_Vertex_Shader_Constant_Raw(int reg, const void* data, int count)
+{
+	DX8CALL(SetVertexShaderConstant( reg, data, count ));
+}
+
+WWINLINE void DX8Wrapper::Set_Pixel_Shader_Constant_Raw(int reg, const void* data, int count)
+{
+	DX8CALL(SetPixelShaderConstant( reg, data, count ));
+}
+
+WWINLINE void DX8Wrapper::Set_Stream_Source_Raw(unsigned stream, IDirect3DVertexBuffer8* vertex_buffer, unsigned stride)
+{
+	DX8CALL(SetStreamSource( stream, vertex_buffer, stride ));
+}
+
+WWINLINE void DX8Wrapper::Set_Indices_Raw(IDirect3DIndexBuffer8* index_buffer, unsigned base_vertex_index)
+{
+	DX8CALL(SetIndices( index_buffer, base_vertex_index ));
+}
+
+WWINLINE void DX8Wrapper::Draw_Primitive_Raw(unsigned primitive_type, unsigned start_vertex, unsigned primitive_count)
+{
+	DX8CALL(DrawPrimitive( (D3DPRIMITIVETYPE)primitive_type, start_vertex, primitive_count ));
+}
+
+WWINLINE void DX8Wrapper::Draw_Indexed_Primitive_Raw(
+	unsigned primitive_type,
+	unsigned min_index,
+	unsigned vertex_count,
+	unsigned start_index,
+	unsigned primitive_count)
+{
+	DX8CALL(DrawIndexedPrimitive( (D3DPRIMITIVETYPE)primitive_type, min_index, vertex_count, start_index, primitive_count ));
+}
+
+WWINLINE void DX8Wrapper::Draw_Primitive_UP(unsigned primitive_type, unsigned primitive_count, const void* vertex_data, unsigned vertex_stride)
+{
+	DX8CALL(DrawPrimitiveUP( (D3DPRIMITIVETYPE)primitive_type, primitive_count, vertex_data, vertex_stride ));
 }
 
 WWINLINE Vector4 DX8Wrapper::Convert_Color(unsigned color)

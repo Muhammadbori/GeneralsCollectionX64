@@ -1824,6 +1824,146 @@ void DX8Wrapper::Set_Viewport(CONST D3DVIEWPORT8* pViewport)
 	DX8CALL(SetViewport(pViewport));
 }
 
+void DX8Wrapper::Get_Viewport(D3DVIEWPORT8* pViewport)
+{
+	DX8_THREAD_ASSERT();
+	DX8CALL(GetViewport(pViewport));
+}
+
+// ----------------------------------------------------------------------------
+//
+// Pass-through device calls whose result the caller inspects. These go
+// straight to the device without asserting or logging on failure, and do not
+// touch any of the wrapper's shadow state.
+//
+// ----------------------------------------------------------------------------
+
+HRESULT DX8Wrapper::Get_DX8_Render_State_Raw(D3DRENDERSTATETYPE state, DWORD* value)
+{
+	DX8_RECORD_DX8_CALLS();
+	return D3DDevice->GetRenderState(state, value);
+}
+
+HRESULT DX8Wrapper::Create_Vertex_Shader(const DWORD* declaration, const DWORD* function, DWORD* handle, DWORD usage)
+{
+	DX8_RECORD_DX8_CALLS();
+	return D3DDevice->CreateVertexShader(declaration, function, handle, usage);
+}
+
+HRESULT DX8Wrapper::Create_Pixel_Shader(const DWORD* function, DWORD* handle)
+{
+	DX8_RECORD_DX8_CALLS();
+	return D3DDevice->CreatePixelShader(function, handle);
+}
+
+HRESULT DX8Wrapper::Delete_Vertex_Shader(DWORD handle)
+{
+	DX8_RECORD_DX8_CALLS();
+	return D3DDevice->DeleteVertexShader(handle);
+}
+
+HRESULT DX8Wrapper::Delete_Pixel_Shader(DWORD handle)
+{
+	DX8_RECORD_DX8_CALLS();
+	return D3DDevice->DeletePixelShader(handle);
+}
+
+HRESULT DX8Wrapper::Create_Texture_Raw(
+	unsigned width,
+	unsigned height,
+	unsigned levels,
+	DWORD usage,
+	D3DFORMAT format,
+	D3DPOOL pool,
+	IDirect3DTexture8** texture)
+{
+	DX8_RECORD_DX8_CALLS();
+	return D3DDevice->CreateTexture(width, height, levels, usage, format, pool, texture);
+}
+
+HRESULT DX8Wrapper::Create_Image_Surface(unsigned width, unsigned height, D3DFORMAT format, IDirect3DSurface8** surface)
+{
+	DX8_RECORD_DX8_CALLS();
+	return D3DDevice->CreateImageSurface(width, height, format, surface);
+}
+
+HRESULT DX8Wrapper::Create_Vertex_Buffer_Raw(unsigned length, DWORD usage, DWORD fvf, D3DPOOL pool, IDirect3DVertexBuffer8** vertex_buffer)
+{
+	DX8_RECORD_DX8_CALLS();
+	return D3DDevice->CreateVertexBuffer(length, usage, fvf, pool, vertex_buffer);
+}
+
+HRESULT DX8Wrapper::Create_Index_Buffer_Raw(unsigned length, DWORD usage, D3DFORMAT format, D3DPOOL pool, IDirect3DIndexBuffer8** index_buffer)
+{
+	DX8_RECORD_DX8_CALLS();
+	return D3DDevice->CreateIndexBuffer(length, usage, format, pool, index_buffer);
+}
+
+HRESULT DX8Wrapper::Get_Render_Target_Surface(IDirect3DSurface8** surface)
+{
+	DX8_RECORD_DX8_CALLS();
+	return D3DDevice->GetRenderTarget(surface);
+}
+
+HRESULT DX8Wrapper::Get_Depth_Stencil_Surface(IDirect3DSurface8** surface)
+{
+	DX8_RECORD_DX8_CALLS();
+	return D3DDevice->GetDepthStencilSurface(surface);
+}
+
+// Unlike Set_Render_Target(), this does not update CurrentRenderTarget, DefaultRenderTarget,
+// CurrentDepthBuffer, DefaultDepthBuffer or IsRenderToTexture.
+HRESULT DX8Wrapper::Set_Render_Target_Raw(IDirect3DSurface8* render_target, IDirect3DSurface8* depth_buffer)
+{
+	DX8_RECORD_DX8_CALLS();
+	return D3DDevice->SetRenderTarget(render_target, depth_buffer);
+}
+
+HRESULT DX8Wrapper::Copy_Rects(
+	IDirect3DSurface8* pSourceSurface,
+	CONST RECT* pSourceRectsArray,
+	UINT cRects,
+	IDirect3DSurface8* pDestinationSurface,
+	CONST POINT* pDestPointsArray)
+{
+	DX8_RECORD_DX8_CALLS();
+	return D3DDevice->CopyRects(pSourceSurface, pSourceRectsArray, cRects, pDestinationSurface, pDestPointsArray);
+}
+
+HRESULT DX8Wrapper::Test_Cooperative_Level()
+{
+	DX8_RECORD_DX8_CALLS();
+	return D3DDevice->TestCooperativeLevel();
+}
+
+// ----------------------------------------------------------------------------
+//
+// Hardware cursor. W3DMouse calls these from its own thread, so they must not
+// use DX8CALL (main thread assert) or touch the frame statistics.
+//
+// ----------------------------------------------------------------------------
+
+BOOL DX8Wrapper::Show_DX8_Cursor(BOOL show)
+{
+	if (D3DDevice == nullptr)
+		return FALSE;
+	return D3DDevice->ShowCursor(show);
+}
+
+HRESULT DX8Wrapper::Set_DX8_Cursor_Properties(unsigned hot_spot_x, unsigned hot_spot_y, IDirect3DSurface8* cursor_bitmap)
+{
+	if (D3DDevice == nullptr)
+		return D3DERR_INVALIDCALL;
+	return D3DDevice->SetCursorProperties(hot_spot_x, hot_spot_y, cursor_bitmap);
+}
+
+void DX8Wrapper::Set_DX8_Cursor_Position(unsigned x, unsigned y, DWORD flags)
+{
+	if (D3DDevice == nullptr)
+		return;
+	D3DDevice->SetCursorPosition(x, y, flags);
+}
+
 // ----------------------------------------------------------------------------
 //
 // Set vertex buffer. A reference to previous vertex buffer is released and
