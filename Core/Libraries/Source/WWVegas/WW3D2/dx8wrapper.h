@@ -446,7 +446,24 @@ public:
 	static IDirect3DSurface8 * _Create_DX8_Surface(unsigned int width, unsigned int height, WW3DFormat format);
 	static IDirect3DSurface8 * _Create_DX8_Surface(const char *filename);
 	static IDirect3DSurface8 * _Get_DX8_Front_Buffer();
+	// Returns null in Direct3D 12 mode; use Read_Back_Buffer or Copy_Back_Buffer_To_Texture there.
 	static SurfaceClass * _Get_DX8_Back_Buffer(unsigned int num=0);
+
+	// Direct3D 12 mode: copies the rectangle src_rect (null for all) of the current render target, the
+	// back buffer or the texture selected with Set_Render_Target / Set_Render_Target_With_Z, into level
+	// 0 of dest at dest_x, dest_y. The copy is made on the GPU at this point of the frame and clipped to
+	// both surfaces. dest must be a non-DXT texture, such as one made by Create_Render_Target or
+	// TextureClass(..., POOL_DEFAULT, true), and not the current render target. Its CPU copy, if any,
+	// is not updated. Returns false when nothing was copied, and always in Direct3D 8 mode, where
+	// callers keep their CopyRects code.
+	static bool Copy_Back_Buffer_To_Texture(TextureClass* dest, const RECT* src_rect = nullptr, int dest_x = 0, int dest_y = 0);
+
+	// Direct3D 12 mode: reads the back buffer back to the CPU and returns it as a new standalone
+	// A8R8G8B8 surface of the back buffer size (the caller releases it), ready to Lock. During a frame
+	// it holds what was drawn so far, between frames the last presented frame. It waits for the GPU,
+	// so it is meant for screenshots. Returns null on failure, and always in Direct3D 8 mode, where
+	// callers keep their _Get_DX8_Back_Buffer code.
+	static SurfaceClass * Read_Back_Buffer();
 
 	static void _Copy_DX8_Rects(
 			IDirect3DSurface8* pSourceSurface,
@@ -510,11 +527,23 @@ public:
 
 	/*
 	** Render target interface. If render target format is WW3D_FORMAT_UNKNOWN, current display format is used.
+	**
+	** Direct3D 12 mode: render targets are textures (stored as B8G8R8A8; X8R8G8B8 and R5G6B5 read
+	** alpha as 1) and WW3D_FORMAT_UNKNOWN means X8R8G8B8. They are selected with
+	** Set_Render_Target(TextureClass*) or Set_Render_Target_With_Z; Set_Render_Target with a null
+	** surface, or Set_Render_Target_With_Z(nullptr), selects the back buffer and default depth buffer
+	** again. Selecting a target resets the viewport to the whole target, as Direct3D 8 does. Without a
+	** ZTextureClass the default depth buffer is used when it is at least as large as the target,
+	** otherwise there is no depth buffer. The IDirect3DSurface8 and swap chain versions cannot select
+	** anything else, as there are no Direct3D 8 surfaces.
 	*/
 	static TextureClass *	Create_Render_Target (int width, int height, WW3DFormat format = WW3D_FORMAT_UNKNOWN);
 
 	static void					Set_Render_Target (IDirect3DSurface8 *render_target, bool use_default_depth_buffer = false);
 	static void					Set_Render_Target (IDirect3DSurface8* render_target, IDirect3DSurface8* dpeth_buffer);
+	// Renders into level 0 of texture with the default depth buffer (Set_Render_Target_With_Z(texture));
+	// null selects the back buffer.
+	static void					Set_Render_Target (TextureClass *texture);
 
 	static void					Set_Render_Target (IDirect3DSwapChain8 *swap_chain);
 	static bool					Is_Render_To_Texture() { return IsRenderToTexture; }
@@ -688,6 +717,8 @@ protected:
 	static void Release_DX12_Device_State();
 	static bool Set_DX12_Render_Device(bool reset_device, bool restore_assets);
 	static void Release_DX12_Textures();
+	static TextureClass * Create_DX12_Render_Target(int width, int height, WW3DFormat format);
+	static void Set_DX12_Render_Target(TextureClass * texture, ZTextureClass * ztexture);
 
 	/*
 	** Device Selection Code.

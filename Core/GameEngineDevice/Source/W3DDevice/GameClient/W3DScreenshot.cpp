@@ -153,17 +153,68 @@ void W3D_UpdateScreenshotMessages()
 	}
 }
 
+// Direct3D 12 mode has no Direct3D 8 back buffer to copy. DX8Wrapper::Read_Back_Buffer reads the back buffer
+// (between frames, the last presented frame) into a new A8R8G8B8 CPU surface, which the screenshot thread
+// converts and writes like the Direct3D 8 copy.
+static void takeCompressedScreenshotDX12(ScreenshotFormat format, Int jpegQuality, const char* leafname)
+{
+	SurfaceClass* surface = DX8Wrapper::Read_Back_Buffer();
+	if (surface == nullptr)
+	{
+		DEBUG_LOG(("Screenshot could not read the back buffer"));
+		return;
+	}
+
+	SurfaceClass::SurfaceDescription surfaceDesc;
+	surface->Get_Description(surfaceDesc);
+
+	if (surfaceDesc.Format != WW3D_FORMAT_A8R8G8B8 && surfaceDesc.Format != WW3D_FORMAT_X8R8G8B8)
+	{
+		DEBUG_LOG(("Screenshot does not support back buffer format %d", (int)surfaceDesc.Format));
+		surface->Release_Ref();
+		return;
+	}
+
+	int pitch = 0;
+	void* bits = surface->Lock(&pitch);
+	if (bits == nullptr)
+	{
+		surface->Release_Ref();
+		return;
+	}
+
+	ScreenshotThreadData* threadData = new ScreenshotThreadData();
+	threadData->width = surfaceDesc.Width;
+	threadData->height = surfaceDesc.Height;
+	threadData->pitch = pitch;
+	threadData->is16Bit = false;
+	threadData->quality = jpegQuality;
+	threadData->format = format;
+	strlcpy(threadData->userDataDirectory, TheGlobalData->getPath_UserData().str(), ARRAY_SIZE(threadData->userDataDirectory));
+	strlcpy(threadData->leafname, leafname, ARRAY_SIZE(threadData->leafname));
+
+	threadData->pixelData = new unsigned char[threadData->pitch * threadData->height];
+	memcpy(threadData->pixelData, bits, threadData->pitch * threadData->height);
+
+	surface->Unlock();
+	surface->Release_Ref();
+	surface = nullptr;
+
+	const HANDLE hThread = CreateThread(nullptr, 0, screenshotThreadFunc, threadData, 0, nullptr);
+	if (hThread)
+	{
+		CloseHandle(hThread);
+	}
+	else
+	{
+		delete threadData;
+	}
+}
+
 void W3D_TakeCompressedScreenshot(ScreenshotFormat format, Int jpegQuality)
 {
 	static constexpr const char* const ScreenshotFormatExtensions[] = { "jpg", "png" };
 	static_assert(ARRAY_SIZE(ScreenshotFormatExtensions) == SCREENSHOT_FORMAT_COUNT, "Incorrect array size");
-
-	// Reading back the swap chain is not supported by the Direct3D 12 renderer yet.
-	if (DX12Device::Is_Active())
-	{
-		DEBUG_LOG(("Screenshots are not supported in Direct3D 12 mode yet"));
-		return;
-	}
 
 	// The filename is created here so the timestamp matches the capture time.
 	char leafname[_MAX_FNAME];
@@ -173,6 +224,12 @@ void W3D_TakeCompressedScreenshot(ScreenshotFormat format, Int jpegQuality)
 	GetLocalTime(&st);
 	sprintf(leafname, "sshot_%04d%02d%02d_%02d%02d%02d_%03d.%s",
 		st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds, extension);
+
+	if (DX12Device::Is_Active())
+	{
+		takeCompressedScreenshotDX12(format, jpegQuality, leafname);
+		return;
+	}
 
 	// TheSuperHackers @bugfix xezon 21/05/2025 Get the back buffer and create a copy of the surface.
 	// Originally this code took the front buffer and tried to lock it. This does not work when the

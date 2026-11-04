@@ -87,6 +87,10 @@ extern int nShadowIndicesInBuf;	//model vetices in vertex buffer
 extern int nShadowStartBatchIndex;
 extern int SHADOW_VERTEX_SIZE;
 extern int SHADOW_INDEX_SIZE;
+// Direct3D 12 mode: dynamic engine buffers that W3DVolumetricShadow.cpp uses in place of
+// shadowVertexBufferD3D/shadowIndexBufferD3D. They share the batch counters above.
+extern DX8VertexBufferClass	*shadowVertexBufferDX12;
+extern DX8IndexBufferClass		*shadowIndexBufferDX12;
 
 //Global streaming vertex buffer with x,y,z,u,v type.
 struct SHADOW_DECAL_VERTEX	//vertex structure passed to D3D
@@ -291,8 +295,9 @@ Bool W3DProjectedShadowManager::ReAcquireResources()
 	if (DX12Device::Is_Active())
 	{
 		// Direct3D 12 mode: Create_*_Raw cannot make Direct3D 8 buffers, use engine buffers instead.
-		// There is no render-to-texture yet, so m_dynamicRenderTarget stays null and only decal
-		// shadows are created (see addShadow).
+		// m_dynamicRenderTarget above is a Direct3D 12 render target. Projected shadows render their
+		// shadow textures into render targets (see W3DProjectedShadow::updateTexture) and draw the
+		// terrain part through the volumetric shadow engine buffers (see renderProjectedTerrainShadow).
 		DEBUG_ASSERTCRASH(shadowDecalIndexBufferDX12 == nullptr && shadowDecalVertexBufferDX12 == nullptr, ("ReAcquireResources not released in W3DProjectedShadowManager"));
 
 		// DX8IndexBufferClass counts indices in 16 bits, so this buffer holds one index less than
@@ -407,6 +412,19 @@ Int W3DProjectedShadowManager::renderProjectedTerrainShadow(W3DProjectedShadow *
 		Real mapScaleInv=1.0f/MAP_XY_FACTOR;
 		SHADOW_VOLUME_VERTEX* pvVertices;
 		UnsignedShort *pvIndices;
+		DX12BufferClass *dx12VertexBuffer=nullptr;
+		DX12BufferClass *dx12IndexBuffer=nullptr;
+		if (DX12Device::Is_Active())
+		{
+			//Direct3D 12 mode: the raw buffers do not exist, so batch into the dynamic engine buffers that
+			//replace them. A discard lock moves a DX12 buffer to fresh frame memory and a plain lock writes
+			//into the current one past the ranges earlier draws read, as D3DLOCK_DISCARD/NOOVERWRITE do.
+			if (shadowVertexBufferDX12 == nullptr || shadowIndexBufferDX12 == nullptr)	return 0;
+			dx12VertexBuffer=shadowVertexBufferDX12->Get_DX12_Buffer();
+			dx12IndexBuffer=shadowIndexBufferDX12->Get_DX12_Buffer();
+			if (dx12VertexBuffer == nullptr || dx12IndexBuffer == nullptr)	return 0;
+		}
+		else
 		if (!DX8Wrapper::Has_D3D_Device())	return 0;
 
 		//Get terrain cell index for area with shadow
@@ -429,6 +447,23 @@ Int W3DProjectedShadowManager::renderProjectedTerrainShadow(W3DProjectedShadow *
 
 		Int numVerts = vertsPerRow *vertsPerColumn;	//number of terrain vertices
 
+		if (dx12VertexBuffer)
+		{
+			if (numVerts > SHADOW_VERTEX_SIZE || (endX - startX) * (endY-startY)*6 > SHADOW_INDEX_SIZE)
+				return 0;	//more than the whole buffer, a Direct3D 8 lock fails here too.
+
+			if (nShadowVertsInBuf > (SHADOW_VERTEX_SIZE-numVerts))	//check if room for model verts
+			{
+				pvVertices=(SHADOW_VOLUME_VERTEX*)dx12VertexBuffer->Lock(0,numVerts*sizeof(SHADOW_VOLUME_VERTEX),true);
+				nShadowVertsInBuf=0;
+				nShadowStartBatchVertex=0;
+			}
+			else
+				pvVertices=(SHADOW_VOLUME_VERTEX*)dx12VertexBuffer->Lock(nShadowVertsInBuf*sizeof(SHADOW_VOLUME_VERTEX),numVerts*sizeof(SHADOW_VOLUME_VERTEX),false);
+			if (pvVertices == nullptr)
+				return 0;
+		}
+		else
 		if (nShadowVertsInBuf > (SHADOW_VERTEX_SIZE-numVerts))	//check if room for model verts
 		{
 			//flush the buffer by drawing the contents and re-locking again
@@ -459,10 +494,27 @@ Int W3DProjectedShadowManager::renderProjectedTerrainShadow(W3DProjectedShadow *
 			}
 		}
 
-		shadowVertexBufferD3D->Unlock();
+		if (dx12VertexBuffer)
+			dx12VertexBuffer->Unlock();
+		else
+			shadowVertexBufferD3D->Unlock();
 
 		Int numIndex=(endX - startX) * (endY-startY)*6;	//6 indices per terrain cell (2 triangles).
 
+		if (dx12IndexBuffer)
+		{
+			if (nShadowIndicesInBuf > (SHADOW_INDEX_SIZE-numIndex))	//check if room for model verts
+			{
+				pvIndices=(UnsignedShort*)dx12IndexBuffer->Lock(0,numIndex*sizeof(short),true);
+				nShadowIndicesInBuf=0;
+				nShadowStartBatchIndex=0;
+			}
+			else
+				pvIndices=(UnsignedShort*)dx12IndexBuffer->Lock(nShadowIndicesInBuf*sizeof(short),numIndex*sizeof(short),false);
+			if (pvIndices == nullptr)
+				return 0;
+		}
+		else
 		if (nShadowIndicesInBuf > (SHADOW_INDEX_SIZE-numIndex))	//check if room for model verts
 		{
 			//flush the buffer by drawing the contents and re-locking again
@@ -522,13 +574,22 @@ Int W3DProjectedShadowManager::renderProjectedTerrainShadow(W3DProjectedShadow *
 				}
 		}
 
-		shadowIndexBufferD3D->Unlock();
+		if (dx12IndexBuffer)
+			dx12IndexBuffer->Unlock();
+		else
+			shadowIndexBufferD3D->Unlock();
 
-		DX8Wrapper::Set_Indices_Raw(shadowIndexBufferD3D,nShadowStartBatchVertex);
+		if (DX12Device::Is_Active())
+			DX8Wrapper::Set_Indices_Raw(shadowIndexBufferDX12,nShadowStartBatchVertex);
+		else
+			DX8Wrapper::Set_Indices_Raw(shadowIndexBufferD3D,nShadowStartBatchVertex);
 
 		DX8Wrapper::_Set_DX8_Transform(D3DTS_WORLD,*(D3DMATRIX *)&mWorld);
 
-		DX8Wrapper::Set_Stream_Source_Raw(0,shadowVertexBufferD3D,sizeof(SHADOW_VOLUME_VERTEX));
+		if (DX12Device::Is_Active())
+			DX8Wrapper::Set_Stream_Source_Raw(0,shadowVertexBufferDX12,sizeof(SHADOW_VOLUME_VERTEX));
+		else
+			DX8Wrapper::Set_Stream_Source_Raw(0,shadowVertexBufferD3D,sizeof(SHADOW_VOLUME_VERTEX));
 		DX8Wrapper::Set_Vertex_Shader(SHADOW_VOLUME_FVF);
 
 		Int numPolys = (endX - startX)*(endY - startY)*2;	//2 triangles per cell
@@ -1841,10 +1902,12 @@ W3DProjectedShadow* W3DProjectedShadowManager::addShadow(RenderObjClass *robj, S
 
 	if (DX12Device::Is_Active())
 	{
-		// Direct3D 12 mode: there is no render-to-texture yet, so m_dynamicRenderTarget is always
-		// null. Decal shadows use a premade texture and do not need it; projected shadows
-		// (SHADOW_PROJECTION, also the default when no shadow info is given) are skipped.
-		if (!robj || !TheGlobalData->m_useShadowDecals || !shadowInfo || shadowInfo->m_type != SHADOW_DECAL)
+		// Direct3D 12 mode: decal shadows use a premade texture and do not need m_dynamicRenderTarget,
+		// so they are still made when the render target could not be created. Projected shadows
+		// (SHADOW_PROJECTION, also the default when no shadow info is given) need it.
+		if (!robj || !TheGlobalData->m_useShadowDecals)
+			return nullptr;
+		if (!m_dynamicRenderTarget && (!shadowInfo || shadowInfo->m_type != SHADOW_DECAL))
 			return nullptr;
 	}
 	else
@@ -2284,7 +2347,15 @@ void W3DProjectedShadow::updateTexture(Vector3 &lightPos)
 		objToLight =  objPos + objToLight * 2000.0f;
 
 		m_shadowProjector->Compute_Perspective_Projection(m_robj,objToLight);
-		m_shadowProjector->Set_Render_Target(TheW3DProjectedShadowManager->getRenderTarget());
+		if (DX12Device::Is_Active())
+		{
+			//Direct3D 12 mode: the permanent texture is itself a render target (see W3DShadowTexture::init)
+			//and surfaces only hold CPU copies, so render straight into it instead of copying from
+			//m_dynamicRenderTarget. This also makes the projector sample this shadow's own texture.
+			m_shadowProjector->Set_Render_Target(m_shadowTexture[0]->getTexture());
+		}
+		else
+			m_shadowProjector->Set_Render_Target(TheW3DProjectedShadowManager->getRenderTarget());
 
 		//Set ambient to 0, so we get a black shadow on solid background
 
@@ -2294,6 +2365,14 @@ void W3DProjectedShadow::updateTexture(Vector3 &lightPos)
 
 		if (!m_shadowProjector->Compute_Texture(m_robj,context))
 		{
+			return;
+		}
+
+		if (DX12Device::Is_Active())
+		{
+			//Direct3D 12 mode: already rendered into the permanent texture, nothing to copy.
+			m_shadowTexture[0]->updateBounds(TheW3DShadowManager->getLightPosWorld(0),m_robj);	//update local shadow bounds
+			m_shadowTexture[0]->setLightPosHistory(lightPos);	//store position of light at time of texture update.
 			return;
 		}
 
@@ -2383,6 +2462,21 @@ Int W3DShadowTexture::init(RenderObjClass *robj)
 	SurfaceClass::SurfaceDescription surface_desc;
 
 	TheW3DProjectedShadowManager->getRenderTarget()->Get_Level_Description(surface_desc);
+
+	if (DX12Device::Is_Active())
+	{
+		//Direct3D 12 mode: make the permanent texture a render target too. W3DProjectedShadow::updateTexture
+		//renders into it directly, because surface copies only see CPU copies in this mode.
+		TextureClass *new_rt_texture = MSGNEW("TextureClass") TextureClass(surface_desc.Width,surface_desc.Height,surface_desc.Format,MIP_LEVELS_1,TextureClass::POOL_DEFAULT,true);
+		if (new_rt_texture->Peek_DX12_Texture() == nullptr)
+		{
+			REF_PTR_RELEASE(new_rt_texture);
+			setTexture(nullptr);
+			return FALSE;
+		}
+		setTexture(new_rt_texture);
+		return TRUE;
+	}
 
 	TextureClass *new_texture = MSGNEW("TextureClass") TextureClass(surface_desc.Width,surface_desc.Height,surface_desc.Format,MIP_LEVELS_1);
 

@@ -29,6 +29,13 @@
 //
 // -dx12debug: the debug layer is enabled (GPU-based validation stays off) and its messages are
 // written to dx12debug.log every frame, together with shader compile errors and failed calls.
+//
+// Render to texture: Set_Render_Target selects a render target texture (or the back buffer) and a
+// depth target (or the default depth buffer, or none). The selection lives outside the command
+// list, so every new command list (Begin_Frame, Flush_Frame_And_Wait) binds it again. Pipeline
+// states are keyed on the bound target formats. Render and depth target textures track their own
+// resource state; Bind_Targets, Bind_Texture, Record_Uploads and Copy_Target_To_Texture move them
+// between states as they are used.
 
 #include "WW3D2/Backend/DX12/dx12device.h"
 #include "WW3D2/Backend/DX12/dx12ffp.h"
@@ -54,6 +61,8 @@
 
 using Microsoft::WRL::ComPtr;
 
+void DX12Device_Write_SRV(unsigned slot, ID3D12Resource * resource, unsigned dxgi_format, unsigned mip_levels, unsigned component_mapping);
+
 bool DX12Device_DebugLayer = false;
 
 bool DX12Device::Requested = false;
@@ -69,6 +78,9 @@ enum
 {
 	FRAME_COUNT = 2,
 	BACK_BUFFER_COUNT = 3,
+	// RTV slots 0 .. BACK_BUFFER_COUNT - 1 are the back buffers, DSV slot 0 the default depth buffer.
+	RTV_HEAP_SIZE = BACK_BUFFER_COUNT + 256,
+	DSV_HEAP_SIZE = 64,
 	SRV_HEAP_SIZE = 16384,
 	SAMPLER_HEAP_SIZE = 2048,
 	FRAME_MEMORY_SIZE = 32 * 1024 * 1024,
@@ -185,6 +197,10 @@ struct PSOKey
 	unsigned StencilFunc;	// D3DCMPFUNC, numbered like D3D12_COMPARISON_FUNC
 	unsigned StencilReadMask;	// truncated to the 8 bits of the stencil plane
 	unsigned StencilWriteMask;
+	// DXGI_FORMAT of the bound render target and depth stencil view. Without a depth stencil view
+	// (DXGI_FORMAT_UNKNOWN) the depth, stencil and depth bias fields are all zero.
+	unsigned RTVFormat;
+	unsigned DSVFormat;
 };
 
 struct PSOKeyLess
@@ -244,6 +260,23 @@ ComPtr<ID3D12Resource> DepthBuffer;
 ComPtr<ID3D12DescriptorHeap> RTVHeap;
 ComPtr<ID3D12DescriptorHeap> DSVHeap;
 UINT RTVDescriptorSize = 0;
+UINT DSVDescriptorSize = 0;
+// Render target and depth stencil view slots of render and depth target textures. Guarded by
+// ResourceMutex.
+unsigned NextRTVSlot = BACK_BUFFER_COUNT;
+std::vector<unsigned> FreeRTVSlots;
+unsigned NextDSVSlot = 1;
+std::vector<unsigned> FreeDSVSlots;
+UINT LastPresentedIndex = 0;
+bool HasPresented = false;
+
+// Render to texture, main thread only. The selected targets are owned references; a null color
+// target is the back buffer. TargetHasDepth says whether the targets bound by Bind_Targets include
+// a depth stencil view.
+DX12TextureClass * TargetColor = nullptr;
+DX12TextureClass * TargetDepth = nullptr;
+bool TargetDefaultDepth = true;
+bool TargetHasDepth = false;
 
 FrameSlot Frames[FRAME_COUNT];
 unsigned FrameIndex = 0;
@@ -298,6 +331,9 @@ std::mutex DebugLogMutex;
 ComPtr<ID3D12InfoQueue> InfoQueue;
 std::map<unsigned, unsigned> DebugMessageCounts;
 UINT64 DebugMessagesDiscarded = 0;
+// Render-to-texture activity since the last heartbeat, for the log.
+unsigned DebugTargetSelects = 0;
+unsigned DebugTargetCopies = 0;
 
 ComPtr<ID3D12Resource> WhiteTexture;
 
@@ -734,6 +770,8 @@ void Record_Uploads(ID3D12GraphicsCommandList * list)
 			barriers.push_back(Make_Transition(resource, (D3D12_RESOURCE_STATES)texture->Get_State(), D3D12_RESOURCE_STATE_COPY_DEST));
 			texture->Set_State(D3D12_RESOURCE_STATE_COPY_DEST);
 		}
+		// Uploads replace whole levels, which initializes a render target as a clear would.
+		texture->Set_Initialized();
 	}
 	if (!barriers.empty())
 	{
@@ -810,6 +848,134 @@ void Ensure_Recording()
 	}
 }
 
+unsigned Target_Width()
+{
+	return TargetColor ? TargetColor->Get_Width() : DX12Device::Get_Width();
+}
+
+unsigned Target_Height()
+{
+	return TargetColor ? TargetColor->Get_Height() : DX12Device::Get_Height();
+}
+
+D3D12_CPU_DESCRIPTOR_HANDLE RTV_Handle(unsigned slot)
+{
+	D3D12_CPU_DESCRIPTOR_HANDLE handle = RTVHeap->GetCPUDescriptorHandleForHeapStart();
+	handle.ptr += (SIZE_T)slot * RTVDescriptorSize;
+	return handle;
+}
+
+D3D12_CPU_DESCRIPTOR_HANDLE DSV_Handle(unsigned slot)
+{
+	D3D12_CPU_DESCRIPTOR_HANDLE handle = DSVHeap->GetCPUDescriptorHandleForHeapStart();
+	handle.ptr += (SIZE_T)slot * DSVDescriptorSize;
+	return handle;
+}
+
+D3D12_CPU_DESCRIPTOR_HANDLE Current_RTV()
+{
+	return TargetColor ? RTV_Handle(TargetColor->Get_RTV_Slot()) : RTV_Handle(BackBufferIndex);
+}
+
+// The depth stencil view for the current color target: the selected depth target, or the default
+// depth buffer when use_default_depth was set. Like Direct3D 8, a depth buffer smaller than the
+// color target cannot be used, and there is none. depth_texture is set to the depth target texture,
+// or null for the default depth buffer and for none.
+bool Current_DSV(D3D12_CPU_DESCRIPTOR_HANDLE & dsv, DX12TextureClass ** depth_texture)
+{
+	const unsigned width = Target_Width();
+	const unsigned height = Target_Height();
+	*depth_texture = nullptr;
+	if (TargetDepth)
+	{
+		if (TargetDepth->Get_Width() < width || TargetDepth->Get_Height() < height)
+		{
+			return false;
+		}
+		dsv = DSV_Handle(TargetDepth->Get_DSV_Slot());
+		*depth_texture = TargetDepth;
+		return true;
+	}
+	if (!TargetDefaultDepth || !DepthBuffer || DX12Device::Get_Width() < width || DX12Device::Get_Height() < height)
+	{
+		return false;
+	}
+	dsv = DSV_Handle(0);
+	return true;
+}
+
+void Ensure_State(DX12TextureClass * texture, D3D12_RESOURCE_STATES state)
+{
+	if (texture->Get_State() != (unsigned)state)
+	{
+		Transition(CommandList.Get(), texture->Peek_Resource(), (D3D12_RESOURCE_STATES)texture->Get_State(), state);
+		texture->Set_State(state);
+	}
+}
+
+// Clears a render or depth target that has not been drawn into yet, so that it never shows
+// uninitialized memory. Recording only.
+void Initialize_Target(DX12TextureClass * texture)
+{
+	if (!texture->Needs_Initial_Clear() || !texture->Peek_Resource())
+	{
+		return;
+	}
+	if (texture->Is_Render_Target())
+	{
+		Ensure_State(texture, D3D12_RESOURCE_STATE_RENDER_TARGET);
+		const float black[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+		CommandList->ClearRenderTargetView(RTV_Handle(texture->Get_RTV_Slot()), black, 0, nullptr);
+	}
+	else if (texture->Is_Depth_Target())
+	{
+		Ensure_State(texture, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+		CommandList->ClearDepthStencilView(DSV_Handle(texture->Get_DSV_Slot()), D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, 1.0f, 0, 0, nullptr);
+	}
+	texture->Set_Initialized();
+}
+
+// Binds the selected targets to the command list being recorded.
+void Bind_Targets()
+{
+	TargetHasDepth = false;
+	if (!Recording || !FrameHasRenderTarget)
+	{
+		return;
+	}
+
+	if (TargetColor)
+	{
+		Initialize_Target(TargetColor);
+		Ensure_State(TargetColor, D3D12_RESOURCE_STATE_RENDER_TARGET);
+	}
+	D3D12_CPU_DESCRIPTOR_HANDLE rtv = Current_RTV();
+
+	D3D12_CPU_DESCRIPTOR_HANDLE dsv;
+	DX12TextureClass * depth_texture = nullptr;
+	TargetHasDepth = Current_DSV(dsv, &depth_texture);
+	if (depth_texture)
+	{
+		Initialize_Target(depth_texture);
+		Ensure_State(depth_texture, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+	}
+
+	CommandList->OMSetRenderTargets(1, &rtv, FALSE, TargetHasDepth ? &dsv : nullptr);
+}
+
+// Moves the bound target textures back to their target states, in case an upload changed them.
+void Ensure_Target_States()
+{
+	if (TargetColor)
+	{
+		Ensure_State(TargetColor, D3D12_RESOURCE_STATE_RENDER_TARGET);
+	}
+	if (TargetDepth && TargetHasDepth)
+	{
+		Ensure_State(TargetDepth, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+	}
+}
+
 void Apply_Viewport()
 {
 	if (!Recording)
@@ -827,10 +993,11 @@ void Apply_Viewport()
 	CommandList->RSSetScissorRects(1, &CurrentScissor);
 }
 
+// The whole current color target.
 void Set_Full_Viewport()
 {
-	unsigned width = DX12Device::Get_Width();
-	unsigned height = DX12Device::Get_Height();
+	unsigned width = Target_Width();
+	unsigned height = Target_Height();
 
 	CurrentViewport.TopLeftX = 0.0f;
 	CurrentViewport.TopLeftY = 0.0f;
@@ -845,6 +1012,83 @@ void Set_Full_Viewport()
 	CurrentScissor.bottom = (LONG)height;
 
 	Apply_Viewport();
+}
+
+// Sets the state every new command list starts with: descriptor heaps, root signature, targets and
+// viewport. Recording only.
+void Restore_Command_List_State()
+{
+	BoundPipelineState = nullptr;
+	BoundTopology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
+	BoundStencilRef = NO_STENCIL_REF;
+	LastVSConstantsGPU = 0;
+	LastPSConstantsGPU = 0;
+
+	ID3D12DescriptorHeap * heaps[] = { SRVHeap.Get(), SamplerHeap.Get() };
+	CommandList->SetDescriptorHeaps(2, heaps);
+	CommandList->SetGraphicsRootSignature(RootSignature.Get());
+
+	Bind_Targets();
+	if (CurrentViewport.Width < 1.0f || CurrentViewport.Height < 1.0f)
+	{
+		Set_Full_Viewport();
+	}
+	else
+	{
+		Apply_Viewport();
+	}
+}
+
+// Executes what the frame recorded so far, waits for the GPU and continues the frame in a new
+// command list. The back buffer stays in the render target state. Recording only.
+bool Flush_Frame_And_Wait()
+{
+	Record_Uploads(CommandList.Get());
+	HRESULT hr = CommandList->Close();
+	if (SUCCEEDED(hr))
+	{
+		ID3D12CommandList * lists[] = { CommandList.Get() };
+		Queue->ExecuteCommandLists(1, lists);
+	}
+	else
+	{
+		Log_Failure("CommandList::Close (flush)", hr);
+	}
+	Wait_For_Fence(Signal_Queue());
+	Process_Deferred();
+
+	// The GPU is idle, so the frame's allocator can be reset; the frame memory stays in use.
+	FrameSlot & frame = Frames[FrameIndex];
+	HRESULT reset = frame.Allocator->Reset();
+	if (SUCCEEDED(reset))
+	{
+		reset = CommandList->Reset(frame.Allocator.Get(), nullptr);
+	}
+	if (FAILED(reset))
+	{
+		Log_Failure("CommandList::Reset (flush)", reset);
+		Recording = false;
+		FrameHasRenderTarget = false;
+		return false;
+	}
+	Restore_Command_List_State();
+	return SUCCEEDED(hr);
+}
+
+void Release_Targets()
+{
+	if (TargetColor)
+	{
+		TargetColor->Release_Ref();
+		TargetColor = nullptr;
+	}
+	if (TargetDepth)
+	{
+		TargetDepth->Release_Ref();
+		TargetDepth = nullptr;
+	}
+	TargetDefaultDepth = true;
+	TargetHasDepth = false;
 }
 
 // Writes source to dx12debug.log with line numbers, matching the compiler's error positions.
@@ -1165,8 +1409,8 @@ ID3D12PipelineState * Get_Pipeline_State(const PSOKey & key, const FVFLayout & l
 		desc.IBStripCutValue = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED;
 		desc.PrimitiveTopologyType = (D3D12_PRIMITIVE_TOPOLOGY_TYPE)key.TopologyType;
 		desc.NumRenderTargets = 1;
-		desc.RTVFormats[0] = DXGI_FORMAT_B8G8R8A8_UNORM;
-		desc.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
+		desc.RTVFormats[0] = (DXGI_FORMAT)key.RTVFormat;
+		desc.DSVFormat = (DXGI_FORMAT)key.DSVFormat;
 		desc.SampleDesc.Count = 1;
 		desc.SampleDesc.Quality = 0;
 
@@ -1198,10 +1442,11 @@ D3D12_CPU_DESCRIPTOR_HANDLE SRV_CPU_Handle(unsigned slot)
 }
 
 // Returns the descriptor table for a texture, writing its view into its slot on first use and
-// adding a transition to PIXEL_SHADER_RESOURCE when needed. Null textures bind the white texture.
+// adding a transition to PIXEL_SHADER_RESOURCE when needed. Null textures bind the white texture,
+// and so do the textures bound as the current targets, which cannot be read while they are written.
 D3D12_GPU_DESCRIPTOR_HANDLE Bind_Texture(DX12TextureClass * texture, D3D12_RESOURCE_BARRIER * barriers, unsigned & barrier_count)
 {
-	if (texture && !texture->Is_CPU_Only())
+	if (texture && !texture->Is_CPU_Only() && texture != TargetColor && !(texture == TargetDepth && TargetHasDepth))
 	{
 		ID3D12Resource * resource = texture->Peek_Resource();
 		unsigned slot = texture->Get_SRV_Slot();
@@ -1209,9 +1454,11 @@ D3D12_GPU_DESCRIPTOR_HANDLE Bind_Texture(DX12TextureClass * texture, D3D12_RESOU
 		{
 			if (SRVSlotResources[slot] != resource)
 			{
-				D3D->CreateShaderResourceView(resource, nullptr, SRV_CPU_Handle(slot));
+				DX12Device_Write_SRV(slot, resource, texture->Get_DXGI_Format(), texture->Get_Level_Count(), texture->Get_SRV_Component_Mapping());
 				SRVSlotResources[slot] = resource;
 			}
+			// Recorded before the batched transitions, while the target is still in its initial state.
+			Initialize_Target(texture);
 			if (texture->Get_State() != (unsigned)D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
 			{
 				barriers[barrier_count++] = Make_Transition(resource, (D3D12_RESOURCE_STATES)texture->Get_State(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -1634,6 +1881,17 @@ bool Init_Device(HWND hwnd)
 		InfoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, FALSE);
 		InfoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING, FALSE);
 		InfoQueue->SetMessageCountLimit(65536);
+		// Render targets are cleared to whatever color the game asks for, so they have no optimized
+		// clear value; the performance warning about that would fire on every clear.
+		D3D12_MESSAGE_ID denied[] = {
+			D3D12_MESSAGE_ID_CLEARRENDERTARGETVIEW_MISMATCHINGCLEARVALUE,
+			D3D12_MESSAGE_ID_CLEARDEPTHSTENCILVIEW_MISMATCHINGCLEARVALUE,
+		};
+		D3D12_INFO_QUEUE_FILTER filter;
+		memset(&filter, 0, sizeof(filter));
+		filter.DenyList.NumIDs = (UINT)(sizeof(denied) / sizeof(denied[0]));
+		filter.DenyList.pIDList = denied;
+		InfoQueue->AddStorageFilterEntries(&filter);
 		DebugMessagesDiscarded = InfoQueue->GetNumMessagesDiscardedByMessageCountLimit();
 	}
 	else if (DX12Device_DebugLayer)
@@ -1708,8 +1966,8 @@ bool Init_Device(HWND hwnd)
 	}
 	UploadList->Close();
 
-	RTVHeap = Create_Descriptor_Heap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV, BACK_BUFFER_COUNT, false);
-	DSVHeap = Create_Descriptor_Heap(D3D12_DESCRIPTOR_HEAP_TYPE_DSV, 1, false);
+	RTVHeap = Create_Descriptor_Heap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV, RTV_HEAP_SIZE, false);
+	DSVHeap = Create_Descriptor_Heap(D3D12_DESCRIPTOR_HEAP_TYPE_DSV, DSV_HEAP_SIZE, false);
 	SRVHeap = Create_Descriptor_Heap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, SRV_HEAP_SIZE, true);
 	SamplerHeap = Create_Descriptor_Heap(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, SAMPLER_HEAP_SIZE, true);
 	if (!RTVHeap || !DSVHeap || !SRVHeap || !SamplerHeap)
@@ -1717,6 +1975,7 @@ bool Init_Device(HWND hwnd)
 		return false;
 	}
 	RTVDescriptorSize = D3D->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+	DSVDescriptorSize = D3D->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
 	SRVDescriptorSize = D3D->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 	SamplerDescriptorSize = D3D->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER);
 	SRVHeapCPU = SRVHeap->GetCPUDescriptorHandleForHeapStart();
@@ -1730,6 +1989,10 @@ bool Init_Device(HWND hwnd)
 		NextSRVSlot = 1;
 		FreeSRVSlots.clear();
 		DeferredSRVFrees.clear();
+		NextRTVSlot = BACK_BUFFER_COUNT;
+		FreeRTVSlots.clear();
+		NextDSVSlot = 1;
+		FreeDSVSlots.clear();
 	}
 
 	if (!Create_Root_Signature())
@@ -1744,12 +2007,16 @@ bool Init_Device(HWND hwnd)
 
 	memset(&CurrentViewport, 0, sizeof(CurrentViewport));
 	memset(&CurrentScissor, 0, sizeof(CurrentScissor));
+	HasPresented = false;
 	return true;
 }
 
 // Releases every object owned by this file. The GPU must be idle.
 void Release_All()
 {
+	// With the device pointer already cleared, the target textures release their resources at once.
+	Release_Targets();
+
 	std::vector<PendingUpload> uploads;
 	std::vector<DeferredRelease> releases;
 	{
@@ -1759,6 +2026,10 @@ void Release_All()
 		DeferredSRVFrees.clear();
 		FreeSRVSlots.clear();
 		NextSRVSlot = 1;
+		FreeRTVSlots.clear();
+		NextRTVSlot = BACK_BUFFER_COUNT;
+		FreeDSVSlots.clear();
+		NextDSVSlot = 1;
 		PendingUploadBytes = 0;
 		HasPendingUploads = false;
 	}
@@ -1803,6 +2074,7 @@ void Release_All()
 	FrameIndex = 0;
 	FrameSlotPrepared = false;
 	FrameHasRenderTarget = false;
+	HasPresented = false;
 	Recording = false;
 	CommandList.Reset();
 	UploadList.Reset();
@@ -1867,7 +2139,7 @@ bool Create_Depth_Buffer(unsigned width, unsigned height)
 		return false;
 	}
 
-	D3D->CreateDepthStencilView(DepthBuffer.Get(), nullptr, DSVHeap->GetCPUDescriptorHandleForHeapStart());
+	D3D->CreateDepthStencilView(DepthBuffer.Get(), nullptr, DSV_Handle(0));
 	return true;
 }
 
@@ -1881,7 +2153,7 @@ bool Has_Render_Target()
 // Used by DX12TextureClass. Descriptor writes are free threaded, so this may run on the loader
 // thread; the slot is not visible to the main thread until the texture is handed over. Bind_Texture
 // later rewrites an equivalent default view once on first use.
-void DX12Device_Write_SRV(unsigned slot, ID3D12Resource * resource, unsigned dxgi_format, unsigned mip_levels)
+void DX12Device_Write_SRV(unsigned slot, ID3D12Resource * resource, unsigned dxgi_format, unsigned mip_levels, unsigned component_mapping)
 {
 	if (!D3D || !SRVHeap || !resource || slot == 0 || slot >= SRV_HEAP_SIZE)
 	{
@@ -1890,12 +2162,42 @@ void DX12Device_Write_SRV(unsigned slot, ID3D12Resource * resource, unsigned dxg
 	D3D12_SHADER_RESOURCE_VIEW_DESC desc = {};
 	desc.Format = (DXGI_FORMAT)dxgi_format;
 	desc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-	desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	desc.Shader4ComponentMapping = component_mapping;
 	desc.Texture2D.MostDetailedMip = 0;
 	desc.Texture2D.MipLevels = mip_levels ? mip_levels : (UINT)-1;
 	desc.Texture2D.PlaneSlice = 0;
 	desc.Texture2D.ResourceMinLODClamp = 0.0f;
 	D3D->CreateShaderResourceView(resource, &desc, SRV_CPU_Handle(slot));
+}
+
+// Used by DX12TextureClass for render targets, which are always B8G8R8A8. Main thread only.
+void DX12Device_Write_RTV(unsigned slot, ID3D12Resource * resource)
+{
+	if (!D3D || !RTVHeap || !resource || slot < BACK_BUFFER_COUNT || slot >= RTV_HEAP_SIZE)
+	{
+		return;
+	}
+	D3D12_RENDER_TARGET_VIEW_DESC desc = {};
+	desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+	desc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+	desc.Texture2D.MipSlice = 0;
+	desc.Texture2D.PlaneSlice = 0;
+	D3D->CreateRenderTargetView(resource, &desc, RTV_Handle(slot));
+}
+
+// Used by DX12TextureClass for depth targets, which are R24G8_TYPELESS. Main thread only.
+void DX12Device_Write_DSV(unsigned slot, ID3D12Resource * resource)
+{
+	if (!D3D || !DSVHeap || !resource || slot == 0 || slot >= DSV_HEAP_SIZE)
+	{
+		return;
+	}
+	D3D12_DEPTH_STENCIL_VIEW_DESC desc = {};
+	desc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+	desc.Flags = D3D12_DSV_FLAG_NONE;
+	desc.Texture2D.MipSlice = 0;
+	D3D->CreateDepthStencilView(resource, &desc, DSV_Handle(slot));
 }
 
 bool DX12Device::Init(void * hwnd)
@@ -1946,7 +2248,7 @@ void DX12Device::Shutdown()
 
 	if (Recording)
 	{
-		End_Frame(false);
+		Submit_Frame(false);
 	}
 	Execute_Uploads_Now();
 	Wait_For_Fence(Signal_Queue());
@@ -2008,7 +2310,7 @@ bool DX12Device::Set_Resolution(unsigned width, unsigned height)
 	// Every reference to the back buffers has to be gone before ResizeBuffers.
 	if (Recording)
 	{
-		End_Frame(false);
+		Submit_Frame(false);
 	}
 	Wait_For_Fence(Signal_Queue());
 	Process_Deferred();
@@ -2033,7 +2335,9 @@ bool DX12Device::Set_Resolution(unsigned width, unsigned height)
 		desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
 		desc.BufferCount = BACK_BUFFER_COUNT;
 		desc.Scaling = DXGI_SCALING_STRETCH;
-		desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+		// Sequential, not discard: the presented back buffer keeps its contents, which Read_Back_Buffer
+		// reads between frames (screenshots).
+		desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
 		desc.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
 		desc.Flags = 0;
 
@@ -2087,6 +2391,7 @@ bool DX12Device::Set_Resolution(unsigned width, unsigned height)
 	}
 
 	BackBufferIndex = SwapChain->GetCurrentBackBufferIndex();
+	HasPresented = false;
 	Width = width;
 	Height = height;
 	Set_Full_Viewport();
@@ -2119,16 +2424,6 @@ void DX12Device::Begin_Frame()
 	}
 	Recording = true;
 
-	BoundPipelineState = nullptr;
-	BoundTopology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
-	BoundStencilRef = NO_STENCIL_REF;
-	LastVSConstantsGPU = 0;
-	LastPSConstantsGPU = 0;
-
-	ID3D12DescriptorHeap * heaps[] = { SRVHeap.Get(), SamplerHeap.Get() };
-	CommandList->SetDescriptorHeaps(2, heaps);
-	CommandList->SetGraphicsRootSignature(RootSignature.Get());
-
 	if (SwapChain)
 	{
 		BackBufferIndex = SwapChain->GetCurrentBackBufferIndex();
@@ -2137,18 +2432,30 @@ void DX12Device::Begin_Frame()
 	if (FrameHasRenderTarget)
 	{
 		Transition(CommandList.Get(), BackBuffers[BackBufferIndex].Get(), D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
-
-		D3D12_CPU_DESCRIPTOR_HANDLE rtv = RTVHeap->GetCPUDescriptorHandleForHeapStart();
-		rtv.ptr += (SIZE_T)BackBufferIndex * RTVDescriptorSize;
-		D3D12_CPU_DESCRIPTOR_HANDLE dsv = DSVHeap->GetCPUDescriptorHandleForHeapStart();
-		CommandList->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
 	}
 
-	Set_Full_Viewport();
+	// Binds the selected targets and keeps the viewport, which Direct3D 8 also keeps across frames.
+	Restore_Command_List_State();
 	Record_Uploads(CommandList.Get());
 }
 
 void DX12Device::End_Frame(bool present)
+{
+	if (!Device)
+	{
+		return;
+	}
+
+	if (Recording && !present)
+	{
+		// Direct3D 8 EndScene without Present costs nothing; ending the command list here would take
+		// a frame slot per render to texture pass and make the next frame wait for the GPU.
+		return;
+	}
+	Submit_Frame(present);
+}
+
+void DX12Device::Submit_Frame(bool present)
 {
 	if (!Device)
 	{
@@ -2199,6 +2506,11 @@ void DX12Device::End_Frame(bool present)
 			Log_Failure("Present", hr);
 		}
 		last_present_error = FAILED(hr) ? hr : S_OK;
+		if (SUCCEEDED(hr))
+		{
+			LastPresentedIndex = BackBufferIndex;
+			HasPresented = true;
+		}
 	}
 
 	Frames[FrameIndex].FenceValue = Signal_Queue();
@@ -2209,7 +2521,10 @@ void DX12Device::End_Frame(bool present)
 	if (present && (FrameNumber % 300) == 0)
 	{
 		// Heartbeat, so the log shows whether frames keep coming.
-		Debug_Log("frame %llu: presented", FrameNumber);
+		Debug_Log("frame %llu: presented (render target selections %u, target copies %u)", FrameNumber,
+			DebugTargetSelects, DebugTargetCopies);
+		DebugTargetSelects = 0;
+		DebugTargetCopies = 0;
 	}
 	Flush_Debug_Messages();
 	++FrameNumber;
@@ -2227,13 +2542,18 @@ void DX12Device::Clear(bool clear_color, bool clear_z_stencil, unsigned argb, fl
 	{
 		return;
 	}
+	Ensure_Target_States();
 
-	// Like Direct3D 8, clear only the current viewport.
+	// Like Direct3D 8, clear only the current viewport of the current target.
 	D3D12_RECT rect = CurrentScissor;
-	if (rect.right > (LONG)Width)
-		rect.right = (LONG)Width;
-	if (rect.bottom > (LONG)Height)
-		rect.bottom = (LONG)Height;
+	if (rect.left < 0)
+		rect.left = 0;
+	if (rect.top < 0)
+		rect.top = 0;
+	if (rect.right > (LONG)Target_Width())
+		rect.right = (LONG)Target_Width();
+	if (rect.bottom > (LONG)Target_Height())
+		rect.bottom = (LONG)Target_Height();
 	if (rect.right <= rect.left || rect.bottom <= rect.top)
 	{
 		return;
@@ -2243,19 +2563,19 @@ void DX12Device::Clear(bool clear_color, bool clear_z_stencil, unsigned argb, fl
 	{
 		float color[4];
 		Color_To_Float4(argb, color);
-		D3D12_CPU_DESCRIPTOR_HANDLE rtv = RTVHeap->GetCPUDescriptorHandleForHeapStart();
-		rtv.ptr += (SIZE_T)BackBufferIndex * RTVDescriptorSize;
-		CommandList->ClearRenderTargetView(rtv, color, 1, &rect);
+		CommandList->ClearRenderTargetView(Current_RTV(), color, 1, &rect);
 	}
 
-	if (clear_z_stencil)
+	// A target without a depth buffer has nothing to clear, as in Direct3D 8.
+	D3D12_CPU_DESCRIPTOR_HANDLE dsv;
+	DX12TextureClass * depth_texture = nullptr;
+	if (clear_z_stencil && TargetHasDepth && Current_DSV(dsv, &depth_texture))
 	{
 		if (z < 0.0f)
 			z = 0.0f;
 		if (z > 1.0f)
 			z = 1.0f;
-		CommandList->ClearDepthStencilView(DSVHeap->GetCPUDescriptorHandleForHeapStart(),
-			D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, z, (UINT8)(stencil & 0xff), 1, &rect);
+		CommandList->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL, z, (UINT8)(stencil & 0xff), 1, &rect);
 	}
 }
 
@@ -2266,7 +2586,8 @@ void DX12Device::Set_Viewport(unsigned x, unsigned y, unsigned width, unsigned h
 		return;
 	}
 
-	// Starting the frame first keeps Begin_Frame from resetting this viewport.
+	// Begin_Frame keeps the viewport, so this could also wait for the frame; it starts the frame
+	// as it always did.
 	Ensure_Recording();
 
 	if (min_z < 0.0f)
@@ -2393,6 +2714,7 @@ void DX12Device::Draw(const DX12DrawDesc & desc)
 		return;
 	}
 	Record_Uploads(CommandList.Get());
+	Ensure_Target_States();
 
 	// Fixed-function shaders, derived from the Direct3D 8 state mirror.
 	const unsigned * render_states = desc.RenderStates;
@@ -2444,10 +2766,20 @@ void DX12Device::Draw(const DX12DrawDesc & desc)
 	key.CullMode = desc.CullMode;
 	key.FillMode = desc.FillMode;
 	key.DepthBias = desc.DepthBias;
+	key.RTVFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
+	key.DSVFormat = TargetHasDepth ? DXGI_FORMAT_D24_UNORM_S8_UINT : DXGI_FORMAT_UNKNOWN;
+	if (!TargetHasDepth)
+	{
+		// Without a depth buffer Direct3D 8 skips the depth and stencil tests.
+		key.ZEnable = 0;
+		key.ZWriteEnable = 0;
+		key.ZFunc = 0;
+		key.DepthBias = 0;
+	}
 
 	// Stencil, from the render state mirror (the fallback states leave it off). Masks such as
 	// 0x80808080 are truncated to the 8 bits of the D24S8 stencil plane.
-	bool stencil = render_states[FFP_RS_STENCILENABLE] != 0;
+	bool stencil = TargetHasDepth && render_states[FFP_RS_STENCILENABLE] != 0;
 	if (stencil)
 	{
 		unsigned fail = render_states[FFP_RS_STENCILFAIL];
@@ -2585,6 +2917,370 @@ void DX12Device::Free_SRV_Slot(unsigned slot)
 	deferred.FenceValue = NextFenceValue;
 	deferred.Slot = slot;
 	DeferredSRVFrees.push_back(deferred);
+}
+
+unsigned DX12Device::Allocate_RTV_Slot()
+{
+	std::lock_guard<std::mutex> lock(ResourceMutex);
+	if (!FreeRTVSlots.empty())
+	{
+		unsigned slot = FreeRTVSlots.back();
+		FreeRTVSlots.pop_back();
+		return slot;
+	}
+	if (NextRTVSlot < RTV_HEAP_SIZE)
+	{
+		return NextRTVSlot++;
+	}
+	WWDEBUG_SAY(("DX12: out of render target view slots"));
+	return 0;
+}
+
+void DX12Device::Free_RTV_Slot(unsigned slot)
+{
+	if (slot < BACK_BUFFER_COUNT || slot >= RTV_HEAP_SIZE || !Device)
+	{
+		return;
+	}
+	std::lock_guard<std::mutex> lock(ResourceMutex);
+	FreeRTVSlots.push_back(slot);
+}
+
+unsigned DX12Device::Allocate_DSV_Slot()
+{
+	std::lock_guard<std::mutex> lock(ResourceMutex);
+	if (!FreeDSVSlots.empty())
+	{
+		unsigned slot = FreeDSVSlots.back();
+		FreeDSVSlots.pop_back();
+		return slot;
+	}
+	if (NextDSVSlot < DSV_HEAP_SIZE)
+	{
+		return NextDSVSlot++;
+	}
+	WWDEBUG_SAY(("DX12: out of depth stencil view slots"));
+	return 0;
+}
+
+void DX12Device::Free_DSV_Slot(unsigned slot)
+{
+	if (slot == 0 || slot >= DSV_HEAP_SIZE || !Device)
+	{
+		return;
+	}
+	std::lock_guard<std::mutex> lock(ResourceMutex);
+	FreeDSVSlots.push_back(slot);
+}
+
+void DX12Device::Set_Render_Target(DX12TextureClass * color, DX12TextureClass * depth, bool use_default_depth)
+{
+	if (!Device)
+	{
+		return;
+	}
+	WWASSERT(Is_Main_Thread());
+
+	if (color && (!color->Is_Render_Target() || !color->Peek_Resource()))
+	{
+		WWDEBUG_SAY(("DX12: Set_Render_Target with a texture that is not a render target, using the back buffer"));
+		color = nullptr;
+	}
+	if (depth && (!depth->Is_Depth_Target() || !depth->Peek_Resource()))
+	{
+		WWDEBUG_SAY(("DX12: Set_Render_Target with a texture that is not a depth target, using no depth buffer"));
+		depth = nullptr;
+		use_default_depth = false;
+	}
+	if (!color)
+	{
+		// The back buffer always uses the default depth buffer. Restoring the back buffer is a no-op
+		// when no texture is selected, so it must never be left with another depth buffer or none.
+		depth = nullptr;
+		use_default_depth = true;
+	}
+
+	if (color != TargetColor)
+	{
+		if (color)
+			color->Add_Ref();
+		if (TargetColor)
+			TargetColor->Release_Ref();
+		TargetColor = color;
+	}
+	if (depth != TargetDepth)
+	{
+		if (depth)
+			depth->Add_Ref();
+		if (TargetDepth)
+			TargetDepth->Release_Ref();
+		TargetDepth = depth;
+	}
+	TargetDefaultDepth = use_default_depth;
+	if (color)
+	{
+		++DebugTargetSelects;
+	}
+
+	// Outside a frame, Begin_Frame binds the targets and applies the viewport.
+	Bind_Targets();
+	Set_Full_Viewport();
+}
+
+DX12TextureClass * DX12Device::Peek_Render_Target()
+{
+	return TargetColor;
+}
+
+unsigned DX12Device::Get_Target_Width()
+{
+	return Target_Width();
+}
+
+unsigned DX12Device::Get_Target_Height()
+{
+	return Target_Height();
+}
+
+bool DX12Device::Copy_Target_To_Texture(DX12TextureClass * dest, const tagRECT * src_rect, int dest_x, int dest_y)
+{
+	if (!Device || !dest || dest->Is_CPU_Only() || dest->Is_Depth_Target() || !dest->Peek_Resource()
+		|| dest->Get_DXGI_Format() != (unsigned)DXGI_FORMAT_B8G8R8A8_UNORM || dest == TargetColor)
+	{
+		return false;
+	}
+	WWASSERT(Is_Main_Thread());
+
+	Ensure_Recording();
+	if (!Recording || !FrameHasRenderTarget)
+	{
+		return false;
+	}
+	// A pending upload to dest has to land before the copy, not overwrite it later.
+	Record_Uploads(CommandList.Get());
+	Ensure_Target_States();
+
+	LONG left = 0;
+	LONG top = 0;
+	LONG right = (LONG)Target_Width();
+	LONG bottom = (LONG)Target_Height();
+	if (src_rect)
+	{
+		const RECT * r = reinterpret_cast<const RECT *>(src_rect);
+		left = std::max(left, r->left);
+		top = std::max(top, r->top);
+		right = std::min(right, r->right);
+		bottom = std::min(bottom, r->bottom);
+		// The destination position follows the clipped source corner.
+		dest_x += left - r->left;
+		dest_y += top - r->top;
+	}
+	if (dest_x < 0)
+	{
+		left -= dest_x;
+		dest_x = 0;
+	}
+	if (dest_y < 0)
+	{
+		top -= dest_y;
+		dest_y = 0;
+	}
+	right = std::min(right, left + (LONG)dest->Get_Width() - dest_x);
+	bottom = std::min(bottom, top + (LONG)dest->Get_Height() - dest_y);
+	if (right <= left || bottom <= top)
+	{
+		return false;
+	}
+
+	ID3D12Resource * source = TargetColor ? TargetColor->Peek_Resource() : BackBuffers[BackBufferIndex].Get();
+
+	// A render target that was never drawn into gets defined contents outside the copied rectangle.
+	Initialize_Target(dest);
+
+	D3D12_RESOURCE_BARRIER barriers[2];
+	unsigned barrier_count = 0;
+	barriers[barrier_count++] = Make_Transition(source, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+	if (dest->Get_State() != (unsigned)D3D12_RESOURCE_STATE_COPY_DEST)
+	{
+		barriers[barrier_count++] = Make_Transition(dest->Peek_Resource(), (D3D12_RESOURCE_STATES)dest->Get_State(), D3D12_RESOURCE_STATE_COPY_DEST);
+		dest->Set_State(D3D12_RESOURCE_STATE_COPY_DEST);
+	}
+	CommandList->ResourceBarrier(barrier_count, barriers);
+
+	D3D12_TEXTURE_COPY_LOCATION dst;
+	memset(&dst, 0, sizeof(dst));
+	dst.pResource = dest->Peek_Resource();
+	dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+	dst.SubresourceIndex = 0;
+
+	D3D12_TEXTURE_COPY_LOCATION src;
+	memset(&src, 0, sizeof(src));
+	src.pResource = source;
+	src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+	src.SubresourceIndex = 0;
+
+	D3D12_BOX box;
+	box.left = (UINT)left;
+	box.top = (UINT)top;
+	box.front = 0;
+	box.right = (UINT)right;
+	box.bottom = (UINT)bottom;
+	box.back = 1;
+
+	CommandList->CopyTextureRegion(&dst, (UINT)dest_x, (UINT)dest_y, 0, &src, &box);
+	++DebugTargetCopies;
+	Transition(CommandList.Get(), source, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+	return true;
+}
+
+DX12TextureClass * DX12Device::Read_Back_Buffer()
+{
+	if (!Device || !SwapChain)
+	{
+		return nullptr;
+	}
+	WWASSERT(Is_Main_Thread());
+
+	const bool in_frame = Recording;
+	ID3D12Resource * source = nullptr;
+	D3D12_RESOURCE_STATES source_state = D3D12_RESOURCE_STATE_PRESENT;
+	if (in_frame)
+	{
+		if (!FrameHasRenderTarget)
+		{
+			return nullptr;
+		}
+		source = BackBuffers[BackBufferIndex].Get();
+		source_state = D3D12_RESOURCE_STATE_RENDER_TARGET;
+	}
+	else
+	{
+		if (!HasPresented)
+		{
+			return nullptr;
+		}
+		source = BackBuffers[LastPresentedIndex].Get();
+		source_state = D3D12_RESOURCE_STATE_PRESENT;
+	}
+	if (!source)
+	{
+		return nullptr;
+	}
+
+	D3D12_RESOURCE_DESC desc = source->GetDesc();
+	D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint;
+	UINT num_rows = 0;
+	UINT64 row_size = 0;
+	UINT64 total = 0;
+	D3D->GetCopyableFootprints(&desc, 0, 1, 0, &footprint, &num_rows, &row_size, &total);
+	if (total == 0 || total == ~0ull)
+	{
+		return nullptr;
+	}
+
+	D3D12_HEAP_PROPERTIES heap;
+	memset(&heap, 0, sizeof(heap));
+	heap.Type = D3D12_HEAP_TYPE_READBACK;
+
+	D3D12_RESOURCE_DESC buffer_desc;
+	memset(&buffer_desc, 0, sizeof(buffer_desc));
+	buffer_desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+	buffer_desc.Width = total;
+	buffer_desc.Height = 1;
+	buffer_desc.DepthOrArraySize = 1;
+	buffer_desc.MipLevels = 1;
+	buffer_desc.Format = DXGI_FORMAT_UNKNOWN;
+	buffer_desc.SampleDesc.Count = 1;
+	buffer_desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+	ComPtr<ID3D12Resource> readback;
+	HRESULT hr = D3D->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &buffer_desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&readback));
+	if (FAILED(hr))
+	{
+		Log_Failure("CreateCommittedResource (readback buffer)", hr);
+		return nullptr;
+	}
+
+	ID3D12GraphicsCommandList * list = CommandList.Get();
+	if (!in_frame)
+	{
+		if (FAILED(UploadAllocator->Reset()) || FAILED(UploadList->Reset(UploadAllocator.Get(), nullptr)))
+		{
+			WWDEBUG_SAY(("DX12: could not reset the upload command list"));
+			return nullptr;
+		}
+		list = UploadList.Get();
+	}
+
+	D3D12_TEXTURE_COPY_LOCATION dst;
+	memset(&dst, 0, sizeof(dst));
+	dst.pResource = readback.Get();
+	dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+	dst.PlacedFootprint = footprint;
+
+	D3D12_TEXTURE_COPY_LOCATION src;
+	memset(&src, 0, sizeof(src));
+	src.pResource = source;
+	src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+	src.SubresourceIndex = 0;
+
+	Transition(list, source, source_state, D3D12_RESOURCE_STATE_COPY_SOURCE);
+	list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+	Transition(list, source, D3D12_RESOURCE_STATE_COPY_SOURCE, source_state);
+
+	if (in_frame)
+	{
+		if (!Flush_Frame_And_Wait())
+		{
+			return nullptr;
+		}
+	}
+	else
+	{
+		hr = UploadList->Close();
+		if (FAILED(hr))
+		{
+			Log_Failure("Close (readback)", hr);
+			return nullptr;
+		}
+		ID3D12CommandList * lists[] = { UploadList.Get() };
+		Queue->ExecuteCommandLists(1, lists);
+		Wait_For_Fence(Signal_Queue());
+	}
+
+	const unsigned width = (unsigned)desc.Width;
+	const unsigned height = desc.Height;
+	DX12TextureClass * texture = DX12TextureClass::Create(width, height, WW3D_FORMAT_A8R8G8B8, 1, true, true);
+	if (!texture)
+	{
+		return nullptr;
+	}
+
+	unsigned char * mapped = nullptr;
+	D3D12_RANGE read_range = { 0, (SIZE_T)total };
+	hr = readback->Map(0, &read_range, (void **)&mapped);
+	if (FAILED(hr) || !mapped)
+	{
+		Log_Failure("Map (readback buffer)", hr);
+		texture->Release_Ref();
+		return nullptr;
+	}
+
+	int pitch = 0;
+	unsigned char * dest = static_cast<unsigned char *>(texture->Lock(0, &pitch));
+	if (dest)
+	{
+		const unsigned rows = std::min(height, (unsigned)num_rows);
+		const size_t row_bytes = std::min((size_t)width * 4, (size_t)row_size);
+		for (unsigned y = 0; y < rows; ++y)
+		{
+			memcpy(dest + (size_t)y * pitch, mapped + footprint.Offset + (size_t)y * footprint.Footprint.RowPitch, row_bytes);
+		}
+		texture->Unlock(0);
+	}
+	D3D12_RANGE no_write = { 0, 0 };
+	readback->Unmap(0, &no_write);
+	return texture;
 }
 
 void DX12Device::Release_When_Idle(ID3D12Resource * resource)

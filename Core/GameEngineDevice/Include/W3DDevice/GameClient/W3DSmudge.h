@@ -47,6 +47,7 @@ public:
 
 private:
 	Bool testHardwareSupport();		///<test if video card supports the effect.
+	Bool updateBackgroundTexture();	///<Direct3D 12 mode: (re)creates the background texture at the back buffer size.
 
 	enum { MAX_POINTS_PER_GROUP = 512 };
 

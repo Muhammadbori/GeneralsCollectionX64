@@ -37,6 +37,7 @@
 #include "WW3D2/texture.h"
 #include "WW3D2/dx8indexbuffer.h"
 #include "WW3D2/dx8wrapper.h"
+#include "WW3D2/Backend/DX12/dx12device.h"
 #include "WW3D2/rinfo.h"
 #include "WW3D2/camera.h"
 #include "WW3D2/sortingrenderer.h"
@@ -80,19 +81,29 @@ void W3DSmudgeManager::ReAcquireResources()
 {
 	ReleaseResources();
 
-	SurfaceClass *surface=DX8Wrapper::_Get_DX8_Back_Buffer();
-	if (surface == nullptr)
-		return;	// No readable back buffer (Direct3D 12 until render to texture exists), so no smudges.
+	if (DX12Device::Is_Active())
+	{
+		// Direct3D 12 mode has no Direct3D 8 back buffer to describe; the background texture is a render
+		// target of the back buffer size that render() fills on the GPU.
+		if (!updateBackgroundTexture())
+			return;
+	}
+	else
+	{
+		SurfaceClass *surface=DX8Wrapper::_Get_DX8_Back_Buffer();
+		if (surface == nullptr)
+			return;
 
-	SurfaceClass::SurfaceDescription surface_desc;
+		SurfaceClass::SurfaceDescription surface_desc;
 
-	surface->Get_Description(surface_desc);
-	REF_PTR_RELEASE(surface);
+		surface->Get_Description(surface_desc);
+		REF_PTR_RELEASE(surface);
 
-	m_backgroundTexture = MSGNEW("TextureClass") TextureClass(surface_desc.Width,surface_desc.Height,surface_desc.Format,MIP_LEVELS_1,TextureClass::POOL_DEFAULT, true);
+		m_backgroundTexture = MSGNEW("TextureClass") TextureClass(surface_desc.Width,surface_desc.Height,surface_desc.Format,MIP_LEVELS_1,TextureClass::POOL_DEFAULT, true);
 
-	m_backBufferWidth = surface_desc.Width;
-	m_backBufferHeight = surface_desc.Height;
+		m_backBufferWidth = surface_desc.Width;
+		m_backBufferHeight = surface_desc.Height;
+	}
 
 	m_indexBuffer=NEW_REF(DX8IndexBufferClass,(SMUDGE_DRAW_SIZE*4*3));	//allocate 4 triangles per smudge, each with 3 indices.
 
@@ -130,6 +141,34 @@ void W3DSmudgeManager::ReAcquireResources()
 			ib+=12;
 		}
 	}
+}
+
+/*Direct3D 12 mode: makes sure the background texture is a render target of the back buffer size, (re)creating it
+when there is none yet or the back buffer was resized, which needs no device reset there.  Returns false, with no
+background texture, if it cannot be created.*/
+Bool W3DSmudgeManager::updateBackgroundTexture()
+{
+	const Int width = (Int)DX12Device::Get_Width();
+	const Int height = (Int)DX12Device::Get_Height();
+
+	if (m_backgroundTexture && m_backBufferWidth == width && m_backBufferHeight == height)
+		return TRUE;
+
+	REF_PTR_RELEASE(m_backgroundTexture);
+	if (width <= 0 || height <= 0)
+		return FALSE;
+
+	// A8R8G8B8 like the back buffer, so the GPU copy needs no conversion.
+	m_backgroundTexture = MSGNEW("TextureClass") TextureClass(width,height,WW3D_FORMAT_A8R8G8B8,MIP_LEVELS_1,TextureClass::POOL_DEFAULT, true);
+	if (m_backgroundTexture->Peek_DX12_Texture() == nullptr)
+	{
+		REF_PTR_RELEASE(m_backgroundTexture);
+		return FALSE;
+	}
+
+	m_backBufferWidth = width;
+	m_backBufferHeight = height;
+	return TRUE;
 }
 
 /*Copies a portion of the current render target into a specified buffer*/
@@ -322,21 +361,38 @@ void W3DSmudgeManager::render(RenderInfoClass &rinfo)
 		return;
 	}
 
-	SurfaceClass *backBuffer = DX8Wrapper::_Get_DX8_Back_Buffer();
-
-	if (!backBuffer)
-		return;
-
-	SurfaceClass *background=m_backgroundTexture ? m_backgroundTexture->Get_Surface_Level() : nullptr;
-
-	if (!background)
-	{
-		REF_PTR_RELEASE(backBuffer);
-		return;
-	}
-
+	SurfaceClass *backBuffer = nullptr;
+	SurfaceClass *background = nullptr;
 	SurfaceClass::SurfaceDescription surface_desc;
-	backBuffer->Get_Description(surface_desc);
+
+	if (DX12Device::Is_Active())
+	{
+		// Direct3D 12 mode has no Direct3D 8 back buffer to lock or copy. The background texture is a render
+		// target of the back buffer size (resized with it) that is filled on the GPU below.
+		if (!updateBackgroundTexture())
+			return;
+
+		surface_desc.Format = WW3D_FORMAT_A8R8G8B8;
+		surface_desc.Width = m_backBufferWidth;
+		surface_desc.Height = m_backBufferHeight;
+	}
+	else
+	{
+		backBuffer = DX8Wrapper::_Get_DX8_Back_Buffer();
+
+		if (!backBuffer)
+			return;
+
+		background=m_backgroundTexture ? m_backgroundTexture->Get_Surface_Level() : nullptr;
+
+		if (!background)
+		{
+			REF_PTR_RELEASE(backBuffer);
+			return;
+		}
+
+		backBuffer->Get_Description(surface_desc);
+	}
 
 	CameraClass &camera=rinfo.Camera;
 	Vector3 vsVert;
@@ -439,7 +495,17 @@ void W3DSmudgeManager::render(RenderInfoClass &rinfo)
 	}
 
 	//Copy the area of backbuffer occupied by smudges into an alternate buffer.
-	background->Copy(0,0,0,0,surface_desc.Width,surface_desc.Height,backBuffer);
+	if (DX12Device::Is_Active())
+	{
+		// Direct3D 12 mode copies the current render target on the GPU at this point of the frame: the back
+		// buffer, or the texture a screen filter redirected the rendering into.
+		if (!DX8Wrapper::Copy_Back_Buffer_To_Texture(m_backgroundTexture))
+			return;
+	}
+	else
+	{
+		background->Copy(0,0,0,0,surface_desc.Width,surface_desc.Height,backBuffer);
+	}
 
 	REF_PTR_RELEASE(background);
 	REF_PTR_RELEASE(backBuffer);

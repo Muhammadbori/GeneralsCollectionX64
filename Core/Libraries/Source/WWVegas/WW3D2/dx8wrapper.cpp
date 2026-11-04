@@ -810,6 +810,8 @@ bool DX8Wrapper::Reset_Device(bool reload_assets)
 			WWDEBUG_SAY(("Device reset failed"));
 			return false;
 		}
+		// A Direct3D 8 reset also leaves the back buffer as the render target.
+		Set_DX12_Render_Target(nullptr, nullptr);
 		D3DVIEWPORT8 vp = { 0, 0, (DWORD)ResolutionWidth, (DWORD)ResolutionHeight, 0.0f, 1.0f };
 		Set_Viewport(&vp);
 		WWDEBUG_SAY(("Device reset completed"));
@@ -1654,6 +1656,14 @@ void DX8Wrapper::Get_Render_Target_Resolution(int & set_w,int & set_h,int & set_
 {
 	WWASSERT(IsInitted);
 
+	if (DX12Device::Is_Active() && DX12Device::Is_Render_To_Texture()) {
+		set_w				= (int)DX12Device::Get_Target_Width();
+		set_h				= (int)DX12Device::Get_Target_Height();
+		set_bits			= BitDepth;
+		set_windowed	= IsWindowed;
+		return;
+	}
+
 	if (CurrentRenderTarget != nullptr) {
 		D3DSURFACE_DESC info;
 		CurrentRenderTarget->GetDesc (&info);
@@ -2221,6 +2231,14 @@ void DX8Wrapper::Set_Viewport(CONST D3DVIEWPORT8* pViewport)
 	DX8_THREAD_ASSERT();
 	if (DX12Device::Is_Active()) {
 		WWASSERT(pViewport);
+		// Direct3D 8 rejects an empty viewport or one outside the render target (D3DERR_INVALIDCALL)
+		// and keeps the current one. A shadow projector's first update relies on this: its texture
+		// size is still 0 then, so its camera asks for a 0 x 0 viewport.
+		if (pViewport->Width==0 || pViewport->Height==0
+			|| (unsigned long long)pViewport->X+pViewport->Width > DX12Device::Get_Target_Width()
+			|| (unsigned long long)pViewport->Y+pViewport->Height > DX12Device::Get_Target_Height()) {
+			return;
+		}
 		DX12Viewport=*pViewport;
 		DX12Device::Set_Viewport(pViewport->X, pViewport->Y, pViewport->Width, pViewport->Height, pViewport->MinZ, pViewport->MaxZ);
 		return;
@@ -4074,7 +4092,7 @@ IDirect3DSurface8 * DX8Wrapper::_Get_DX8_Front_Buffer()
 
 SurfaceClass * DX8Wrapper::_Get_DX8_Back_Buffer(unsigned int num)
 {
-	// No Direct3D 8 resources exist in Direct3D 12 mode.
+	// No Direct3D 8 resources exist in Direct3D 12 mode; Read_Back_Buffer reads the back buffer there.
 	if (DX12Device::Is_Active()) return nullptr;
 	DX8_THREAD_ASSERT();
 
@@ -4091,11 +4109,107 @@ SurfaceClass * DX8Wrapper::_Get_DX8_Back_Buffer(unsigned int num)
 }
 
 
+bool DX8Wrapper::Copy_Back_Buffer_To_Texture(TextureClass* dest, const RECT* src_rect, int dest_x, int dest_y)
+{
+	// Direct3D 8 callers keep their CopyRects code.
+	if (!DX12Device::Is_Active()) return false;
+	DX8_THREAD_ASSERT();
+
+	if (dest==nullptr || dest->Peek_DX12_Texture()==nullptr) return false;
+	return DX12Device::Copy_Target_To_Texture(dest->Peek_DX12_Texture(), src_rect, dest_x, dest_y);
+}
+
+SurfaceClass * DX8Wrapper::Read_Back_Buffer()
+{
+	// Direct3D 8 callers keep their _Get_DX8_Back_Buffer code.
+	if (!DX12Device::Is_Active()) return nullptr;
+	DX8_THREAD_ASSERT();
+
+	DX12TextureClass * texture=DX12Device::Read_Back_Buffer();
+	if (texture==nullptr) {
+		WWDEBUG_SAY(("DX8Wrapper::Read_Back_Buffer - the back buffer could not be read"));
+		return nullptr;
+	}
+	SurfaceClass * surface=NEW_REF(SurfaceClass,(texture,0));
+	texture->Release_Ref();
+	return surface;
+}
+
+// Direct3D 12 version of Create_Render_Target: the same square power of two sizes as Direct3D 8 mode.
+TextureClass * DX8Wrapper::Create_DX12_Render_Target(int width, int height, WW3DFormat format)
+{
+	DX8_THREAD_ASSERT();
+
+	// There is no display format; Direct3D 8 mode gets X8R8G8B8 from a 32 bit desktop.
+	if (format==WW3D_FORMAT_UNKNOWN) {
+		format=WW3D_FORMAT_X8R8G8B8;
+	}
+
+	if (!Get_Current_Caps()->Support_Render_To_Texture_Format(format)) {
+		WWDEBUG_SAY(("DX8Wrapper - Render target format is not supported"));
+		return nullptr;
+	}
+
+	const D3DCAPS8& dx8caps=Get_Current_Caps()->Get_DX8_Caps();
+	float poweroftwosize = width;
+	if (height > 0 && height < width) {
+		poweroftwosize = height;
+	}
+	poweroftwosize = ::Find_POT (poweroftwosize);
+
+	if (poweroftwosize>dx8caps.MaxTextureWidth) {
+		poweroftwosize=dx8caps.MaxTextureWidth;
+	}
+	if (poweroftwosize>dx8caps.MaxTextureHeight) {
+		poweroftwosize=dx8caps.MaxTextureHeight;
+	}
+
+	width = height = poweroftwosize;
+
+	TextureClass * tex = NEW_REF(TextureClass,(width,height,format,MIP_LEVELS_1,TextureClass::POOL_DEFAULT,true));
+	if (tex->Peek_DX12_Texture() == nullptr)
+	{
+		WWDEBUG_SAY(("DX8Wrapper - Render target creation failed!"));
+		REF_PTR_RELEASE(tex);
+	}
+
+	return tex;
+}
+
+// Direct3D 12 version of the Set_Render_Target functions. A null texture selects the back buffer and
+// the default depth buffer. Without ztexture, a texture uses the default depth buffer if it fits.
+void DX8Wrapper::Set_DX12_Render_Target(TextureClass * texture, ZTextureClass * ztexture)
+{
+	DX8_THREAD_ASSERT();
+
+	if (texture==nullptr && !DX12Device::Is_Render_To_Texture()) {
+		// Already on the back buffer; like Direct3D 8 mode, keep the viewport.
+		IsRenderToTexture=false;
+		return;
+	}
+
+	DX12TextureClass * color=texture ? texture->Peek_DX12_Texture() : nullptr;
+	DX12TextureClass * depth=(texture && ztexture) ? ztexture->Peek_DX12_Texture() : nullptr;
+	if (texture && (color==nullptr || !color->Is_Render_Target())) {
+		WWDEBUG_SAY(("DX8Wrapper::Set_Render_Target - %s is not a render target", texture->Get_Texture_Name().str()));
+	}
+
+	// This also resets the device viewport to the whole target.
+	DX12Device::Set_Render_Target(color, depth, ztexture==nullptr);
+	IsRenderToTexture=DX12Device::Is_Render_To_Texture();
+
+	DX12Viewport.X=0;
+	DX12Viewport.Y=0;
+	DX12Viewport.Width=DX12Device::Get_Target_Width();
+	DX12Viewport.Height=DX12Device::Get_Target_Height();
+	DX12Viewport.MinZ=0.0f;
+	DX12Viewport.MaxZ=1.0f;
+}
+
 TextureClass *
 DX8Wrapper::Create_Render_Target (int width, int height, WW3DFormat format)
 {
-	// No Direct3D 8 resources exist in Direct3D 12 mode.
-	if (DX12Device::Is_Active()) return nullptr;
+	if (DX12Device::Is_Active()) return Create_DX12_Render_Target(width, height, format);
 	DX8_THREAD_ASSERT();
 	DX8_Assert();
 	DX8_RECORD_DX8_CALLS();
@@ -4162,10 +4276,24 @@ void DX8Wrapper::Create_Render_Target
 	ZTextureClass** depth_buffer
 )
 {
-	// Render to texture is not supported in Direct3D 12 mode yet.
 	if (DX12Device::Is_Active()) {
 		*target=nullptr;
 		*depth_buffer=nullptr;
+
+		// As in Direct3D 8 mode, there is no display format to fall back on here.
+		if (format==WW3D_FORMAT_UNKNOWN || !Get_Current_Caps()->Support_Depth_Stencil_Format(zformat)) {
+			WWDEBUG_SAY(("DX8Wrapper - Render target with depth format is not supported"));
+			return;
+		}
+
+		*target=Create_DX12_Render_Target(width,height,format);
+		if (*target!=nullptr) {
+			const int size=(*target)->Get_Width();
+			*depth_buffer=NEW_REF(ZTextureClass,(size,size,zformat,MIP_LEVELS_1,TextureClass::POOL_DEFAULT));
+			if ((*depth_buffer)->Peek_DX12_Texture()==nullptr) {
+				REF_PTR_RELEASE((*depth_buffer));
+			}
+		}
 		return;
 	}
 
@@ -4250,7 +4378,10 @@ void DX8Wrapper::Set_Render_Target_With_Z
 	ZTextureClass* ztexture
 )
 {
-	if (DX12Device::Is_Active()) return;
+	if (DX12Device::Is_Active()) {
+		Set_DX12_Render_Target(texture,ztexture);
+		return;
+	}
 
 	WWASSERT(texture!=nullptr);
 	IDirect3DSurface8 * d3d_surf = texture->Get_D3D_Surface_Level();
@@ -4305,11 +4436,28 @@ DX8Wrapper::Set_Render_Target(IDirect3DSwapChain8 *swap_chain)
 }
 
 void
+DX8Wrapper::Set_Render_Target(TextureClass *texture)
+{
+	if (DX12Device::Is_Active()) {
+		Set_DX12_Render_Target(texture,nullptr);
+		return;
+	}
+
+	if (texture != nullptr) {
+		Set_Render_Target_With_Z(texture);
+	}
+	else {
+		Set_Render_Target((IDirect3DSurface8 *)nullptr);
+	}
+}
+
+void
 DX8Wrapper::Set_Render_Target(IDirect3DSurface8 *render_target, bool use_default_depth_buffer)
 {
-	// Direct3D 12 mode always renders to the back buffer.
+	// There are no Direct3D 8 surfaces in Direct3D 12 mode, so this can only select the back buffer.
 	if (DX12Device::Is_Active()) {
-		IsRenderToTexture = false;
+		WWASSERT(render_target==nullptr);
+		Set_DX12_Render_Target(nullptr,nullptr);
 		return;
 	}
 
@@ -4439,8 +4587,10 @@ void DX8Wrapper::Set_Render_Target
 	IDirect3DSurface8* depth_buffer
 )
 {
+	// There are no Direct3D 8 surfaces in Direct3D 12 mode, so this can only select the back buffer.
 	if (DX12Device::Is_Active()) {
-		IsRenderToTexture = false;
+		WWASSERT(render_target==nullptr);
+		Set_DX12_Render_Target(nullptr,nullptr);
 		return;
 	}
 

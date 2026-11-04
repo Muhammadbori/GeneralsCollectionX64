@@ -39,13 +39,40 @@ struct tagRECT;
 //
 // A cpu_only texture has no GPU resource. It backs standalone SurfaceClass objects.
 //
+// Render targets and depth targets (main thread only) have one level and are drawn into by the GPU:
+// - A render target is stored as B8G8R8A8 whatever its WW3DFormat, has a render target view and is
+//   sampled like any texture. Formats without alpha (X8R8G8B8, R5G6B5, ...) sample alpha as 1, as
+//   Direct3D 8 does. Lock/Unlock work on a CPU copy that does not see what the GPU rendered; an
+//   unlocked level replaces the GPU contents.
+// - A depth target is a D24S8 depth stencil buffer with a depth stencil view, sampled as
+//   R24_UNORM_X8_TYPELESS (depth in red). It cannot be locked.
+// Both start out cleared (black with zero alpha, depth 1 and stencil 0). DX12Device tracks their
+// resource state and moves them between RENDER_TARGET/DEPTH_WRITE, PIXEL_SHADER_RESOURCE and the
+// copy states as they are bound as a target, sampled or copied.
+//
 // Lock/Unlock may be called from the texture loader thread. Everything else that touches the GPU
 // resource runs on the main thread.
 class DX12TextureClass : public RefCountClass
 {
 public:
+	enum UsageType
+	{
+		USAGE_TEXTURE,
+		USAGE_RENDER_TARGET,
+		USAGE_DEPTH_TARGET,
+	};
+
 	// levels: 0 means the full mip chain down to 1x1.
 	static DX12TextureClass * Create(unsigned width, unsigned height, WW3DFormat format, unsigned levels, bool keep_cpu_copy, bool cpu_only = false);
+	// A render target that DX12Device::Set_Render_Target can select. Returns null for formats that
+	// are not stored as B8G8R8A8 (DXT, palettized, bump map formats) or when creation fails.
+	static DX12TextureClass * Create_Render_Target(unsigned width, unsigned height, WW3DFormat format);
+	// A D24S8 depth stencil target for DX12Device::Set_Render_Target. Returns null when creation fails.
+	static DX12TextureClass * Create_Depth_Target(unsigned width, unsigned height);
+
+	UsageType Get_Usage() const { return Usage; }
+	bool Is_Render_Target() const { return Usage == USAGE_RENDER_TARGET; }
+	bool Is_Depth_Target() const { return Usage == USAGE_DEPTH_TARGET; }
 
 	unsigned Get_Width(unsigned level = 0) const;
 	unsigned Get_Height(unsigned level = 0) const;
@@ -69,15 +96,22 @@ public:
 	// Main thread only, used by DX12Device while recording.
 	ID3D12Resource * Peek_Resource() const { return Resource; }
 	unsigned Get_SRV_Slot() const { return SRVSlot; }
+	unsigned Get_RTV_Slot() const { return RTVSlot; }		// render targets only
+	unsigned Get_DSV_Slot() const { return DSVSlot; }		// depth targets only
 	unsigned Get_State() const { return State; }			// D3D12_RESOURCE_STATES
 	void Set_State(unsigned state) { State = state; }
-	unsigned Get_DXGI_Format() const { return DXGIFormat; }	// DXGI_FORMAT of the GPU resource
+	unsigned Get_DXGI_Format() const { return DXGIFormat; }	// DXGI_FORMAT of the shader resource view
+	unsigned Get_SRV_Component_Mapping() const { return SRVComponentMapping; }	// D3D12_SHADER_4_COMPONENT_MAPPING
+	// True until a render or depth target is first cleared, drawn into or uploaded to.
+	bool Needs_Initial_Clear() const { return NeedsInitialClear; }
+	void Set_Initialized() { NeedsInitialClear = false; }
 
 protected:
 	DX12TextureClass();
 	virtual ~DX12TextureClass() override;
 
 	bool Init(unsigned width, unsigned height, WW3DFormat format, unsigned levels, bool keep_cpu_copy, bool cpu_only);
+	bool Init_Target(unsigned width, unsigned height, WW3DFormat format, UsageType usage);
 	void Upload_Level(unsigned level);
 
 	unsigned Width;
@@ -89,10 +123,15 @@ protected:
 	std::vector<std::vector<unsigned char>> LevelData;
 	std::vector<unsigned char> LevelLockedReadOnly;
 
+	UsageType Usage;
 	ID3D12Resource * Resource;
 	unsigned SRVSlot;
+	unsigned RTVSlot;
+	unsigned DSVSlot;
 	unsigned State;
 	unsigned DXGIFormat;
+	unsigned SRVComponentMapping;
+	bool NeedsInitialClear;
 };
 
 // A vertex or index buffer.

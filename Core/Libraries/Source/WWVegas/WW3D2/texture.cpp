@@ -698,11 +698,16 @@ TextureClass::TextureClass
 
 	if (DX12Device::Is_Active())
 	{
-		// Render targets are not supported by the Direct3D 12 renderer yet. Procedural textures keep a
-		// CPU copy so that partial updates (font pages, radar, shroud) see the rest of the texture.
+		// Render targets have a single level, as Direct3D 8 render targets made by
+		// DX8Wrapper::Create_Render_Target do. Procedural textures keep a CPU copy so that partial
+		// updates (font pages, radar, shroud) see the rest of the texture.
 		if (rendertarget)
 		{
-			WWDEBUG_SAY(("TextureClass: render target textures are not supported in Direct3D 12 mode (%d x %d)", width, height));
+			Poke_DX12_Texture(DX12TextureClass::Create_Render_Target(width, height, format));
+			if (Peek_DX12_Texture() == nullptr)
+			{
+				WWDEBUG_SAY(("TextureClass: could not create a %d x %d render target of format %d", width, height, (int)format));
+			}
 		}
 		else
 		{
@@ -1381,9 +1386,14 @@ ZTextureClass::ZTextureClass
 :	TextureBaseClass(width,height, mip_level_count, pool),
 	DepthStencilTextureFormat(zformat)
 {
-	// Depth textures are not supported by the Direct3D 12 renderer yet; the texture stays empty.
+	// Direct3D 12 depth textures are always D24S8, whatever zformat asks for.
 	if (DX12Device::Is_Active())
 	{
+		Poke_DX12_Texture(DX12TextureClass::Create_Depth_Target(width, height));
+		if (Peek_DX12_Texture() == nullptr)
+		{
+			WWDEBUG_SAY(("ZTextureClass: could not create a %d x %d depth texture", width, height));
+		}
 		Initialized=true;
 		IsProcedural=true;
 		IsReducible=false;
@@ -1441,7 +1451,7 @@ void ZTextureClass::Apply(unsigned int stage)
 {
 	if (DX12Device::Is_Active())
 	{
-		DX8Wrapper::Set_DX12_Texture(stage, nullptr);
+		DX8Wrapper::Set_DX12_Texture(stage, Peek_DX12_Texture());
 		return;
 	}
 	DX8Wrapper::Set_DX8_Texture(stage, Peek_D3D_Base_Texture());
@@ -1512,6 +1522,12 @@ IDirect3DSurface8* ZTextureClass::Get_D3D_Surface_Level(unsigned int level)
 unsigned ZTextureClass::Get_Texture_Memory_Usage() const
 {
 	int size=0;
+	if (DX12Device::Is_Active())
+	{
+		DX12TextureClass *dx12_texture = Peek_DX12_Texture();
+		if (dx12_texture == nullptr) return 0;
+		return dx12_texture->Get_Width()*dx12_texture->Get_Height()*4;
+	}
 	if (!Peek_D3D_Texture()) return 0;
 	for (unsigned i=0;i<Peek_D3D_Texture()->GetLevelCount();++i)
 	{

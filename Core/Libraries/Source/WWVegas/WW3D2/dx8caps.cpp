@@ -585,6 +585,12 @@ DX8Caps::DX8Caps(const D3DADAPTER_IDENTIFIER8& adapter_id)
 	SupportTextureFormat[WW3D_FORMAT_DXT4]=true;
 	SupportTextureFormat[WW3D_FORMAT_DXT5]=true;
 
+	// Render targets are stored as B8G8R8A8; the formats without alpha read alpha as 1.
+	SupportRenderToTextureFormat[WW3D_FORMAT_A8R8G8B8]=true;
+	SupportRenderToTextureFormat[WW3D_FORMAT_X8R8G8B8]=true;
+	SupportRenderToTextureFormat[WW3D_FORMAT_R5G6B5]=true;
+
+	// Depth textures are always D24S8.
 	for (i=0;i<WW3D_ZFORMAT_COUNT;++i) {
 		SupportDepthStencilFormat[i]=false;
 	}
@@ -594,6 +600,7 @@ DX8Caps::DX8Caps(const D3DADAPTER_IDENTIFIER8& adapter_id)
 
 	DXLOG(("Hardware T&L support: Yes\r\n"));
 	DXLOG(("Max textures per pass: %d\r\n",MaxTexturesPerPass));
+	DXLOG(("Render to texture: A8R8G8B8, X8R8G8B8, R5G6B5\r\n"));
 	CapsWorkString="";
 }
 

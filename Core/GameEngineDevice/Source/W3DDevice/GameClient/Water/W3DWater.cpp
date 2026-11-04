@@ -935,9 +935,10 @@ void WaterRenderObjClass::ReAcquireResources()
 	if (DX12Device::Is_Active())
 	{
 		//Direct3D 12 mode: the grid mesh uses engine buffers (generateIndexBuffer/generateVertexBuffer
-		//create them in this mode). The shader water needs vertex/pixel shaders and a render target,
-		//which this mode does not provide yet, so skip it but still restore the water tracks and
-		//textures below.
+		//create them in this mode). The shader water needs vertex/pixel shaders (wave.vso/wave.pso),
+		//which this mode does not provide yet, so skip it (init forces it off) but still restore the
+		//water tracks and textures below. Render targets exist, but only the shader water uses the
+		//reflection texture, so m_pReflectionTexture is not made either.
 		if (m_meshData)
 		{
 			//Create new grid data
@@ -1095,8 +1096,9 @@ Int WaterRenderObjClass::init(Real waterLevel, Real dx, Real dy, SceneClass *par
 	m_parentScene=parentScene;
 	m_waterType = type;
 
-	//Direct3D 12 mode has no pixel/vertex shaders or render targets yet, so shader water falls back
-	//to the translucent fixed function water.
+	//Direct3D 12 mode has no pixel/vertex shaders yet, so shader water falls back to the translucent
+	//fixed function water. Shader water is the only type that renders the reflection (renderMirror
+	//into m_pReflectionTexture, drawn by drawSea with the wave shaders), so there is no reflection.
 	if (DX12Device::Is_Active() && m_waterType == WATER_TYPE_2_PVSHADER)
 		m_waterType = WATER_TYPE_0_TRANSLUCENT;
 
@@ -1515,7 +1517,7 @@ void WaterRenderObjClass::loadSetting( Setting *setting, TimeOfDay timeOfDay )
 void WaterRenderObjClass::updateRenderTargetTextures(CameraClass *cam)
 {
 	if (DX12Device::Is_Active() && m_pReflectionTexture == nullptr)
-		return;	//no reflection render target in Direct3D 12 mode yet.
+		return;	//no reflection texture: shader water, its only user, is forced off in Direct3D 12 mode (see init).
 
 	if (m_waterType == WATER_TYPE_2_PVSHADER && getClippedWaterPlane(cam, nullptr) &&
 		TheTerrainRenderObject && TheTerrainRenderObject->getMap())

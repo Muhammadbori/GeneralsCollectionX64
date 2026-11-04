@@ -21,6 +21,7 @@
 #include "../../../Include/W3DDevice/GameClient/W3DProfilerFrameCapture.h"
 
 #include "WW3D2/dx8wrapper.h"
+#include "WW3D2/Backend/DX12/dx12device.h"
 #include "WW3D2/surfaceclass.h"
 #include "WW3D2/texture.h"
 #include "WW3D2/ww3d.h"
@@ -28,6 +29,60 @@
 #include "WWMath/wwmath.h"
 #include <cstring>
 #include <d3dx8core.h>
+
+// Direct3D 12 mode has no pixel shaders and no Direct3D 8 surfaces, so read the back buffer back and scale it
+// down to PROFILER_FRAME_IMAGE_SIZE pixels wide with the display aspect ratio (point sampled) and swizzle it from
+// BGRA to RGBA on the CPU, which the Direct3D 8 path does on the GPU. Reading back waits for the GPU.
+static bool CaptureBackBufferDX12(std::vector<UnsignedByte> &pixels, UnsignedInt &imageHeight, UnsignedInt displayWidth, UnsignedInt displayHeight)
+{
+	SurfaceClass *backBuffer = DX8Wrapper::Read_Back_Buffer();
+	if (!backBuffer)
+		return false;
+
+	SurfaceClass::SurfaceDescription backBufferDesc;
+	backBuffer->Get_Description(backBufferDesc);
+	if ((backBufferDesc.Format != WW3D_FORMAT_A8R8G8B8 && backBufferDesc.Format != WW3D_FORMAT_X8R8G8B8) ||
+		backBufferDesc.Width == 0 || backBufferDesc.Height == 0)
+	{
+		REF_PTR_RELEASE(backBuffer);
+		return false;
+	}
+
+	int pitch = 0;
+	const UnsignedByte *bits = static_cast<const UnsignedByte *>(backBuffer->Lock(&pitch));
+	if (!bits)
+	{
+		REF_PTR_RELEASE(backBuffer);
+		return false;
+	}
+
+	const Real aspectRatio = (Real)displayHeight / (Real)displayWidth;
+	const UnsignedInt height = max(min((int)WWMath::Roundf(PROFILER_FRAME_IMAGE_SIZE * aspectRatio), PROFILER_FRAME_IMAGE_SIZE), 1);
+	const size_t rowBytes = (size_t)PROFILER_FRAME_IMAGE_SIZE * 4;
+	pixels.resize(rowBytes * height);
+
+	for (UnsignedInt row = 0; row < height; ++row)
+	{
+		const UnsignedInt sourceRow = min((UnsignedInt)((row + 0.5f) * backBufferDesc.Height / height), backBufferDesc.Height - 1);
+		const UnsignedByte *source = bits + sourceRow * pitch;
+		UnsignedByte *destination = pixels.data() + row * rowBytes;
+		for (UnsignedInt column = 0; column < PROFILER_FRAME_IMAGE_SIZE; ++column)
+		{
+			const UnsignedInt sourceColumn = min((UnsignedInt)((column + 0.5f) * backBufferDesc.Width / PROFILER_FRAME_IMAGE_SIZE), backBufferDesc.Width - 1);
+			const UnsignedByte *pixel = source + sourceColumn * 4;
+			destination[0] = pixel[2];
+			destination[1] = pixel[1];
+			destination[2] = pixel[0];
+			destination[3] = pixel[3];
+			destination += 4;
+		}
+	}
+
+	backBuffer->Unlock();
+	REF_PTR_RELEASE(backBuffer);
+	imageHeight = height;
+	return true;
+}
 
 W3DProfilerFrameCapture::W3DProfilerFrameCapture()
 {
@@ -59,6 +114,16 @@ void W3DProfilerFrameCapture::Capture(UnsignedInt displayWidth, UnsignedInt disp
 	if (ShouldReuseLastCapture(currentTimeMs))
 	{
 		PROFILER_FRAME_IMAGE(m_lastCapturePixels.data(), PROFILER_FRAME_IMAGE_SIZE, m_lastCaptureHeight, 0, false);
+		return;
+	}
+
+	if (DX12Device::Is_Active())
+	{
+		if (CaptureBackBufferDX12(m_lastCapturePixels, m_lastCaptureHeight, displayWidth, displayHeight))
+		{
+			PROFILER_FRAME_IMAGE(m_lastCapturePixels.data(), PROFILER_FRAME_IMAGE_SIZE, m_lastCaptureHeight, 0, false);
+			m_lastCaptureTimeMs = currentTimeMs;
+		}
 		return;
 	}
 

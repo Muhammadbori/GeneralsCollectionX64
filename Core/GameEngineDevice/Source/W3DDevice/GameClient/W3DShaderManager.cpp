@@ -114,6 +114,7 @@ IDirect3DSurface8 *W3DShaderManager::m_oldRenderSurface=nullptr;	///<previous re
 IDirect3DTexture8 *W3DShaderManager::m_renderTexture=nullptr;		///<texture into which rendering will be redirected.
 IDirect3DSurface8 *W3DShaderManager::m_newRenderSurface=nullptr;	///<new render target inside m_renderTexture
 IDirect3DSurface8 *W3DShaderManager::m_oldDepthSurface=nullptr;	///<previous depth buffer surface
+TextureClass *W3DShaderManager::m_renderTargetTexture=nullptr;	///<Direct3D 12 mode: texture into which rendering will be redirected.
 /*===========================================================================================*/
 /*=========      Screen Shaders	=============================================================*/
 /*===========================================================================================*/
@@ -493,6 +494,12 @@ Int ScreenBWFilterDOT3::init()
 		return false;
 	}
 
+	if (DX12Device::Is_Active())
+	{	//Direct3D 12 mode reports no chipset, but its fixed-function shaders do the DOT3 and multiply-add blends.
+		W3DFilters[FT_VIEW_BW_FILTER]=&screenBWFilterDOT3;
+		return TRUE;
+	}
+
 	if ((res=W3DShaderManager::getChipset()) != 0)
 	{
 			W3DFilters[FT_VIEW_BW_FILTER]=&screenBWFilterDOT3;
@@ -511,8 +518,9 @@ Bool ScreenBWFilterDOT3::preRender(Bool &skipRender, CustomScenePassModes &scene
 Bool ScreenBWFilterDOT3::postRender(FilterModes mode, Coord2D &scrollDelta,Bool &doExtraRender)
 {
 	IDirect3DTexture8 * tex =	W3DShaderManager::endRenderToTexture();
-	DEBUG_ASSERTCRASH(tex, ("Require rendered texture."));
-	if (!tex) return false;
+	TextureClass *targetTex = W3DShaderManager::getRenderTargetTexture();	//Direct3D 12 mode renders into this instead.
+	DEBUG_ASSERTCRASH(tex || targetTex, ("Require rendered texture."));
+	if (!tex && !targetTex) return false;
 	if (!set(mode)) return false;
 
 	struct _TRANS_LIT_TEX_VERTEX {
@@ -575,6 +583,8 @@ Bool ScreenBWFilterDOT3::postRender(FilterModes mode, Coord2D &scrollDelta,Bool 
 	}
 
 	DX8Wrapper::Set_DX8_Texture_Raw(0,tex);	//previously rendered frame inside this texture
+	if (targetTex)
+		DX8Wrapper::Set_DX8_Texture_Raw(0,targetTex);	//Direct3D 12 mode: previously rendered frame inside this texture
 
 	DX8Wrapper::Draw_Primitive_UP(D3DPT_TRIANGLESTRIP, 2, v, sizeof(_TRANS_LIT_TEX_VERTEX));
 
@@ -778,9 +788,10 @@ Bool ScreenCrossFadeFilter::postRender(FilterModes mode, Coord2D &scrollDelta,Bo
 	}
 
 	tex=W3DShaderManager::getRenderTexture();
+	TextureClass *targetTex = W3DShaderManager::getRenderTargetTexture();	//Direct3D 12 mode renders into this instead.
 
-	DEBUG_ASSERTCRASH(tex, ("Require last rendered texture."));
-	if (!tex) return false;
+	DEBUG_ASSERTCRASH(tex || targetTex, ("Require last rendered texture."));
+	if (!tex && !targetTex) return false;
 	if (!set(mode)) return false;
 
 	struct _TRANS_LIT_TEX_VERTEX {
@@ -796,6 +807,8 @@ Bool ScreenCrossFadeFilter::postRender(FilterModes mode, Coord2D &scrollDelta,Bo
 	Real radius = 0.0f;
 
 	DX8Wrapper::Set_DX8_Texture_Raw(0,tex);	//previously rendered frame inside this texture
+	if (targetTex)
+		DX8Wrapper::Set_DX8_Texture_Raw(0,targetTex);	//Direct3D 12 mode: previously rendered frame inside this texture
 	if (mode == FM_VIEW_CROSSFADE_CIRCLE)
 	{	DX8Wrapper::Set_DX8_Texture_Raw(1,m_fadePatternTexture);
 		//Use the current fade level to scale the mask texture, for other modes the texture
@@ -948,8 +961,9 @@ Bool ScreenMotionBlurFilter::preRender(Bool &skipRender, CustomScenePassModes &s
 Bool ScreenMotionBlurFilter::postRender(FilterModes mode, Coord2D &scrollDelta,Bool &doExtraRender)
 {
 	IDirect3DTexture8 * tex =	W3DShaderManager::endRenderToTexture();
-	DEBUG_ASSERTCRASH(tex, ("Require rendered texture."));
-	if (!tex) return false;
+	TextureClass *targetTex = W3DShaderManager::getRenderTargetTexture();	//Direct3D 12 mode renders into this instead.
+	DEBUG_ASSERTCRASH(tex || targetTex, ("Require rendered texture."));
+	if (!tex && !targetTex) return false;
 	if (!set(mode)) return false;
 
 	Bool continueEffect = true;
@@ -963,6 +977,8 @@ Bool ScreenMotionBlurFilter::postRender(FilterModes mode, Coord2D &scrollDelta,B
 	Int xpos, ypos, width, height;
 
 	DX8Wrapper::Set_DX8_Texture_Raw(0,tex);	//previously rendered frame inside this texture
+	if (targetTex)
+		DX8Wrapper::Set_DX8_Texture_Raw(0,targetTex);	//Direct3D 12 mode: previously rendered frame inside this texture
 	TheTacticalView->getOrigin(&xpos,&ypos);
 	width=TheTacticalView->getWidth();
 	height=TheTacticalView->getHeight();
@@ -2624,6 +2640,14 @@ void W3DShaderManager::init()
 	D3DSURFACE_DESC desc;
 	// For now, check & see if we are gf3 or higher on the food chain.
 
+	if (DX12Device::Is_Active())
+	{
+		//Direct3D 12 mode has no Direct3D 8 surfaces (and reports no chipset, so the block below is skipped).
+		//Our effects that need an offscreen render target get a render target texture of the back buffer size
+		//instead, made here like the Direct3D 8 one.
+		updateRenderTargetTexture();
+	}
+
 	ChipsetType res=DC_UNKNOWN;
 	if ((res=W3DShaderManager::getChipset()) != 0)
 	{
@@ -2706,6 +2730,7 @@ void W3DShaderManager::shutdown()
 	SAFE_RELEASE(m_renderTexture);
 	SAFE_RELEASE(m_oldRenderSurface);
 	SAFE_RELEASE(m_oldDepthSurface);
+	REF_PTR_RELEASE(m_renderTargetTexture);
 	m_currentShader = ST_INVALID;
 	m_currentFilter = FT_NULL_FILTER;
 	//release any assets associated with a shader (vertex/pixel shaders, textures, etc.)
@@ -2860,20 +2885,37 @@ void W3DShaderManager::startRenderToTexture()
 {
 	DEBUG_ASSERTCRASH(!m_renderingToTexture, ("Already rendering to texture - cannot nest calls."));
 
-	if (m_renderingToTexture || m_newRenderSurface==nullptr || m_oldDepthSurface==nullptr) return;
-	HRESULT hr = DX8Wrapper::Set_Render_Target_Raw(m_newRenderSurface,m_oldDepthSurface);
-
-	// TheSuperHackers @bugfix If SetRenderTarget fails (e.g. due to MSAA forced by driver
-	// profile causing a depth buffer mismatch that D3DSURFACE_DESC doesn't report), permanently
-	// disable RTT to prevent repeated failures and accidental backbuffer clears.
-	if (hr != S_OK)
+	if (DX12Device::Is_Active())
 	{
-		// Permanently disable RTT
-		SAFE_RELEASE(m_newRenderSurface);
-		SAFE_RELEASE(m_renderTexture);
-		SAFE_RELEASE(m_oldRenderSurface);
-		SAFE_RELEASE(m_oldDepthSurface);
-		return;
+		//Direct3D 12 mode has no Direct3D 8 surfaces, so select the render target texture with the default
+		//depth buffer.  The texture follows the back buffer size, which changes without a device reset there.
+		if (m_renderingToTexture || m_renderTargetTexture==nullptr || !updateRenderTargetTexture()) return;
+		DX8Wrapper::Set_Render_Target_With_Z(m_renderTargetTexture);
+
+		//If the target could not be selected, permanently disable RTT like the Direct3D 8 path below.
+		if (!DX8Wrapper::Is_Render_To_Texture())
+		{
+			REF_PTR_RELEASE(m_renderTargetTexture);
+			return;
+		}
+	}
+	else
+	{
+		if (m_renderingToTexture || m_newRenderSurface==nullptr || m_oldDepthSurface==nullptr) return;
+		HRESULT hr = DX8Wrapper::Set_Render_Target_Raw(m_newRenderSurface,m_oldDepthSurface);
+
+		// TheSuperHackers @bugfix If SetRenderTarget fails (e.g. due to MSAA forced by driver
+		// profile causing a depth buffer mismatch that D3DSURFACE_DESC doesn't report), permanently
+		// disable RTT to prevent repeated failures and accidental backbuffer clears.
+		if (hr != S_OK)
+		{
+			// Permanently disable RTT
+			SAFE_RELEASE(m_newRenderSurface);
+			SAFE_RELEASE(m_renderTexture);
+			SAFE_RELEASE(m_oldRenderSurface);
+			SAFE_RELEASE(m_oldDepthSurface);
+			return;
+		}
 	}
 
 	m_renderingToTexture = true;
@@ -2910,6 +2952,23 @@ IDirect3DTexture8 *W3DShaderManager::endRenderToTexture()
 {
 	DEBUG_ASSERTCRASH(m_renderingToTexture, ("Not rendering to texture."));
 	if (!m_renderingToTexture) return nullptr;
+	if (DX12Device::Is_Active())
+	{
+		//Direct3D 12 mode: restore the back buffer and default depth buffer.  There are no Direct3D 8 textures to
+		//return; the rendered image is in getRenderTargetTexture().
+		DX8Wrapper::Set_Render_Target((IDirect3DSurface8 *)nullptr);
+
+		//assume render target texture will be in stage 0, with the same states as below.
+		DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP);
+		DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP);
+		DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_ADDRESSW, D3DTADDRESS_CLAMP);
+		DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
+		DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_MINFILTER, D3DTEXF_LINEAR);
+		DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_MIPFILTER, D3DTEXF_NONE);
+
+		m_renderingToTexture = false;
+		return nullptr;
+	}
 	HRESULT hr = DX8Wrapper::Set_Render_Target_Raw(m_oldRenderSurface,m_oldDepthSurface);	//restore original render target
 	DEBUG_ASSERTCRASH(hr==S_OK, ("Set target failed unexpectedly."));
 	if (hr == S_OK)
@@ -2934,6 +2993,32 @@ was applied.  NOTE: This texture does not survive device reset.. so quit effect 
 IDirect3DTexture8 *W3DShaderManager::getRenderTexture()
 {
 	return m_renderTexture;
+}
+
+/**Direct3D 12 mode: makes sure m_renderTargetTexture is a render target texture of the back buffer size, as the
+Direct3D 8 render target texture is, (re)creating it when there is none yet or the back buffer was resized.  The
+format is A8R8G8B8 like the back buffer, so the destination alpha used by soft water edges and the cross-fade
+alpha mask is kept.  Returns false, with no texture, if it cannot be created.*/
+Bool W3DShaderManager::updateRenderTargetTexture()
+{
+	const Int width = (Int)DX12Device::Get_Width();
+	const Int height = (Int)DX12Device::Get_Height();
+
+	if (m_renderTargetTexture && m_renderTargetTexture->Get_Width() == width && m_renderTargetTexture->Get_Height() == height)
+		return true;
+
+	REF_PTR_RELEASE(m_renderTargetTexture);
+	if (width <= 0 || height <= 0)
+		return false;
+
+	m_renderTargetTexture = NEW_REF(TextureClass, (width, height, WW3D_FORMAT_A8R8G8B8, MIP_LEVELS_1, TextureClass::POOL_DEFAULT, true));
+	if (m_renderTargetTexture->Peek_DX12_Texture() == nullptr)
+	{
+		DEBUG_LOG(("W3DShaderManager: could not create a %d x %d render target texture", width, height));
+		REF_PTR_RELEASE(m_renderTargetTexture);
+		return false;
+	}
+	return true;
 }
 
 enum GraphicsVenderID CPP_11(: Int)

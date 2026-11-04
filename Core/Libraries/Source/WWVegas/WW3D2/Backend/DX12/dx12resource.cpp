@@ -26,8 +26,10 @@
 #include <mutex>
 
 // Implemented in dx12device.cpp: writes a 2D texture SRV into the given slot of the shader visible
-// CBV/SRV heap.
-extern void DX12Device_Write_SRV(unsigned slot, ID3D12Resource * resource, unsigned dxgi_format, unsigned mip_levels);
+// CBV/SRV heap, and render target and depth stencil views into the slots of their CPU heaps.
+extern void DX12Device_Write_SRV(unsigned slot, ID3D12Resource * resource, unsigned dxgi_format, unsigned mip_levels, unsigned component_mapping);
+extern void DX12Device_Write_RTV(unsigned slot, ID3D12Resource * resource);
+extern void DX12Device_Write_DSV(unsigned slot, ID3D12Resource * resource);
 
 namespace
 {
@@ -291,6 +293,26 @@ DX12TextureClass * DX12TextureClass::Create(unsigned width, unsigned height, WW3
 	return texture;
 }
 
+DX12TextureClass * DX12TextureClass::Create_Render_Target(unsigned width, unsigned height, WW3DFormat format)
+{
+	DX12TextureClass * texture = new DX12TextureClass;
+	if (!texture->Init_Target(width, height, format, USAGE_RENDER_TARGET)) {
+		texture->Release_Ref();
+		return nullptr;
+	}
+	return texture;
+}
+
+DX12TextureClass * DX12TextureClass::Create_Depth_Target(unsigned width, unsigned height)
+{
+	DX12TextureClass * texture = new DX12TextureClass;
+	if (!texture->Init_Target(width, height, WW3D_FORMAT_UNKNOWN, USAGE_DEPTH_TARGET)) {
+		texture->Release_Ref();
+		return nullptr;
+	}
+	return texture;
+}
+
 DX12TextureClass::DX12TextureClass() :
 	Width(0),
 	Height(0),
@@ -298,10 +320,15 @@ DX12TextureClass::DX12TextureClass() :
 	Format(WW3D_FORMAT_UNKNOWN),
 	KeepCPUCopy(false),
 	CPUOnly(false),
+	Usage(USAGE_TEXTURE),
 	Resource(nullptr),
 	SRVSlot(0),
+	RTVSlot(0),
+	DSVSlot(0),
 	State(D3D12_RESOURCE_STATE_COMMON),
-	DXGIFormat(DXGI_FORMAT_UNKNOWN)
+	DXGIFormat(DXGI_FORMAT_UNKNOWN),
+	SRVComponentMapping(D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING),
+	NeedsInitialClear(false)
 {
 }
 
@@ -320,6 +347,20 @@ DX12TextureClass::~DX12TextureClass()
 			DX12Device::Free_SRV_Slot(SRVSlot);
 		}
 		SRVSlot = 0;
+	}
+	// Render target and depth stencil views are read when a command is recorded, so their slots can
+	// be reused right away.
+	if (RTVSlot != 0) {
+		if (DX12Device::Is_Active()) {
+			DX12Device::Free_RTV_Slot(RTVSlot);
+		}
+		RTVSlot = 0;
+	}
+	if (DSVSlot != 0) {
+		if (DX12Device::Is_Active()) {
+			DX12Device::Free_DSV_Slot(DSVSlot);
+		}
+		DSVSlot = 0;
 	}
 }
 
@@ -381,7 +422,118 @@ bool DX12TextureClass::Init(unsigned width, unsigned height, WW3DFormat format, 
 		WWDEBUG_SAY(("DX12: out of SRV slots"));
 		return false;
 	}
-	DX12Device_Write_SRV(SRVSlot, Resource, DXGIFormat, LevelCount);
+	DX12Device_Write_SRV(SRVSlot, Resource, DXGIFormat, LevelCount, SRVComponentMapping);
+	return true;
+}
+
+// Main thread only.
+bool DX12TextureClass::Init_Target(unsigned width, unsigned height, WW3DFormat format, UsageType usage)
+{
+	const bool depth = (usage == USAGE_DEPTH_TARGET);
+	if (width == 0 || height == 0 || width > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION || height > D3D12_REQ_TEXTURE2D_U_OR_V_DIMENSION) {
+		WWDEBUG_SAY(("DX12: unsupported %s target size %ux%u", depth ? "depth" : "render", width, height));
+		return false;
+	}
+	if (!depth && (Is_Block_Format(format) || Get_Element_Size(format) == 0)) {
+		WWDEBUG_SAY(("DX12: unsupported render target format %d", (int)format));
+		return false;
+	}
+
+	ID3D12Device * device = DX12Device::Get_D3D12_Device();
+	if (device == nullptr) {
+		return false;
+	}
+
+	Width = width;
+	Height = height;
+	LevelCount = 1;
+	Format = depth ? WW3D_FORMAT_UNKNOWN : format;
+	Usage = usage;
+	CPUOnly = false;
+	KeepCPUCopy = false;
+	LevelData.resize(LevelCount);
+	LevelLockedReadOnly.assign(LevelCount, 0);
+
+	D3D12_HEAP_PROPERTIES heap;
+	memset(&heap, 0, sizeof(heap));
+	heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+	heap.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+	heap.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+	heap.CreationNodeMask = 1;
+	heap.VisibleNodeMask = 1;
+
+	D3D12_RESOURCE_DESC desc;
+	memset(&desc, 0, sizeof(desc));
+	desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+	desc.Alignment = 0;
+	desc.Width = width;
+	desc.Height = height;
+	desc.DepthOrArraySize = 1;
+	desc.MipLevels = 1;
+	desc.SampleDesc.Count = 1;
+	desc.SampleDesc.Quality = 0;
+	desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+
+	D3D12_CLEAR_VALUE clear;
+	memset(&clear, 0, sizeof(clear));
+	const D3D12_CLEAR_VALUE * optimized_clear = nullptr;
+	D3D12_RESOURCE_STATES initial_state;
+	if (depth) {
+		// Typeless so that it can be both a depth stencil view and a shader resource view.
+		desc.Format = DXGI_FORMAT_R24G8_TYPELESS;
+		desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+		clear.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+		clear.DepthStencil.Depth = 1.0f;
+		clear.DepthStencil.Stencil = 0;
+		optimized_clear = &clear;
+		initial_state = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+		DXGIFormat = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+	} else {
+		// The game clears render targets to many colors, so there is no optimized clear value.
+		desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+		desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+		initial_state = D3D12_RESOURCE_STATE_RENDER_TARGET;
+		DXGIFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
+		// Direct3D 8 reads alpha as 1 from formats without alpha.
+		if (!::Has_Alpha(format)) {
+			SRVComponentMapping = D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_0,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_1,
+				D3D12_SHADER_COMPONENT_MAPPING_FROM_MEMORY_COMPONENT_2,
+				D3D12_SHADER_COMPONENT_MAPPING_FORCE_VALUE_1);
+		}
+	}
+
+	HRESULT hr = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc,
+		initial_state, optimized_clear, __uuidof(ID3D12Resource), (void **)&Resource);
+	if (FAILED(hr)) {
+		WWDEBUG_SAY(("DX12: failed to create %s target %ux%u (0x%08X)", depth ? "depth" : "render", width, height, (unsigned)hr));
+		Resource = nullptr;
+		return false;
+	}
+	State = initial_state;
+	NeedsInitialClear = true;
+
+	SRVSlot = DX12Device::Allocate_SRV_Slot();
+	if (SRVSlot == 0) {
+		WWDEBUG_SAY(("DX12: out of SRV slots"));
+		return false;
+	}
+	DX12Device_Write_SRV(SRVSlot, Resource, DXGIFormat, 1, SRVComponentMapping);
+
+	if (depth) {
+		DSVSlot = DX12Device::Allocate_DSV_Slot();
+		if (DSVSlot == 0) {
+			return false;
+		}
+		DX12Device_Write_DSV(DSVSlot, Resource);
+	} else {
+		RTVSlot = DX12Device::Allocate_RTV_Slot();
+		if (RTVSlot == 0) {
+			return false;
+		}
+		DX12Device_Write_RTV(RTVSlot, Resource);
+	}
 	return true;
 }
 
@@ -416,7 +568,7 @@ unsigned DX12TextureClass::Get_Level_Size(unsigned level) const
 void * DX12TextureClass::Lock(unsigned level, int * pitch, const tagRECT * rect, bool read_only)
 {
 	WWASSERT(level < LevelCount);
-	if (level >= LevelCount) {
+	if (level >= LevelCount || Usage == USAGE_DEPTH_TARGET) {
 		return nullptr;
 	}
 
@@ -445,7 +597,7 @@ void * DX12TextureClass::Lock(unsigned level, int * pitch, const tagRECT * rect,
 void DX12TextureClass::Unlock(unsigned level)
 {
 	WWASSERT(level < LevelCount);
-	if (level >= LevelCount) {
+	if (level >= LevelCount || Usage == USAGE_DEPTH_TARGET) {
 		return;
 	}
 
