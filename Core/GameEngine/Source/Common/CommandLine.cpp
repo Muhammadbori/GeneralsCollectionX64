@@ -41,6 +41,7 @@
 
 Bool TheDebugIgnoreSyncErrors = FALSE;
 extern Int DX8Wrapper_PreserveFPU;
+extern bool DX8Wrapper_UseDX12;
 
 #ifdef DEBUG_CRC
 Int TheCRCFirstFrameToLog = -1;
@@ -118,6 +119,15 @@ Int parseNoLogOrCrash(char *args[], int)
 Int parseWin(char *args[], int)
 {
 	TheWritableGlobalData->m_windowed = true;
+
+	return 1;
+}
+
+//=============================================================================
+//=============================================================================
+Int parseDX12(char *args[], int)
+{
+	DX8Wrapper_UseDX12 = true;
 
 	return 1;
 }
@@ -1165,6 +1175,9 @@ static CommandLineParam paramsForStartup[] =
 {
 	{ "-win", parseWin },
 	{ "-fullscreen", parseNoWin },
+
+	// TheSuperHackers @feature 2026 Render with Direct3D 12 instead of Direct3D 8 while the port is in progress.
+	{ "-dx12", parseDX12 },
 
 	// TheSuperHackers @feature helmutbuhler 11/04/2025
 	// This runs the game without a window, graphics, input and audio. You can combine this with -replay

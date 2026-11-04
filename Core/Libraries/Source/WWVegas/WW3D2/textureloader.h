@@ -44,6 +44,7 @@
 
 class StringClass;
 struct IDirect3DTexture8;
+class DX12TextureClass;
 class TextureLoadTaskClass;
 class TextureLoadTaskListClass;
 
@@ -61,6 +62,16 @@ public:
 //		WW3DFormat texture_format);	// Pass WW3D_FORMAT_UNKNOWN if you don't care
 
 	static IDirect3DSurface8 *		Load_Surface_Immediate(
+		const StringClass& filename,
+		WW3DFormat surface_format,		// Pass WW3D_FORMAT_UNKNOWN if you don't care
+		bool allow_compression);
+
+	// Direct3D 12 versions of the two functions above. The caller owns the returned reference.
+	// The surface is a CPU only texture with one level.
+	static DX12TextureClass *		Load_DX12_Thumbnail(
+		const StringClass& filename,const Vector3& hsv_shift);
+
+	static DX12TextureClass *		Load_DX12_Surface_Immediate(
 		const StringClass& filename,
 		WW3DFormat surface_format,		// Pass WW3D_FORMAT_UNKNOWN if you don't care
 		bool allow_compression);
@@ -251,6 +262,7 @@ class TextureLoadTaskClass : public TextureLoadTaskListNodeClass
 
 		TextureBaseClass*		Texture;
 		IDirect3DBaseTexture8*	D3DTexture;
+		DX12TextureClass*		DX12Texture;		// Used instead of D3DTexture in Direct3D 12 mode
 		WW3DFormat				Format;
 
 		unsigned int			Width;

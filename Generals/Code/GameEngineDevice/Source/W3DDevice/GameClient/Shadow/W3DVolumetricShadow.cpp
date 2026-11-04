@@ -3639,7 +3639,7 @@ Bool W3DVolumetricShadowManager::ReAcquireResources()
 {
 	ReleaseResources();
 
-	DEBUG_ASSERTCRASH(DX8Wrapper::Has_D3D_Device(), ("Trying to ReAcquireResources on W3DVolumetricShadowManager without device"));
+	DEBUG_ASSERTCRASH(DX8Wrapper::Has_D3D_Device() || DX12Device::Is_Active(), ("Trying to ReAcquireResources on W3DVolumetricShadowManager without device"));
 
 	if (FAILED(DX8Wrapper::Create_Index_Buffer_Raw
 	(

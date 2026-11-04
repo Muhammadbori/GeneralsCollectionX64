@@ -54,6 +54,7 @@ class StringClass;
 class DX8VertexBufferClass;
 class FVFInfoClass;
 struct IDirect3DVertexBuffer8;
+class DX12BufferClass;
 class VertexBufferClass;
 struct VertexFormatXYZNDUV2;
 
@@ -215,6 +216,8 @@ public:
 	DX8VertexBufferClass(const Vector3* vertices, const Vector2* tex_coords, unsigned short VertexCount,UsageType usage=USAGE_DEFAULT);
 
 	IDirect3DVertexBuffer8* Get_DX8_Vertex_Buffer() { return VertexBuffer; }
+	// Direct3D 12 mode only, null in Direct3D 8 mode.
+	DX12BufferClass* Get_DX12_Buffer() const { return DX12Buffer; }
 
 	void Copy(const Vector3* loc, unsigned first_vertex, unsigned count);
 	void Copy(const Vector3* loc, const Vector2* uv, unsigned first_vertex, unsigned count);
@@ -225,6 +228,7 @@ public:
 
 protected:
 	IDirect3DVertexBuffer8*		VertexBuffer;
+	DX12BufferClass*				DX12Buffer;
 
 	void Create_Vertex_Buffer(UsageType usage);
 };

@@ -30,6 +30,7 @@
 
 #include "Common/GameMemory.h"
 #include "WW3D2/dx8wrapper.h"
+#include "WW3D2/Backend/DX12/dx12device.h"
 #include "WW3D2/rendobj.h"
 #include "WW3D2/hanim.h"
 #include "WW3D2/camera.h"
@@ -55,6 +56,15 @@ static TextureClass *cursorTextures[Mouse::NUM_MOUSE_CURSORS][MAX_2D_CURSOR_ANIM
 static const Image *cursorImages[Mouse::NUM_MOUSE_CURSORS];			///<Images for use with the RM_POLYGON method.
 static RenderObjClass *cursorModels[Mouse::NUM_MOUSE_CURSORS];	///< W3D models for each cursor type
 static HAnimClass			*cursorAnims[Mouse::NUM_MOUSE_CURSORS];		///< W3D animations for each cursor type
+
+// The Direct3D 12 renderer has no hardware cursor and does not draw the 3D cursor models yet, so it
+// draws the 2D image cursor instead.
+static Mouse::RedrawMode getSupportedRedrawMode(Mouse::RedrawMode mode)
+{
+	if (DX12Device::Is_Active() && (mode == Mouse::RM_DX8 || mode == Mouse::RM_W3D))
+		return Mouse::RM_POLYGON;
+	return mode;
+}
 
 ///Mouse polling/update thread function
 static class MouseThreadClass : public ThreadClass
@@ -332,6 +342,13 @@ void W3DMouse::init()
 
 	//check if system already initialized and texture assets loaded.
 	Win32Mouse::init();
+	const RedrawMode supportedMode = getSupportedRedrawMode(m_currentRedrawMode);
+	if (supportedMode != m_currentRedrawMode)
+	{
+		m_currentRedrawMode = supportedMode;
+		if (m_currentRedrawMode == RM_POLYGON)
+			initPolygonAssets();
+	}
 	setCursor(ARROW);	//set default starting cursor image
 
 	WWASSERT(!thread.Is_Running());
@@ -593,6 +610,8 @@ void W3DMouse::draw()
 void W3DMouse::setRedrawMode(RedrawMode mode)
 {
 	MouseCursor cursor = getMouseCursor();
+
+	mode = getSupportedRedrawMode(mode);
 
 	//Turn off the previous cursor mode
 	setCursor(NONE);

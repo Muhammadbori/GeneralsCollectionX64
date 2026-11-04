@@ -78,7 +78,7 @@ Bool W3DSnowManager::ReAcquireResources()
 
 	if (TheWeatherSetting->m_usePointSprites && DX8Wrapper::Get_Current_Caps()->Support_PointSprites())
 	{
-		DEBUG_ASSERTCRASH(DX8Wrapper::Has_D3D_Device(), ("Trying to ReAcquireResources on W3DSnowManager without device"));
+		DEBUG_ASSERTCRASH(DX8Wrapper::Has_D3D_Device() || DX12Device::Is_Active(), ("Trying to ReAcquireResources on W3DSnowManager without device"));
 
 		if (m_VertexBufferD3D == nullptr)
 		{

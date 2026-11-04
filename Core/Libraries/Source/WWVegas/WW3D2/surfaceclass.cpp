@@ -53,6 +53,10 @@
 #include "WWMath/vector2i.h"
 #include "colorspace.h"
 #include "WWLib/bound.h"
+#include "bitmaphandler.h"
+#include "textureloader.h"
+#include "Backend/DX12/dx12device.h"
+#include "Backend/DX12/dx12resource.h"
 #include <d3dx8.h>
 
 void Convert_Pixel(Vector3 &rgb, const SurfaceClass::SurfaceDescription &sd, const unsigned char * pixel)
@@ -157,34 +161,199 @@ void Convert_Pixel(unsigned char * pixel,const SurfaceClass::SurfaceDescription 
 	}
 }
 
+static bool Is_DXT_Format(WW3DFormat format)
+{
+	switch (format)
+	{
+	case WW3D_FORMAT_DXT1:
+	case WW3D_FORMAT_DXT2:
+	case WW3D_FORMAT_DXT3:
+	case WW3D_FORMAT_DXT4:
+	case WW3D_FORMAT_DXT5:
+		return true;
+	default:
+		return false;
+	}
+}
+
+// Formats BitmapHandlerClass can read and write without a palette.
+static bool Is_Convertible_Format(WW3DFormat format)
+{
+	switch (format)
+	{
+	case WW3D_FORMAT_A8R8G8B8:
+	case WW3D_FORMAT_X8R8G8B8:
+	case WW3D_FORMAT_R8G8B8:
+	case WW3D_FORMAT_A4R4G4B4:
+	case WW3D_FORMAT_A1R5G5B5:
+	case WW3D_FORMAT_R5G6B5:
+	case WW3D_FORMAT_R3G3B2:
+	case WW3D_FORMAT_L8:
+	case WW3D_FORMAT_A8:
+		return true;
+	default:
+		return false;
+	}
+}
+
+// CPU copy of a rectangle between two locked surfaces, used in Direct3D 12 mode in place of
+// CopyRects and D3DXLoadSurfaceFromSurface. Both pointers point at the top left texel of their
+// surface. Same size and format copies rows (DXT formats copy whole 4x4 blocks); anything else
+// converts each texel and box filters when the sizes differ.
+static void Copy_Texels
+(
+	unsigned char *dst, int dst_pitch, WW3DFormat dst_format,
+	unsigned dstx, unsigned dsty, unsigned dstwidth, unsigned dstheight,
+	const unsigned char *src, int src_pitch, WW3DFormat src_format,
+	unsigned srcx, unsigned srcy, unsigned srcwidth, unsigned srcheight
+)
+{
+	if (dst == nullptr || src == nullptr || dstwidth == 0 || dstheight == 0 || srcwidth == 0 || srcheight == 0)
+	{
+		return;
+	}
+
+	if (dst_format == src_format && dstwidth == srcwidth && dstheight == srcheight)
+	{
+		if (Is_DXT_Format(src_format))
+		{
+			const unsigned block_size = (src_format == WW3D_FORMAT_DXT1) ? 8 : 16;
+			const unsigned row_size = ((srcwidth + 3) / 4) * block_size;
+			const unsigned row_count = (srcheight + 3) / 4;
+			for (unsigned row = 0; row < row_count; ++row)
+			{
+				memcpy
+				(
+					dst + (dsty / 4 + row) * dst_pitch + (dstx / 4) * block_size,
+					src + (srcy / 4 + row) * src_pitch + (srcx / 4) * block_size,
+					row_size
+				);
+			}
+		}
+		else
+		{
+			const unsigned bpp = ::Get_Bytes_Per_Pixel(src_format);
+			for (unsigned row = 0; row < srcheight; ++row)
+			{
+				memcpy(dst + (dsty + row) * dst_pitch + dstx * bpp, src + (srcy + row) * src_pitch + srcx * bpp, srcwidth * bpp);
+			}
+		}
+		return;
+	}
+
+	if (!Is_Convertible_Format(src_format) || !Is_Convertible_Format(dst_format))
+	{
+		WWDEBUG_SAY(("SurfaceClass: cannot convert surface format %d to %d in Direct3D 12 mode", (int)src_format, (int)dst_format));
+		return;
+	}
+
+	const unsigned src_bpp = ::Get_Bytes_Per_Pixel(src_format);
+	const unsigned dst_bpp = ::Get_Bytes_Per_Pixel(dst_format);
+
+	for (unsigned y = 0; y < dstheight; ++y)
+	{
+		unsigned sy0 = srcy + (y * srcheight) / dstheight;
+		unsigned sy1 = srcy + ((y + 1) * srcheight) / dstheight;
+		if (sy1 <= sy0) sy1 = sy0 + 1;
+
+		unsigned char *dst_row = dst + (dsty + y) * dst_pitch;
+
+		for (unsigned x = 0; x < dstwidth; ++x)
+		{
+			unsigned sx0 = srcx + (x * srcwidth) / dstwidth;
+			unsigned sx1 = srcx + ((x + 1) * srcwidth) / dstwidth;
+			if (sx1 <= sx0) sx1 = sx0 + 1;
+
+			unsigned sum[4] = { 0, 0, 0, 0 };
+			unsigned count = 0;
+			for (unsigned sy = sy0; sy < sy1; ++sy)
+			{
+				for (unsigned sx = sx0; sx < sx1; ++sx)
+				{
+					unsigned char bgra[4];
+					BitmapHandlerClass::Read_B8G8R8A8(bgra, src + sy * src_pitch + sx * src_bpp, src_format, nullptr, 0);
+					sum[0] += bgra[0];
+					sum[1] += bgra[1];
+					sum[2] += bgra[2];
+					sum[3] += bgra[3];
+					++count;
+				}
+			}
+
+			unsigned char bgra[4];
+			for (int i = 0; i < 4; ++i)
+			{
+				bgra[i] = (unsigned char)((sum[i] + count / 2) / count);
+			}
+			// BitmapHandlerClass writes the blue channel into A8 surfaces.
+			if (dst_format == WW3D_FORMAT_A8)
+			{
+				dst_row[dstx + x] = bgra[3];
+				continue;
+			}
+			BitmapHandlerClass::Write_B8G8R8A8(dst_row + (dstx + x) * dst_bpp, dst_format, bgra);
+		}
+	}
+}
+
 /*************************************************************************
 **                             SurfaceClass
 *************************************************************************/
 SurfaceClass::SurfaceClass(unsigned width, unsigned height, WW3DFormat format):
 	D3DSurface(nullptr),
+	DX12Texture(nullptr),
+	DX12Level(0),
 	SurfaceFormat(format)
 {
 	WWASSERT(width);
 	WWASSERT(height);
+	if (DX12Device::Is_Active())
+	{
+		DX12Texture = DX12TextureClass::Create(width, height, format, 1, true, true);
+		return;
+	}
 	D3DSurface = DX8Wrapper::_Create_DX8_Surface(width, height, format);
 }
 
 SurfaceClass::SurfaceClass(const char *filename):
-	D3DSurface(nullptr)
+	D3DSurface(nullptr),
+	DX12Texture(nullptr),
+	DX12Level(0)
 {
-	D3DSurface = DX8Wrapper::_Create_DX8_Surface(filename);
+	if (DX12Device::Is_Active())
+	{
+		StringClass filename_string(filename,true);
+		DX12Texture = TextureLoader::Load_DX12_Surface_Immediate(filename_string, WW3D_FORMAT_UNKNOWN, true);
+	}
+	else
+	{
+		D3DSurface = DX8Wrapper::_Create_DX8_Surface(filename);
+	}
 	SurfaceDescription desc;
 	Get_Description(desc);
 	SurfaceFormat=desc.Format;
 }
 
 SurfaceClass::SurfaceClass(IDirect3DSurface8 *d3d_surface)	:
-	D3DSurface (nullptr)
+	D3DSurface (nullptr),
+	DX12Texture (nullptr),
+	DX12Level (0)
 {
 	Attach (d3d_surface);
 	SurfaceDescription desc;
 	Get_Description(desc);
 	SurfaceFormat=desc.Format;
+}
+
+SurfaceClass::SurfaceClass(DX12TextureClass *texture, unsigned level) :
+	D3DSurface (nullptr),
+	DX12Texture (nullptr),
+	DX12Level (level)
+{
+	WWASSERT(texture != nullptr);
+	WWASSERT(level < texture->Get_Level_Count());
+	REF_PTR_SET(DX12Texture, texture);
+	SurfaceFormat=texture->Get_Format();
 }
 
 SurfaceClass::~SurfaceClass()
@@ -193,10 +362,163 @@ SurfaceClass::~SurfaceClass()
 		D3DSurface->Release();
 		D3DSurface = nullptr;
 	}
+	REF_PTR_RELEASE(DX12Texture);
+}
+
+void *SurfaceClass::Lock_Rect(int *pitch, const tagRECT *rect, bool read_only)
+{
+	if (DX12Device::Is_Active())
+	{
+		if (DX12Texture == nullptr)
+		{
+			*pitch = 0;
+			return nullptr;
+		}
+		return DX12Texture->Lock(DX12Level, pitch, rect, read_only);
+	}
+
+	D3DLOCKED_RECT lock_rect;
+	::ZeroMemory(&lock_rect, sizeof(D3DLOCKED_RECT));
+	DX8_ErrorCode(D3DSurface->LockRect(&lock_rect, rect, read_only ? D3DLOCK_READONLY : 0));
+	*pitch = lock_rect.Pitch;
+	return lock_rect.pBits;
+}
+
+void SurfaceClass::Unlock_Rect()
+{
+	if (DX12Device::Is_Active())
+	{
+		if (DX12Texture != nullptr)
+		{
+			DX12Texture->Unlock(DX12Level);
+		}
+		return;
+	}
+
+	DX8_ErrorCode(D3DSurface->UnlockRect());
+}
+
+DX12TextureClass *SurfaceClass::Create_DX12_Texture(unsigned levels)
+{
+	SurfaceDescription sd;
+	Get_Description(sd);
+	if (DX12Texture == nullptr || sd.Width == 0 || sd.Height == 0)
+	{
+		return nullptr;
+	}
+
+	// Mipmaps cannot be generated on the CPU for compressed surfaces.
+	if (Is_DXT_Format(sd.Format) || !Is_Convertible_Format(sd.Format))
+	{
+		if (levels != 1)
+		{
+			static bool logged = false;
+			if (!logged)
+			{
+				logged = true;
+				WWDEBUG_SAY(("SurfaceClass: no mipmaps for textures made from format %d surfaces in Direct3D 12 mode", (int)sd.Format));
+			}
+		}
+		levels = 1;
+	}
+
+	DX12TextureClass *texture = DX12TextureClass::Create(sd.Width, sd.Height, sd.Format, levels, true);
+	if (texture == nullptr)
+	{
+		return nullptr;
+	}
+
+	int src_pitch = 0;
+	const unsigned char *src = static_cast<const unsigned char *>(Lock_Rect(&src_pitch, nullptr, true));
+	int dst_pitch = 0;
+	unsigned char *dst = static_cast<unsigned char *>(texture->Lock(0, &dst_pitch));
+	Copy_Texels(dst, dst_pitch, sd.Format, 0, 0, sd.Width, sd.Height, src, src_pitch, sd.Format, 0, 0, sd.Width, sd.Height);
+	Unlock_Rect();
+
+	// Box filter each level from the previous one, which stays locked until it has been used.
+	for (unsigned level = 1; level < texture->Get_Level_Count(); ++level)
+	{
+		int mip_pitch = 0;
+		unsigned char *mip = static_cast<unsigned char *>(texture->Lock(level, &mip_pitch));
+		Copy_Texels
+		(
+			mip, mip_pitch, sd.Format, 0, 0, texture->Get_Width(level), texture->Get_Height(level),
+			dst, dst_pitch, sd.Format, 0, 0, texture->Get_Width(level - 1), texture->Get_Height(level - 1)
+		);
+		texture->Unlock(level - 1);
+		dst = mip;
+		dst_pitch = mip_pitch;
+	}
+	texture->Unlock(texture->Get_Level_Count() - 1);
+
+	return texture;
+}
+
+void SurfaceClass::Copy_DX12(const RECT &dest, const SurfaceClass *source, const RECT &src)
+{
+	if (dest.right<=dest.left || dest.bottom<=dest.top || src.right<=src.left || src.bottom<=src.top)
+	{
+		return;
+	}
+
+	SurfaceClass *other=const_cast<SurfaceClass*>(source);
+	SurfaceDescription sd,osd;
+	Get_Description(sd);
+	other->Get_Description(osd);
+
+	int dst_pitch=0;
+	unsigned char *dst=static_cast<unsigned char *>(Lock_Rect(&dst_pitch,nullptr,false));
+	if (dst == nullptr)
+	{
+		return;
+	}
+
+	// A texture level can be locked only once, so a copy within the same level reads from a snapshot.
+	const bool same_level=(other->DX12Texture == DX12Texture && other->DX12Level == DX12Level);
+	std::vector<unsigned char> snapshot;
+	const unsigned char *src_bits=nullptr;
+	int src_pitch=0;
+	if (same_level)
+	{
+		snapshot.assign(dst,dst+DX12Texture->Get_Level_Size(DX12Level));
+		src_bits=snapshot.data();
+		src_pitch=dst_pitch;
+	}
+	else
+	{
+		src_bits=static_cast<const unsigned char *>(other->Lock_Rect(&src_pitch,nullptr,true));
+	}
+
+	Copy_Texels
+	(
+		dst,dst_pitch,sd.Format,dest.left,dest.top,dest.right-dest.left,dest.bottom-dest.top,
+		src_bits,src_pitch,osd.Format,src.left,src.top,src.right-src.left,src.bottom-src.top
+	);
+
+	if (!same_level && src_bits != nullptr)
+	{
+		other->Unlock_Rect();
+	}
+	Unlock_Rect();
 }
 
 void SurfaceClass::Get_Description(SurfaceDescription &surface_desc)
 {
+	if (DX12Device::Is_Active())
+	{
+		if (DX12Texture == nullptr)
+		{
+			surface_desc.Format = WW3D_FORMAT_UNKNOWN;
+			surface_desc.Width = 0;
+			surface_desc.Height = 0;
+			return;
+		}
+		surface_desc.Format = DX12Texture->Get_Format();
+		surface_desc.Width = DX12Texture->Get_Width(DX12Level);
+		surface_desc.Height = DX12Texture->Get_Height(DX12Level);
+		return;
+	}
+
 	D3DSURFACE_DESC d3d_desc;
 	::ZeroMemory(&d3d_desc, sizeof(D3DSURFACE_DESC));
 	DX8_ErrorCode(D3DSurface->GetDesc(&d3d_desc));
@@ -214,32 +536,22 @@ unsigned int SurfaceClass::Get_Bytes_Per_Pixel()
 
 SurfaceClass::LockedSurfacePtr SurfaceClass::Lock(int *pitch)
 {
-	D3DLOCKED_RECT lock_rect;
-	::ZeroMemory(&lock_rect, sizeof(D3DLOCKED_RECT));
-	DX8_ErrorCode(D3DSurface->LockRect(&lock_rect, nullptr, 0));
-	*pitch = lock_rect.Pitch;
-	return static_cast<LockedSurfacePtr>(lock_rect.pBits);
+	return static_cast<LockedSurfacePtr>(Lock_Rect(pitch, nullptr, false));
 }
 
 SurfaceClass::LockedSurfacePtr SurfaceClass::Lock(int *pitch, const Vector2i &min, const Vector2i &max)
 {
-	D3DLOCKED_RECT lock_rect;
-	::ZeroMemory(&lock_rect, sizeof(D3DLOCKED_RECT));
-
 	RECT rect;
 	rect.left = min.I;
 	rect.top = min.J;
 	rect.right = max.I;
 	rect.bottom = max.J;
-	DX8_ErrorCode(D3DSurface->LockRect(&lock_rect, &rect, 0));
-
-	*pitch = lock_rect.Pitch;
-	return static_cast<LockedSurfacePtr>(lock_rect.pBits);
+	return static_cast<LockedSurfacePtr>(Lock_Rect(pitch, &rect, false));
 }
 
 void SurfaceClass::Unlock()
 {
-	DX8_ErrorCode(D3DSurface->UnlockRect());
+	Unlock_Rect();
 }
 
 /***********************************************************************************************
@@ -265,19 +577,18 @@ void SurfaceClass::Clear()
 	// size of each pixel in bytes
 	unsigned int size=::Get_Bytes_Per_Pixel(sd.Format);
 
-	D3DLOCKED_RECT lock_rect;
-	::ZeroMemory(&lock_rect, sizeof(D3DLOCKED_RECT));
-	DX8_ErrorCode(D3DSurface->LockRect(&lock_rect,nullptr,0));
+	int pitch;
+	unsigned char *mem=(unsigned char *) Lock_Rect(&pitch,nullptr,false);
+	if (mem == nullptr) return;
 	unsigned int i;
-	unsigned char *mem=(unsigned char *) lock_rect.pBits;
 
 	for (i=0; i<sd.Height; i++)
 	{
 		memset(mem,0,size*sd.Width);
-		mem+=lock_rect.Pitch;
+		mem+=pitch;
 	}
 
-	DX8_ErrorCode(D3DSurface->UnlockRect());
+	Unlock_Rect();
 }
 
 
@@ -304,19 +615,18 @@ void SurfaceClass::Copy(const unsigned char *other)
 	// size of each pixel in bytes
 	unsigned int size=::Get_Bytes_Per_Pixel(sd.Format);
 
-	D3DLOCKED_RECT lock_rect;
-	::ZeroMemory(&lock_rect, sizeof(D3DLOCKED_RECT));
-	DX8_ErrorCode(D3DSurface->LockRect(&lock_rect,nullptr,0));
+	int pitch;
+	unsigned char *mem=(unsigned char *) Lock_Rect(&pitch,nullptr,false);
+	if (mem == nullptr) return;
 	unsigned int i;
-	unsigned char *mem=(unsigned char *) lock_rect.pBits;
 
 	for (i=0; i<sd.Height; i++)
 	{
 		memcpy(mem,&other[i*sd.Width*size],size*sd.Width);
-		mem+=lock_rect.Pitch;
+		mem+=pitch;
 	}
 
-	DX8_ErrorCode(D3DSurface->UnlockRect());
+	Unlock_Rect();
 }
 
 
@@ -343,25 +653,24 @@ void SurfaceClass::Copy(const Vector2i &min, const Vector2i &max, const unsigned
 	// size of each pixel in bytes
 	unsigned int size=::Get_Bytes_Per_Pixel(sd.Format);
 
-	D3DLOCKED_RECT lock_rect;
-	::ZeroMemory(&lock_rect, sizeof(D3DLOCKED_RECT));
 	RECT rect;
 	rect.left=min.I;
 	rect.right=max.I;
 	rect.top=min.J;
 	rect.bottom=max.J;
-	DX8_ErrorCode(D3DSurface->LockRect(&lock_rect,&rect,0));
+	int pitch;
+	unsigned char *mem=(unsigned char *) Lock_Rect(&pitch,&rect,false);
+	if (mem == nullptr) return;
 	int i;
-	unsigned char *mem=(unsigned char *) lock_rect.pBits;
 	int dx=max.I-min.I;
 
 	for (i=min.J; i<max.J; i++)
 	{
 		memcpy(mem,&other[(i*sd.Width+min.I)*size],size*dx);
-		mem+=lock_rect.Pitch;
+		mem+=pitch;
 	}
 
-	DX8_ErrorCode(D3DSurface->UnlockRect());
+	Unlock_Rect();
 }
 
 
@@ -394,11 +703,14 @@ unsigned char *SurfaceClass::CreateCopy(int *width,int *height,int*size,bool fli
 
 	unsigned char *other=W3DNEWARRAY unsigned char [sd.Height*sd.Width*mysize];
 
-	D3DLOCKED_RECT lock_rect;
-	::ZeroMemory(&lock_rect, sizeof(D3DLOCKED_RECT));
-	DX8_ErrorCode(D3DSurface->LockRect(&lock_rect,nullptr,D3DLOCK_READONLY));
+	int pitch;
+	unsigned char *mem=(unsigned char *) Lock_Rect(&pitch,nullptr,true);
+	if (mem == nullptr)
+	{
+		memset(other,0,sd.Height*sd.Width*mysize);
+		return other;
+	}
 	unsigned int i;
-	unsigned char *mem=(unsigned char *) lock_rect.pBits;
 
 	for (i=0; i<sd.Height; i++)
 	{
@@ -409,10 +721,10 @@ unsigned char *SurfaceClass::CreateCopy(int *width,int *height,int*size,bool fli
 		{
 			memcpy(&other[i*sd.Width*mysize],mem,mysize*sd.Width);
 		}
-		mem+=lock_rect.Pitch;
+		mem+=pitch;
 	}
 
-	DX8_ErrorCode(D3DSurface->UnlockRect());
+	Unlock_Rect();
 
 	return other;
 }
@@ -455,6 +767,30 @@ void SurfaceClass::Copy(
 
 	if (src.right>int(osd.Width)) src.right=int(osd.Width);
 	if (src.bottom>int(osd.Height)) src.bottom=int(osd.Height);
+
+	if (DX12Device::Is_Active())
+	{
+		RECT dest;
+		dest.left=dstx;
+		dest.right=dstx+width;
+		dest.top=dsty;
+		dest.bottom=dsty+height;
+
+		if (dest.right>int(sd.Width)) dest.right=int(sd.Width);
+		if (dest.bottom>int(sd.Height)) dest.bottom=int(sd.Height);
+
+		// Same size and format copies the source rect as is (CopyRects), anything else fits it
+		// into the clipped destination rect (D3DXLoadSurfaceFromSurface).
+		if (sd.Format==osd.Format && sd.Width==osd.Width && sd.Height==osd.Height)
+		{
+			dest.right=MIN(dest.left+(src.right-src.left),int(sd.Width));
+			dest.bottom=MIN(dest.top+(src.bottom-src.top),int(sd.Height));
+			src.right=src.left+(dest.right-dest.left);
+			src.bottom=src.top+(dest.bottom-dest.top);
+		}
+		Copy_DX12(dest,other,src);
+		return;
+	}
 
 	if (sd.Format==osd.Format && sd.Width==osd.Width && sd.Height==osd.Height)
 	{
@@ -516,6 +852,16 @@ void SurfaceClass::Stretch_Copy(
 	dest.top=dsty;
 	dest.bottom=dsty+dstheight;
 
+	if (DX12Device::Is_Active())
+	{
+		if (src.right>int(osd.Width)) src.right=int(osd.Width);
+		if (src.bottom>int(osd.Height)) src.bottom=int(osd.Height);
+		if (dest.right>int(sd.Width)) dest.right=int(sd.Width);
+		if (dest.bottom>int(sd.Height)) dest.bottom=int(sd.Height);
+		Copy_DX12(dest,other,src);
+		return;
+	}
+
 	DX8_ErrorCode(D3DXLoadSurfaceFromSurface(D3DSurface,nullptr,&dest,other->D3DSurface,nullptr,&src,D3DX_FILTER_TRIANGLE ,0));
 }
 
@@ -563,7 +909,8 @@ void SurfaceClass::FindBB(Vector2i *min,Vector2i*max)
 	rect.left=min->I;
 	rect.right=max->I;
 
-	DX8_ErrorCode(D3DSurface->LockRect(&lock_rect,&rect,D3DLOCK_READONLY));
+	lock_rect.pBits=Lock_Rect(&lock_rect.Pitch,&rect,true);
+	if (lock_rect.pBits == nullptr) return;
 
 	int x,y;
 	unsigned int size=::Get_Bytes_Per_Pixel(sd.Format);
@@ -587,7 +934,7 @@ void SurfaceClass::FindBB(Vector2i *min,Vector2i*max)
 		}
 	}
 
-	DX8_ErrorCode(D3DSurface->UnlockRect());
+	Unlock_Rect();
 
 	*max=realmax;
 	*min=realmin;
@@ -641,7 +988,8 @@ bool SurfaceClass::Is_Transparent_Column(unsigned int column)
 	rect.left=column;
 	rect.right=column+1;
 
-	DX8_ErrorCode(D3DSurface->LockRect(&lock_rect,&rect,D3DLOCK_READONLY));
+	lock_rect.pBits=Lock_Rect(&lock_rect.Pitch,&rect,true);
+	if (lock_rect.pBits == nullptr) return true;
 
 	int y;
 
@@ -653,12 +1001,12 @@ bool SurfaceClass::Is_Transparent_Column(unsigned int column)
 		unsigned char myalpha=alpha[size-1];
 		myalpha=(myalpha>>(8-alphabits)) & mask;
 		if (myalpha) {
-			DX8_ErrorCode(D3DSurface->UnlockRect());
+			Unlock_Rect();
 			return false;
 		}
 	}
 
-	DX8_ErrorCode(D3DSurface->UnlockRect());
+	Unlock_Rect();
 	return true;
 }
 
@@ -862,6 +1210,7 @@ bool SurfaceClass::Is_Monochrome()
 
 	size=::Get_Bytes_Per_Pixel(sd.Format);
 	unsigned char *bits=(unsigned char*) Lock(&pitch);
+	if (bits == nullptr) return false;
 
 	Vector3 rgb;
 	bool mono=true;
@@ -912,6 +1261,7 @@ void SurfaceClass::Hue_Shift(const Vector3 &hsv_shift)
 
 	size=::Get_Bytes_Per_Pixel(sd.Format);
 	unsigned char *bits=(unsigned char*) Lock(&pitch);
+	if (bits == nullptr) return;
 
 	Vector3 rgb;
 

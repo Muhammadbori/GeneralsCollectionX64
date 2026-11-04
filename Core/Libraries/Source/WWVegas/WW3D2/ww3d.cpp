@@ -1365,6 +1365,9 @@ void WW3D::Make_Screen_Shot( const char * filename_base , const float gamma, con
 	// Originally this code took the front buffer and tried to lock it. This does not work when the
 	// render view clips outside the desktop boundaries. It crashed the game.
 	SurfaceClass* surface = DX8Wrapper::_Get_DX8_Back_Buffer();
+	// There is no readable back buffer in Direct3D 12 mode yet.
+	if (surface == nullptr)
+		return;
 
 	SurfaceClass::SurfaceDescription surfaceDesc;
 	surface->Get_Description(surfaceDesc);
@@ -1715,6 +1718,9 @@ void WW3D::Update_Movie_Capture()
 	// Originally this code took the front buffer and tried to lock it. This does not work when the
 	// render view clips outside the desktop boundaries. It crashed the game.
 	SurfaceClass* surface = DX8Wrapper::_Get_DX8_Back_Buffer();
+	// There is no readable back buffer in Direct3D 12 mode yet.
+	if (surface == nullptr)
+		return;
 
 	SurfaceClass::SurfaceDescription surfaceDesc;
 	surface->Get_Description(surfaceDesc);

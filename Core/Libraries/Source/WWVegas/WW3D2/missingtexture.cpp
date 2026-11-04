@@ -20,6 +20,8 @@
 #include "missingtexture.h"
 #include "texture.h"
 #include "dx8wrapper.h"
+#include "Backend/DX12/dx12device.h"
+#include "Backend/DX12/dx12resource.h"
 
 static unsigned missing_image_width=128;
 static unsigned missing_image_height=128;
@@ -29,9 +31,70 @@ extern unsigned int missing_image_palette[];
 extern unsigned int missing_image_pixels[];
 
 static IDirect3DTexture8 * _MissingTexture = nullptr;
+static DX12TextureClass * _DX12MissingTexture = nullptr;
+
+static const unsigned MISSING_TEXTURE_COLOR = 0x7FFF00FF;
+
+// Fills every level of a A8R8G8B8 Direct3D 12 texture with the missing texture color.
+static void Fill_DX12_Missing_Texture(DX12TextureClass *texture)
+{
+	for (unsigned level=0;level<texture->Get_Level_Count();++level)
+	{
+		int pitch=0;
+		unsigned char *bits=static_cast<unsigned char*>(texture->Lock(level,&pitch));
+		if (bits == nullptr)
+		{
+			continue;
+		}
+
+		for (unsigned y=0;y<texture->Get_Height(level);y++)
+		{
+			unsigned *buffer=reinterpret_cast<unsigned*>(bits+y*pitch);
+			for (unsigned x=0;x<texture->Get_Width(level);x++)
+			{
+				buffer[x]=MISSING_TEXTURE_COLOR;
+			}
+		}
+
+		texture->Unlock(level);
+	}
+}
+
+DX12TextureClass* MissingTexture::_Get_DX12_Missing_Texture()
+{
+	if (_DX12MissingTexture != nullptr)
+	{
+		_DX12MissingTexture->Add_Ref();
+	}
+	return _DX12MissingTexture;
+}
+
+DX12TextureClass* MissingTexture::_Create_DX12_Missing_Surface()
+{
+	DX12TextureClass *surface = DX12TextureClass::Create
+	(
+		missing_image_width,
+		missing_image_height,
+		WW3D_FORMAT_A8R8G8B8,
+		1,
+		true,
+		true
+	);
+	if (surface != nullptr)
+	{
+		Fill_DX12_Missing_Texture(surface);
+	}
+	return surface;
+}
 
 IDirect3DTexture8* MissingTexture::_Get_Missing_Texture()
 {
+	// There is no Direct3D 8 missing texture in Direct3D 12 mode.
+	if (DX12Device::Is_Active())
+	{
+		return nullptr;
+	}
+
 	WWASSERT(_MissingTexture);
 	_MissingTexture->AddRef();
 	return _MissingTexture;
@@ -39,6 +102,11 @@ IDirect3DTexture8* MissingTexture::_Get_Missing_Texture()
 
 IDirect3DSurface8* MissingTexture::_Create_Missing_Surface()
 {
+	if (DX12Device::Is_Active())
+	{
+		return nullptr;
+	}
+
 	IDirect3DSurface8 *texture_surface = nullptr;
 	DX8_ErrorCode(_MissingTexture->GetSurfaceLevel(0, &texture_surface));
 	D3DSURFACE_DESC texture_surface_desc;
@@ -59,6 +127,24 @@ IDirect3DSurface8* MissingTexture::_Create_Missing_Surface()
 void MissingTexture::_Init()
 {
 	WWASSERT(!_MissingTexture);
+
+	if (DX12Device::Is_Active())
+	{
+		WWASSERT(!_DX12MissingTexture);
+		_DX12MissingTexture = DX12TextureClass::Create
+		(
+			missing_image_width,
+			missing_image_height,
+			WW3D_FORMAT_A8R8G8B8,
+			MIP_LEVELS_ALL,
+			false
+		);
+		if (_DX12MissingTexture != nullptr)
+		{
+			Fill_DX12_Missing_Texture(_DX12MissingTexture);
+		}
+		return;
+	}
 
 	IDirect3DTexture8* tex=DX8Wrapper::_Create_DX8_Texture
 	(
@@ -130,8 +216,12 @@ void MissingTexture::_Init()
 
 void MissingTexture::_Deinit()
 {
-	_MissingTexture->Release();
-	_MissingTexture=nullptr;
+	REF_PTR_RELEASE(_DX12MissingTexture);
+	if (_MissingTexture)
+	{
+		_MissingTexture->Release();
+		_MissingTexture=nullptr;
+	}
 }
 
 unsigned int missing_image_palette[]={

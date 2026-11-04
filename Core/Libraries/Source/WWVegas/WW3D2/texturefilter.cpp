@@ -39,6 +39,7 @@
 
 #include "texturefilter.h"
 #include "dx8wrapper.h"
+#include "Backend/DX12/dx12device.h"
 
 const char* const TextureFilterClass::TextureFilterModeString[] = {
 	"None",
@@ -121,7 +122,11 @@ void TextureFilterClass::Apply(unsigned int stage)
 */
 void TextureFilterClass::_Init_Filters(TextureFilterMode texture_filter, AnisotropicFilterMode anisotropy_level)
 {
-	const D3DCAPS8& dx8caps=DX8Wrapper::Get_Current_Caps()->Get_DX8_Caps();
+	// Direct3D 12 supports every filter type the game uses.
+	const DWORD texture_filter_caps=DX12Device::Is_Active()
+		? (D3DPTFILTERCAPS_MINFLINEAR | D3DPTFILTERCAPS_MAGFLINEAR | D3DPTFILTERCAPS_MIPFLINEAR |
+			D3DPTFILTERCAPS_MINFANISOTROPIC | D3DPTFILTERCAPS_MAGFANISOTROPIC)
+		: DX8Wrapper::Get_Current_Caps()->Get_DX8_Caps().TextureFilterCaps;
 
 	// TheSuperHackers @info Init zero stage filter defaults, point filtering is the lowest type for non mip filtering
 	_MinTextureFilters[0][FILTER_TYPE_NONE]=D3DTEXF_POINT;
@@ -171,14 +176,14 @@ void TextureFilterClass::_Init_Filters(TextureFilterMode texture_filter, Anisotr
 
 	case TEXTURE_FILTER_BILINEAR:
 
-		if (dx8caps.TextureFilterCaps & D3DPTFILTERCAPS_MINFLINEAR) {
+		if (texture_filter_caps & D3DPTFILTERCAPS_MINFLINEAR) {
 			_MinTextureFilters[0][FILTER_TYPE_BEST]=D3DTEXF_LINEAR;
 		}
 		else {
 			_MinTextureFilters[0][FILTER_TYPE_BEST]=D3DTEXF_POINT;
 		}
 
-		if (dx8caps.TextureFilterCaps & D3DPTFILTERCAPS_MAGFLINEAR) {
+		if (texture_filter_caps & D3DPTFILTERCAPS_MAGFLINEAR) {
 			_MagTextureFilters[0][FILTER_TYPE_BEST]=D3DTEXF_LINEAR;
 		}
 		else {
@@ -190,21 +195,21 @@ void TextureFilterClass::_Init_Filters(TextureFilterMode texture_filter, Anisotr
 
 	case TEXTURE_FILTER_TRILINEAR:
 
-		if (dx8caps.TextureFilterCaps & D3DPTFILTERCAPS_MINFLINEAR) {
+		if (texture_filter_caps & D3DPTFILTERCAPS_MINFLINEAR) {
 			_MinTextureFilters[0][FILTER_TYPE_BEST]=D3DTEXF_LINEAR;
 		}
 		else {
 			_MinTextureFilters[0][FILTER_TYPE_BEST]=D3DTEXF_POINT;
 		}
 
-		if (dx8caps.TextureFilterCaps & D3DPTFILTERCAPS_MAGFLINEAR) {
+		if (texture_filter_caps & D3DPTFILTERCAPS_MAGFLINEAR) {
 			_MagTextureFilters[0][FILTER_TYPE_BEST]=D3DTEXF_LINEAR;
 		}
 		else {
 			_MagTextureFilters[0][FILTER_TYPE_BEST]=D3DTEXF_POINT;
 		}
 
-		if (dx8caps.TextureFilterCaps & D3DPTFILTERCAPS_MIPFLINEAR) {
+		if (texture_filter_caps & D3DPTFILTERCAPS_MIPFLINEAR) {
 			_MipMapFilters[0][FILTER_TYPE_BEST]=D3DTEXF_LINEAR;
 		}
 		else {
@@ -216,32 +221,32 @@ void TextureFilterClass::_Init_Filters(TextureFilterMode texture_filter, Anisotr
 
 	case TEXTURE_FILTER_ANISOTROPIC:
 
-		if (dx8caps.TextureFilterCaps & (D3DPTFILTERCAPS_MINFANISOTROPIC | D3DPTFILTERCAPS_MAGFANISOTROPIC)) {
+		if (texture_filter_caps & (D3DPTFILTERCAPS_MINFANISOTROPIC | D3DPTFILTERCAPS_MAGFANISOTROPIC)) {
 			// Set the Anisotropic filtering level for all stages
 			_Set_Max_Anisotropy(anisotropy_level);
 		}
 
-		if (dx8caps.TextureFilterCaps & D3DPTFILTERCAPS_MINFANISOTROPIC) {
+		if (texture_filter_caps & D3DPTFILTERCAPS_MINFANISOTROPIC) {
 			_MinTextureFilters[0][FILTER_TYPE_BEST]=D3DTEXF_ANISOTROPIC;
 		}
-		else if (dx8caps.TextureFilterCaps & D3DPTFILTERCAPS_MINFLINEAR) {
+		else if (texture_filter_caps & D3DPTFILTERCAPS_MINFLINEAR) {
 			_MinTextureFilters[0][FILTER_TYPE_BEST]=D3DTEXF_LINEAR;
 		}
 		else {
 			_MinTextureFilters[0][FILTER_TYPE_BEST]=D3DTEXF_POINT;
 		}
 
-		if (dx8caps.TextureFilterCaps & D3DPTFILTERCAPS_MAGFANISOTROPIC) {
+		if (texture_filter_caps & D3DPTFILTERCAPS_MAGFANISOTROPIC) {
 			_MagTextureFilters[0][FILTER_TYPE_BEST]=D3DTEXF_ANISOTROPIC;
 		}
-		else if (dx8caps.TextureFilterCaps & D3DPTFILTERCAPS_MAGFLINEAR) {
+		else if (texture_filter_caps & D3DPTFILTERCAPS_MAGFLINEAR) {
 			_MagTextureFilters[0][FILTER_TYPE_BEST]=D3DTEXF_LINEAR;
 		}
 		else {
 			_MagTextureFilters[0][FILTER_TYPE_BEST]=D3DTEXF_POINT;
 		}
 
-		if (dx8caps.TextureFilterCaps & D3DPTFILTERCAPS_MIPFLINEAR) {
+		if (texture_filter_caps & D3DPTFILTERCAPS_MIPFLINEAR) {
 			_MipMapFilters[0][FILTER_TYPE_BEST]=D3DTEXF_LINEAR;
 		}
 		else {

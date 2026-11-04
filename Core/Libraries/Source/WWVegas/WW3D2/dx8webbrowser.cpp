@@ -64,6 +64,10 @@ bool DX8WebBrowser::Initialize(	const char* badpageurl,
 											const char* mousefilename,
 											const char* mousebusyfilename)
 {
+	// The browser engine renders through the Direct3D 8 device, which does not exist in Direct3D 12 mode.
+	if (DX12Device::Is_Active())
+		return false;
+
 	if(pBrowser == 0)
 	{
 		// Initialize COM

@@ -44,6 +44,8 @@
 #include "WWMath/sphere.h"
 #include "WWLib/thread.h"
 #include "WWDebug/wwmemlog.h"
+#include "WW3D2/Backend/DX12/dx12device.h"
+#include "WW3D2/Backend/DX12/dx12resource.h"
 
 #define DEFAULT_IB_SIZE 5000
 
@@ -190,6 +192,11 @@ IndexBufferClass::WriteLockClass::WriteLockClass(IndexBufferClass* index_buffer_
 	index_buffer->Add_Ref();
 	switch (index_buffer->Type()) {
 	case BUFFER_TYPE_DX8:
+		if (DX12BufferClass* dx12_buffer=static_cast<DX8IndexBufferClass*>(index_buffer)->dx12_buffer) {
+			indices=(unsigned short*)dx12_buffer->Lock(0,index_buffer->Get_Index_Count()*sizeof(WORD),(flags&D3DLOCK_DISCARD)!=0);
+			WWASSERT(indices);
+			break;
+		}
 		DX8_Assert();
 		DX8_ErrorCode(static_cast<DX8IndexBufferClass*>(index_buffer)->Get_DX8_Index_Buffer()->Lock(
 			0,
@@ -216,6 +223,10 @@ IndexBufferClass::WriteLockClass::~WriteLockClass()
 	DX8_THREAD_ASSERT();
 	switch (index_buffer->Type()) {
 	case BUFFER_TYPE_DX8:
+		if (DX12BufferClass* dx12_buffer=static_cast<DX8IndexBufferClass*>(index_buffer)->dx12_buffer) {
+			dx12_buffer->Unlock();
+			break;
+		}
 		DX8_Assert();
 		DX8_ErrorCode(static_cast<DX8IndexBufferClass*>(index_buffer)->index_buffer->Unlock());
 		break;
@@ -241,6 +252,14 @@ IndexBufferClass::AppendLockClass::AppendLockClass(IndexBufferClass* index_buffe
 	index_buffer->Add_Ref();
 	switch (index_buffer->Type()) {
 	case BUFFER_TYPE_DX8:
+		if (DX12BufferClass* dx12_buffer=static_cast<DX8IndexBufferClass*>(index_buffer)->dx12_buffer) {
+			indices=(unsigned short*)dx12_buffer->Lock(
+				start_index*sizeof(unsigned short),
+				index_range*sizeof(unsigned short),
+				false);
+			WWASSERT(indices);
+			break;
+		}
 		DX8_Assert();
 		DX8_ErrorCode(static_cast<DX8IndexBufferClass*>(index_buffer)->index_buffer->Lock(
 			start_index*sizeof(unsigned short),
@@ -264,6 +283,10 @@ IndexBufferClass::AppendLockClass::~AppendLockClass()
 	DX8_THREAD_ASSERT();
 	switch (index_buffer->Type()) {
 	case BUFFER_TYPE_DX8:
+		if (DX12BufferClass* dx12_buffer=static_cast<DX8IndexBufferClass*>(index_buffer)->dx12_buffer) {
+			dx12_buffer->Unlock();
+			break;
+		}
 		DX8_Assert();
 		DX8_ErrorCode(static_cast<DX8IndexBufferClass*>(index_buffer)->index_buffer->Unlock());
 		break;
@@ -284,10 +307,18 @@ IndexBufferClass::AppendLockClass::~AppendLockClass()
 
 DX8IndexBufferClass::DX8IndexBufferClass(unsigned short index_count_,UsageType usage)
 	:
-	IndexBufferClass(BUFFER_TYPE_DX8,index_count_)
+	IndexBufferClass(BUFFER_TYPE_DX8,index_count_),
+	index_buffer(nullptr),
+	dx12_buffer(nullptr)
 {
 	DX8_THREAD_ASSERT();
 	WWASSERT(index_count);
+
+	if (DX12Device::Is_Active()) {
+		dx12_buffer=NEW_REF(DX12BufferClass,(sizeof(WORD)*index_count,(usage&USAGE_DYNAMIC)!=0));
+		return;
+	}
+
 	unsigned usage_flags=
 		D3DUSAGE_WRITEONLY|
 		((usage&USAGE_DYNAMIC) ? D3DUSAGE_DYNAMIC : 0)|
@@ -338,7 +369,10 @@ DX8IndexBufferClass::DX8IndexBufferClass(unsigned short index_count_,UsageType u
 
 DX8IndexBufferClass::~DX8IndexBufferClass()
 {
-	index_buffer->Release();
+	if (index_buffer) {
+		index_buffer->Release();
+	}
+	REF_PTR_RELEASE(dx12_buffer);
 }
 
 // ----------------------------------------------------------------------------
@@ -429,6 +463,15 @@ DynamicIBAccessClass::WriteLockClass::WriteLockClass(DynamicIBAccessClass* ib_ac
 	case BUFFER_TYPE_DYNAMIC_DX8:
 		WWASSERT(DynamicIBAccess);
 //		WWASSERT(!dynamic_dx8_index_buffer->Engine_Refs());
+		if (DX12BufferClass* dx12_buffer=static_cast<DX8IndexBufferClass*>(DynamicIBAccess->IndexBuffer)->Get_DX12_Buffer()) {
+			// Discard exactly where the Direct3D 8 path uses D3DLOCK_DISCARD
+			Indices=(unsigned short*)dx12_buffer->Lock(
+				DynamicIBAccess->IndexBufferOffset*sizeof(WORD),
+				DynamicIBAccess->Get_Index_Count()*sizeof(WORD),
+				!DynamicIBAccess->IndexBufferOffset);
+			WWASSERT(Indices);
+			break;
+		}
 		DX8_Assert();
 		DX8_ErrorCode(
 			static_cast<DX8IndexBufferClass*>(DynamicIBAccess->IndexBuffer)->Get_DX8_Index_Buffer()->Lock(
@@ -452,6 +495,10 @@ DynamicIBAccessClass::WriteLockClass::~WriteLockClass()
 	DX8_THREAD_ASSERT();
 	switch (DynamicIBAccess->Get_Type()) {
 	case BUFFER_TYPE_DYNAMIC_DX8:
+		if (DX12BufferClass* dx12_buffer=static_cast<DX8IndexBufferClass*>(DynamicIBAccess->IndexBuffer)->Get_DX12_Buffer()) {
+			dx12_buffer->Unlock();
+			break;
+		}
 		DX8_Assert();
 		DX8_ErrorCode(static_cast<DX8IndexBufferClass*>(DynamicIBAccess->IndexBuffer)->Get_DX8_Index_Buffer()->Unlock());
 		break;
@@ -487,7 +534,7 @@ void DynamicIBAccessClass::Allocate_DX8_Dynamic_Buffer()
 	// Create a new vb if one doesn't exist currently
 	if (!_DynamicDX8IndexBuffer) {
 		unsigned usage=DX8IndexBufferClass::USAGE_DYNAMIC;
-		if (DX8Wrapper::Get_Current_Caps()->Support_NPatches()) {
+		if (!DX12Device::Is_Active() && DX8Wrapper::Get_Current_Caps()->Support_NPatches()) {
 			usage|=DX8IndexBufferClass::USAGE_NPATCHES;
 		}
 

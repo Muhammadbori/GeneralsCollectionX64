@@ -14,6 +14,11 @@ set(WW3D2_SRC
     assetstatus.cpp
     assetstatus.h
     Backend/DX8Backend.cpp
+    Backend/DX12/dx12device.cpp
+    Backend/DX12/dx12device.h
+    Backend/DX12/dx12resource.cpp
+    Backend/DX12/dx12resource.h
+    Backend/DX12/dx12shaders.h
     bitmaphandler.cpp
     bitmaphandler.h
     bmp2d.cpp

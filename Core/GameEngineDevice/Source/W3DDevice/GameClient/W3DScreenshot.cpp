@@ -22,6 +22,7 @@
 #include "GameClient/InGameUI.h"
 #include "WW3D2/dx8wrapper.h"
 #include "WW3D2/surfaceclass.h"
+#include "WW3D2/Backend/DX12/dx12device.h"
 #include "WWLib/mpsc_intrusive_queue.h"
 #include <stb_image_write.h>
 
@@ -156,6 +157,13 @@ void W3D_TakeCompressedScreenshot(ScreenshotFormat format, Int jpegQuality)
 {
 	static constexpr const char* const ScreenshotFormatExtensions[] = { "jpg", "png" };
 	static_assert(ARRAY_SIZE(ScreenshotFormatExtensions) == SCREENSHOT_FORMAT_COUNT, "Incorrect array size");
+
+	// Reading back the swap chain is not supported by the Direct3D 12 renderer yet.
+	if (DX12Device::Is_Active())
+	{
+		DEBUG_LOG(("Screenshots are not supported in Direct3D 12 mode yet"));
+		return;
+	}
 
 	// The filename is created here so the timestamp matches the capture time.
 	char leafname[_MAX_FNAME];

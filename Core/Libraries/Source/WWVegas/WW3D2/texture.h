@@ -55,6 +55,7 @@ struct IDirect3DCubeTexture8;
 struct IDirect3DVolumeTexture8;
 
 class DX8Wrapper;
+class DX12TextureClass;
 class TextureLoader;
 class LoaderThreadClass;
 class TextureLoadTaskClass;
@@ -159,6 +160,13 @@ public:
 	IDirect3DBaseTexture8 *Peek_D3D_Base_Texture() const;
 	void Set_D3D_Base_Texture(IDirect3DBaseTexture8* tex);
 
+	// texture accessors (dx12). In Direct3D 12 mode the D3D texture above is always null.
+	DX12TextureClass *Peek_DX12_Texture() const;
+	void Set_DX12_Texture(DX12TextureClass* tex);
+
+	// True if either the Direct3D 8 or the Direct3D 12 texture object exists.
+	bool Has_Texture_Object() const { return D3DTexture != nullptr || DX12Texture != nullptr; }
+
 	PoolType Get_Pool() const { return Pool; }
 
 	bool Is_Missing_Texture();
@@ -177,6 +185,9 @@ public:
 
 	// Background texture loader will call this when texture has been loaded
 	virtual void Apply_New_Surface(IDirect3DBaseTexture8* tex, bool initialized, bool disable_auto_invalidation = false)=0;	// If the parameter is true, the texture will be flagged as initialised
+
+	// Direct3D 12 version of Apply_New_Surface. The texture may be null, which leaves nothing to bind.
+	virtual void Apply_New_DX12_Surface(DX12TextureClass* tex, bool initialized, bool disable_auto_invalidation = false);
 
 	MipCountType MipLevelCount;
 
@@ -204,6 +215,8 @@ protected:
 
 	void Load_Locked_Surface();
 	void Poke_Texture(IDirect3DBaseTexture8* tex) { D3DTexture = tex; }
+	// Takes over the caller's reference and releases the previous texture.
+	void Poke_DX12_Texture(DX12TextureClass* tex);
 
 	bool Initialized;
 
@@ -231,6 +244,9 @@ private:
 
 	// Direct3D texture object
 	IDirect3DBaseTexture8 *D3DTexture;
+
+	// Direct3D 12 texture object (owned reference)
+	DX12TextureClass *DX12Texture;
 
 	// Name
 	StringClass Name;
@@ -321,6 +337,7 @@ public:
 
 	// Background texture loader will call this when texture has been loaded
 	virtual void Apply_New_Surface(IDirect3DBaseTexture8* tex, bool initialized, bool disable_auto_invalidation = false) override;	// If the parameter is true, the texture will be flagged as initialised
+	virtual void Apply_New_DX12_Surface(DX12TextureClass* tex, bool initialized, bool disable_auto_invalidation = false) override;
 
 	// Get the surface of one of the mipmap levels (defaults to highest-resolution one)
 	SurfaceClass *Get_Surface_Level(unsigned int level = 0);

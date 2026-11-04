@@ -84,6 +84,8 @@
 #include "dx8texman.h"
 #include "WWLib/bound.h"
 #include "DbgHelpGuard.h"
+#include "WW3D2/Backend/DX12/dx12device.h"
+#include "WW3D2/Backend/DX12/dx12resource.h"
 #include <Utility/bit_adapter.h>
 
 #include "shdlib.h"
@@ -101,6 +103,9 @@ bool DX8Wrapper_IsWindowed = true;
 
 // FPU_PRESERVE
 int DX8Wrapper_PreserveFPU = 0;
+
+// -dx12, set by the command line parser before WW3D is initialized.
+bool DX8Wrapper_UseDX12 = false;
 
 /***********************************************************************************
 **
@@ -140,6 +145,10 @@ bool								DX8Wrapper::world_identity;
 unsigned							DX8Wrapper::RenderStates[256];
 unsigned							DX8Wrapper::TextureStageStates[MAX_TEXTURE_STAGES][32];
 IDirect3DBaseTexture8 *		DX8Wrapper::Textures[MAX_TEXTURE_STAGES];
+DX12TextureClass *			DX8Wrapper::DX12Textures[MAX_TEXTURE_STAGES];
+D3DMATERIAL8					DX8Wrapper::DX8Material;
+D3DLIGHT8						DX8Wrapper::DX8Lights[4];
+D3DVIEWPORT8					DX8Wrapper::DX12Viewport;
 RenderStateStruct				DX8Wrapper::render_state;
 unsigned							DX8Wrapper::render_state_changed;
 
@@ -185,6 +194,11 @@ Direct3DCreate8Type	Direct3DCreate8Ptr = nullptr;
 HINSTANCE D3D8Lib = nullptr;
 
 DX8_CleanupHook	 *DX8Wrapper::m_pCleanupHook=nullptr;
+
+namespace wrapper
+{
+void D3DMatrixIdentity(D3DMATRIX* dxm);
+} // namespace wrapper
 #ifdef EXTENDED_STATS
 DX8_Stats	 DX8Wrapper::stats;
 #endif
@@ -253,6 +267,12 @@ bool DX8Wrapper::Init(void * hwnd, bool lite)
 
 	// zero memory
 	memset(Textures,0,sizeof(IDirect3DBaseTexture8*)*MAX_TEXTURE_STAGES);
+	memset(DX12Textures,0,sizeof(DX12TextureClass*)*MAX_TEXTURE_STAGES);
+	memset(DX8Lights,0,sizeof(DX8Lights));
+	memset(&DX12Viewport,0,sizeof(DX12Viewport));
+	memset(&DX8Material,0,sizeof(DX8Material));
+	DX8Material.Diffuse.r=DX8Material.Diffuse.g=DX8Material.Diffuse.b=DX8Material.Diffuse.a=1.0f;
+	DX8Material.Ambient=DX8Material.Diffuse;
 	memset(RenderStates,0,sizeof(unsigned)*256);
 	memset(TextureStageStates,0,sizeof(unsigned)*32*MAX_TEXTURE_STAGES);
 	memset(Vertex_Shader_Constants,0,sizeof(Vector4)*MAX_VERTEX_SHADER_CONSTANTS);
@@ -292,7 +312,28 @@ bool DX8Wrapper::Init(void * hwnd, bool lite)
 
 	Invalidate_Cached_Render_States();
 
-	if (!lite) {
+	if (DX8Wrapper_UseDX12) {
+		DX12Device::Set_Requested(true);
+	}
+
+	if (!lite && DX12Device::Is_Requested()) {
+		// Direct3D 8 is not loaded at all in Direct3D 12 mode.
+		WWDEBUG_SAY(("Create Direct3D12 device"));
+		{
+			DbgHelpGuard dbgHelpGuard;
+			if (!DX12Device::Init(hwnd)) {
+				WWDEBUG_SAY(("Direct3D12 initialization failed"));
+				Shutdown();
+				return false;
+			}
+		}
+		IsInitted = true;
+
+		WWDEBUG_SAY(("Enumerate devices"));
+		Enumerate_DX12_Device();
+		WWDEBUG_SAY(("DX8Wrapper Init completed (Direct3D12)"));
+	}
+	else if (!lite) {
 		D3D8Lib = LoadLibrary("D3D8.DLL");
 
 		if (D3D8Lib == nullptr) return false;	// Return false at this point if init failed
@@ -340,6 +381,14 @@ void DX8Wrapper::Shutdown()
 
 		Set_Render_Target ((IDirect3DSurface8 *)nullptr);
 		Release_Device();
+	}
+	else if (DX12Device::Is_Active()) {
+		Release_Device();
+	}
+
+	Release_DX12_Textures();
+	if (DX12Device::Is_Active()) {
+		DX12Device::Shutdown();
 	}
 
 	if (D3DInterface) {
@@ -424,15 +473,23 @@ void DX8Wrapper::Invalidate_Cached_Render_States()
 {
 	render_state_changed=0;
 
+	// In Direct3D 12 mode the caches are the device state, so they must stay valid. Nothing can
+	// change the state behind the wrapper's back because there is no Direct3D 8 device.
+	const bool keep_states = DX12Device::Is_Active();
+
 	int a;
-	for (a=0;a<sizeof(RenderStates)/sizeof(unsigned);++a) {
-		RenderStates[a]=0x12345678;
+	if (!keep_states) {
+		for (a=0;a<sizeof(RenderStates)/sizeof(unsigned);++a) {
+			RenderStates[a]=0x12345678;
+		}
 	}
 	for (a=0;a<MAX_TEXTURE_STAGES;++a)
 	{
-		for (int b=0; b<32;b++)
-		{
-			TextureStageStates[a][b]=0x12345678;
+		if (!keep_states) {
+			for (int b=0; b<32;b++)
+			{
+				TextureStageStates[a][b]=0x12345678;
+			}
 		}
 		//Need to explicitly set texture to null, otherwise app will not be able to
 		//set it to null because of redundant state checker. MW
@@ -443,6 +500,7 @@ void DX8Wrapper::Invalidate_Cached_Render_States()
 		}
 		Textures[a]=nullptr;
 	}
+	Release_DX12_Textures();
 
 	ShaderClass::Invalidate();
 
@@ -450,7 +508,96 @@ void DX8Wrapper::Invalidate_Cached_Render_States()
 	Release_Render_State();
 
 	// (gth) clear the matrix shadows too
-	memset(&DX8Transforms, 0, sizeof(DX8Transforms));
+	if (!keep_states) {
+		memset(&DX8Transforms, 0, sizeof(DX8Transforms));
+	}
+}
+
+void DX8Wrapper::Release_DX12_Textures()
+{
+	for (unsigned i=0;i<MAX_TEXTURE_STAGES;++i) {
+		REF_PTR_RELEASE(DX12Textures[i]);
+	}
+}
+
+void DX8Wrapper::Set_DX12_Texture(unsigned stage, DX12TextureClass* texture)
+{
+	WWASSERT(stage<MAX_TEXTURE_STAGES);
+	if (stage>=MAX_TEXTURE_STAGES || DX12Textures[stage]==texture) return;
+
+	SNAPSHOT_SAY(("DX12 - SetTexture(%x) ",texture));
+	REF_PTR_SET(DX12Textures[stage],texture);
+	DX8_RECORD_TEXTURE_CHANGE();
+}
+
+// Direct3D 8 device defaults, so that every state a draw reads has a defined value.
+void DX8Wrapper::Set_DX12_Default_Device_States()
+{
+	unsigned a;
+	for (a=0;a<sizeof(RenderStates)/sizeof(unsigned);++a) {
+		RenderStates[a]=0;
+	}
+	RenderStates[D3DRS_ZENABLE]=D3DZB_TRUE;
+	RenderStates[D3DRS_FILLMODE]=D3DFILL_SOLID;
+	RenderStates[D3DRS_SHADEMODE]=D3DSHADE_GOURAUD;
+	RenderStates[D3DRS_ZWRITEENABLE]=TRUE;
+	RenderStates[D3DRS_LASTPIXEL]=TRUE;
+	RenderStates[D3DRS_SRCBLEND]=D3DBLEND_ONE;
+	RenderStates[D3DRS_DESTBLEND]=D3DBLEND_ZERO;
+	RenderStates[D3DRS_CULLMODE]=D3DCULL_CCW;
+	RenderStates[D3DRS_ZFUNC]=D3DCMP_LESSEQUAL;
+	RenderStates[D3DRS_ALPHAFUNC]=D3DCMP_ALWAYS;
+	RenderStates[D3DRS_FOGEND]=F2DW(1.0f);
+	RenderStates[D3DRS_FOGDENSITY]=F2DW(1.0f);
+	RenderStates[D3DRS_STENCILFAIL]=D3DSTENCILOP_KEEP;
+	RenderStates[D3DRS_STENCILZFAIL]=D3DSTENCILOP_KEEP;
+	RenderStates[D3DRS_STENCILPASS]=D3DSTENCILOP_KEEP;
+	RenderStates[D3DRS_STENCILFUNC]=D3DCMP_ALWAYS;
+	RenderStates[D3DRS_STENCILMASK]=0xffffffff;
+	RenderStates[D3DRS_STENCILWRITEMASK]=0xffffffff;
+	RenderStates[D3DRS_TEXTUREFACTOR]=0xffffffff;
+	RenderStates[D3DRS_CLIPPING]=TRUE;
+	RenderStates[D3DRS_LIGHTING]=TRUE;
+	RenderStates[D3DRS_COLORVERTEX]=TRUE;
+	RenderStates[D3DRS_LOCALVIEWER]=TRUE;
+	RenderStates[D3DRS_DIFFUSEMATERIALSOURCE]=D3DMCS_COLOR1;
+	RenderStates[D3DRS_SPECULARMATERIALSOURCE]=D3DMCS_COLOR2;
+	RenderStates[D3DRS_POINTSIZE]=F2DW(1.0f);
+	RenderStates[D3DRS_POINTSCALE_A]=F2DW(1.0f);
+	RenderStates[D3DRS_POINTSIZE_MAX]=F2DW(64.0f);
+	RenderStates[D3DRS_MULTISAMPLEANTIALIAS]=TRUE;
+	RenderStates[D3DRS_MULTISAMPLEMASK]=0xffffffff;
+	RenderStates[D3DRS_PATCHSEGMENTS]=F2DW(1.0f);
+	RenderStates[D3DRS_COLORWRITEENABLE]=0x0000000f;
+	RenderStates[D3DRS_BLENDOP]=D3DBLENDOP_ADD;
+
+	for (a=0;a<MAX_TEXTURE_STAGES;++a) {
+		for (int b=0;b<32;++b) {
+			TextureStageStates[a][b]=0;
+		}
+		TextureStageStates[a][D3DTSS_COLOROP]=(a==0) ? D3DTOP_MODULATE : D3DTOP_DISABLE;
+		TextureStageStates[a][D3DTSS_COLORARG1]=D3DTA_TEXTURE;
+		TextureStageStates[a][D3DTSS_COLORARG2]=D3DTA_CURRENT;
+		TextureStageStates[a][D3DTSS_ALPHAOP]=(a==0) ? D3DTOP_SELECTARG1 : D3DTOP_DISABLE;
+		TextureStageStates[a][D3DTSS_ALPHAARG1]=D3DTA_TEXTURE;
+		TextureStageStates[a][D3DTSS_ALPHAARG2]=D3DTA_CURRENT;
+		TextureStageStates[a][D3DTSS_COLORARG0]=D3DTA_CURRENT;
+		TextureStageStates[a][D3DTSS_ALPHAARG0]=D3DTA_CURRENT;
+		TextureStageStates[a][D3DTSS_RESULTARG]=D3DTA_CURRENT;
+		TextureStageStates[a][D3DTSS_TEXCOORDINDEX]=a;
+		TextureStageStates[a][D3DTSS_ADDRESSU]=D3DTADDRESS_WRAP;
+		TextureStageStates[a][D3DTSS_ADDRESSV]=D3DTADDRESS_WRAP;
+		TextureStageStates[a][D3DTSS_ADDRESSW]=D3DTADDRESS_WRAP;
+		TextureStageStates[a][D3DTSS_MAGFILTER]=D3DTEXF_POINT;
+		TextureStageStates[a][D3DTSS_MINFILTER]=D3DTEXF_POINT;
+		TextureStageStates[a][D3DTSS_MIPFILTER]=D3DTEXF_NONE;
+		TextureStageStates[a][D3DTSS_MAXANISOTROPY]=1;
+		TextureStageStates[a][D3DTSS_TEXTURETRANSFORMFLAGS]=D3DTTFF_DISABLE;
+	}
+
+	for (a=0;a<=D3DTS_WORLD;++a) {
+		wrapper::D3DMatrixIdentity(&DX8Transforms[a]);
+	}
 }
 
 void DX8Wrapper::Do_Onetime_Device_Dependent_Shutdowns()
@@ -610,6 +757,18 @@ bool DX8Wrapper::Reset_Device(bool reload_assets)
 {
 	WWDEBUG_SAY(("Resetting device."));
 	DX8_THREAD_ASSERT();
+	if (IsInitted && DX12Device::Is_Active()) {
+		// A Direct3D 12 device is never lost and keeps every resource, so a reset only resizes the
+		// swap chain. The wrapper's state caches stay valid.
+		if (!DX12Device::Set_Resolution(ResolutionWidth, ResolutionHeight)) {
+			WWDEBUG_SAY(("Device reset failed"));
+			return false;
+		}
+		D3DVIEWPORT8 vp = { 0, 0, (DWORD)ResolutionWidth, (DWORD)ResolutionHeight, 0.0f, 1.0f };
+		Set_Viewport(&vp);
+		WWDEBUG_SAY(("Device reset completed"));
+		return true;
+	}
 	if ((IsInitted) && (D3DDevice != nullptr)) {
 		// Release all non-MANAGED stuff
 		WW3D::_Invalidate_Textures();
@@ -635,7 +794,7 @@ bool DX8Wrapper::Reset_Device(bool reload_assets)
 
 		HRESULT hr=_Get_D3D_Device8()->TestCooperativeLevel();
 		if (hr != D3DERR_DEVICELOST )
-		{	DX8CALL_HRES(Reset(&_PresentParameters),hr)
+		{	DX8CALL_HRES(Reset(&_PresentParameters),hr);
 			if (hr != D3D_OK)
 				return false;	//reset failed.
 		}
@@ -661,6 +820,22 @@ bool DX8Wrapper::Reset_Device(bool reload_assets)
 
 void DX8Wrapper::Release_Device()
 {
+	if (DX12Device::Is_Active()) {
+		// The Direct3D 12 device itself is destroyed by Shutdown.
+		if (CurrentCaps) {
+			for (unsigned i=0;i<MAX_VERTEX_STREAMS;++i)
+			{
+				if (render_state.vertex_buffers[i]) render_state.vertex_buffers[i]->Release_Engine_Ref();
+				REF_PTR_RELEASE(render_state.vertex_buffers[i]);
+			}
+			if (render_state.index_buffer) render_state.index_buffer->Release_Engine_Ref();
+			REF_PTR_RELEASE(render_state.index_buffer);
+
+			Do_Onetime_Device_Dependent_Shutdowns();
+		}
+		return;
+	}
+
 	if (D3DDevice) {
 
 		for (int a=0;a<MAX_TEXTURE_STAGES;++a)
@@ -788,6 +963,49 @@ void DX8Wrapper::Enumerate_Devices()
 			}
 		}
 	}
+}
+
+// Direct3D 12 mode has a single render device: the adapter DX12Device picked, with its display
+// modes, all reported as 32 bit.
+void DX8Wrapper::Enumerate_DX12_Device()
+{
+	WWASSERT(DX12Device::Is_Active());
+
+	::ZeroMemory(&CurrentAdapterIdentifier, sizeof(D3DADAPTER_IDENTIFIER8));
+	const char * adapter_name = DX12Device::Get_Adapter_Name();
+	strlcpy(CurrentAdapterIdentifier.Description, adapter_name ? adapter_name : "Direct3D 12", sizeof(CurrentAdapterIdentifier.Description));
+	strlcpy(CurrentAdapterIdentifier.Driver, "d3d12.dll", sizeof(CurrentAdapterIdentifier.Driver));
+	CurrentAdapterIdentifier.VendorId = DX12Device::Get_Vendor_Id();
+	CurrentAdapterIdentifier.DeviceId = DX12Device::Get_Device_Id();
+
+	RenderDeviceDescClass desc;
+	desc.set_device_name(CurrentAdapterIdentifier.Description);
+	desc.set_driver_name(CurrentAdapterIdentifier.Driver);
+	desc.set_driver_version("12.0.0.0");
+
+	DX8Caps dx12caps(CurrentAdapterIdentifier);
+	desc.Caps = dx12caps.Get_DX8_Caps();
+	desc.AdapterIdentifier = CurrentAdapterIdentifier;
+
+	desc.reset_resolution_list();
+	const int mode_count = DX12Device::Get_Display_Mode_Count();
+	for (int mode_index=0; mode_index<mode_count; mode_index++) {
+		DX12Device::DisplayMode mode = DX12Device::Get_Display_Mode(mode_index);
+		if (mode.Width > 0 && mode.Height > 0) {
+			desc.add_resolution(mode.Width, mode.Height, 32);
+		}
+	}
+
+	// The adapter may not report modes (for example a render-only adapter), but the game window can
+	// still be presented to, so offer the desktop resolution.
+	if (desc.Enumerate_Resolutions().Count() == 0) {
+		desc.add_resolution(::GetSystemMetrics(SM_CXSCREEN), ::GetSystemMetrics(SM_CYSCREEN), 32);
+	}
+
+	StringClass device_name(CurrentAdapterIdentifier.Description,true);
+	_RenderDeviceNameTable.Add(device_name);
+	_RenderDeviceShortNameTable.Add(device_name);
+	_RenderDeviceDescriptionTable.Add(desc);
 }
 
 bool DX8Wrapper::Set_Any_Render_Device()
@@ -1016,6 +1234,10 @@ bool DX8Wrapper::Set_Render_Device(int dev, int width, int height, int bits, int
 		Resize_And_Position_Window();
 	}
 #endif
+	if (DX12Device::Is_Active()) {
+		return Set_DX12_Render_Device(reset_device, restore_assets);
+	}
+
 	//must be either resetting existing device or creating a new one.
 	WWASSERT(reset_device || D3DDevice == nullptr);
 
@@ -1167,6 +1389,60 @@ bool DX8Wrapper::Set_Render_Device(int dev, int width, int height, int bits, int
 	return ret;
 }
 
+// Direct3D 12 part of Set_Render_Device. The swap chain always presents to the game window
+// (fullscreen is the borderless window set up by Resize_And_Position_Window) in 32 bit with a
+// D24S8 depth buffer. _PresentParameters is kept up to date for the code that reads it.
+bool DX8Wrapper::Set_DX12_Render_Device(bool reset_device, bool restore_assets)
+{
+	BitDepth = 32;
+	DisplayFormat = D3DFMT_X8R8G8B8;
+	MultiSampleAntiAliasing = D3DMULTISAMPLE_NONE;
+
+	const UINT presentation_interval = _PresentParameters.FullScreen_PresentationInterval;
+	::ZeroMemory(&_PresentParameters, sizeof(D3DPRESENT_PARAMETERS));
+	_PresentParameters.BackBufferWidth = ResolutionWidth;
+	_PresentParameters.BackBufferHeight = ResolutionHeight;
+	_PresentParameters.BackBufferCount = 1;
+	_PresentParameters.BackBufferFormat = D3DFMT_A8R8G8B8;
+	_PresentParameters.SwapEffect = D3DSWAPEFFECT_DISCARD;
+	_PresentParameters.hDeviceWindow = _Hwnd;
+	_PresentParameters.Windowed = TRUE;
+	_PresentParameters.EnableAutoDepthStencil = TRUE;
+	_PresentParameters.AutoDepthStencilFormat = D3DFMT_D24S8;
+	_PresentParameters.MultiSampleType = D3DMULTISAMPLE_NONE;
+	_PresentParameters.FullScreen_PresentationInterval = presentation_interval ? presentation_interval : D3DPRESENT_INTERVAL_DEFAULT;
+	_PresentParameters.FullScreen_RefreshRateInHz = D3DPRESENT_RATE_DEFAULT;
+
+	bool ret;
+	if (reset_device && CurrentCaps != nullptr) {
+		WWDEBUG_SAY(("DX8Wrapper::Set_Render_Device is resetting the device."));
+		ret = Reset_Device(restore_assets);
+	}
+	else if (CurrentCaps != nullptr) {
+		// The device-dependent systems already exist; only the swap chain changes.
+		ret = DX12Device::Set_Resolution(ResolutionWidth, ResolutionHeight);
+	}
+	else {
+		ret = DX12Device::Set_Resolution(ResolutionWidth, ResolutionHeight);
+		if (ret) {
+			_DX8SingleThreaded = true;
+			Vertex_Processing_Behavior = D3DCREATE_HARDWARE_VERTEXPROCESSING;
+			Set_DX12_Default_Device_States();
+			Do_Onetime_Device_Dependent_Inits();
+		}
+	}
+
+	WWDEBUG_SAY(("Direct3D12 Set_Render_Device done: %dx%d, windowed: %d, success: %d", ResolutionWidth, ResolutionHeight, IsWindowed ? 1 : 0, ret ? 1 : 0));
+
+	if (ret) {
+		D3DVIEWPORT8 vp = { 0, 0, (DWORD)ResolutionWidth, (DWORD)ResolutionHeight, 0.0f, 1.0f };
+		Set_Viewport(&vp);
+		Render2DClass::Set_Screen_Resolution( RectClass( 0, 0, ResolutionWidth, ResolutionHeight ) );
+	}
+
+	return ret;
+}
+
 bool DX8Wrapper::Set_Next_Render_Device()
 {
 	int new_dev = (CurRenderDevice + 1) % _RenderDeviceNameTable.Count();
@@ -1241,6 +1517,12 @@ int DX8Wrapper::Get_Swap_Interval()
 
 bool DX8Wrapper::Has_Stencil()
 {
+	// The Direct3D 12 renderer does not emulate stencil states yet, so report no stencil buffer
+	// and let the game pick its stencil-free paths.
+	if (DX12Device::Is_Active()) {
+		return false;
+	}
+
 	bool has_stencil = (_PresentParameters.AutoDepthStencilFormat == D3DFMT_D24S8 ||
 						_PresentParameters.AutoDepthStencilFormat == D3DFMT_D24X4S4);
 	return has_stencil;
@@ -1287,13 +1569,18 @@ const char * DX8Wrapper::Get_Render_Device_Name(int device_index)
 
 bool DX8Wrapper::Set_Device_Resolution(int width,int height,int bits,int windowed, bool resize_window)
 {
-	if (D3DDevice != nullptr) {
+	if (D3DDevice != nullptr || DX12Device::Is_Active()) {
 
 		if (width != -1) {
 			_PresentParameters.BackBufferWidth = ResolutionWidth = width;
 		}
 		if (height != -1) {
 			_PresentParameters.BackBufferHeight = ResolutionHeight = height;
+		}
+		// Direct3D 12 fullscreen is a borderless window, so the windowed state can change freely.
+		if (DX12Device::Is_Active() && windowed != -1) {
+			IsWindowed = (windowed != 0);
+			DX8Wrapper_IsWindowed = IsWindowed;
 		}
 		if (resize_window)
 		{
@@ -1691,7 +1978,7 @@ unsigned long DX8Wrapper::Get_FrameCount() {return FrameCount;}
 
 void DX8_Assert()
 {
-	WWASSERT(DX8Wrapper::_Get_D3D8());
+	WWASSERT(DX8Wrapper::_Get_D3D8() || DX12Device::Is_Active());
 	DX8_THREAD_ASSERT();
 }
 
@@ -1703,7 +1990,12 @@ void DX8Wrapper::Begin_Scene()
 	DX8WebBrowser::Update();
 #endif
 
-	DX8CALL(BeginScene());
+	if (DX12Device::Is_Active()) {
+		DX12Device::Begin_Frame();
+	}
+	else {
+		DX8CALL(BeginScene());
+	}
 
 	DX8WebBrowser::Update();
 }
@@ -1715,7 +2007,17 @@ void DX8Wrapper::End_Scene(bool flip_frames)
 
 	DX8WebBrowser::Render(0);
 
-	if (flip_frames) {
+	if (DX12Device::Is_Active()) {
+		{
+			WWPROFILE("DX12Device::End_Frame()");
+			DX12Device::End_Frame(flip_frames);
+		}
+		if (flip_frames) {
+			IsDeviceLost=false;
+			FrameCount++;
+		}
+	}
+	else if (flip_frames) {
 		DX8_Assert();
 		HRESULT hr;
 		{
@@ -1760,6 +2062,7 @@ void DX8Wrapper::End_Scene(bool flip_frames)
 	Set_Index_Buffer(nullptr,0);
 	for (int i=0;i<CurrentCaps->Get_Max_Textures_Per_Pass();++i) Set_Texture(i,nullptr);
 	Set_Material(nullptr);
+	Release_DX12_Textures();
 }
 
 
@@ -1768,6 +2071,8 @@ void DX8Wrapper::Flip_To_Primary()
 	// If we are fullscreen and the current frame is odd then we need
 	// to force a page flip to ensure that the first buffer in the flipping
 	// chain is the one visible.
+	if (DX12Device::Is_Active()) return;
+
 	if (!_PresentParameters.Windowed) {
 		DX8_Assert();
 
@@ -1823,6 +2128,13 @@ void DX8Wrapper::Clear(bool clear_color, bool clear_z_stencil, const Vector3 &co
 {
 	DX8_THREAD_ASSERT();
 
+	if (DX12Device::Is_Active()) {
+		if (clear_color || clear_z_stencil) {
+			DX12Device::Clear(clear_color, clear_z_stencil, Convert_Color(color,dest_alpha), z, stencil);
+		}
+		return;
+	}
+
 	// If we try to clear a stencil buffer which is not there, the entire call will fail
 	// KJM fixed this to get format from back buffer (incase render to texture is used)
 	/*bool has_stencil = (	_PresentParameters.AutoDepthStencilFormat == D3DFMT_D15S1 ||
@@ -1862,12 +2174,22 @@ void DX8Wrapper::Clear(bool clear_color, bool clear_z_stencil, const Vector3 &co
 void DX8Wrapper::Set_Viewport(CONST D3DVIEWPORT8* pViewport)
 {
 	DX8_THREAD_ASSERT();
+	if (DX12Device::Is_Active()) {
+		WWASSERT(pViewport);
+		DX12Viewport=*pViewport;
+		DX12Device::Set_Viewport(pViewport->X, pViewport->Y, pViewport->Width, pViewport->Height, pViewport->MinZ, pViewport->MaxZ);
+		return;
+	}
 	DX8CALL(SetViewport(pViewport));
 }
 
 void DX8Wrapper::Get_Viewport(D3DVIEWPORT8* pViewport)
 {
 	DX8_THREAD_ASSERT();
+	if (DX12Device::Is_Active()) {
+		*pViewport=DX12Viewport;
+		return;
+	}
 	DX8CALL(GetViewport(pViewport));
 }
 
@@ -1875,36 +2197,53 @@ void DX8Wrapper::Get_Viewport(D3DVIEWPORT8* pViewport)
 //
 // Pass-through device calls whose result the caller inspects. These go
 // straight to the device without asserting or logging on failure, and do not
-// touch any of the wrapper's shadow state.
+// touch any of the wrapper's shadow state. Without a Direct3D 8 device
+// (Direct3D 12 mode) creation and render target calls fail cleanly.
 //
 // ----------------------------------------------------------------------------
 
 HRESULT DX8Wrapper::Get_DX8_Render_State_Raw(D3DRENDERSTATETYPE state, DWORD* value)
 {
+	if (D3DDevice == nullptr) {
+		if (value) *value = RenderStates[state];
+		return D3D_OK;
+	}
 	DX8_RECORD_DX8_CALLS();
 	return D3DDevice->GetRenderState(state, value);
 }
 
 HRESULT DX8Wrapper::Create_Vertex_Shader(const DWORD* declaration, const DWORD* function, DWORD* handle, DWORD usage)
 {
+	if (D3DDevice == nullptr) {
+		if (handle) *handle = 0;
+		return D3DERR_NOTAVAILABLE;
+	}
 	DX8_RECORD_DX8_CALLS();
 	return D3DDevice->CreateVertexShader(declaration, function, handle, usage);
 }
 
 HRESULT DX8Wrapper::Create_Pixel_Shader(const DWORD* function, DWORD* handle)
 {
+	if (D3DDevice == nullptr) {
+		if (handle) *handle = 0;
+		return D3DERR_NOTAVAILABLE;
+	}
 	DX8_RECORD_DX8_CALLS();
 	return D3DDevice->CreatePixelShader(function, handle);
 }
 
 HRESULT DX8Wrapper::Delete_Vertex_Shader(DWORD handle)
 {
+	if (D3DDevice == nullptr)
+		return D3D_OK;
 	DX8_RECORD_DX8_CALLS();
 	return D3DDevice->DeleteVertexShader(handle);
 }
 
 HRESULT DX8Wrapper::Delete_Pixel_Shader(DWORD handle)
 {
+	if (D3DDevice == nullptr)
+		return D3D_OK;
 	DX8_RECORD_DX8_CALLS();
 	return D3DDevice->DeletePixelShader(handle);
 }
@@ -1918,36 +2257,60 @@ HRESULT DX8Wrapper::Create_Texture_Raw(
 	D3DPOOL pool,
 	IDirect3DTexture8** texture)
 {
+	if (D3DDevice == nullptr) {
+		if (texture) *texture = nullptr;
+		return D3DERR_NOTAVAILABLE;
+	}
 	DX8_RECORD_DX8_CALLS();
 	return D3DDevice->CreateTexture(width, height, levels, usage, format, pool, texture);
 }
 
 HRESULT DX8Wrapper::Create_Image_Surface(unsigned width, unsigned height, D3DFORMAT format, IDirect3DSurface8** surface)
 {
+	if (D3DDevice == nullptr) {
+		if (surface) *surface = nullptr;
+		return D3DERR_NOTAVAILABLE;
+	}
 	DX8_RECORD_DX8_CALLS();
 	return D3DDevice->CreateImageSurface(width, height, format, surface);
 }
 
 HRESULT DX8Wrapper::Create_Vertex_Buffer_Raw(unsigned length, DWORD usage, DWORD fvf, D3DPOOL pool, IDirect3DVertexBuffer8** vertex_buffer)
 {
+	if (D3DDevice == nullptr) {
+		if (vertex_buffer) *vertex_buffer = nullptr;
+		return D3DERR_NOTAVAILABLE;
+	}
 	DX8_RECORD_DX8_CALLS();
 	return D3DDevice->CreateVertexBuffer(length, usage, fvf, pool, vertex_buffer);
 }
 
 HRESULT DX8Wrapper::Create_Index_Buffer_Raw(unsigned length, DWORD usage, D3DFORMAT format, D3DPOOL pool, IDirect3DIndexBuffer8** index_buffer)
 {
+	if (D3DDevice == nullptr) {
+		if (index_buffer) *index_buffer = nullptr;
+		return D3DERR_NOTAVAILABLE;
+	}
 	DX8_RECORD_DX8_CALLS();
 	return D3DDevice->CreateIndexBuffer(length, usage, format, pool, index_buffer);
 }
 
 HRESULT DX8Wrapper::Get_Render_Target_Surface(IDirect3DSurface8** surface)
 {
+	if (D3DDevice == nullptr) {
+		if (surface) *surface = nullptr;
+		return D3DERR_NOTAVAILABLE;
+	}
 	DX8_RECORD_DX8_CALLS();
 	return D3DDevice->GetRenderTarget(surface);
 }
 
 HRESULT DX8Wrapper::Get_Depth_Stencil_Surface(IDirect3DSurface8** surface)
 {
+	if (D3DDevice == nullptr) {
+		if (surface) *surface = nullptr;
+		return D3DERR_NOTAVAILABLE;
+	}
 	DX8_RECORD_DX8_CALLS();
 	return D3DDevice->GetDepthStencilSurface(surface);
 }
@@ -1956,6 +2319,8 @@ HRESULT DX8Wrapper::Get_Depth_Stencil_Surface(IDirect3DSurface8** surface)
 // CurrentDepthBuffer, DefaultDepthBuffer or IsRenderToTexture.
 HRESULT DX8Wrapper::Set_Render_Target_Raw(IDirect3DSurface8* render_target, IDirect3DSurface8* depth_buffer)
 {
+	if (D3DDevice == nullptr)
+		return D3DERR_INVALIDCALL;
 	DX8_RECORD_DX8_CALLS();
 	return D3DDevice->SetRenderTarget(render_target, depth_buffer);
 }
@@ -1967,12 +2332,17 @@ HRESULT DX8Wrapper::Copy_Rects(
 	IDirect3DSurface8* pDestinationSurface,
 	CONST POINT* pDestPointsArray)
 {
+	if (D3DDevice == nullptr)
+		return D3DERR_INVALIDCALL;
 	DX8_RECORD_DX8_CALLS();
 	return D3DDevice->CopyRects(pSourceSurface, pSourceRectsArray, cRects, pDestinationSurface, pDestPointsArray);
 }
 
 HRESULT DX8Wrapper::Test_Cooperative_Level()
 {
+	// A Direct3D 12 device is never lost.
+	if (D3DDevice == nullptr)
+		return DX12Device::Is_Active() ? D3D_OK : D3DERR_INVALIDCALL;
 	DX8_RECORD_DX8_CALLS();
 	return D3DDevice->TestCooperativeLevel();
 }
@@ -2175,12 +2545,23 @@ void DX8Wrapper::Draw_Sorting_IB_VB(
 	DX8_RECORD_INDEX_BUFFER_CHANGE();
 
 	DX8_RECORD_DRAW_CALLS();
-	DX8CALL(DrawIndexedPrimitive(
-		D3DPT_TRIANGLELIST,
-		0,		// start vertex
-		vertex_count,
-		dyn_ib_access.IndexBufferOffset,
-		polygon_count));
+	if (DX12Device::Is_Active()) {
+		Draw_DX12(
+			D3DPT_TRIANGLELIST,
+			dyn_ib_access.IndexBufferOffset,
+			polygon_count,
+			dyn_vb_access.VertexBufferOffset,
+			dyn_vb_access.VertexBuffer,
+			dyn_ib_access.IndexBuffer);
+	}
+	else {
+		DX8CALL(DrawIndexedPrimitive(
+			D3DPT_TRIANGLELIST,
+			0,		// start vertex
+			vertex_count,
+			dyn_ib_access.IndexBufferOffset,
+			polygon_count));
+	}
 
 	DX8_RECORD_RENDER(polygon_count,vertex_count,render_state.shader);
 }
@@ -2209,7 +2590,7 @@ void DX8Wrapper::Draw(
 	if (!_Is_Triangle_Draw_Enabled()) return;
 
 #ifdef DEBUG_LOGGING
-	if (WW3D::Is_Snapshot_Activated()) {
+	if (D3DDevice && WW3D::Is_Snapshot_Activated()) {
 		unsigned long passes=0;
 		SNAPSHOT_SAY(("ValidateDevice:"));
 		HRESULT res=D3DDevice->ValidateDevice(&passes);
@@ -2288,12 +2669,23 @@ void DX8Wrapper::Draw(
 				}*/
 				DX8_RECORD_RENDER(polygon_count,vertex_count,render_state.shader);
 				DX8_RECORD_DRAW_CALLS();
-				DX8CALL(DrawIndexedPrimitive(
-					(D3DPRIMITIVETYPE)primitive_type,
-					min_vertex_index,
-					vertex_count,
-					start_index+render_state.iba_offset,
-					polygon_count));
+				if (DX12Device::Is_Active()) {
+					Draw_DX12(
+						primitive_type,
+						start_index+render_state.iba_offset,
+						polygon_count,
+						render_state.index_base_offset+render_state.vba_offset,
+						render_state.vertex_buffers[0],
+						render_state.index_buffer);
+				}
+				else {
+					DX8CALL(DrawIndexedPrimitive(
+						(D3DPRIMITIVETYPE)primitive_type,
+						min_vertex_index,
+						vertex_count,
+						start_index+render_state.iba_offset,
+						polygon_count));
+				}
 			}
 			break;
 		case BUFFER_TYPE_SORTING:
@@ -2383,6 +2775,123 @@ void DX8Wrapper::Draw_Strip(
 //
 //
 // ----------------------------------------------------------------------------
+
+// ----------------------------------------------------------------------------
+//
+// Direct3D 12 draw. Everything the Direct3D 8 device would have used is read
+// back from the wrapper's caches, which Apply_Render_State_Changes has just
+// brought up to date.
+//
+// ----------------------------------------------------------------------------
+
+// Cache entries still holding the Invalidate_Cached_Render_States marker were never set.
+static unsigned DX12_State(unsigned value, unsigned default_value)
+{
+	return (value==0x12345678) ? default_value : value;
+}
+
+void DX8Wrapper::Draw_DX12(
+	unsigned primitive_type,
+	unsigned start_index,
+	unsigned polygon_count,
+	int base_vertex,
+	VertexBufferClass* vertex_buffer,
+	IndexBufferClass* index_buffer)
+{
+	if (vertex_buffer==nullptr || index_buffer==nullptr || polygon_count==0) return;
+
+	DX12BufferClass* vb=static_cast<DX8VertexBufferClass*>(vertex_buffer)->Get_DX12_Buffer();
+	DX12BufferClass* ib=static_cast<DX8IndexBufferClass*>(index_buffer)->Get_DX12_Buffer();
+	if (vb==nullptr || ib==nullptr) return;
+
+	const unsigned fvf=vertex_buffer->FVF_Info().Get_FVF();
+	if (fvf==0) {
+		// Vertex shader declarations are not supported in Direct3D 12 mode yet.
+		return;
+	}
+
+	unsigned index_count=0;
+	switch (primitive_type) {
+	case D3DPT_POINTLIST: index_count=polygon_count; break;
+	case D3DPT_LINELIST: index_count=polygon_count*2; break;
+	case D3DPT_LINESTRIP: index_count=polygon_count+1; break;
+	case D3DPT_TRIANGLELIST: index_count=polygon_count*3; break;
+	case D3DPT_TRIANGLESTRIP: index_count=polygon_count+2; break;
+	case D3DPT_TRIANGLEFAN: index_count=polygon_count+2; break;
+	default: WWASSERT(0); return;
+	}
+
+	DX12DrawDesc desc;
+	memset(&desc,0,sizeof(desc));
+
+	desc.PrimitiveType=primitive_type;
+	desc.IndexCount=index_count;
+	desc.StartIndex=start_index;
+	desc.BaseVertex=base_vertex;
+
+	desc.VertexAddress=vb->Get_GPU_Address();
+	desc.VertexBufferSize=vb->Get_Size();
+	desc.VertexStride=vertex_buffer->FVF_Info().Get_FVF_Size();
+	desc.FVF=fvf;
+
+	desc.IndexAddress=ib->Get_GPU_Address();
+	desc.IndexBufferSize=ib->Get_Size();
+
+	desc.World=&DX8Transforms[D3DTS_WORLD].m[0][0];
+	desc.View=&DX8Transforms[D3DTS_VIEW].m[0][0];
+	desc.Projection=&DX8Transforms[D3DTS_PROJECTION].m[0][0];
+
+	desc.AlphaBlendEnable=DX12_State(RenderStates[D3DRS_ALPHABLENDENABLE],FALSE)!=0;
+	desc.SrcBlend=DX12_State(RenderStates[D3DRS_SRCBLEND],D3DBLEND_ONE);
+	desc.DestBlend=DX12_State(RenderStates[D3DRS_DESTBLEND],D3DBLEND_ZERO);
+	desc.BlendOp=DX12_State(RenderStates[D3DRS_BLENDOP],D3DBLENDOP_ADD);
+	desc.ColorWriteMask=DX12_State(RenderStates[D3DRS_COLORWRITEENABLE],0xf)&0xf;
+	desc.ZEnable=DX12_State(RenderStates[D3DRS_ZENABLE],D3DZB_TRUE)!=D3DZB_FALSE;
+	desc.ZWriteEnable=DX12_State(RenderStates[D3DRS_ZWRITEENABLE],TRUE)!=0;
+	desc.ZFunc=DX12_State(RenderStates[D3DRS_ZFUNC],D3DCMP_LESSEQUAL);
+	desc.CullMode=DX12_State(RenderStates[D3DRS_CULLMODE],D3DCULL_CCW);
+	desc.FillMode=DX12_State(RenderStates[D3DRS_FILLMODE],D3DFILL_SOLID);
+	desc.DepthBias=(int)DX12_State(RenderStates[D3DRS_ZBIAS],0);
+	desc.AlphaTestEnable=DX12_State(RenderStates[D3DRS_ALPHATESTENABLE],FALSE)!=0;
+	desc.AlphaFunc=DX12_State(RenderStates[D3DRS_ALPHAFUNC],D3DCMP_ALWAYS);
+	desc.AlphaRef=DX12_State(RenderStates[D3DRS_ALPHAREF],0)&0xff;
+	desc.SpecularEnable=DX12_State(RenderStates[D3DRS_SPECULARENABLE],FALSE)!=0;
+	desc.TextureFactor=DX12_State(RenderStates[D3DRS_TEXTUREFACTOR],0xffffffff);
+
+	// There is no lighting emulation yet. Vertices without a diffuse color are white when unlit;
+	// lit ones get the material diffuse as the closest approximation.
+	if (DX12_State(RenderStates[D3DRS_LIGHTING],TRUE)) {
+		desc.MaterialDiffuse[0]=DX8Material.Diffuse.r;
+		desc.MaterialDiffuse[1]=DX8Material.Diffuse.g;
+		desc.MaterialDiffuse[2]=DX8Material.Diffuse.b;
+		desc.MaterialDiffuse[3]=DX8Material.Diffuse.a;
+	}
+	else {
+		desc.MaterialDiffuse[0]=desc.MaterialDiffuse[1]=desc.MaterialDiffuse[2]=desc.MaterialDiffuse[3]=1.0f;
+	}
+
+	for (unsigned stage=0;stage<DX12_MAX_STAGES;++stage) {
+		const unsigned* tss=TextureStageStates[stage];
+		desc.ColorOp[stage]=DX12_State(tss[D3DTSS_COLOROP],(stage==0) ? D3DTOP_MODULATE : D3DTOP_DISABLE);
+		desc.ColorArg0[stage]=DX12_State(tss[D3DTSS_COLORARG0],D3DTA_CURRENT);
+		desc.ColorArg1[stage]=DX12_State(tss[D3DTSS_COLORARG1],D3DTA_TEXTURE);
+		desc.ColorArg2[stage]=DX12_State(tss[D3DTSS_COLORARG2],D3DTA_CURRENT);
+		desc.AlphaOp[stage]=DX12_State(tss[D3DTSS_ALPHAOP],(stage==0) ? D3DTOP_SELECTARG1 : D3DTOP_DISABLE);
+		desc.AlphaArg0[stage]=DX12_State(tss[D3DTSS_ALPHAARG0],D3DTA_CURRENT);
+		desc.AlphaArg1[stage]=DX12_State(tss[D3DTSS_ALPHAARG1],D3DTA_TEXTURE);
+		desc.AlphaArg2[stage]=DX12_State(tss[D3DTSS_ALPHAARG2],D3DTA_CURRENT);
+		desc.TexCoordIndex[stage]=DX12_State(tss[D3DTSS_TEXCOORDINDEX],stage);
+		desc.MinFilter[stage]=DX12_State(tss[D3DTSS_MINFILTER],D3DTEXF_POINT);
+		desc.MagFilter[stage]=DX12_State(tss[D3DTSS_MAGFILTER],D3DTEXF_POINT);
+		desc.MipFilter[stage]=DX12_State(tss[D3DTSS_MIPFILTER],D3DTEXF_NONE);
+		desc.AddressU[stage]=DX12_State(tss[D3DTSS_ADDRESSU],D3DTADDRESS_WRAP);
+		desc.AddressV[stage]=DX12_State(tss[D3DTSS_ADDRESSV],D3DTADDRESS_WRAP);
+		desc.MaxAnisotropy[stage]=DX12_State(tss[D3DTSS_MAXANISOTROPY],1);
+		desc.Textures[stage]=DX12Textures[stage];
+	}
+
+	DX12Device::Draw(desc);
+}
 
 void DX8Wrapper::Apply_Render_State_Changes()
 {
@@ -2541,6 +3050,8 @@ IDirect3DTexture8 * DX8Wrapper::_Create_DX8_Texture
 	bool rendertarget
 )
 {
+	// No Direct3D 8 resources exist in Direct3D 12 mode.
+	if (DX12Device::Is_Active()) return nullptr;
 	DX8_THREAD_ASSERT();
 	DX8_Assert();
 	IDirect3DTexture8 *texture = nullptr;
@@ -2658,6 +3169,8 @@ IDirect3DTexture8 * DX8Wrapper::_Create_DX8_Texture
 	MipCountType mip_level_count
 )
 {
+	// No Direct3D 8 resources exist in Direct3D 12 mode.
+	if (DX12Device::Is_Active()) return nullptr;
 	DX8_THREAD_ASSERT();
 	DX8_Assert();
 	IDirect3DTexture8 *texture = nullptr;
@@ -2703,6 +3216,8 @@ IDirect3DTexture8 * DX8Wrapper::_Create_DX8_Texture
 	MipCountType mip_level_count
 )
 {
+	// No Direct3D 8 resources exist in Direct3D 12 mode.
+	if (DX12Device::Is_Active()) return nullptr;
 	DX8_THREAD_ASSERT();
 	DX8_Assert();
 	IDirect3DTexture8 *texture = nullptr;
@@ -2744,6 +3259,8 @@ IDirect3DTexture8 * DX8Wrapper::_Create_DX8_ZTexture
 	D3DPOOL pool
 )
 {
+	// No Direct3D 8 resources exist in Direct3D 12 mode.
+	if (DX12Device::Is_Active()) return nullptr;
 	DX8_THREAD_ASSERT();
 	DX8_Assert();
 	IDirect3DTexture8* texture = nullptr;
@@ -2826,6 +3343,8 @@ IDirect3DCubeTexture8* DX8Wrapper::_Create_DX8_Cube_Texture
 	bool rendertarget
 )
 {
+	// No Direct3D 8 resources exist in Direct3D 12 mode.
+	if (DX12Device::Is_Active()) return nullptr;
 	WWASSERT(width==height);
 	DX8_THREAD_ASSERT();
 	DX8_Assert();
@@ -2964,6 +3483,8 @@ IDirect3DVolumeTexture8* DX8Wrapper::_Create_DX8_Volume_Texture
 	D3DPOOL pool
 )
 {
+	// No Direct3D 8 resources exist in Direct3D 12 mode.
+	if (DX12Device::Is_Active()) return nullptr;
 	DX8_THREAD_ASSERT();
 	DX8_Assert();
 	IDirect3DVolumeTexture8* texture=nullptr;
@@ -3033,6 +3554,8 @@ IDirect3DVolumeTexture8* DX8Wrapper::_Create_DX8_Volume_Texture
 
 IDirect3DSurface8 * DX8Wrapper::_Create_DX8_Surface(unsigned int width, unsigned int height, WW3DFormat format)
 {
+	// No Direct3D 8 resources exist in Direct3D 12 mode.
+	if (DX12Device::Is_Active()) return nullptr;
 	DX8_THREAD_ASSERT();
 	DX8_Assert();
 
@@ -3048,6 +3571,8 @@ IDirect3DSurface8 * DX8Wrapper::_Create_DX8_Surface(unsigned int width, unsigned
 
 IDirect3DSurface8 * DX8Wrapper::_Create_DX8_Surface(const char *filename_)
 {
+	// No Direct3D 8 resources exist in Direct3D 12 mode.
+	if (DX12Device::Is_Active()) return nullptr;
 	DX8_THREAD_ASSERT();
 	DX8_Assert();
 
@@ -3125,6 +3650,10 @@ void DX8Wrapper::Compute_Caps(WW3DFormat display_format)
 	DX8_THREAD_ASSERT();
 	DX8_Assert();
 	delete CurrentCaps;
+	if (DX12Device::Is_Active()) {
+		CurrentCaps=new DX8Caps(Get_Current_Adapter_Identifier());
+		return;
+	}
 	CurrentCaps=new DX8Caps(_Get_D3D8(),D3DDevice,display_format,Get_Current_Adapter_Identifier());
 }
 
@@ -3298,6 +3827,8 @@ void DX8Wrapper::Set_Light_Environment(LightEnvironmentClass* light_env)
 
 IDirect3DSurface8 * DX8Wrapper::_Get_DX8_Front_Buffer()
 {
+	// No Direct3D 8 resources exist in Direct3D 12 mode.
+	if (DX12Device::Is_Active()) return nullptr;
 	DX8_THREAD_ASSERT();
 	D3DDISPLAYMODE mode;
 
@@ -3313,6 +3844,8 @@ IDirect3DSurface8 * DX8Wrapper::_Get_DX8_Front_Buffer()
 
 SurfaceClass * DX8Wrapper::_Get_DX8_Back_Buffer(unsigned int num)
 {
+	// No Direct3D 8 resources exist in Direct3D 12 mode.
+	if (DX12Device::Is_Active()) return nullptr;
 	DX8_THREAD_ASSERT();
 
 	IDirect3DSurface8 * bb;
@@ -3331,6 +3864,8 @@ SurfaceClass * DX8Wrapper::_Get_DX8_Back_Buffer(unsigned int num)
 TextureClass *
 DX8Wrapper::Create_Render_Target (int width, int height, WW3DFormat format)
 {
+	// No Direct3D 8 resources exist in Direct3D 12 mode.
+	if (DX12Device::Is_Active()) return nullptr;
 	DX8_THREAD_ASSERT();
 	DX8_Assert();
 	DX8_RECORD_DX8_CALLS();
@@ -3397,6 +3932,13 @@ void DX8Wrapper::Create_Render_Target
 	ZTextureClass** depth_buffer
 )
 {
+	// Render to texture is not supported in Direct3D 12 mode yet.
+	if (DX12Device::Is_Active()) {
+		*target=nullptr;
+		*depth_buffer=nullptr;
+		return;
+	}
+
 	DX8_THREAD_ASSERT();
 	DX8_Assert();
 	DX8_RECORD_DX8_CALLS();
@@ -3478,6 +4020,8 @@ void DX8Wrapper::Set_Render_Target_With_Z
 	ZTextureClass* ztexture
 )
 {
+	if (DX12Device::Is_Active()) return;
+
 	WWASSERT(texture!=nullptr);
 	IDirect3DSurface8 * d3d_surf = texture->Get_D3D_Surface_Level();
 	WWASSERT(d3d_surf != nullptr);
@@ -3503,6 +4047,8 @@ void DX8Wrapper::Set_Render_Target_With_Z
 void
 DX8Wrapper::Set_Render_Target(IDirect3DSwapChain8 *swap_chain)
 {
+	if (DX12Device::Is_Active()) return;
+
 	DX8_THREAD_ASSERT();
 	WWASSERT (swap_chain != nullptr);
 
@@ -3531,6 +4077,12 @@ DX8Wrapper::Set_Render_Target(IDirect3DSwapChain8 *swap_chain)
 void
 DX8Wrapper::Set_Render_Target(IDirect3DSurface8 *render_target, bool use_default_depth_buffer)
 {
+	// Direct3D 12 mode always renders to the back buffer.
+	if (DX12Device::Is_Active()) {
+		IsRenderToTexture = false;
+		return;
+	}
+
 	DX8_THREAD_ASSERT();
 	DX8_Assert();
 
@@ -3657,6 +4209,11 @@ void DX8Wrapper::Set_Render_Target
 	IDirect3DSurface8* depth_buffer
 )
 {
+	if (DX12Device::Is_Active()) {
+		IsRenderToTexture = false;
+		return;
+	}
+
 	DX8_THREAD_ASSERT();
 	DX8_Assert();
 
@@ -3762,6 +4319,8 @@ void DX8Wrapper::Set_Render_Target
 IDirect3DSwapChain8 *
 DX8Wrapper::Create_Additional_Swap_Chain (HWND render_window)
 {
+	// No Direct3D 8 resources exist in Direct3D 12 mode.
+	if (DX12Device::Is_Active()) return nullptr;
 	DX8_Assert();
 
 	//
@@ -3796,6 +4355,10 @@ void DX8Wrapper::Flush_DX8_Resource_Manager(unsigned int bytes)
 
 unsigned int DX8Wrapper::Get_Free_Texture_RAM()
 {
+	if (DX12Device::Is_Active()) {
+		const unsigned long long memory = DX12Device::Get_Dedicated_Video_Memory();
+		return (memory > 0x7fffffff) ? 0x7fffffff : (unsigned int)memory;
+	}
 	DX8_Assert();
 	DX8_RECORD_DX8_CALLS();
 	return DX8Wrapper::_Get_D3D_Device8()->GetAvailableTextureMem();
@@ -3807,6 +4370,9 @@ unsigned int DX8Wrapper::Get_Free_Texture_RAM()
 // Contrast - controls the difference between the maximum and the minimum of the curve
 void DX8Wrapper::Set_Gamma(float gamma,float bright,float contrast,bool calibrate,bool uselimit)
 {
+	// Gamma ramps are not supported in Direct3D 12 mode yet.
+	if (DX12Device::Is_Active()) return;
+
 	gamma=Bound(gamma,0.6f,6.0f);
 	bright=Bound(bright,-0.5f,0.5f);
 	contrast=Bound(contrast,0.5f,2.0f);
@@ -4622,5 +5188,8 @@ const char* DX8Wrapper::Get_DX8_Blend_Op_Name(unsigned value)
 
 WW3DFormat	DX8Wrapper::getBackBufferFormat()
 {
+	if (DX12Device::Is_Active()) {
+		return WW3D_FORMAT_A8R8G8B8;
+	}
 	return D3DFormat_To_WW3DFormat( _PresentParameters.BackBufferFormat );
 }

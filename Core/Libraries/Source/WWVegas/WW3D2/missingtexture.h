@@ -22,6 +22,7 @@
 
 struct IDirect3DTexture8;
 struct IDirect3DSurface8;
+class DX12TextureClass;
 
 class MissingTexture
 {
@@ -31,4 +32,9 @@ public:
 
 	static IDirect3DTexture8* _Get_Missing_Texture();		// Return a reference to missing texture
 	static IDirect3DSurface8* _Create_Missing_Surface();	// Create new surface which contain missing texture image
+
+	// Direct3D 12 versions of the above; the caller owns the returned reference. The surface is a CPU
+	// only texture with one level.
+	static DX12TextureClass* _Get_DX12_Missing_Texture();
+	static DX12TextureClass* _Create_DX12_Missing_Surface();
 };

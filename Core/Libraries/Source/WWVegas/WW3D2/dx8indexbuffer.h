@@ -45,6 +45,7 @@
 class DX8Wrapper;
 class SortingRendererClass;
 struct IDirect3DIndexBuffer8;
+class DX12BufferClass;
 class DX8IndexBufferClass;
 class SortingIndexBufferClass;
 
@@ -174,9 +175,12 @@ public:
 	void Copy(unsigned short* indices,unsigned start_index,unsigned index_count);
 
 	IDirect3DIndexBuffer8* Get_DX8_Index_Buffer()	{ return index_buffer; }
+	// Direct3D 12 mode only, null in Direct3D 8 mode.
+	DX12BufferClass* Get_DX12_Buffer() const	{ return dx12_buffer; }
 
 private:
 	IDirect3DIndexBuffer8*	index_buffer;		// actual dx8 index buffer
+	DX12BufferClass*			dx12_buffer;		// replaces index_buffer in Direct3D 12 mode
 };
 
 

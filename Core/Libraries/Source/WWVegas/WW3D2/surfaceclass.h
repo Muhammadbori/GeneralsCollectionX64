@@ -42,13 +42,17 @@
 #include "ww3dformat.h"
 
 struct IDirect3DSurface8;
+struct tagRECT;
 class Vector2i;
 class Vector3;
+class DX12TextureClass;
 
 /*************************************************************************
 **                             SurfaceClass
 **
 ** This is our surface class, which wraps IDirect3DSurface8.
+** In Direct3D 12 mode it wraps one level of a DX12TextureClass instead
+** (a CPU only texture for standalone surfaces).
 **
 ** Hector Yee 2/12/01 - added in fills, blits etc for font3d class
 **
@@ -73,6 +77,9 @@ class SurfaceClass : public RefCountClass
 
 		// Create the surface from a D3D pointer
 		SurfaceClass(IDirect3DSurface8 *d3d_surface);
+
+		// Create the surface from one level of a Direct3D 12 texture (keeps a reference to it)
+		SurfaceClass(DX12TextureClass *texture, unsigned level);
 
 		virtual ~SurfaceClass() override;
 
@@ -121,6 +128,8 @@ class SurfaceClass : public RefCountClass
 
 			// For use by TextureClass:
 		IDirect3DSurface8 *Peek_D3D_Surface() { return D3DSurface; }
+		DX12TextureClass *Peek_DX12_Texture() { return DX12Texture; }
+		unsigned Get_DX12_Level() const { return DX12Level; }
 
 		// Attaching and detaching a surface pointer
 		void	Attach (IDirect3DSurface8 *surface);
@@ -145,8 +154,22 @@ class SurfaceClass : public RefCountClass
 
 	private:
 
+		// Lock helpers shared by the Direct3D 8 and Direct3D 12 paths. A null rect locks the whole surface.
+		void *Lock_Rect(int *pitch, const tagRECT *rect, bool read_only);
+		void Unlock_Rect();
+
+		// Creates a Direct3D 12 texture holding a copy of this surface, with mipmaps generated from it.
+		DX12TextureClass *Create_DX12_Texture(unsigned levels);
+
+		// Direct3D 12 version of Copy/Stretch_Copy. The rects are already clipped to both surfaces.
+		void Copy_DX12(const tagRECT &dest, const SurfaceClass *source, const tagRECT &src);
+
 		// Direct3D surface object
 		IDirect3DSurface8 *D3DSurface;
+
+		// Direct3D 12 texture and level (owned reference)
+		DX12TextureClass *DX12Texture;
+		unsigned DX12Level;
 
 		WW3DFormat SurfaceFormat;
 	friend class TextureClass;

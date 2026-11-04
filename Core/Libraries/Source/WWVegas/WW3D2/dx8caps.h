@@ -223,6 +223,8 @@ public:
 
 	DX8Caps(IDirect3D8* direct3d, const D3DCAPS8& caps,WW3DFormat display_format, const D3DADAPTER_IDENTIFIER8& adapter_id);
 	DX8Caps(IDirect3D8* direct3d, IDirect3DDevice8* D3DDevice,WW3DFormat display_format, const D3DADAPTER_IDENTIFIER8& adapter_id);
+	// Direct3D 12 mode: describes what the Direct3D 12 renderer emulates, without Direct3D 8.
+	explicit DX8Caps(const D3DADAPTER_IDENTIFIER8& adapter_id);
 	static void Shutdown();
 
 	void Compute_Caps(WW3DFormat display_format, const D3DADAPTER_IDENTIFIER8& adapter_id);
@@ -287,6 +289,7 @@ private:
 	static DeviceTypeIntel Get_Intel_Device(unsigned device_id);
 
 	void Init_Caps(IDirect3DDevice8* D3DDevice);
+	void Init_DX12_Caps();
 	void Check_Texture_Format_Support(WW3DFormat display_format,const D3DCAPS8& caps);
 	void Check_Render_To_Texture_Support(WW3DFormat display_format,const D3DCAPS8& caps);
 	void Check_Depth_Stencil_Support(WW3DFormat display_format, const D3DCAPS8& caps);

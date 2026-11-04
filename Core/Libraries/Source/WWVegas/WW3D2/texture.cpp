@@ -57,6 +57,8 @@
 #include "meshmatdesc.h"
 #include "texturethumbnail.h"
 #include "WWDebug/wwprofile.h"
+#include "Backend/DX12/dx12device.h"
+#include "Backend/DX12/dx12resource.h"
 
 const unsigned DEFAULT_INACTIVATION_TIME=20000;
 
@@ -85,6 +87,7 @@ TextureBaseClass::TextureBaseClass
 )
 :	MipLevelCount(mip_level_count),
 	D3DTexture(nullptr),
+	DX12Texture(nullptr),
 	Initialized(false),
    Name(""),
 	FullPath(""),
@@ -124,6 +127,7 @@ TextureBaseClass::~TextureBaseClass()
 		D3DTexture->Release();
 		D3DTexture = nullptr;
 	}
+	REF_PTR_RELEASE(DX12Texture);
 
 	DX8TextureManagerClass::Remove(this);
 }
@@ -206,6 +210,7 @@ void TextureBaseClass::Invalidate()
 		D3DTexture->Release();
 		D3DTexture = nullptr;
 	}
+	REF_PTR_RELEASE(DX12Texture);
 
 	Initialized=false;
 
@@ -276,6 +281,61 @@ void TextureBaseClass::Set_D3D_Base_Texture(IDirect3DBaseTexture8* tex)
 	}
 }
 
+//**********************************************************************************************
+//! Returns a pointer to the dx12 texture
+/*!
+*/
+DX12TextureClass * TextureBaseClass::Peek_DX12_Texture() const
+{
+	LastAccessed=WW3D::Get_Sync_Time();
+	return DX12Texture;
+}
+
+//**********************************************************************************************
+//! Set the dx12 texture pointer.  Handles ref counts properly.
+/*!
+*/
+void TextureBaseClass::Set_DX12_Texture(DX12TextureClass* tex)
+{
+	LastAccessed=WW3D::Get_Sync_Time();
+	REF_PTR_SET(DX12Texture, tex);
+}
+
+//**********************************************************************************************
+//! Set the dx12 texture pointer, taking over the caller's reference.
+/*!
+*/
+void TextureBaseClass::Poke_DX12_Texture(DX12TextureClass* tex)
+{
+	if (DX12Texture != tex) {
+		REF_PTR_RELEASE(DX12Texture);
+	}
+	DX12Texture = tex;
+}
+
+//**********************************************************************************************
+//! Apply new dx12 texture
+/*!
+*/
+void TextureBaseClass::Apply_New_DX12_Surface
+(
+	DX12TextureClass* tex,
+	bool initialized,
+	bool disable_auto_invalidation
+)
+{
+	Set_DX12_Texture(tex);
+
+	if (initialized) Initialized=true;
+	if (disable_auto_invalidation) InactivationTime = 0;
+
+	if (initialized && tex)
+	{
+		Width=tex->Get_Width();
+		Height=tex->Get_Height();
+	}
+}
+
 
 //**********************************************************************************************
 //! Load locked surface
@@ -286,6 +346,7 @@ void TextureBaseClass::Load_Locked_Surface()
 	WWPROFILE(("TextureClass::Load_Locked_Surface()"));
 	if (D3DTexture) D3DTexture->Release();
 	D3DTexture=nullptr;
+	REF_PTR_RELEASE(DX12Texture);
 	TextureLoader::Request_Thumbnail(this);
 	Initialized=false;
 }
@@ -297,6 +358,14 @@ void TextureBaseClass::Load_Locked_Surface()
 */
 bool TextureBaseClass::Is_Missing_Texture()
 {
+	if (DX12Device::Is_Active())
+	{
+		DX12TextureClass *missing_dx12_texture = MissingTexture::_Get_DX12_Missing_Texture();
+		bool is_missing = (missing_dx12_texture != nullptr && DX12Texture == missing_dx12_texture);
+		REF_PTR_RELEASE(missing_dx12_texture);
+		return is_missing;
+	}
+
 	bool flag = false;
 	IDirect3DBaseTexture8 *missing_texture = MissingTexture::_Get_Missing_Texture();
 
@@ -330,6 +399,12 @@ void TextureBaseClass::Set_Texture_Name(const char * name)
 */
 unsigned int TextureBaseClass::Get_Priority()
 {
+	// Direct3D 12 has no managed pool, so texture priorities do not exist.
+	if (DX12Device::Is_Active())
+	{
+		return 0;
+	}
+
 	if (!D3DTexture)
 	{
 		WWASSERT_PRINT(0, "Get_Priority: D3DTexture is null!");
@@ -346,6 +421,11 @@ unsigned int TextureBaseClass::Get_Priority()
 */
 unsigned int TextureBaseClass::Set_Priority(unsigned int priority)
 {
+	if (DX12Device::Is_Active())
+	{
+		return 0;
+	}
+
 	if (!D3DTexture)
 	{
 		WWASSERT_PRINT(0, "Set_Priority: D3DTexture is null!");
@@ -388,6 +468,11 @@ unsigned TextureBaseClass::Get_Reduction() const
 void TextureBaseClass::Apply_Null(unsigned int stage)
 {
 	// This function sets the render states for a "null" texture
+	if (DX12Device::Is_Active())
+	{
+		DX8Wrapper::Set_DX12_Texture(stage, nullptr);
+		return;
+	}
 	DX8Wrapper::Set_DX8_Texture(stage, nullptr);
 }
 
@@ -611,6 +696,28 @@ TextureClass::TextureClass
 	default : break;
 	}
 
+	if (DX12Device::Is_Active())
+	{
+		// Render targets are not supported by the Direct3D 12 renderer yet. Procedural textures keep a
+		// CPU copy so that partial updates (font pages, radar, shroud) see the rest of the texture.
+		if (rendertarget)
+		{
+			WWDEBUG_SAY(("TextureClass: render target textures are not supported in Direct3D 12 mode (%d x %d)", width, height));
+		}
+		else
+		{
+			Poke_DX12_Texture(DX12TextureClass::Create(width, height, format, mip_level_count, true));
+		}
+
+		// Direct3D 12 textures are never lost, so default pool textures need no tracker.
+		if (pool==POOL_DEFAULT)
+		{
+			Set_Dirty();
+		}
+		LastAccessed=WW3D::Get_Sync_Time();
+		return;
+	}
+
 	D3DPOOL d3dpool=(D3DPOOL)0;
 	switch(pool)
 	{
@@ -780,6 +887,13 @@ TextureClass::TextureClass
 	default: break;
 	}
 
+	if (DX12Device::Is_Active())
+	{
+		Poke_DX12_Texture(surface->Create_DX12_Texture(mip_level_count));
+		LastAccessed=WW3D::Get_Sync_Time();
+		return;
+	}
+
 	Poke_Texture
 	(
 		DX8Wrapper::_Create_DX8_Texture
@@ -852,7 +966,7 @@ void TextureClass::Init()
 	}
 
 
-	if (!Peek_D3D_Base_Texture())
+	if (!Has_Texture_Object())
 	{
 		if (!WW3D::Get_Thumbnail_Enabled() || MipLevelCount==MIP_LEVELS_1)
 		{
@@ -914,6 +1028,26 @@ void TextureClass::Apply_New_Surface
 
 
 //**********************************************************************************************
+//! Apply new dx12 texture
+/*!
+*/
+void TextureClass::Apply_New_DX12_Surface
+(
+	DX12TextureClass* tex,
+	bool initialized,
+	bool disable_auto_invalidation
+)
+{
+	TextureBaseClass::Apply_New_DX12_Surface(tex, initialized, disable_auto_invalidation);
+
+	if (initialized && tex)
+	{
+		TextureFormat=tex->Get_Format();
+	}
+}
+
+
+//**********************************************************************************************
 //! Apply texture states
 /*!
 */
@@ -955,7 +1089,11 @@ void TextureClass::Apply(unsigned int stage)
 	DX8_RECORD_TEXTURE(this);
 
 	// Set texture itself
-	if (WW3D::Is_Texturing_Enabled())
+	if (DX12Device::Is_Active())
+	{
+		DX8Wrapper::Set_DX12_Texture(stage, WW3D::Is_Texturing_Enabled() ? Peek_DX12_Texture() : nullptr);
+	}
+	else if (WW3D::Is_Texturing_Enabled())
 	{
 		DX8Wrapper::Set_DX8_Texture(stage, Peek_D3D_Base_Texture());
 	}
@@ -973,6 +1111,17 @@ void TextureClass::Apply(unsigned int stage)
 */
 SurfaceClass *TextureClass::Get_Surface_Level(unsigned int level)
 {
+	if (DX12Device::Is_Active())
+	{
+		DX12TextureClass *dx12_texture = Peek_DX12_Texture();
+		if (dx12_texture == nullptr || level >= dx12_texture->Get_Level_Count())
+		{
+			WWDEBUG_SAY(("Get_Surface_Level: no Direct3D 12 texture level %u for %s", level, Get_Texture_Name().str()));
+			return nullptr;
+		}
+		return new SurfaceClass(dx12_texture, level);
+	}
+
 	if (!Peek_D3D_Texture())
 	{
 		WWASSERT_PRINT(0, "Get_Surface_Level: D3DTexture is null!");
@@ -993,6 +1142,18 @@ SurfaceClass *TextureClass::Get_Surface_Level(unsigned int level)
 */
 void TextureClass::Get_Level_Description( SurfaceClass::SurfaceDescription & desc, unsigned int level )
 {
+	if (DX12Device::Is_Active())
+	{
+		DX12TextureClass *dx12_texture = Peek_DX12_Texture();
+		if (dx12_texture != nullptr && level < dx12_texture->Get_Level_Count())
+		{
+			desc.Format = dx12_texture->Get_Format();
+			desc.Width = dx12_texture->Get_Width(level);
+			desc.Height = dx12_texture->Get_Height(level);
+		}
+		return;
+	}
+
 	SurfaceClass * surf = Get_Surface_Level(level);
 	if (surf != nullptr) {
 		surf->Get_Description(desc);
@@ -1006,6 +1167,11 @@ void TextureClass::Get_Level_Description( SurfaceClass::SurfaceDescription & des
 */
 IDirect3DSurface8 *TextureClass::Get_D3D_Surface_Level(unsigned int level)
 {
+	if (DX12Device::Is_Active())
+	{
+		return nullptr;
+	}
+
 	if (!Peek_D3D_Texture())
 	{
 		WWASSERT_PRINT(0, "Get_D3D_Surface_Level: D3DTexture is null!");
@@ -1024,6 +1190,16 @@ IDirect3DSurface8 *TextureClass::Get_D3D_Surface_Level(unsigned int level)
 unsigned TextureClass::Get_Texture_Memory_Usage() const
 {
 	int size=0;
+	if (DX12Device::Is_Active())
+	{
+		DX12TextureClass *dx12_texture = Peek_DX12_Texture();
+		if (dx12_texture == nullptr) return 0;
+		for (unsigned i=0;i<dx12_texture->Get_Level_Count();++i)
+		{
+			size+=dx12_texture->Get_Level_Size(i);
+		}
+		return size;
+	}
 	if (!Peek_D3D_Texture()) return 0;
 	for (unsigned i=0;i<Peek_D3D_Texture()->GetLevelCount();++i)
 	{
@@ -1205,6 +1381,16 @@ ZTextureClass::ZTextureClass
 :	TextureBaseClass(width,height, mip_level_count, pool),
 	DepthStencilTextureFormat(zformat)
 {
+	// Depth textures are not supported by the Direct3D 12 renderer yet; the texture stays empty.
+	if (DX12Device::Is_Active())
+	{
+		Initialized=true;
+		IsProcedural=true;
+		IsReducible=false;
+		LastAccessed=WW3D::Get_Sync_Time();
+		return;
+	}
+
 	D3DPOOL d3dpool=(D3DPOOL)0;
 	switch (pool)
 	{
@@ -1253,6 +1439,11 @@ ZTextureClass::ZTextureClass
 */
 void ZTextureClass::Apply(unsigned int stage)
 {
+	if (DX12Device::Is_Active())
+	{
+		DX8Wrapper::Set_DX12_Texture(stage, nullptr);
+		return;
+	}
 	DX8Wrapper::Set_DX8_Texture(stage, Peek_D3D_Base_Texture());
 }
 
@@ -1298,6 +1489,11 @@ void ZTextureClass::Apply_New_Surface
 */
 IDirect3DSurface8* ZTextureClass::Get_D3D_Surface_Level(unsigned int level)
 {
+	if (DX12Device::Is_Active())
+	{
+		return nullptr;
+	}
+
 	if (!Peek_D3D_Texture())
 	{
 		WWASSERT_PRINT(0, "Get_D3D_Surface_Level: D3DTexture is null!");
@@ -1357,6 +1553,15 @@ CubeTextureClass::CubeTextureClass
 		IsCompressionAllowed=true;
 		break;
 	default : break;
+	}
+
+	// Cube textures are not supported by the Direct3D 12 renderer yet. Drop the 2D texture that the
+	// TextureClass constructor created; the texture stays empty.
+	if (DX12Device::Is_Active())
+	{
+		Poke_DX12_Texture(nullptr);
+		LastAccessed=WW3D::Get_Sync_Time();
+		return;
 	}
 
 	D3DPOOL d3dpool=(D3DPOOL)0;
@@ -1641,6 +1846,15 @@ VolumeTextureClass::VolumeTextureClass
 		IsCompressionAllowed=true;
 		break;
 	default : break;
+	}
+
+	// Volume textures are not supported by the Direct3D 12 renderer yet. Drop the 2D texture that the
+	// TextureClass constructor created; the texture stays empty.
+	if (DX12Device::Is_Active())
+	{
+		Poke_DX12_Texture(nullptr);
+		LastAccessed=WW3D::Get_Sync_Time();
+		return;
 	}
 
 	D3DPOOL d3dpool=(D3DPOOL)0;

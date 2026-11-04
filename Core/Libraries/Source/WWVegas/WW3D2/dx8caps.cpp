@@ -508,6 +508,204 @@ DX8Caps::DX8Caps(
 	Compute_Caps(display_format,adapter_id);
 }
 
+DX8Caps::DX8Caps(const D3DADAPTER_IDENTIFIER8& adapter_id)
+	:
+	Direct3D(nullptr),
+	MaxDisplayWidth(0),
+	MaxDisplayHeight(0)
+{
+	Init_DX12_Caps();
+
+	CapsLog="";
+	CompactLog="";
+	DXLOG(("Video Card: %s\r\n",adapter_id.Description));
+	DXLOG(("Driver: Direct3D 12\r\n"));
+
+	DriverDLL=adapter_id.Driver;
+	DriverBuildVersion=0;
+	DriverVersionStatus=DRIVER_STATUS_GOOD;
+
+	VendorId=Define_Vendor(adapter_id.VendorId);
+	switch (VendorId) {
+	case VENDOR_NVIDIA: DeviceId=(unsigned)Get_NVidia_Device(adapter_id.DeviceId); break;
+	case VENDOR_ATI: DeviceId=(unsigned)Get_ATI_Device(adapter_id.DeviceId); break;
+	case VENDOR_INTEL: DeviceId=(unsigned)Get_Intel_Device(adapter_id.DeviceId); break;
+	case VENDOR_S3: DeviceId=(unsigned)Get_S3_Device(adapter_id.DeviceId); break;
+	case VENDOR_POWERVR: DeviceId=(unsigned)Get_PowerVR_Device(adapter_id.DeviceId); break;
+	case VENDOR_MATROX: DeviceId=(unsigned)Get_Matrox_Device(adapter_id.DeviceId); break;
+	case VENDOR_3DFX: DeviceId=(unsigned)Get_3Dfx_Device(adapter_id.DeviceId); break;
+	case VENDOR_3DLABS: DeviceId=(unsigned)Get_3DLabs_Device(adapter_id.DeviceId); break;
+	default: DeviceId=0; break;
+	}
+	DXLOG(("Video Card Chip Vendor: %s\r\n",VendorNames[VendorId]));
+	DXLOG(("Vendor id: 0x%x\r\n",adapter_id.VendorId));
+	DXLOG(("Device id: 0x%x\r\n",adapter_id.DeviceId));
+	COMPACTLOG(("%s\tDirect3D 12\t",VendorNames[VendorId]));
+
+	// The renderer emulates the Direct3D 8 fixed-function pipeline with two texture stages. The
+	// vendor specific hacks for 2002 era hardware do not apply.
+	SupportTnL=true;
+	SupportDXTC=true;
+	supportGamma=false;
+	SupportNPatches=false;
+	SupportBumpEnvmap=false;
+	SupportBumpEnvmapLuminance=false;
+	SupportZBias=true;
+	SupportAnisotropicFiltering=true;
+	SupportModAlphaAddClr=true;
+	SupportDot3=true;
+	SupportPointSprites=false;
+	SupportCubemaps=false;
+	CanDoMultiPass=true;
+	IsFogAllowed=true;
+	MaxTexturesPerPass=2;
+	MaxSimultaneousTextures=2;
+
+	// Zero shader versions keep the game on its fixed-function paths.
+	VertexShaderVersion=0;
+	PixelShaderVersion=0;
+
+	unsigned i;
+	for (i=0;i<WW3D_FORMAT_COUNT;++i) {
+		SupportTextureFormat[i]=false;
+		SupportRenderToTextureFormat[i]=false;
+	}
+	SupportTextureFormat[WW3D_FORMAT_A8R8G8B8]=true;
+	SupportTextureFormat[WW3D_FORMAT_X8R8G8B8]=true;
+	SupportTextureFormat[WW3D_FORMAT_R5G6B5]=true;
+	SupportTextureFormat[WW3D_FORMAT_A1R5G5B5]=true;
+	SupportTextureFormat[WW3D_FORMAT_X1R5G5B5]=true;
+	SupportTextureFormat[WW3D_FORMAT_A4R4G4B4]=true;
+	SupportTextureFormat[WW3D_FORMAT_A8]=true;
+	SupportTextureFormat[WW3D_FORMAT_L8]=true;
+	SupportTextureFormat[WW3D_FORMAT_A8L8]=true;
+	SupportTextureFormat[WW3D_FORMAT_DXT1]=true;
+	SupportTextureFormat[WW3D_FORMAT_DXT2]=true;
+	SupportTextureFormat[WW3D_FORMAT_DXT3]=true;
+	SupportTextureFormat[WW3D_FORMAT_DXT4]=true;
+	SupportTextureFormat[WW3D_FORMAT_DXT5]=true;
+
+	for (i=0;i<WW3D_ZFORMAT_COUNT;++i) {
+		SupportDepthStencilFormat[i]=false;
+	}
+	SupportDepthStencilFormat[WW3D_ZFORMAT_D16]=true;
+	SupportDepthStencilFormat[WW3D_ZFORMAT_D24S8]=true;
+	SupportDepthStencilFormat[WW3D_ZFORMAT_D32]=true;
+
+	DXLOG(("Hardware T&L support: Yes\r\n"));
+	DXLOG(("Max textures per pass: %d\r\n",MaxTexturesPerPass));
+	CapsWorkString="";
+}
+
+// A plausible Direct3D 8 caps structure for the code that reads it directly.
+void DX8Caps::Init_DX12_Caps()
+{
+	::ZeroMemory(&Caps, sizeof(Caps));
+
+	Caps.DeviceType=D3DDEVTYPE_HAL;
+	Caps.AdapterOrdinal=0;
+	Caps.Caps2=D3DCAPS2_CANRENDERWINDOWED|D3DCAPS2_DYNAMICTEXTURES;
+	Caps.Caps3=D3DCAPS3_ALPHA_FULLSCREEN_FLIP_OR_DISCARD;
+	Caps.PresentationIntervals=D3DPRESENT_INTERVAL_IMMEDIATE|D3DPRESENT_INTERVAL_ONE;
+	Caps.CursorCaps=0;
+	Caps.DevCaps=
+		D3DDEVCAPS_EXECUTEVIDEOMEMORY|
+		D3DDEVCAPS_TLVERTEXVIDEOMEMORY|
+		D3DDEVCAPS_TEXTUREVIDEOMEMORY|
+		D3DDEVCAPS_DRAWPRIMTLVERTEX|
+		D3DDEVCAPS_CANRENDERAFTERFLIP|
+		D3DDEVCAPS_DRAWPRIMITIVES2|
+		D3DDEVCAPS_DRAWPRIMITIVES2EX|
+		D3DDEVCAPS_HWTRANSFORMANDLIGHT|
+		D3DDEVCAPS_HWRASTERIZATION;
+	Caps.PrimitiveMiscCaps=
+		D3DPMISCCAPS_MASKZ|
+		D3DPMISCCAPS_CULLNONE|
+		D3DPMISCCAPS_CULLCW|
+		D3DPMISCCAPS_CULLCCW|
+		D3DPMISCCAPS_COLORWRITEENABLE|
+		D3DPMISCCAPS_BLENDOP;
+	Caps.RasterCaps=
+		D3DPRASTERCAPS_DITHER|
+		D3DPRASTERCAPS_ZTEST|
+		D3DPRASTERCAPS_FOGVERTEX|
+		D3DPRASTERCAPS_FOGTABLE|
+		D3DPRASTERCAPS_MIPMAPLODBIAS|
+		D3DPRASTERCAPS_ZBIAS|
+		D3DPRASTERCAPS_ANISOTROPY;
+	Caps.ZCmpCaps=
+		D3DPCMPCAPS_NEVER|D3DPCMPCAPS_LESS|D3DPCMPCAPS_EQUAL|D3DPCMPCAPS_LESSEQUAL|
+		D3DPCMPCAPS_GREATER|D3DPCMPCAPS_NOTEQUAL|D3DPCMPCAPS_GREATEREQUAL|D3DPCMPCAPS_ALWAYS;
+	Caps.AlphaCmpCaps=Caps.ZCmpCaps;
+	Caps.SrcBlendCaps=
+		D3DPBLENDCAPS_ZERO|D3DPBLENDCAPS_ONE|D3DPBLENDCAPS_SRCCOLOR|D3DPBLENDCAPS_INVSRCCOLOR|
+		D3DPBLENDCAPS_SRCALPHA|D3DPBLENDCAPS_INVSRCALPHA|D3DPBLENDCAPS_DESTALPHA|D3DPBLENDCAPS_INVDESTALPHA|
+		D3DPBLENDCAPS_DESTCOLOR|D3DPBLENDCAPS_INVDESTCOLOR|D3DPBLENDCAPS_SRCALPHASAT|
+		D3DPBLENDCAPS_BOTHSRCALPHA|D3DPBLENDCAPS_BOTHINVSRCALPHA;
+	Caps.DestBlendCaps=Caps.SrcBlendCaps;
+	Caps.ShadeCaps=
+		D3DPSHADECAPS_COLORGOURAUDRGB|
+		D3DPSHADECAPS_SPECULARGOURAUDRGB|
+		D3DPSHADECAPS_ALPHAGOURAUDBLEND|
+		D3DPSHADECAPS_FOGGOURAUD;
+	Caps.TextureCaps=
+		D3DPTEXTURECAPS_PERSPECTIVE|
+		D3DPTEXTURECAPS_ALPHA|
+		D3DPTEXTURECAPS_MIPMAP;
+	Caps.TextureFilterCaps=
+		D3DPTFILTERCAPS_MINFPOINT|D3DPTFILTERCAPS_MINFLINEAR|D3DPTFILTERCAPS_MINFANISOTROPIC|
+		D3DPTFILTERCAPS_MIPFPOINT|D3DPTFILTERCAPS_MIPFLINEAR|
+		D3DPTFILTERCAPS_MAGFPOINT|D3DPTFILTERCAPS_MAGFLINEAR|D3DPTFILTERCAPS_MAGFANISOTROPIC;
+	Caps.TextureAddressCaps=
+		D3DPTADDRESSCAPS_WRAP|D3DPTADDRESSCAPS_MIRROR|D3DPTADDRESSCAPS_CLAMP|
+		D3DPTADDRESSCAPS_BORDER|D3DPTADDRESSCAPS_INDEPENDENTUV|D3DPTADDRESSCAPS_MIRRORONCE;
+	Caps.LineCaps=D3DLINECAPS_TEXTURE|D3DLINECAPS_ZTEST|D3DLINECAPS_BLEND|D3DLINECAPS_ALPHACMP;
+	Caps.MaxTextureWidth=4096;
+	Caps.MaxTextureHeight=4096;
+	Caps.MaxVolumeExtent=256;
+	Caps.MaxTextureRepeat=8192;
+	Caps.MaxTextureAspectRatio=4096;
+	Caps.MaxAnisotropy=16;
+	Caps.MaxVertexW=1.0e10f;
+	Caps.GuardBandLeft=-16384.0f;
+	Caps.GuardBandTop=-16384.0f;
+	Caps.GuardBandRight=16384.0f;
+	Caps.GuardBandBottom=16384.0f;
+	Caps.ExtentsAdjust=0.0f;
+	Caps.StencilCaps=0;
+	Caps.FVFCaps=8;
+	Caps.TextureOpCaps=
+		D3DTEXOPCAPS_DISABLE|D3DTEXOPCAPS_SELECTARG1|D3DTEXOPCAPS_SELECTARG2|
+		D3DTEXOPCAPS_MODULATE|D3DTEXOPCAPS_MODULATE2X|D3DTEXOPCAPS_MODULATE4X|
+		D3DTEXOPCAPS_ADD|D3DTEXOPCAPS_ADDSIGNED|D3DTEXOPCAPS_ADDSIGNED2X|D3DTEXOPCAPS_SUBTRACT|D3DTEXOPCAPS_ADDSMOOTH|
+		D3DTEXOPCAPS_BLENDDIFFUSEALPHA|D3DTEXOPCAPS_BLENDTEXTUREALPHA|D3DTEXOPCAPS_BLENDFACTORALPHA|
+		D3DTEXOPCAPS_BLENDTEXTUREALPHAPM|D3DTEXOPCAPS_BLENDCURRENTALPHA|D3DTEXOPCAPS_PREMODULATE|
+		D3DTEXOPCAPS_MODULATEALPHA_ADDCOLOR|D3DTEXOPCAPS_MODULATECOLOR_ADDALPHA|
+		D3DTEXOPCAPS_MODULATEINVALPHA_ADDCOLOR|D3DTEXOPCAPS_MODULATEINVCOLOR_ADDALPHA|
+		D3DTEXOPCAPS_DOTPRODUCT3|D3DTEXOPCAPS_MULTIPLYADD|D3DTEXOPCAPS_LERP;
+	Caps.MaxTextureBlendStages=8;
+	Caps.MaxSimultaneousTextures=2;
+	Caps.VertexProcessingCaps=
+		D3DVTXPCAPS_TEXGEN|
+		D3DVTXPCAPS_MATERIALSOURCE7|
+		D3DVTXPCAPS_DIRECTIONALLIGHTS|
+		D3DVTXPCAPS_POSITIONALLIGHTS|
+		D3DVTXPCAPS_LOCALVIEWER;
+	Caps.MaxActiveLights=8;
+	Caps.MaxUserClipPlanes=0;
+	Caps.MaxVertexBlendMatrices=0;
+	Caps.MaxVertexBlendMatrixIndex=0;
+	Caps.MaxPointSize=1.0f;
+	Caps.MaxPrimitiveCount=0xfffff;
+	Caps.MaxVertexIndex=0xffffff;
+	Caps.MaxStreams=2;
+	Caps.MaxStreamStride=256;
+	Caps.VertexShaderVersion=0;
+	Caps.MaxVertexShaderConst=0;
+	Caps.PixelShaderVersion=0;
+	Caps.MaxPixelShaderValue=0.0f;
+}
+
 //Don't really need this but I added this function to free static variables so
 //they don't show up in our memory manager as a leak. -MW 7-22-03
 void DX8Caps::Shutdown()

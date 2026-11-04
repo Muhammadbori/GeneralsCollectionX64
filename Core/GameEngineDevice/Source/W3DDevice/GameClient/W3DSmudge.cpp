@@ -81,6 +81,9 @@ void W3DSmudgeManager::ReAcquireResources()
 	ReleaseResources();
 
 	SurfaceClass *surface=DX8Wrapper::_Get_DX8_Back_Buffer();
+	if (surface == nullptr)
+		return;	// No readable back buffer (Direct3D 12 until render to texture exists), so no smudges.
+
 	SurfaceClass::SurfaceDescription surface_desc;
 
 	surface->Get_Description(surface_desc);

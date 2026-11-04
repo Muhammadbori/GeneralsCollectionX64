@@ -58,6 +58,7 @@
 #include "dx8vertexbuffer.h"
 #include "dx8indexbuffer.h"
 #include "WW3D2/vertmaterial.h"
+#include "WW3D2/Backend/DX12/dx12device.h"
 
 /*
 ** Registry value names
@@ -148,15 +149,17 @@ WWINLINE void DX8_ErrorCode(unsigned res)
 // Converts a FLOAT to a DWORD for use in SetRenderState() calls
 inline DWORD F2DW(FLOAT f) { return std::bit_cast<DWORD>(f); }
 
+// The device calls are skipped when there is no Direct3D 8 device, which is always the case in
+// Direct3D 12 mode. The wrapper's caches are still updated by the callers.
 #ifdef WWDEBUG
-#define DX8CALL_HRES(x,res) DX8_Assert(); res = DX8Wrapper::_Get_D3D_Device8()->x; DX8_ErrorCode(res); DX8Wrapper::Increment_DX8_CallCount();
-#define DX8CALL(x) DX8_Assert(); DX8_ErrorCode(DX8Wrapper::_Get_D3D_Device8()->x); DX8Wrapper::Increment_DX8_CallCount();
-#define DX8CALL_D3D(x) DX8_Assert(); DX8_ErrorCode(DX8Wrapper::_Get_D3D8()->x); DX8Wrapper::Increment_DX8_CallCount();
+#define DX8CALL_HRES(x,res) do { if (DX8Wrapper::_Get_D3D_Device8()) { DX8_Assert(); res = DX8Wrapper::_Get_D3D_Device8()->x; DX8_ErrorCode(res); DX8Wrapper::Increment_DX8_CallCount(); } else { res = E_FAIL; } } while (0)
+#define DX8CALL(x) do { if (DX8Wrapper::_Get_D3D_Device8()) { DX8_Assert(); DX8_ErrorCode(DX8Wrapper::_Get_D3D_Device8()->x); DX8Wrapper::Increment_DX8_CallCount(); } } while (0)
+#define DX8CALL_D3D(x) do { if (DX8Wrapper::_Get_D3D8()) { DX8_Assert(); DX8_ErrorCode(DX8Wrapper::_Get_D3D8()->x); DX8Wrapper::Increment_DX8_CallCount(); } } while (0)
 #define DX8_THREAD_ASSERT() if (_DX8SingleThreaded) { WWASSERT_PRINT(DX8Wrapper::_Get_Main_Thread_ID()==ThreadClass::_Get_Current_Thread_ID(),"DX8Wrapper::DX8 calls must be called from the main thread!"); }
 #else
-#define DX8CALL_HRES(x,res) res = DX8Wrapper::_Get_D3D_Device8()->x; DX8Wrapper::Increment_DX8_CallCount();
-#define DX8CALL(x) DX8Wrapper::_Get_D3D_Device8()->x; DX8Wrapper::Increment_DX8_CallCount();
-#define DX8CALL_D3D(x) DX8Wrapper::_Get_D3D8()->x; DX8Wrapper::Increment_DX8_CallCount();
+#define DX8CALL_HRES(x,res) do { if (DX8Wrapper::_Get_D3D_Device8()) { res = DX8Wrapper::_Get_D3D_Device8()->x; DX8Wrapper::Increment_DX8_CallCount(); } else { res = E_FAIL; } } while (0)
+#define DX8CALL(x) do { if (DX8Wrapper::_Get_D3D_Device8()) { DX8Wrapper::_Get_D3D_Device8()->x; DX8Wrapper::Increment_DX8_CallCount(); } } while (0)
+#define DX8CALL_D3D(x) do { if (DX8Wrapper::_Get_D3D8()) { DX8Wrapper::_Get_D3D8()->x; DX8Wrapper::Increment_DX8_CallCount(); } } while (0)
 #define DX8_THREAD_ASSERT() ;
 #endif
 
@@ -269,6 +272,14 @@ class DX8Wrapper
 		unsigned short min_vertex_index=0,
 		unsigned short vertex_count=0);
 
+	static void Draw_DX12(
+		unsigned primitive_type,
+		unsigned start_index,
+		unsigned polygon_count,
+		int base_vertex,
+		VertexBufferClass* vertex_buffer,
+		IndexBufferClass* index_buffer);
+
 public:
 #ifdef EXTENDED_STATS
 	static DX8_Stats stats;
@@ -340,6 +351,8 @@ public:
 	static void Set_DX8_Clip_Plane(DWORD Index, CONST float* pPlane);
 	static void Set_DX8_Texture_Stage_State(unsigned stage, D3DTEXTURESTAGESTATETYPE state, unsigned value);
 	static void Set_DX8_Texture(unsigned int stage, IDirect3DBaseTexture8* texture);
+	// Direct3D 12 counterpart of Set_DX8_Texture, used by TextureClass::Apply in Direct3D 12 mode.
+	static void Set_DX12_Texture(unsigned stage, DX12TextureClass* texture);
 	static void Set_Light_Environment(LightEnvironmentClass* light_env);
 	static LightEnvironmentClass* Get_Light_Environment() { return Light_Environment; }
 	static void Set_Fog(bool enable, const Vector3 &color, float start, float end);
@@ -646,7 +659,11 @@ protected:
 
 	static void Reset_Statistics();
 	static void Enumerate_Devices();
+	static void Enumerate_DX12_Device();
 	static void Set_Default_Global_Render_States();
+	static void Set_DX12_Default_Device_States();
+	static bool Set_DX12_Render_Device(bool reset_device, bool restore_assets);
+	static void Release_DX12_Textures();
 
 	/*
 	** Device Selection Code.
@@ -740,6 +757,12 @@ protected:
 	static unsigned						RenderStates[256];
 	static unsigned						TextureStageStates[MAX_TEXTURE_STAGES][32];
 	static IDirect3DBaseTexture8 *	Textures[MAX_TEXTURE_STAGES];
+
+	// Direct3D 12 mode: state the Direct3D 8 device used to hold, read back when drawing.
+	static DX12TextureClass *		DX12Textures[MAX_TEXTURE_STAGES];
+	static D3DMATERIAL8					DX8Material;
+	static D3DLIGHT8						DX8Lights[4];
+	static D3DVIEWPORT8					DX12Viewport;
 
 	// These fog settings are constant for all objects in a given scene,
 	// unlike the matching renderstates which vary based on shader settings.
@@ -843,6 +866,11 @@ WWINLINE void DX8Wrapper::_Set_DX8_Transform(D3DTRANSFORMSTATETYPE transform, co
 
 WWINLINE void DX8Wrapper::_Get_DX8_Transform(D3DTRANSFORMSTATETYPE transform, D3DMATRIX& m)
 {
+	if (DX12Device::Is_Active()) {
+		WWASSERT(transform<=D3DTS_WORLD);
+		m=DX8Transforms[transform];
+		return;
+	}
 	DX8CALL(GetTransform(transform,&m));
 }
 
@@ -902,6 +930,7 @@ WWINLINE void DX8Wrapper::Set_DX8_Material(const D3DMATERIAL8* mat)
 	DX8_RECORD_MATERIAL_CHANGE();
 	WWASSERT(mat);
 	SNAPSHOT_SAY(("DX8 - SetMaterial"));
+	DX8Material=*mat;
 	DX8CALL(SetMaterial(mat));
 }
 
@@ -909,6 +938,7 @@ WWINLINE void DX8Wrapper::Set_DX8_Light(int index, D3DLIGHT8* light)
 {
 	if (light) {
 		DX8_RECORD_LIGHT_CHANGE();
+		DX8Lights[index]=*light;
 		DX8CALL(SetLight(index,light));
 		DX8CALL(LightEnable(index,TRUE));
 		CurrentDX8LightEnables[index]=true;
@@ -1342,9 +1372,11 @@ WWINLINE void DX8Wrapper::Set_Projection_Transform_With_Z_Bias(const Matrix4x4& 
 		tmp_zbias*=(1.0f/16.0f);
 		tmp_zbias*=1.0f / (ZFar - ZNear);
 		tmp.m[2][2]-=tmp_zbias*tmp.m[3][2];
+		DX8Transforms[D3DTS_PROJECTION]=tmp;
 		DX8CALL(SetTransform(D3DTS_PROJECTION,&tmp));
 	}
 	else {
+		DX8Transforms[D3DTS_PROJECTION]=ProjectionMatrix;
 		DX8CALL(SetTransform(D3DTS_PROJECTION,&ProjectionMatrix));
 	}
 }
@@ -1367,12 +1399,14 @@ WWINLINE void DX8Wrapper::Set_Transform(D3DTRANSFORMSTATETYPE transform,const Ma
 			D3DMATRIX ProjectionMatrix=To_D3DMATRIX(m);
 			ZFar=0.0f;
 			ZNear=0.0f;
+			DX8Transforms[D3DTS_PROJECTION]=ProjectionMatrix;
 			DX8CALL(SetTransform(D3DTS_PROJECTION,&ProjectionMatrix));
 		}
 		break;
 	default:
 		DX8_RECORD_MATRIX_CHANGE();
 		D3DMATRIX dxm=To_D3DMATRIX(m);
+		if (transform<=D3DTS_WORLD) DX8Transforms[transform]=dxm;
 		DX8CALL(SetTransform(transform,&dxm));
 		break;
 	}
@@ -1394,6 +1428,7 @@ WWINLINE void DX8Wrapper::Set_Transform(D3DTRANSFORMSTATETYPE transform,const Ma
 	default:
 		DX8_RECORD_MATRIX_CHANGE();
 		D3DMATRIX dxm=To_D3DMATRIX(m);
+		if (transform<=D3DTS_WORLD) DX8Transforms[transform]=dxm;
 		DX8CALL(SetTransform(transform,&dxm));
 		break;
 	}
@@ -1422,6 +1457,10 @@ WWINLINE void DX8Wrapper::Get_Transform(D3DTRANSFORMSTATETYPE transform, Matrix4
 		break;
 	default:
 		D3DMATRIX dxm;
+		if (DX12Device::Is_Active()) {
+			WWASSERT(transform<=D3DTS_WORLD);
+			dxm=DX8Transforms[transform];
+		}
 		DX8CALL(GetTransform(transform,&dxm));
 		m=To_Matrix4x4(dxm);
 		break;
