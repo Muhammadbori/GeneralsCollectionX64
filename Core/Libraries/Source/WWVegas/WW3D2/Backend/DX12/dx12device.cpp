@@ -97,6 +97,19 @@ enum
 	BLEND_BOTHINVSRCALPHA = 13,
 };
 
+// D3DSTENCILOP_KEEP .. D3DSTENCILOP_DECR and D3DCMP_NEVER .. D3DCMP_ALWAYS have the same values as
+// D3D12_STENCIL_OP and D3D12_COMPARISON_FUNC.
+enum
+{
+	STENCILOP_KEEP = 1,
+	STENCILOP_DECR = 8,
+	CMP_NEVER = 1,
+	CMP_ALWAYS = 8,
+};
+
+// BoundStencilRef before the first OMSetStencilRef of a command list. References are 8-bit values.
+const UINT NO_STENCIL_REF = 0xffffffff;
+
 // DX12DrawDesc::DepthBias is D3DRS_ZBIAS (0..16, larger is closer). One step moves depth by about
 // 0.000005 (the usual Direct3D 8 to 9 conversion), which is -84 units of a 24-bit depth buffer.
 const int ZBIAS_TO_DEPTH_BIAS = -84;
@@ -163,6 +176,15 @@ struct PSOKey
 	unsigned CullMode;
 	unsigned FillMode;
 	int DepthBias;
+	// Stencil, all zero when D3DRS_STENCILENABLE is off. The reference value is not part of the
+	// pipeline state; Draw sets it with OMSetStencilRef.
+	unsigned StencilEnable;
+	unsigned StencilFail;	// D3DSTENCILOP, numbered like D3D12_STENCIL_OP
+	unsigned StencilZFail;
+	unsigned StencilPass;
+	unsigned StencilFunc;	// D3DCMPFUNC, numbered like D3D12_COMPARISON_FUNC
+	unsigned StencilReadMask;	// truncated to the 8 bits of the stencil plane
+	unsigned StencilWriteMask;
 };
 
 struct PSOKeyLess
@@ -285,6 +307,7 @@ D3D12_RECT CurrentScissor;
 // Per-frame command list state, reset by Begin_Frame.
 ID3D12PipelineState * BoundPipelineState = nullptr;
 D3D_PRIMITIVE_TOPOLOGY BoundTopology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
+UINT BoundStencilRef = NO_STENCIL_REF;
 DX12VSConstants LastVSConstants;
 UINT64 LastVSConstantsGPU = 0;
 DX12PSConstants LastPSConstants;
@@ -1116,10 +1139,24 @@ ID3D12PipelineState * Get_Pipeline_State(const PSOKey & key, const FVFLayout & l
 		depth.DepthEnable = key.ZEnable ? TRUE : FALSE;
 		depth.DepthWriteMask = key.ZWriteEnable ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
 		depth.DepthFunc = (key.ZFunc >= 1 && key.ZFunc <= 8) ? (D3D12_COMPARISON_FUNC)key.ZFunc : D3D12_COMPARISON_FUNC_LESS_EQUAL;
-		depth.StencilEnable = FALSE;
-		depth.StencilReadMask = D3D12_DEFAULT_STENCIL_READ_MASK;
-		depth.StencilWriteMask = D3D12_DEFAULT_STENCIL_WRITE_MASK;
 		D3D12_DEPTH_STENCILOP_DESC stencil_op = { D3D12_STENCIL_OP_KEEP, D3D12_STENCIL_OP_KEEP, D3D12_STENCIL_OP_KEEP, D3D12_COMPARISON_FUNC_ALWAYS };
+		if (key.StencilEnable)
+		{
+			// Direct3D 8 has no two-sided stencil, so both faces use the same operations.
+			depth.StencilEnable = TRUE;
+			depth.StencilReadMask = (UINT8)key.StencilReadMask;
+			depth.StencilWriteMask = (UINT8)key.StencilWriteMask;
+			stencil_op.StencilFailOp = (D3D12_STENCIL_OP)key.StencilFail;
+			stencil_op.StencilDepthFailOp = (D3D12_STENCIL_OP)key.StencilZFail;
+			stencil_op.StencilPassOp = (D3D12_STENCIL_OP)key.StencilPass;
+			stencil_op.StencilFunc = (D3D12_COMPARISON_FUNC)key.StencilFunc;
+		}
+		else
+		{
+			depth.StencilEnable = FALSE;
+			depth.StencilReadMask = D3D12_DEFAULT_STENCIL_READ_MASK;
+			depth.StencilWriteMask = D3D12_DEFAULT_STENCIL_WRITE_MASK;
+		}
 		depth.FrontFace = stencil_op;
 		depth.BackFace = stencil_op;
 
@@ -1794,6 +1831,7 @@ void Release_All()
 
 	BoundPipelineState = nullptr;
 	BoundTopology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
+	BoundStencilRef = NO_STENCIL_REF;
 	LastVSConstantsGPU = 0;
 	LastPSConstantsGPU = 0;
 }
@@ -2083,6 +2121,7 @@ void DX12Device::Begin_Frame()
 
 	BoundPipelineState = nullptr;
 	BoundTopology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
+	BoundStencilRef = NO_STENCIL_REF;
 	LastVSConstantsGPU = 0;
 	LastPSConstantsGPU = 0;
 
@@ -2406,6 +2445,24 @@ void DX12Device::Draw(const DX12DrawDesc & desc)
 	key.FillMode = desc.FillMode;
 	key.DepthBias = desc.DepthBias;
 
+	// Stencil, from the render state mirror (the fallback states leave it off). Masks such as
+	// 0x80808080 are truncated to the 8 bits of the D24S8 stencil plane.
+	bool stencil = render_states[FFP_RS_STENCILENABLE] != 0;
+	if (stencil)
+	{
+		unsigned fail = render_states[FFP_RS_STENCILFAIL];
+		unsigned zfail = render_states[FFP_RS_STENCILZFAIL];
+		unsigned pass = render_states[FFP_RS_STENCILPASS];
+		unsigned func = render_states[FFP_RS_STENCILFUNC];
+		key.StencilEnable = 1;
+		key.StencilFail = (fail >= STENCILOP_KEEP && fail <= STENCILOP_DECR) ? fail : STENCILOP_KEEP;
+		key.StencilZFail = (zfail >= STENCILOP_KEEP && zfail <= STENCILOP_DECR) ? zfail : STENCILOP_KEEP;
+		key.StencilPass = (pass >= STENCILOP_KEEP && pass <= STENCILOP_DECR) ? pass : STENCILOP_KEEP;
+		key.StencilFunc = (func >= CMP_NEVER && func <= CMP_ALWAYS) ? func : CMP_ALWAYS;
+		key.StencilReadMask = render_states[FFP_RS_STENCILMASK] & 0xff;
+		key.StencilWriteMask = render_states[FFP_RS_STENCILWRITEMASK] & 0xff;
+	}
+
 	ID3D12PipelineState * pso = Get_Pipeline_State(key, layout, LastVertexShader->Code.Get(), LastPixelShader->Code.Get());
 	if (!pso)
 	{
@@ -2457,6 +2514,15 @@ void DX12Device::Draw(const DX12DrawDesc & desc)
 	{
 		CommandList->IASetPrimitiveTopology(topology);
 		BoundTopology = topology;
+	}
+	if (stencil)
+	{
+		UINT stencil_ref = render_states[FFP_RS_STENCILREF] & 0xff;
+		if (stencil_ref != BoundStencilRef)
+		{
+			CommandList->OMSetStencilRef(stencil_ref);
+			BoundStencilRef = stencil_ref;
+		}
 	}
 
 	D3D12_VERTEX_BUFFER_VIEW vertex_view;

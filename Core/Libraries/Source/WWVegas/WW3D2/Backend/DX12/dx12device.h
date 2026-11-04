@@ -134,7 +134,9 @@ struct DX12DrawDesc
 	DX12TextureClass * Textures[DX12_MAX_STAGES];
 
 	// The Direct3D 8 device state the fixed-function emulation is derived from. Without
-	// RenderStates or TextureStageStates the explicit fields above are used, with no lighting or fog.
+	// RenderStates or TextureStageStates the explicit fields above are used, with no lighting, fog
+	// or stencil. The stencil states (D3DRS_STENCILENABLE ... D3DRS_STENCILWRITEMASK) are read from
+	// RenderStates only.
 	const unsigned * RenderStates;			// 256 entries, D3DRENDERSTATETYPE indexed
 	const unsigned * TextureStageStates;	// [stage * 32 + D3DTEXTURESTAGESTATETYPE], DX12_MAX_STAGES stages
 	const float * TextureMatrices[DX12_MAX_STAGES];	// D3DTS_TEXTURE0 + stage, 4x4 row major; null is identity

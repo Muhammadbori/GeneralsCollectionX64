@@ -421,6 +421,14 @@ void DX12FFP_Fill_Fallback_States(const DX12DrawDesc & desc, unsigned * rs, unsi
 	rs[FFP_RS_TEXTUREFACTOR] = desc.TextureFactor;
 	rs[FFP_RS_COLORVERTEX] = 1;
 
+	// Stencil off, with the Direct3D 8 defaults for the rest.
+	rs[FFP_RS_STENCILFAIL] = 1;		// D3DSTENCILOP_KEEP
+	rs[FFP_RS_STENCILZFAIL] = 1;
+	rs[FFP_RS_STENCILPASS] = 1;
+	rs[FFP_RS_STENCILFUNC] = CMP_ALWAYS;
+	rs[FFP_RS_STENCILMASK] = 0xffffffff;
+	rs[FFP_RS_STENCILWRITEMASK] = 0xffffffff;
+
 	for (unsigned stage = 0; stage < DX12_MAX_STAGES; ++stage)
 	{
 		unsigned * t = tss + stage * FFP_TSS_COUNT;

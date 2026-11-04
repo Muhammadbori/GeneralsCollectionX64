@@ -1564,10 +1564,9 @@ int DX8Wrapper::Get_Swap_Interval()
 
 bool DX8Wrapper::Has_Stencil()
 {
-	// The Direct3D 12 renderer does not emulate stencil states yet, so report no stencil buffer
-	// and let the game pick its stencil-free paths.
+	// The Direct3D 12 renderer always has a D24S8 depth buffer and emulates the stencil states.
 	if (DX12Device::Is_Active()) {
-		return false;
+		return true;
 	}
 
 	bool has_stencil = (_PresentParameters.AutoDepthStencilFormat == D3DFMT_D24S8 ||
