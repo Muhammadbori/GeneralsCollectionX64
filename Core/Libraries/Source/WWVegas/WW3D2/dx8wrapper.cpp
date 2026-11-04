@@ -332,6 +332,8 @@ bool DX8Wrapper::Init(void * hwnd, bool lite)
 	return(true);
 }
 
+static void Restore_Desktop_Display_Mode();
+
 void DX8Wrapper::Shutdown()
 {
 	if (D3DDevice) {
@@ -354,6 +356,8 @@ void DX8Wrapper::Shutdown()
 			Textures[i] = nullptr;
 		}
 	}
+
+	Restore_Desktop_Display_Mode();
 
 	if (D3D8Lib) {
 		FreeLibrary(D3D8Lib);
@@ -872,8 +876,51 @@ void DX8Wrapper::Get_Format_Name(unsigned int format, StringClass *tex_format)
 		}
 }
 
+// Fullscreen is presented as a borderless window covering the monitor. Exclusive fullscreen
+// Direct3D 8 never presents on current drivers (the window stays on the splash screen and
+// all frames are black), and the Direct3D 12 flip model presents the same borderless way.
+// A resolution other than the monitor's own is applied as a temporary display mode change.
+static bool _DisplayModeChanged = false;
+
+static void Restore_Desktop_Display_Mode()
+{
+	if (_DisplayModeChanged) {
+		::ChangeDisplaySettingsEx(nullptr, nullptr, nullptr, 0, nullptr);
+		_DisplayModeChanged = false;
+	}
+}
+
+static void Set_Fullscreen_Display_Mode(HWND hwnd, int width, int height)
+{
+	Restore_Desktop_Display_Mode();
+
+	MONITORINFOEX mi;
+	mi.cbSize = sizeof(mi);
+	::GetMonitorInfo(::MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY), &mi);
+	if ((mi.rcMonitor.right - mi.rcMonitor.left) == width && (mi.rcMonitor.bottom - mi.rcMonitor.top) == height) {
+		return;
+	}
+
+	DEVMODE dm = { 0 };
+	dm.dmSize = sizeof(dm);
+	dm.dmPelsWidth = width;
+	dm.dmPelsHeight = height;
+	dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT;
+	if (::ChangeDisplaySettingsEx(mi.szDevice, &dm, nullptr, CDS_FULLSCREEN, nullptr) == DISP_CHANGE_SUCCESSFUL) {
+		_DisplayModeChanged = true;
+	} else {
+		WWDEBUG_SAY(("Display mode %dx%d is not supported, keeping the desktop mode", width, height));
+	}
+}
+
 void DX8Wrapper::Resize_And_Position_Window()
 {
+	if (IsWindowed) {
+		Restore_Desktop_Display_Mode();
+	} else {
+		Set_Fullscreen_Display_Mode(_Hwnd, ResolutionWidth, ResolutionHeight);
+	}
+
 	// Get the current dimensions of the 'render area' of the window
 	RECT rect = { 0 };
 	::GetClientRect (_Hwnd, &rect);
@@ -896,7 +943,9 @@ void DX8Wrapper::Resize_And_Position_Window()
 		// Resize the window to fit this resolution
 		if (!IsWindowed)
 		{
-			::SetWindowPos(_Hwnd, HWND_TOPMOST, 0, 0, width, height, 0);
+			MONITORINFO mi = {sizeof(MONITORINFO)};
+			GetMonitorInfo(MonitorFromWindow(_Hwnd, MONITOR_DEFAULTTOPRIMARY), &mi);
+			::SetWindowPos(_Hwnd, HWND_TOPMOST, mi.rcMonitor.left, mi.rcMonitor.top, width, height, 0);
 
 			DEBUG_LOG(("Window resized to w:%d h:%d", width, height));
 		}
@@ -977,12 +1026,13 @@ bool DX8Wrapper::Set_Render_Device(int dev, int width, int height, int bits, int
 
 	_PresentParameters.BackBufferWidth = ResolutionWidth;
 	_PresentParameters.BackBufferHeight = ResolutionHeight;
-	_PresentParameters.BackBufferCount = IsWindowed ? 1 : 2;
+	_PresentParameters.BackBufferCount = 1;
 
 	//I changed this to discard all the time (even when full-screen) since that the most efficient. 07-16-03 MW:
 	_PresentParameters.SwapEffect = D3DSWAPEFFECT_DISCARD;//IsWindowed ? D3DSWAPEFFECT_DISCARD : D3DSWAPEFFECT_FLIP;		// Shouldn't this be D3DSWAPEFFECT_FLIP?
 	_PresentParameters.hDeviceWindow = _Hwnd;
-	_PresentParameters.Windowed = IsWindowed;
+	// Always windowed: fullscreen is a borderless window, see Set_Fullscreen_Display_Mode.
+	_PresentParameters.Windowed = TRUE;
 
 	_PresentParameters.EnableAutoDepthStencil = TRUE;				// Driver will attempt to match Z-buffer depth
 	_PresentParameters.Flags=0;											// We're not going to lock the backbuffer
@@ -995,8 +1045,7 @@ bool DX8Wrapper::Set_Render_Device(int dev, int width, int height, int bits, int
 	** - if in windowed mode, the backbuffer must use the current display format.
 	** - the depth buffer must use
 	*/
-	if (IsWindowed) {
-
+	{
 		D3DDISPLAYMODE desktop_mode;
 		::ZeroMemory(&desktop_mode, sizeof(D3DDISPLAYMODE));
 		D3DInterface->GetAdapterDisplayMode( CurRenderDevice, &desktop_mode );
@@ -1042,14 +1091,6 @@ bool DX8Wrapper::Set_Render_Device(int dev, int width, int height, int bits, int
 				_PresentParameters.AutoDepthStencilFormat=D3DFMT_UNKNOWN;
 			}
 		}
-
-	} else {
-
-		/*
-		** Try to find a mode that matches the user's desired bit-depth.
-		*/
-		Find_Color_And_Z_Mode(ResolutionWidth,ResolutionHeight,BitDepth,&DisplayFormat,
-			&_PresentParameters.BackBufferFormat,&_PresentParameters.AutoDepthStencilFormat);
 	}
 
 	/*
@@ -1073,7 +1114,7 @@ bool DX8Wrapper::Set_Render_Device(int dev, int width, int height, int bits, int
 			CurRenderDevice,
 			D3DDEVTYPE_HAL,
 			_PresentParameters.BackBufferFormat,
-			IsWindowed,
+			_PresentParameters.Windowed,
 			MultiSampleAntiAliasing
 		);
 
@@ -1081,7 +1122,7 @@ bool DX8Wrapper::Set_Render_Device(int dev, int width, int height, int bits, int
 			CurRenderDevice,
 			D3DDEVTYPE_HAL,
 			_PresentParameters.AutoDepthStencilFormat,
-			IsWindowed,
+			_PresentParameters.Windowed,
 			MultiSampleAntiAliasing
 		);
 
@@ -1727,7 +1768,7 @@ void DX8Wrapper::Flip_To_Primary()
 	// If we are fullscreen and the current frame is odd then we need
 	// to force a page flip to ensure that the first buffer in the flipping
 	// chain is the one visible.
-	if (!IsWindowed) {
+	if (!_PresentParameters.Windowed) {
 		DX8_Assert();
 
 		int numBuffers = (_PresentParameters.BackBufferCount + 1);
