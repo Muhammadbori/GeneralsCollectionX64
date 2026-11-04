@@ -156,6 +156,8 @@ protected:
 
 	LPDIRECT3DVERTEXBUFFER8 m_vertexBufferD3D;		///<D3D vertex buffer
 	LPDIRECT3DINDEXBUFFER8	m_indexBufferD3D;	///<D3D index buffer
+	DX8VertexBufferClass	*m_gridVertexBufferDX12;	///<grid mesh vertex buffer in Direct3D 12 mode (replaces m_vertexBufferD3D)
+	DX8IndexBufferClass		*m_gridIndexBufferDX12;		///<grid mesh index buffer in Direct3D 12 mode (replaces m_indexBufferD3D)
 	Int						m_vertexBufferD3DOffset;	///<location to start writing vertices
 	DWORD					m_dwWavePixelShader;	///<handle to D3D pixel shader
 	DWORD					m_dwWaveVertexShader;	///<handle to D3D vertex shader

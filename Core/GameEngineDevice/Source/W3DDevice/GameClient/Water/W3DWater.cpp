@@ -44,6 +44,7 @@
 #include "WW3D2/scene.h"
 #include "WW3D2/dx8wrapper.h"
 #include "WW3D2/Backend/DX12/dx12device.h"
+#include "WW3D2/Backend/DX12/dx12resource.h"
 #include "WW3D2/Renderer.h"
 #include "WW3D2/light.h"
 #include "d3dx8math.h"
@@ -351,6 +352,8 @@ WaterRenderObjClass::WaterRenderObjClass()
 	m_skyBox=nullptr;
 	m_vertexBufferD3D=nullptr;
 	m_indexBufferD3D=nullptr;
+	m_gridVertexBufferDX12=nullptr;
+	m_gridIndexBufferDX12=nullptr;
 	m_vertexBufferD3DOffset=0;
 
 	m_dwWavePixelShader=0;
@@ -656,6 +659,23 @@ HRESULT WaterRenderObjClass::generateVertexBuffer( Int sizeX, Int sizeY, Int ver
 		m_numVertices=sizeX*sizeY;
 	}
 
+	if (DX12Device::Is_Active())
+	{
+		//Direct3D 12 mode: no raw Direct3D 8 buffers. Only the dynamic grid mesh buffer is supported;
+		//the static sea patch belongs to the pixel/vertex shader water, which this mode turns into type 0.
+		if (doStatic || m_numVertices > 0xffff)
+			return E_FAIL;
+
+		if (m_gridVertexBufferDX12 == nullptr)
+		{
+			m_gridVertexBufferDX12=NEW_REF(DX8VertexBufferClass,(WATER_MESH_FVF,m_numVertices,DX8VertexBufferClass::USAGE_DYNAMIC));
+			DEBUG_ASSERTCRASH(m_gridVertexBufferDX12->FVF_Info().Get_FVF_Size() == (unsigned)vertexSize, ("Water grid vertex size does not match WATER_MESH_FVF"));
+		}
+
+		m_vertexBufferD3DOffset=0;
+		return S_OK;	//only create the buffer, renderWaterMesh will fill it.
+	}
+
 	if (m_vertexBufferD3D == nullptr)
 	{
 		// Create vertex buffer
@@ -719,6 +739,42 @@ HRESULT WaterRenderObjClass::generateIndexBuffer(Int sizeX, Int sizeY)
 	//Total index buffer size = (SizeY-1)*(SizeX*2+2) - 2 (drop the extra 2 indices from last strip)
 
 	m_numIndices=(sizeY-1)*(sizeX*2+2) - 2;
+
+	if (DX12Device::Is_Active())
+	{
+		//Direct3D 12 mode: no raw Direct3D 8 buffers, use a static engine index buffer with the same strips.
+		if ((m_numIndices+2) > 0xffff || sizeX*sizeY > 0xffff)
+			return E_FAIL;
+
+		REF_PTR_RELEASE(m_gridIndexBufferDX12);
+		m_gridIndexBufferDX12=NEW_REF(DX8IndexBufferClass,(m_numIndices+2));
+
+		DX8IndexBufferClass::WriteLockClass lockIdxBuffer(m_gridIndexBufferDX12);
+		UnsignedShort *pIndices=lockIdxBuffer.Get_Index_Array();
+
+		Int i,j,k;
+
+		for (i=0,j=0,k=0; i<m_numIndices; j++)
+		{
+			for (;k<(sizeX*(j+1)); k++,i+=2)
+			{
+				pIndices[i]=(UnsignedShort) k+sizeX;
+				pIndices[i+1]=(UnsignedShort) k;
+			}
+			//Degenerate triangles connecting the current strip to the next one (see below).
+			if (i<m_numIndices) //check if there is at least 1 more strip to go
+			{
+				pIndices[i]=k-1;
+				pIndices[i+1]=k+sizeX;
+				i+=2;
+			}
+		}
+		//The 2 spare indices are never drawn.
+		pIndices[m_numIndices]=0;
+		pIndices[m_numIndices+1]=0;
+
+		return S_OK;
+	}
 
 	//old way
 
@@ -820,6 +876,8 @@ void WaterRenderObjClass::ReleaseResources()
 	REF_PTR_RELEASE(m_pReflectionTexture);
 	SAFE_RELEASE(m_vertexBufferD3D);
 	SAFE_RELEASE(m_indexBufferD3D);
+	REF_PTR_RELEASE(m_gridVertexBufferDX12);
+	REF_PTR_RELEASE(m_gridIndexBufferDX12);
 
 	if (m_waterTrackSystem)
 		m_waterTrackSystem->ReleaseResources();
@@ -876,9 +934,18 @@ void WaterRenderObjClass::ReAcquireResources()
 	//allocate the right size depending on usage
 	if (DX12Device::Is_Active())
 	{
-		//Direct3D 12 mode: the grid mesh and shader water need raw Direct3D 8 buffers, shaders and
-		//a render target, which this mode does not provide yet. Skip them (renderWaterMesh does not
-		//draw) but still restore the water tracks and textures below.
+		//Direct3D 12 mode: the grid mesh uses engine buffers (generateIndexBuffer/generateVertexBuffer
+		//create them in this mode). The shader water needs vertex/pixel shaders and a render target,
+		//which this mode does not provide yet, so skip it but still restore the water tracks and
+		//textures below.
+		if (m_meshData)
+		{
+			//Create new grid data
+			if (FAILED(generateIndexBuffer(m_gridCellsX+1,m_gridCellsY+1)))
+				return;
+			if (FAILED(generateVertexBuffer(m_gridCellsX+1,m_gridCellsY+1,sizeof(MaterMeshVertexFormat),false)))
+				return;
+		}
 	}
 	else
 	if (m_meshData)
@@ -1232,6 +1299,8 @@ void WaterRenderObjClass::enableWaterGrid(Bool state)
 		//Release existing grid data
 		SAFE_RELEASE(m_vertexBufferD3D);
 		SAFE_RELEASE(m_indexBufferD3D);
+		REF_PTR_RELEASE(m_gridVertexBufferDX12);
+		REF_PTR_RELEASE(m_gridIndexBufferDX12);
 
 		//Create new grid data
 		if (FAILED(generateIndexBuffer(m_gridCellsX+1,m_gridCellsY+1)))
@@ -2244,8 +2313,15 @@ void WaterRenderObjClass::renderWaterMesh()
 	if (!m_doWaterGrid)
 		return;	//the water grid is disabled.
 
+	if (DX12Device::Is_Active())
+	{
+		//Direct3D 12 mode keeps the grid in engine buffers instead of raw Direct3D 8 ones.
+		if (m_gridVertexBufferDX12 == nullptr || m_gridIndexBufferDX12 == nullptr)
+			return;	//no grid buffers.
+	}
+	else
 	if (m_vertexBufferD3D == nullptr || m_indexBufferD3D == nullptr)
-		return;	//no grid buffers (Direct3D 12 mode cannot create raw Direct3D 8 buffers).
+		return;	//no grid buffers.
 
 	//According to Nvidia there's a D3D bug that happens if you don't start with a
 	//new dynamic VB each frame - so we force a DISCARD by overflowing the counter.
@@ -2299,6 +2375,20 @@ void WaterRenderObjClass::renderWaterMesh()
 #endif
 
 	MaterMeshVertexFormat *vb;
+	DX12BufferClass *dx12Buffer = nullptr;
+	if (DX12Device::Is_Active())
+	{
+		//The offset was forced past the end above, so this is always the discard lock at the start
+		//of the buffer (a discard lock moves the DX12 buffer to fresh frame memory).
+		dx12Buffer = m_gridVertexBufferDX12->Get_DX12_Buffer();
+		if (dx12Buffer == nullptr)
+			return;
+		vb = (MaterMeshVertexFormat *)dx12Buffer->Lock(0,mx*my*sizeof(MaterMeshVertexFormat),true);
+		if (vb == nullptr)
+			return;
+		m_vertexBufferD3DOffset=0;	//reset start of page to first vertex
+	}
+	else
 	if (m_vertexBufferD3DOffset < m_numVertices)
 	{
 		//we have room in current VB, append new verts
@@ -2376,7 +2466,10 @@ void WaterRenderObjClass::renderWaterMesh()
 		}
 	}
 
-	m_vertexBufferD3D->Unlock();
+	if (dx12Buffer)
+		dx12Buffer->Unlock();
+	else
+		m_vertexBufferD3D->Unlock();
 
 	DX8Wrapper::Set_Transform(D3DTS_WORLD,Transform);	//position the water surface
 	DX8Wrapper::Set_Material(m_meshVertexMaterialClass);
@@ -2412,8 +2505,16 @@ void WaterRenderObjClass::renderWaterMesh()
 
 //	DX8Wrapper::Set_DX8_Render_State_Raw(D3DRS_ZFUNC,D3DCMP_ALWAYS);	//used to display grid under map.
 
-	DX8Wrapper::Set_Indices_Raw(m_indexBufferD3D,m_vertexBufferD3DOffset);
-	DX8Wrapper::Set_Stream_Source_Raw(0,m_vertexBufferD3D,sizeof(MaterMeshVertexFormat));
+	if (DX12Device::Is_Active())
+	{
+		DX8Wrapper::Set_Indices_Raw(m_gridIndexBufferDX12,m_vertexBufferD3DOffset);
+		DX8Wrapper::Set_Stream_Source_Raw(0,m_gridVertexBufferDX12,sizeof(MaterMeshVertexFormat));
+	}
+	else
+	{
+		DX8Wrapper::Set_Indices_Raw(m_indexBufferD3D,m_vertexBufferD3DOffset);
+		DX8Wrapper::Set_Stream_Source_Raw(0,m_vertexBufferD3D,sizeof(MaterMeshVertexFormat));
+	}
 	DX8Wrapper::Set_Vertex_Shader(WATER_MESH_FVF);
 
 
