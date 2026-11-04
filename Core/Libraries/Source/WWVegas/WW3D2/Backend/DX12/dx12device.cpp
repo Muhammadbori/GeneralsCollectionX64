@@ -23,13 +23,16 @@
 // has finished the frame that last used it. Resources that the GPU may still read are released
 // through Release_When_Idle, which waits for the fence of the frame being recorded.
 //
-// Draws: DX8Wrapper describes each draw with DX12DrawDesc. The vertex format picks a vertex
-// shader variant and an input layout, the render states pick a pipeline state, and the texture
-// stage states go to the pixel shader as constants.
+// Draws: DX8Wrapper describes each draw with DX12DrawDesc. The fixed-function state picks a
+// generated vertex and pixel shader (dx12ffp.h), the vertex format picks an input layout, and
+// both shaders and the render states pick a pipeline state.
+//
+// -dx12debug: the debug layer is enabled (GPU-based validation stays off) and its messages are
+// written to dx12debug.log every frame, together with shader compile errors and failed calls.
 
 #include "WW3D2/Backend/DX12/dx12device.h"
+#include "WW3D2/Backend/DX12/dx12ffp.h"
 #include "WW3D2/Backend/DX12/dx12resource.h"
-#include "WW3D2/Backend/DX12/dx12shaders.h"
 #include "WWDebug/wwdebug.h"
 
 #include <windows.h>
@@ -42,11 +45,16 @@
 #include <atomic>
 #include <map>
 #include <mutex>
+#include <string>
+#include <unordered_map>
 #include <vector>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
 using Microsoft::WRL::ComPtr;
+
+bool DX12Device_DebugLayer = false;
 
 bool DX12Device::Requested = false;
 ID3D12Device * DX12Device::Device = nullptr;
@@ -71,22 +79,6 @@ enum
 	MAX_INPUT_ELEMENTS = 16,
 };
 
-// Direct3D 8 FVF bits. Spelled out here so this file does not depend on d3d8.h.
-enum
-{
-	FVF_POSITION_MASK = 0x00e,
-	FVF_XYZ = 0x002,
-	FVF_XYZRHW = 0x004,
-	FVF_XYZB1 = 0x006,
-	FVF_NORMAL = 0x010,
-	FVF_PSIZE = 0x020,
-	FVF_DIFFUSE = 0x040,
-	FVF_SPECULAR = 0x080,
-	FVF_TEXCOUNT_MASK = 0xf00,
-	FVF_TEXCOUNT_SHIFT = 8,
-	FVF_MAX_TEXCOORDS = 8,
-};
-
 // D3DPRIMITIVETYPE
 enum
 {
@@ -105,37 +97,12 @@ enum
 	BLEND_BOTHINVSRCALPHA = 13,
 };
 
-enum
-{
-	TOP_DISABLE = 1,
-	CMP_ALWAYS = 8,
-};
-
 // DX12DrawDesc::DepthBias is D3DRS_ZBIAS (0..16, larger is closer). One step moves depth by about
 // 0.000005 (the usual Direct3D 8 to 9 conversion), which is -84 units of a 24-bit depth buffer.
 const int ZBIAS_TO_DEPTH_BIAS = -84;
 
-// Must match VSConstants and PSConstants in dx12shaders.h.
-struct DX12VSConstants
-{
-	float WorldViewProjection[16];
-	float ScreenToClip[4];
-	float DepthToClip[4];
-	float PixelOffset[4];
-	unsigned TexCoordIndex[4];
-	float MaterialDiffuse[4];
-};
-
-struct DX12PSConstants
-{
-	unsigned ColorStage[DX12_MAX_STAGES][4];	// op, arg1, arg2, arg0
-	unsigned AlphaStage[DX12_MAX_STAGES][4];
-	unsigned Flags[4];							// alpha func (0 = off), alpha ref, specular enable
-	float TextureFactor[4];
-};
-
-static_assert(sizeof(DX12VSConstants) == 144, "DX12VSConstants must match the HLSL constant buffer");
-static_assert(sizeof(DX12PSConstants) == 96, "DX12PSConstants must match the HLSL constant buffer");
+// dx12debug.log keeps the full text of this many messages per message ID; later ones are counted.
+const unsigned DEBUG_LOG_MAX_MESSAGES_PER_ID = 1000;
 
 struct FramePage
 {
@@ -181,6 +148,8 @@ struct DeferredSlot
 // All members are 32-bit so the key has no padding and can be compared with memcmp.
 struct PSOKey
 {
+	unsigned VertexShader;	// ShaderEntry::Id
+	unsigned PixelShader;
 	unsigned FVF;
 	unsigned TopologyType;
 	unsigned AlphaBlendEnable;
@@ -206,8 +175,31 @@ struct FVFLayout
 	D3D12_INPUT_ELEMENT_DESC Elements[MAX_INPUT_ELEMENTS];
 	unsigned ElementCount;
 	unsigned Size;
-	unsigned VSKey;
 };
+
+// A generated shader. A failed compile is cached with null Code, so it is reported only once.
+struct ShaderEntry
+{
+	ShaderEntry() : Id(0) {}
+
+	ComPtr<ID3DBlob> Code;
+	unsigned Id;
+};
+
+template <class Key>
+struct FFPKeyHash
+{
+	size_t operator()(const Key & key) const { return DX12FFP_Hash(&key, sizeof(Key)); }
+};
+
+template <class Key>
+struct FFPKeyEqual
+{
+	bool operator()(const Key & a, const Key & b) const { return memcmp(&a, &b, sizeof(Key)) == 0; }
+};
+
+typedef std::unordered_map<DX12VSKey, ShaderEntry, FFPKeyHash<DX12VSKey>, FFPKeyEqual<DX12VSKey>> VertexShaderMap;
+typedef std::unordered_map<DX12PSKey, ShaderEntry, FFPKeyHash<DX12PSKey>, FFPKeyEqual<DX12PSKey>> PixelShaderMap;
 
 ComPtr<IDXGIFactory4> Factory;
 ComPtr<IDXGIAdapter1> Adapter;
@@ -265,9 +257,25 @@ UINT64 PendingUploadBytes = 0;
 std::atomic<bool> HasPendingUploads(false);
 
 ComPtr<ID3D12RootSignature> RootSignature;
-ComPtr<ID3DBlob> PixelShader;
-std::map<unsigned, ComPtr<ID3DBlob>> VertexShaders;
+VertexShaderMap VertexShaders;
+PixelShaderMap PixelShaders;
+unsigned NextShaderId = 1;
 std::map<PSOKey, ComPtr<ID3D12PipelineState>, PSOKeyLess> PipelineStates;
+
+// The shaders of the last draw. Map elements do not move, so the pointers stay valid until the
+// maps are cleared.
+DX12FFPKey LastFFPKey;
+bool LastFFPKeyValid = false;
+const ShaderEntry * LastVertexShader = nullptr;
+const ShaderEntry * LastPixelShader = nullptr;
+
+// -dx12debug
+FILE * DebugLog = nullptr;
+bool DebugLogStarted = false;
+std::mutex DebugLogMutex;
+ComPtr<ID3D12InfoQueue> InfoQueue;
+std::map<unsigned, unsigned> DebugMessageCounts;
+UINT64 DebugMessagesDiscarded = 0;
 
 ComPtr<ID3D12Resource> WhiteTexture;
 
@@ -328,12 +336,131 @@ bool Is_Main_Thread()
 	return GetCurrentThreadId() == MainThreadID;
 }
 
+// Appends a line to dx12debug.log when -dx12debug opened it.
+void Debug_Log(const char * format, ...)
+{
+	std::lock_guard<std::mutex> lock(DebugLogMutex);
+	if (!DebugLog)
+	{
+		return;
+	}
+	va_list args;
+	va_start(args, format);
+	vfprintf(DebugLog, format, args);
+	va_end(args);
+	fputc('\n', DebugLog);
+}
+
+// The first open in a process starts a new log, later ones (after a device shutdown) append.
+void Open_Debug_Log()
+{
+	std::lock_guard<std::mutex> lock(DebugLogMutex);
+	if (DebugLog)
+	{
+		return;
+	}
+	DebugLog = fopen("dx12debug.log", DebugLogStarted ? "a" : "w");
+	if (!DebugLog)
+	{
+		WWDEBUG_SAY(("DX12: could not open dx12debug.log"));
+		return;
+	}
+	DebugLogStarted = true;
+	DebugMessageCounts.clear();
+	DebugMessagesDiscarded = 0;
+}
+
+const char * Severity_Name(D3D12_MESSAGE_SEVERITY severity)
+{
+	switch (severity)
+	{
+	case D3D12_MESSAGE_SEVERITY_CORRUPTION: return "CORRUPTION";
+	case D3D12_MESSAGE_SEVERITY_ERROR: return "ERROR";
+	case D3D12_MESSAGE_SEVERITY_WARNING: return "WARNING";
+	case D3D12_MESSAGE_SEVERITY_INFO: return "INFO";
+	case D3D12_MESSAGE_SEVERITY_MESSAGE: return "MESSAGE";
+	default: return "UNKNOWN";
+	}
+}
+
+// Moves the debug layer messages to dx12debug.log and flushes it. Main thread only.
+void Flush_Debug_Messages()
+{
+	if (InfoQueue)
+	{
+		// Re-read the count so messages stored by other threads meanwhile are not cleared unlogged.
+		std::vector<char> buffer;
+		for (UINT64 i = 0; i < InfoQueue->GetNumStoredMessages(); ++i)
+		{
+			SIZE_T length = 0;
+			if (FAILED(InfoQueue->GetMessage(i, nullptr, &length)) || length < sizeof(D3D12_MESSAGE))
+			{
+				continue;
+			}
+			buffer.resize(length);
+			D3D12_MESSAGE * message = reinterpret_cast<D3D12_MESSAGE *>(&buffer[0]);
+			if (FAILED(InfoQueue->GetMessage(i, message, &length)))
+			{
+				continue;
+			}
+
+			unsigned & seen = DebugMessageCounts[(unsigned)message->ID];
+			++seen;
+			if (seen <= DEBUG_LOG_MAX_MESSAGES_PER_ID)
+			{
+				Debug_Log("frame %llu: %s #%d: %s", DX12Device::Get_Frame_Number(), Severity_Name(message->Severity),
+					(int)message->ID, message->pDescription ? message->pDescription : "");
+			}
+			if (seen == DEBUG_LOG_MAX_MESSAGES_PER_ID)
+			{
+				Debug_Log("frame %llu: message #%d logged %u times, further ones are only counted",
+					DX12Device::Get_Frame_Number(), (int)message->ID, seen);
+			}
+		}
+
+		UINT64 discarded = InfoQueue->GetNumMessagesDiscardedByMessageCountLimit();
+		if (discarded > DebugMessagesDiscarded)
+		{
+			Debug_Log("frame %llu: %llu messages were discarded by the message count limit", DX12Device::Get_Frame_Number(), discarded - DebugMessagesDiscarded);
+		}
+		InfoQueue->ClearStoredMessages();
+		DebugMessagesDiscarded = InfoQueue->GetNumMessagesDiscardedByMessageCountLimit();
+	}
+
+	std::lock_guard<std::mutex> lock(DebugLogMutex);
+	if (DebugLog)
+	{
+		fflush(DebugLog);
+	}
+}
+
+void Close_Debug_Log()
+{
+	for (std::map<unsigned, unsigned>::const_iterator it = DebugMessageCounts.begin(); it != DebugMessageCounts.end(); ++it)
+	{
+		if (it->second > DEBUG_LOG_MAX_MESSAGES_PER_ID)
+		{
+			Debug_Log("message #%d occurred %u times in total", (int)it->first, it->second);
+		}
+	}
+	Debug_Log("shutdown");
+
+	std::lock_guard<std::mutex> lock(DebugLogMutex);
+	if (DebugLog)
+	{
+		fclose(DebugLog);
+		DebugLog = nullptr;
+	}
+}
+
 void Log_Failure(const char * what, HRESULT hr)
 {
 	WWDEBUG_SAY(("DX12: %s failed (0x%08x)", what, (unsigned)hr));
+	Debug_Log("frame %llu: %s failed (0x%08x)", DX12Device::Get_Frame_Number(), what, (unsigned)hr);
 	if ((hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) && D3D)
 	{
 		WWDEBUG_SAY(("DX12: device removed, reason 0x%08x", (unsigned)D3D->GetDeviceRemovedReason()));
+		Debug_Log("device removed, reason 0x%08x", (unsigned)D3D->GetDeviceRemovedReason());
 	}
 }
 
@@ -697,7 +824,22 @@ void Set_Full_Viewport()
 	Apply_Viewport();
 }
 
-ComPtr<ID3DBlob> Compile_Shader(const char * source, size_t length, const char * entry, const char * target, const D3D_SHADER_MACRO * macros)
+// Writes source to dx12debug.log with line numbers, matching the compiler's error positions.
+void Debug_Log_Source(const std::string & source)
+{
+	unsigned line = 1;
+	size_t start = 0;
+	while (start < source.size())
+	{
+		size_t end = source.find('\n', start);
+		if (end == std::string::npos)
+			end = source.size();
+		Debug_Log("%4u: %s", line++, source.substr(start, end - start).c_str());
+		start = end + 1;
+	}
+}
+
+ComPtr<ID3DBlob> Compile_Shader(const std::string & source, const char * name, const char * entry, const char * target)
 {
 	UINT flags = D3DCOMPILE_ENABLE_STRICTNESS;
 #ifdef _DEBUG
@@ -708,45 +850,64 @@ ComPtr<ID3DBlob> Compile_Shader(const char * source, size_t length, const char *
 
 	ComPtr<ID3DBlob> code;
 	ComPtr<ID3DBlob> errors;
-	HRESULT hr = D3DCompileFunc(source, length, "dx12shaders.h", macros, nullptr, entry, target, flags, 0, &code, &errors);
+	HRESULT hr = D3DCompileFunc(source.c_str(), source.size(), name, nullptr, nullptr, entry, target, flags, 0, &code, &errors);
 	if (FAILED(hr))
 	{
-		WWDEBUG_SAY(("DX12: compiling %s (%s) failed (0x%08x): %s", entry, target, (unsigned)hr,
-			errors ? (const char *)errors->GetBufferPointer() : "no compiler output"));
+		const char * output = errors ? (const char *)errors->GetBufferPointer() : "no compiler output";
+		WWDEBUG_SAY(("DX12: compiling %s (%s) failed (0x%08x): %s", name, target, (unsigned)hr, output));
+		Debug_Log("frame %llu: compiling %s (%s) failed (0x%08x):\n%s", DX12Device::Get_Frame_Number(), name, target, (unsigned)hr, output);
+		Debug_Log_Source(source);
 		return nullptr;
 	}
 	return code;
 }
 
-ID3DBlob * Get_Vertex_Shader(unsigned key)
+const ShaderEntry & Get_Vertex_Shader(const DX12VSKey & key)
 {
-	std::map<unsigned, ComPtr<ID3DBlob>>::iterator it = VertexShaders.find(key);
+	VertexShaderMap::iterator it = VertexShaders.find(key);
 	if (it != VertexShaders.end())
 	{
-		return it->second.Get();
+		return it->second;
 	}
 
-	char rhw[4], normal[4], diffuse[4], specular[4], texcount[4];
-	snprintf(rhw, sizeof(rhw), "%u", key & 1);
-	snprintf(normal, sizeof(normal), "%u", (key >> 1) & 1);
-	snprintf(diffuse, sizeof(diffuse), "%u", (key >> 2) & 1);
-	snprintf(specular, sizeof(specular), "%u", (key >> 3) & 1);
-	snprintf(texcount, sizeof(texcount), "%u", (key >> 4) & 15);
+	std::string source;
+	DX12FFP_Generate_Vertex_Shader(key, source);
 
-	const D3D_SHADER_MACRO macros[] =
+	char name[64];
+	snprintf(name, sizeof(name), "ffp_vs_%08x", DX12FFP_Hash(&key, sizeof(key)));
+
+	ShaderEntry entry;
+	entry.Id = NextShaderId++;
+	entry.Code = Compile_Shader(source, name, "VSMain", "vs_5_0");
+	if (entry.Code)
 	{
-		{ "RHW", rhw },
-		{ "HAS_NORMAL", normal },
-		{ "HAS_DIFFUSE", diffuse },
-		{ "HAS_SPECULAR", specular },
-		{ "TEXCOUNT", texcount },
-		{ nullptr, nullptr },
-	};
+		Debug_Log("frame %llu: compiled %s (FVF 0x%x)", DX12Device::Get_Frame_Number(), name, key.FVF);
+	}
+	return VertexShaders.insert(VertexShaderMap::value_type(key, entry)).first->second;
+}
 
-	// A failed compile is cached too, so it is reported only once.
-	ComPtr<ID3DBlob> blob = Compile_Shader(DX12VertexShaderSource, sizeof(DX12VertexShaderSource) - 1, "VSMain", "vs_5_0", macros);
-	VertexShaders[key] = blob;
-	return blob.Get();
+const ShaderEntry & Get_Pixel_Shader(const DX12PSKey & key)
+{
+	PixelShaderMap::iterator it = PixelShaders.find(key);
+	if (it != PixelShaders.end())
+	{
+		return it->second;
+	}
+
+	std::string source;
+	DX12FFP_Generate_Pixel_Shader(key, source);
+
+	char name[64];
+	snprintf(name, sizeof(name), "ffp_ps_%08x", DX12FFP_Hash(&key, sizeof(key)));
+
+	ShaderEntry entry;
+	entry.Id = NextShaderId++;
+	entry.Code = Compile_Shader(source, name, "PSMain", "ps_5_0");
+	if (entry.Code)
+	{
+		Debug_Log("frame %llu: compiled %s", DX12Device::Get_Frame_Number(), name);
+	}
+	return PixelShaders.insert(PixelShaderMap::value_type(key, entry)).first->second;
 }
 
 // Builds the input layout for a Direct3D 8 FVF. Fails for formats without a position or with
@@ -766,7 +927,6 @@ bool Decode_FVF(unsigned fvf, FVFLayout & layout)
 
 	unsigned offset = 0;
 	unsigned count = 0;
-	bool rhw = false;
 
 	D3D12_INPUT_ELEMENT_DESC element;
 	memset(&element, 0, sizeof(element));
@@ -787,7 +947,6 @@ bool Decode_FVF(unsigned fvf, FVFLayout & layout)
 	{
 		element.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
 		offset = 16;
-		rhw = true;
 	}
 	else if (position >= FVF_XYZB1)
 	{
@@ -858,7 +1017,6 @@ bool Decode_FVF(unsigned fvf, FVFLayout & layout)
 
 	layout.ElementCount = count;
 	layout.Size = offset;
-	layout.VSKey = (rhw ? 1u : 0u) | (normal ? 2u : 0u) | (diffuse ? 4u : 0u) | (specular ? 8u : 0u) | (texcount << 4);
 	return true;
 }
 
@@ -884,7 +1042,7 @@ D3D12_BLEND Map_Blend(unsigned blend, bool alpha, D3D12_BLEND fallback)
 	return (D3D12_BLEND)blend;
 }
 
-ID3D12PipelineState * Get_Pipeline_State(const PSOKey & key, const FVFLayout & layout)
+ID3D12PipelineState * Get_Pipeline_State(const PSOKey & key, const FVFLayout & layout, ID3DBlob * vertex_shader, ID3DBlob * pixel_shader)
 {
 	std::map<PSOKey, ComPtr<ID3D12PipelineState>, PSOKeyLess>::iterator it = PipelineStates.find(key);
 	if (it != PipelineStates.end())
@@ -893,16 +1051,15 @@ ID3D12PipelineState * Get_Pipeline_State(const PSOKey & key, const FVFLayout & l
 	}
 
 	ComPtr<ID3D12PipelineState> pso;
-	ID3DBlob * vertex_shader = Get_Vertex_Shader(layout.VSKey);
-	if (vertex_shader && PixelShader)
+	if (vertex_shader && pixel_shader)
 	{
 		D3D12_GRAPHICS_PIPELINE_STATE_DESC desc;
 		memset(&desc, 0, sizeof(desc));
 		desc.pRootSignature = RootSignature.Get();
 		desc.VS.pShaderBytecode = vertex_shader->GetBufferPointer();
 		desc.VS.BytecodeLength = vertex_shader->GetBufferSize();
-		desc.PS.pShaderBytecode = PixelShader->GetBufferPointer();
-		desc.PS.BytecodeLength = PixelShader->GetBufferSize();
+		desc.PS.pShaderBytecode = pixel_shader->GetBufferPointer();
+		desc.PS.BytecodeLength = pixel_shader->GetBufferSize();
 
 		D3D12_BLEND src_color, dest_color, src_alpha, dest_alpha;
 		if (key.SrcBlend == BLEND_BOTHSRCALPHA)
@@ -1109,28 +1266,6 @@ void Color_To_Float4(unsigned argb, float * out)
 	out[1] = ((argb >> 8) & 0xff) / 255.0f;
 	out[2] = (argb & 0xff) / 255.0f;
 	out[3] = ((argb >> 24) & 0xff) / 255.0f;
-}
-
-void Set_Identity(float * m)
-{
-	memset(m, 0, sizeof(float) * 16);
-	m[0] = m[5] = m[10] = m[15] = 1.0f;
-}
-
-// out = a * b for row major 4x4 matrices.
-void Multiply_Matrix(const float * a, const float * b, float * out)
-{
-	for (int row = 0; row < 4; ++row)
-	{
-		for (int col = 0; col < 4; ++col)
-		{
-			out[row * 4 + col] =
-				a[row * 4 + 0] * b[0 * 4 + col] +
-				a[row * 4 + 1] * b[1 * 4 + col] +
-				a[row * 4 + 2] * b[2 * 4 + col] +
-				a[row * 4 + 3] * b[3 * 4 + col];
-		}
-	}
 }
 
 // Copies constants into frame memory, reusing the previous copy when nothing changed.
@@ -1400,15 +1535,32 @@ bool Init_Device(HWND hwnd)
 		return false;
 	}
 
-	UINT factory_flags = 0;
+	// The debug layer has to be enabled before the device is created. It needs the Graphics Tools
+	// optional Windows feature.
+	bool debug_layer = DX12Device_DebugLayer;
 #ifdef _DEBUG
-	ComPtr<ID3D12Debug> debug;
-	if (D3D12GetDebugInterfaceFunc && SUCCEEDED(D3D12GetDebugInterfaceFunc(IID_PPV_ARGS(&debug))))
-	{
-		debug->EnableDebugLayer();
-		factory_flags = DXGI_CREATE_FACTORY_DEBUG;
-	}
+	debug_layer = true;
 #endif
+	UINT factory_flags = 0;
+	if (debug_layer)
+	{
+		ComPtr<ID3D12Debug> debug;
+		if (D3D12GetDebugInterfaceFunc && SUCCEEDED(D3D12GetDebugInterfaceFunc(IID_PPV_ARGS(&debug))))
+		{
+			debug->EnableDebugLayer();
+			ComPtr<ID3D12Debug1> debug1;
+			if (SUCCEEDED(debug.As(&debug1)))
+			{
+				debug1->SetEnableGPUBasedValidation(FALSE);
+			}
+			factory_flags = DXGI_CREATE_FACTORY_DEBUG;
+			Debug_Log("debug layer enabled, GPU-based validation off");
+		}
+		else
+		{
+			Debug_Log("D3D12GetDebugInterface failed; the debug layer needs the Graphics Tools optional feature");
+		}
+	}
 
 	HRESULT hr = CreateDXGIFactory2Func_(factory_flags, IID_PPV_ARGS(&Factory));
 	if (FAILED(hr) && factory_flags != 0)
@@ -1429,11 +1581,27 @@ bool Init_Device(HWND hwnd)
 	WWDEBUG_SAY(("DX12: adapter %s (vendor 0x%04x, device 0x%04x, %u MB)", AdapterName,
 		AdapterDesc.VendorId, AdapterDesc.DeviceId, (unsigned)(AdapterDesc.DedicatedVideoMemory / (1024 * 1024))));
 
+	Debug_Log("adapter %s (vendor 0x%04x, device 0x%04x)", AdapterName, AdapterDesc.VendorId, AdapterDesc.DeviceId);
+
 	hr = D3D12CreateDeviceFunc(Adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&D3D));
 	if (FAILED(hr))
 	{
 		Log_Failure("D3D12CreateDevice", hr);
 		return false;
+	}
+
+	// Messages are collected for dx12debug.log; nothing breaks into the debugger.
+	if (DX12Device_DebugLayer && SUCCEEDED(D3D.As(&InfoQueue)))
+	{
+		InfoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, FALSE);
+		InfoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, FALSE);
+		InfoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING, FALSE);
+		InfoQueue->SetMessageCountLimit(65536);
+		DebugMessagesDiscarded = InfoQueue->GetNumMessagesDiscardedByMessageCountLimit();
+	}
+	else if (DX12Device_DebugLayer)
+	{
+		Debug_Log("ID3D12InfoQueue is not available, debug layer messages are not logged");
 	}
 
 	Enumerate_Display_Modes();
@@ -1532,12 +1700,6 @@ bool Init_Device(HWND hwnd)
 		return false;
 	}
 
-	PixelShader = Compile_Shader(DX12PixelShaderSource, sizeof(DX12PixelShaderSource) - 1, "PSMain", "ps_5_0", nullptr);
-	if (!PixelShader)
-	{
-		return false;
-	}
-
 	if (!Create_White_Texture())
 	{
 		return false;
@@ -1577,7 +1739,11 @@ void Release_All()
 
 	PipelineStates.clear();
 	VertexShaders.clear();
-	PixelShader.Reset();
+	PixelShaders.clear();
+	NextShaderId = 1;
+	LastFFPKeyValid = false;
+	LastVertexShader = nullptr;
+	LastPixelShader = nullptr;
 	RootSignature.Reset();
 	SamplerCache.clear();
 	WhiteTexture.Reset();
@@ -1619,6 +1785,8 @@ void Release_All()
 	}
 	NextFenceValue = 1;
 
+	Flush_Debug_Messages();
+	InfoQueue.Reset();
 	D3D.Reset();
 	Adapter.Reset();
 	Factory.Reset();
@@ -1705,16 +1873,24 @@ bool DX12Device::Init(void * hwnd)
 	}
 
 	WWDEBUG_SAY(("DX12: initializing Direct3D 12"));
+	if (DX12Device_DebugLayer)
+	{
+		Open_Debug_Log();
+		Debug_Log("initializing Direct3D 12");
+	}
 	if (!Init_Device((HWND)hwnd))
 	{
 		WWDEBUG_SAY(("DX12: initialization failed"));
+		Debug_Log("initialization failed");
 		if (Queue && Fence && FenceEvent)
 		{
 			Wait_For_Fence(Signal_Queue());
 		}
 		Release_All();
+		Close_Debug_Log();
 		return false;
 	}
+	Flush_Debug_Messages();
 
 	Device = D3D.Get();
 	Width = 0;
@@ -1740,6 +1916,7 @@ void DX12Device::Shutdown()
 	// Resources released from here on are released immediately.
 	Device = nullptr;
 	Release_All();
+	Close_Debug_Log();
 	Width = 0;
 	Height = 0;
 }
@@ -1990,6 +2167,7 @@ void DX12Device::End_Frame(bool present)
 	FrameSlotPrepared = false;
 
 	Process_Deferred();
+	Flush_Debug_Messages();
 	++FrameNumber;
 }
 
@@ -2172,9 +2350,37 @@ void DX12Device::Draw(const DX12DrawDesc & desc)
 	}
 	Record_Uploads(CommandList.Get());
 
+	// Fixed-function shaders, derived from the Direct3D 8 state mirror.
+	const unsigned * render_states = desc.RenderStates;
+	const unsigned * texture_stage_states = desc.TextureStageStates;
+	unsigned fallback_render_states[FFP_RS_COUNT];
+	unsigned fallback_texture_stage_states[(unsigned)FFP_TSS_COUNT * DX12_MAX_STAGES];
+	if (!render_states || !texture_stage_states)
+	{
+		DX12FFP_Fill_Fallback_States(desc, fallback_render_states, fallback_texture_stage_states);
+		render_states = fallback_render_states;
+		texture_stage_states = fallback_texture_stage_states;
+	}
+
+	DX12FFPKey ffp;
+	DX12FFP_Build_Key(desc, render_states, texture_stage_states, ffp);
+	if (!LastFFPKeyValid || memcmp(&ffp, &LastFFPKey, sizeof(ffp)) != 0)
+	{
+		LastVertexShader = &Get_Vertex_Shader(ffp.VS);
+		LastPixelShader = &Get_Pixel_Shader(ffp.PS);
+		LastFFPKey = ffp;
+		LastFFPKeyValid = true;
+	}
+	if (!LastVertexShader->Code || !LastPixelShader->Code)
+	{
+		return;
+	}
+
 	// Pipeline state. States that do not matter are normalized to share pipeline states.
 	PSOKey key;
 	memset(&key, 0, sizeof(key));
+	key.VertexShader = LastVertexShader->Id;
+	key.PixelShader = LastPixelShader->Id;
 	key.FVF = desc.FVF;
 	key.TopologyType = (unsigned)topology_type;
 	key.AlphaBlendEnable = desc.AlphaBlendEnable ? 1 : 0;
@@ -2195,24 +2401,21 @@ void DX12Device::Draw(const DX12DrawDesc & desc)
 	key.FillMode = desc.FillMode;
 	key.DepthBias = desc.DepthBias;
 
-	ID3D12PipelineState * pso = Get_Pipeline_State(key, layout);
+	ID3D12PipelineState * pso = Get_Pipeline_State(key, layout, LastVertexShader->Code.Get(), LastPixelShader->Code.Get());
 	if (!pso)
 	{
 		return;
 	}
 
-	// Textures. A stage after a disabled stage is unused and gets the white texture.
-	bool stage_enabled[DX12_MAX_STAGES];
-	stage_enabled[0] = desc.ColorOp[0] > TOP_DISABLE;
-	stage_enabled[1] = stage_enabled[0] && desc.ColorOp[1] > TOP_DISABLE;
-
+	// Textures. Stages that do not sample their texture get the white texture.
 	D3D12_RESOURCE_BARRIER barriers[DX12_MAX_STAGES];
 	unsigned barrier_count = 0;
 	D3D12_GPU_DESCRIPTOR_HANDLE textures[DX12_MAX_STAGES];
 	D3D12_GPU_DESCRIPTOR_HANDLE samplers[DX12_MAX_STAGES];
 	for (int stage = 0; stage < DX12_MAX_STAGES; ++stage)
 	{
-		textures[stage] = Bind_Texture(stage_enabled[stage] ? desc.Textures[stage] : nullptr, barriers, barrier_count);
+		bool sampled = ffp.PS.Stages[stage].Texture == FFP_TEXTURE_SAMPLED;
+		textures[stage] = Bind_Texture(sampled ? desc.Textures[stage] : nullptr, barriers, barrier_count);
 		samplers[stage] = Get_Sampler(desc.MinFilter[stage], desc.MagFilter[stage], desc.MipFilter[stage],
 			desc.AddressU[stage], desc.AddressV[stage], desc.MaxAnisotropy[stage]);
 	}
@@ -2221,72 +2424,17 @@ void DX12Device::Draw(const DX12DrawDesc & desc)
 		CommandList->ResourceBarrier(barrier_count, barriers);
 	}
 
-	// Vertex shader constants.
+	DX12FFPViewport viewport;
+	viewport.X = CurrentViewport.TopLeftX;
+	viewport.Y = CurrentViewport.TopLeftY;
+	viewport.Width = CurrentViewport.Width;
+	viewport.Height = CurrentViewport.Height;
+	viewport.MinZ = CurrentViewport.MinDepth;
+	viewport.MaxZ = CurrentViewport.MaxDepth;
+
 	DX12VSConstants vs;
-	memset(&vs, 0, sizeof(vs));
-	{
-		float identity[16];
-		Set_Identity(identity);
-		const float * world = desc.World ? desc.World : identity;
-		const float * view = desc.View ? desc.View : identity;
-		const float * projection = desc.Projection ? desc.Projection : identity;
-		float world_view[16];
-		Multiply_Matrix(world, view, world_view);
-		Multiply_Matrix(world_view, projection, vs.WorldViewProjection);
-	}
-
-	float vp_x = CurrentViewport.TopLeftX;
-	float vp_y = CurrentViewport.TopLeftY;
-	float vp_w = CurrentViewport.Width >= 1.0f ? CurrentViewport.Width : 1.0f;
-	float vp_h = CurrentViewport.Height >= 1.0f ? CurrentViewport.Height : 1.0f;
-
-	// Direct3D 8 puts pixel centers on integer coordinates, Direct3D 12 half a pixel further.
-	// Pretransformed vertices: render target pixels plus half a pixel, through the viewport to NDC.
-	vs.ScreenToClip[0] = 2.0f / vp_w;
-	vs.ScreenToClip[1] = -2.0f / vp_h;
-	vs.ScreenToClip[2] = (0.5f - vp_x) * 2.0f / vp_w - 1.0f;
-	vs.ScreenToClip[3] = 1.0f - (0.5f - vp_y) * 2.0f / vp_h;
-
-	// Pretransformed depth is final; undo the viewport depth mapping.
-	float depth_range = CurrentViewport.MaxDepth - CurrentViewport.MinDepth;
-	if (depth_range > 1.0e-6f || depth_range < -1.0e-6f)
-	{
-		vs.DepthToClip[0] = 1.0f / depth_range;
-		vs.DepthToClip[1] = -CurrentViewport.MinDepth / depth_range;
-	}
-	else
-	{
-		vs.DepthToClip[0] = 1.0f;
-		vs.DepthToClip[1] = 0.0f;
-	}
-
-	vs.PixelOffset[0] = 1.0f / vp_w;
-	vs.PixelOffset[1] = -1.0f / vp_h;
-	vs.TexCoordIndex[0] = desc.TexCoordIndex[0] & 0xffff;
-	vs.TexCoordIndex[1] = desc.TexCoordIndex[1] & 0xffff;
-	for (int i = 0; i < 4; ++i)
-	{
-		vs.MaterialDiffuse[i] = desc.MaterialDiffuse[i];
-	}
-
-	// Pixel shader constants.
 	DX12PSConstants ps;
-	memset(&ps, 0, sizeof(ps));
-	for (int stage = 0; stage < DX12_MAX_STAGES; ++stage)
-	{
-		ps.ColorStage[stage][0] = stage_enabled[stage] ? desc.ColorOp[stage] : TOP_DISABLE;
-		ps.ColorStage[stage][1] = desc.ColorArg1[stage];
-		ps.ColorStage[stage][2] = desc.ColorArg2[stage];
-		ps.ColorStage[stage][3] = desc.ColorArg0[stage];
-		ps.AlphaStage[stage][0] = desc.AlphaOp[stage];
-		ps.AlphaStage[stage][1] = desc.AlphaArg1[stage];
-		ps.AlphaStage[stage][2] = desc.AlphaArg2[stage];
-		ps.AlphaStage[stage][3] = desc.AlphaArg0[stage];
-	}
-	ps.Flags[0] = (desc.AlphaTestEnable && desc.AlphaFunc >= 1 && desc.AlphaFunc < CMP_ALWAYS) ? desc.AlphaFunc : 0;
-	ps.Flags[1] = desc.AlphaRef & 0xff;
-	ps.Flags[2] = desc.SpecularEnable ? 1 : 0;
-	Color_To_Float4(desc.TextureFactor, ps.TextureFactor);
+	DX12FFP_Fill_Constants(desc, render_states, ffp, viewport, vs, ps);
 
 	UINT64 vs_gpu = Upload_Constants(&vs, sizeof(vs), &LastVSConstants, LastVSConstantsGPU);
 	UINT64 ps_gpu = Upload_Constants(&ps, sizeof(ps), &LastPSConstants, LastPSConstantsGPU);

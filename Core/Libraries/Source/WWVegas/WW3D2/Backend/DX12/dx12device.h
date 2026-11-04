@@ -18,10 +18,11 @@
 
 // Direct3D 12 renderer. DX8Wrapper keeps its render state, texture stage state, transform and
 // material caches as before, and in Direct3D 12 mode hands each draw to DX12Device, which
-// emulates the fixed-function pipeline with one uber shader and a pipeline state cache.
+// emulates the fixed-function pipeline with generated shaders (dx12ffp.h) and a pipeline state cache.
 //
 // The Direct3D 12 path is selected with -dx12 while the port is in progress. Once it covers
-// everything the Direct3D 8 path is deleted.
+// everything the Direct3D 8 path is deleted. -dx12debug sets DX12Device_DebugLayer, which enables
+// the Direct3D 12 debug layer and writes its messages to dx12debug.log.
 
 #pragma once
 
@@ -32,9 +33,41 @@ struct ID3D12GraphicsCommandList;
 struct ID3D12Resource;
 class DX12TextureClass;
 
+extern bool DX12Device_DebugLayer;
+
 enum
 {
 	DX12_MAX_STAGES = 2,
+	DX12_MAX_LIGHTS = 4,
+};
+
+// D3DMATERIAL8, colors as rgba.
+struct DX12MaterialDesc
+{
+	float Diffuse[4];
+	float Ambient[4];
+	float Specular[4];
+	float Emissive[4];
+	float Power;
+};
+
+// D3DLIGHT8 in world space, colors as rgba. Type is D3DLIGHTTYPE.
+struct DX12LightDesc
+{
+	bool Enabled;
+	unsigned Type;
+	float Diffuse[4];
+	float Specular[4];
+	float Ambient[4];
+	float Position[3];
+	float Direction[3];
+	float Range;
+	float Falloff;
+	float Attenuation0;
+	float Attenuation1;
+	float Attenuation2;
+	float Theta;
+	float Phi;
 };
 
 // One draw call, described with plain values so this header does not depend on Direct3D 8 types.
@@ -99,6 +132,14 @@ struct DX12DrawDesc
 	unsigned AddressV[DX12_MAX_STAGES];
 	unsigned MaxAnisotropy[DX12_MAX_STAGES];
 	DX12TextureClass * Textures[DX12_MAX_STAGES];
+
+	// The Direct3D 8 device state the fixed-function emulation is derived from. Without
+	// RenderStates or TextureStageStates the explicit fields above are used, with no lighting or fog.
+	const unsigned * RenderStates;			// 256 entries, D3DRENDERSTATETYPE indexed
+	const unsigned * TextureStageStates;	// [stage * 32 + D3DTEXTURESTAGESTATETYPE], DX12_MAX_STAGES stages
+	const float * TextureMatrices[DX12_MAX_STAGES];	// D3DTS_TEXTURE0 + stage, 4x4 row major; null is identity
+	DX12MaterialDesc Material;
+	DX12LightDesc Lights[DX12_MAX_LIGHTS];
 };
 
 class DX12Device

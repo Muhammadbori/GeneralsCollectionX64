@@ -632,6 +632,15 @@ void DX8Wrapper::Set_DX12_Default_Device_States()
 	dev.FVF=0;
 	dev.PixelShader=0;
 
+	// A new device has every light disabled. CurrentDX8LightEnables doubles as the device's enables.
+	memset(DX8Lights,0,sizeof(DX8Lights));
+	for (a=0;a<4;++a) {
+		CurrentDX8LightEnables[a]=false;
+	}
+	memset(&DX8Material,0,sizeof(DX8Material));
+	DX8Material.Diffuse.r=DX8Material.Diffuse.g=DX8Material.Diffuse.b=DX8Material.Diffuse.a=1.0f;
+	DX8Material.Ambient=DX8Material.Diffuse;
+
 	for (a=0;a<=D3DTS_WORLD;++a) {
 		wrapper::D3DMatrixIdentity(&DX8Transforms[a]);
 	}
@@ -2823,8 +2832,9 @@ void DX8Wrapper::Draw_Strip(
 // ----------------------------------------------------------------------------
 //
 // Direct3D 12 draws. Everything comes from DX12Device_State, the mirror of what
-// the Direct3D 8 device would hold, plus DX8Transforms, DX8Material and the
-// viewport DX12Device already has. The wrapper caches are never read here.
+// the Direct3D 8 device would hold, plus DX8Transforms, DX8Material, DX8Lights with
+// CurrentDX8LightEnables and the viewport DX12Device already has. The wrapper
+// caches are never read here.
 //
 // ----------------------------------------------------------------------------
 
@@ -2905,8 +2915,62 @@ bool DX8Wrapper::Fill_DX12_Draw_State(DX12DrawDesc& desc)
 	desc.SpecularEnable=rs[D3DRS_SPECULARENABLE]!=0;
 	desc.TextureFactor=rs[D3DRS_TEXTUREFACTOR];
 
-	// There is no lighting emulation yet. Vertices without a diffuse color are white when unlit;
-	// lit ones get the material diffuse as the closest approximation.
+	// The device derives the fixed-function pipeline from the full state mirror.
+	desc.RenderStates=dev.RenderStates;
+	desc.TextureStageStates=&dev.TextureStageStates[0][0];
+
+	const D3DMATERIAL8& mat=DX8Material;
+	desc.Material.Diffuse[0]=mat.Diffuse.r;
+	desc.Material.Diffuse[1]=mat.Diffuse.g;
+	desc.Material.Diffuse[2]=mat.Diffuse.b;
+	desc.Material.Diffuse[3]=mat.Diffuse.a;
+	desc.Material.Ambient[0]=mat.Ambient.r;
+	desc.Material.Ambient[1]=mat.Ambient.g;
+	desc.Material.Ambient[2]=mat.Ambient.b;
+	desc.Material.Ambient[3]=mat.Ambient.a;
+	desc.Material.Specular[0]=mat.Specular.r;
+	desc.Material.Specular[1]=mat.Specular.g;
+	desc.Material.Specular[2]=mat.Specular.b;
+	desc.Material.Specular[3]=mat.Specular.a;
+	desc.Material.Emissive[0]=mat.Emissive.r;
+	desc.Material.Emissive[1]=mat.Emissive.g;
+	desc.Material.Emissive[2]=mat.Emissive.b;
+	desc.Material.Emissive[3]=mat.Emissive.a;
+	desc.Material.Power=mat.Power;
+
+	for (unsigned index=0;index<4;++index) {
+		const D3DLIGHT8& light=DX8Lights[index];
+		desc.Lights[index].Enabled=CurrentDX8LightEnables[index];
+		desc.Lights[index].Type=(unsigned)light.Type;
+		desc.Lights[index].Diffuse[0]=light.Diffuse.r;
+		desc.Lights[index].Diffuse[1]=light.Diffuse.g;
+		desc.Lights[index].Diffuse[2]=light.Diffuse.b;
+		desc.Lights[index].Diffuse[3]=light.Diffuse.a;
+		desc.Lights[index].Specular[0]=light.Specular.r;
+		desc.Lights[index].Specular[1]=light.Specular.g;
+		desc.Lights[index].Specular[2]=light.Specular.b;
+		desc.Lights[index].Specular[3]=light.Specular.a;
+		desc.Lights[index].Ambient[0]=light.Ambient.r;
+		desc.Lights[index].Ambient[1]=light.Ambient.g;
+		desc.Lights[index].Ambient[2]=light.Ambient.b;
+		desc.Lights[index].Ambient[3]=light.Ambient.a;
+		desc.Lights[index].Position[0]=light.Position.x;
+		desc.Lights[index].Position[1]=light.Position.y;
+		desc.Lights[index].Position[2]=light.Position.z;
+		desc.Lights[index].Direction[0]=light.Direction.x;
+		desc.Lights[index].Direction[1]=light.Direction.y;
+		desc.Lights[index].Direction[2]=light.Direction.z;
+		desc.Lights[index].Range=light.Range;
+		desc.Lights[index].Falloff=light.Falloff;
+		desc.Lights[index].Attenuation0=light.Attenuation0;
+		desc.Lights[index].Attenuation1=light.Attenuation1;
+		desc.Lights[index].Attenuation2=light.Attenuation2;
+		desc.Lights[index].Theta=light.Theta;
+		desc.Lights[index].Phi=light.Phi;
+	}
+
+	// MaterialDiffuse is the M1 approximation of lighting, kept for the existing field: the material
+	// diffuse when lit, white when unlit.
 	if (rs[D3DRS_LIGHTING]) {
 		desc.MaterialDiffuse[0]=DX8Material.Diffuse.r;
 		desc.MaterialDiffuse[1]=DX8Material.Diffuse.g;
@@ -2935,6 +2999,7 @@ bool DX8Wrapper::Fill_DX12_Draw_State(DX12DrawDesc& desc)
 		desc.AddressV[stage]=tss[D3DTSS_ADDRESSV];
 		desc.MaxAnisotropy[stage]=tss[D3DTSS_MAXANISOTROPY];
 		desc.Textures[stage]=dev.Textures[stage];
+		desc.TextureMatrices[stage]=&DX8Transforms[D3DTS_TEXTURE0+stage].m[0][0];
 	}
 
 	return true;

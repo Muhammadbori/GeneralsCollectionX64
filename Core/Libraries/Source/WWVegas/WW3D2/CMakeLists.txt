@@ -16,6 +16,8 @@ set(WW3D2_SRC
     Backend/DX8Backend.cpp
     Backend/DX12/dx12device.cpp
     Backend/DX12/dx12device.h
+    Backend/DX12/dx12ffp.cpp
+    Backend/DX12/dx12ffp.h
     Backend/DX12/dx12resource.cpp
     Backend/DX12/dx12resource.h
     Backend/DX12/dx12shaders.h

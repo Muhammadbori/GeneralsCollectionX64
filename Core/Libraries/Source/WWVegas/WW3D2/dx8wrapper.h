@@ -1557,7 +1557,7 @@ WWINLINE void DX8Wrapper::Set_Transform(D3DTRANSFORMSTATETYPE transform,const Ma
 		break;
 	case D3DTS_PROJECTION:
 		{
-			D3DMATRIX ProjectionMatrix=To_D3DMATRIX(m);
+			ProjectionMatrix=To_D3DMATRIX(m);
 			ZFar=0.0f;
 			ZNear=0.0f;
 			DX8Transforms[D3DTS_PROJECTION]=ProjectionMatrix;
