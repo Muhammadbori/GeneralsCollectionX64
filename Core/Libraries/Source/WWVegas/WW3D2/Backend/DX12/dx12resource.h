@@ -52,6 +52,8 @@ public:
 	unsigned Get_Level_Count() const { return LevelCount; }
 	WW3DFormat Get_Format() const { return Format; }
 	bool Is_CPU_Only() const { return CPUOnly; }
+	// True when every level keeps its CPU copy after Unlock, so a later Lock still sees its texels.
+	bool Keeps_CPU_Copy() const { return KeepCPUCopy; }
 
 	// CPU row pitch of a level in bytes. For DXT formats this is the pitch of one row of 4x4 blocks.
 	unsigned Get_Pitch(unsigned level) const;

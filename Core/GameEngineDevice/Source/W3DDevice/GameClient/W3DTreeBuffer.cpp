@@ -87,6 +87,8 @@ enum
 #include "WW3D2/matinfo.h"
 #include "WW3D2/mesh.h"
 #include "WW3D2/meshmdl.h"
+#include "WW3D2/Backend/DX12/dx12device.h"
+#include "WW3D2/Backend/DX12/dx12resource.h"
 #include "d3dx8tex.h"
 
 
@@ -98,6 +100,50 @@ enum
 #define END_OF_PARTITION (-1)
 
 #define DELETED_TREE_TYPE (-2)
+
+//-----------------------------------------------------------------------------
+// Direct3D 12 mode: builds levels 1..n of an A8R8G8B8 texture from level 0 with a 2x2 box filter,
+// in place of D3DXFilterTexture(..., D3DX_FILTER_BOX).
+//-----------------------------------------------------------------------------
+static void dx12FilterTreeTextureMips(DX12TextureClass *tex)
+{
+	if (tex == nullptr || tex->Get_Format() != WW3D_FORMAT_A8R8G8B8) {
+		return;
+	}
+	for (unsigned level = 1; level < tex->Get_Level_Count(); level++) {
+		const unsigned srcWidth = tex->Get_Width(level-1);
+		const unsigned srcHeight = tex->Get_Height(level-1);
+		const unsigned dstWidth = tex->Get_Width(level);
+		const unsigned dstHeight = tex->Get_Height(level);
+		int srcPitch = 0;
+		int dstPitch = 0;
+		const UnsignedByte *src = (const UnsignedByte *)tex->Lock(level-1, &srcPitch, nullptr, true);
+		UnsignedByte *dst = (UnsignedByte *)tex->Lock(level, &dstPitch);
+		if (src && dst) {
+			for (unsigned y = 0; y < dstHeight; y++) {
+				const unsigned y0 = (2*y < srcHeight) ? 2*y : srcHeight-1;
+				const unsigned y1 = (2*y+1 < srcHeight) ? 2*y+1 : y0;
+				const UnsignedByte *row0 = src + y0*srcPitch;
+				const UnsignedByte *row1 = src + y1*srcPitch;
+				UnsignedByte *out = dst + y*dstPitch;
+				for (unsigned x = 0; x < dstWidth; x++) {
+					const unsigned x0 = (2*x < srcWidth) ? 2*x : srcWidth-1;
+					const unsigned x1 = (2*x+1 < srcWidth) ? 2*x+1 : x0;
+					for (unsigned c = 0; c < 4; c++) {
+						const unsigned sum = row0[x0*4+c] + row0[x1*4+c] + row1[x0*4+c] + row1[x1*4+c];
+						out[x*4+c] = (UnsignedByte)((sum + 2) >> 2);
+					}
+				}
+			}
+		}
+		if (dst) {
+			tex->Unlock(level);
+		}
+		if (src) {
+			tex->Unlock(level-1);
+		}
+	}
+}
 
 /******************************************************************************
 						W3DTreeTextureClass
@@ -131,6 +177,52 @@ int W3DTreeBuffer::W3DTreeTextureClass::update(W3DTreeBuffer *buffer)
 	//Set to clamp.
 	Get_Filter().Set_U_Addr_Mode(TextureFilterClass::TEXTURE_ADDRESS_CLAMP);
 	Get_Filter().Set_V_Addr_Mode(TextureFilterClass::TEXTURE_ADDRESS_CLAMP);
+
+	if (DX12Device::Is_Active()) {
+		// Direct3D 12 mode: same tile copy, written through the DX12 texture's Lock with its own
+		// row pitch, then a CPU box filter for the mip chain. Texture reduction (SetLOD) is not
+		// supported in this mode.
+		DX12TextureClass *tex = Peek_DX12_Texture();
+		if (tex == nullptr) {
+			return 0;
+		}
+		int pitch = 0;
+		UnsignedByte *bits = (UnsignedByte *)tex->Lock(0, &pitch);
+		if (bits == nullptr) {
+			return 0;
+		}
+		Int tilePixelExtent = TILE_PIXEL_EXTENT;
+		if (tex->Get_Format() == WW3D_FORMAT_A8R8G8B8) {
+			Int tileNdx;
+			Int pixelBytes = 4;
+			for (tileNdx=0; tileNdx < buffer->getNumTiles(); tileNdx++) {
+				TileData *pTile = buffer->getSourceTile(tileNdx);
+				if (!pTile) continue;
+				ICoord2D position = pTile->m_tileLocationInTexture;
+				if (position.x<0) {
+					continue;
+				}
+				Int i,j;
+				for (j=0; j<tilePixelExtent; j++) {
+					UnsignedByte *pBGR = pTile->getRGBDataForWidth(tilePixelExtent);
+					pBGR += (tilePixelExtent-(1+j))*TILE_BYTES_PER_PIXEL*tilePixelExtent; // invert to match.
+					Int row = position.y+j;
+					UnsignedByte *pBGRA = bits + row*pitch;
+
+					Int column = position.x;
+					pBGRA += column*pixelBytes;
+					for (i=0; i<tilePixelExtent; i++) {
+						*((Int *)pBGRA) = (pBGR[3]<<24) + (pBGR[2]<<16) + (pBGR[1]<<8) + (pBGR[0]);
+						pBGRA +=pixelBytes;
+						pBGR +=TILE_BYTES_PER_PIXEL;
+					}
+				}
+			}
+		}
+		tex->Unlock(0);
+		dx12FilterTreeTextureMips(tex);
+		return (Int)tex->Get_Height(0);
+	}
 
 	IDirect3DSurface8 *surface_level;
 	D3DSURFACE_DESC surface_desc;

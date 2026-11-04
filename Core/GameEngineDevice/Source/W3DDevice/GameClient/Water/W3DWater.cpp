@@ -43,6 +43,7 @@
 #include "WW3D2/camera.h"
 #include "WW3D2/scene.h"
 #include "WW3D2/dx8wrapper.h"
+#include "WW3D2/Backend/DX12/dx12device.h"
 #include "WW3D2/Renderer.h"
 #include "WW3D2/light.h"
 #include "d3dx8math.h"
@@ -873,6 +874,13 @@ void WaterRenderObjClass::ReAcquireResources()
 
 	//We're using the same grid for either 3D Water Mesh or Pixel/Vertex shader.  Just
 	//allocate the right size depending on usage
+	if (DX12Device::Is_Active())
+	{
+		//Direct3D 12 mode: the grid mesh and shader water need raw Direct3D 8 buffers, shaders and
+		//a render target, which this mode does not provide yet. Skip them (renderWaterMesh does not
+		//draw) but still restore the water tracks and textures below.
+	}
+	else
 	if (m_meshData)
 	{
 		//Create new grid data
@@ -1019,6 +1027,11 @@ Int WaterRenderObjClass::init(Real waterLevel, Real dx, Real dy, SceneClass *par
 
 	m_parentScene=parentScene;
 	m_waterType = type;
+
+	//Direct3D 12 mode has no pixel/vertex shaders or render targets yet, so shader water falls back
+	//to the translucent fixed function water.
+	if (DX12Device::Is_Active() && m_waterType == WATER_TYPE_2_PVSHADER)
+		m_waterType = WATER_TYPE_0_TRANSLUCENT;
 
 	/// Hack for now
 	//m_waterType = WATER_TYPE_0_TRANSLUCENT;
@@ -1432,6 +1445,9 @@ void WaterRenderObjClass::loadSetting( Setting *setting, TimeOfDay timeOfDay )
 //-------------------------------------------------------------------------------------------------
 void WaterRenderObjClass::updateRenderTargetTextures(CameraClass *cam)
 {
+	if (DX12Device::Is_Active() && m_pReflectionTexture == nullptr)
+		return;	//no reflection render target in Direct3D 12 mode yet.
+
 	if (m_waterType == WATER_TYPE_2_PVSHADER && getClippedWaterPlane(cam, nullptr) &&
 		TheTerrainRenderObject && TheTerrainRenderObject->getMap())
 		renderMirror(cam);	//generate texture containing reflected scene
@@ -2227,6 +2243,9 @@ void WaterRenderObjClass::renderWaterMesh()
 
 	if (!m_doWaterGrid)
 		return;	//the water grid is disabled.
+
+	if (m_vertexBufferD3D == nullptr || m_indexBufferD3D == nullptr)
+		return;	//no grid buffers (Direct3D 12 mode cannot create raw Direct3D 8 buffers).
 
 	//According to Nvidia there's a D3D bug that happens if you don't start with a
 	//new dynamic VB each frame - so we force a DISCARD by overflowing the counter.

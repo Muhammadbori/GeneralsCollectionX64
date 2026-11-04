@@ -36,6 +36,10 @@
 
 class WorldHeightMap;
 #define TILE_OFFSET 8
+
+/// Direct3D 12 mode replacement for D3DXFilterTexture(tex, nullptr, 0, D3DX_FILTER_BOX): box filters mip levels 1..n from level 0 on the CPU.
+void TerrainTex_Build_DX12_Mips(TextureClass *tex);
+
 /** ***********************************************************************
 **                             TerrainTextureClass
 ***************************************************************************/
@@ -57,6 +61,9 @@ public:
 	int update(WorldHeightMap *htMap); ///< Sets the pixels, and returns the actual height of the texture.
 	Bool updateFlat(WorldHeightMap *htMap, Int xCell, Int yCell, Int cellWidth, Int pixelsPerCell); ///< Sets the pixels.
 	void setLOD(Int LOD);
+protected:
+	int updateTerrainTextureDX12(WorldHeightMap *htMap); ///< Direct3D 12 mode body of update().
+	Bool updateFlatTerrainTextureDX12(WorldHeightMap *htMap, Int xCell, Int yCell, Int cellWidth, Int pixelsPerCell); ///< Direct3D 12 mode body of updateFlat().
 };
 
 
@@ -90,7 +97,8 @@ public:
 		// just use default destructor. ~TerrainTextureClass();
 public:
 	int update(WorldHeightMap *htMap); ///< Sets the pixels, and returns the actual height of the texture.
-
+protected:
+	int updateAlphaEdgeTextureDX12(WorldHeightMap *htMap); ///< Direct3D 12 mode body of update().
 };
 
 class LightMapTerrainTextureClass : public TextureClass

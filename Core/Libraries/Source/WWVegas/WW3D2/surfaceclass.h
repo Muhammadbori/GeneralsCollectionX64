@@ -152,6 +152,13 @@ class SurfaceClass : public RefCountClass
 
 		WW3DFormat Get_Surface_Format() const { return SurfaceFormat; }
 
+		// Direct3D 12 replacement for D3DXFilterTexture(texture, nullptr, 0, D3DX_FILTER_BOX): rebuilds
+		// levels first_level and below on the CPU, box filtering each level from the one above it, and
+		// uploads them. The level above first_level is only read, with a new lock, so it must still have
+		// its CPU data: does nothing for textures created without keep_cpu_copy, for null textures and
+		// for formats the CPU cannot convert (DXT, paletted).
+		static void Generate_DX12_Mipmaps(DX12TextureClass *texture, unsigned first_level = 1);
+
 	private:
 
 		// Lock helpers shared by the Direct3D 8 and Direct3D 12 paths. A null rect locks the whole surface.

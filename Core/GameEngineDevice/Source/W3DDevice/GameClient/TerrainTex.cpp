@@ -52,7 +52,256 @@
 #include "W3DDevice/GameClient/TileData.h"
 #include "Common/GlobalData.h"
 #include "WW3D2/dx8wrapper.h"
+#include "WW3D2/surfaceclass.h"
 #include "d3dx8tex.h"
+
+/******************************************************************************
+						Direct3D 12 helpers
+******************************************************************************/
+// In Direct3D 12 mode these textures have no IDirect3DTexture8. The update functions fill
+// level 0 through SurfaceClass, address rows with the locked pitch, and build the mip chain
+// on the CPU in place of D3DXFilterTexture. Direct3D 12 has no SetLOD, so texture reduction
+// is not applied and the textures keep their full resolution.
+
+//=============================================================================
+// TerrainTex_Build_DX12_Mips
+//=============================================================================
+/** Box filters mip levels 1..n of the texture from level 0 (Direct3D 12 mode). */
+//=============================================================================
+void TerrainTex_Build_DX12_Mips(TextureClass *tex)
+{
+	if (tex == nullptr) {
+		return;
+	}
+	SurfaceClass::Generate_DX12_Mipmaps(tex->Peek_DX12_Texture());
+}
+
+//=============================================================================
+// updateTerrainTextureDX12
+//=============================================================================
+/** Direct3D 12 version of TerrainTextureClass::update. */
+//=============================================================================
+int TerrainTextureClass::updateTerrainTextureDX12(WorldHeightMap *htMap)
+{
+	SurfaceClass *surface_level = Get_Surface_Level(0);
+	if (surface_level == nullptr) {
+		return 0;
+	}
+	SurfaceClass::SurfaceDescription surface_desc;
+	surface_level->Get_Description(surface_desc);
+	if (surface_desc.Width < TEXTURE_WIDTH) {
+		REF_PTR_RELEASE(surface_level);
+		return 0;
+	}
+
+	int pitch = 0;
+	UnsignedByte *pBits = (UnsignedByte *)surface_level->Lock(&pitch);
+	if (pBits == nullptr) {
+		REF_PTR_RELEASE(surface_level);
+		return 0;
+	}
+
+	Int tilePixelExtent = TILE_PIXEL_EXTENT;
+#ifdef RTS_DEBUG
+	Int tilesPerRow = surface_desc.Width/(2*TILE_PIXEL_EXTENT+TILE_OFFSET);
+	tilesPerRow *= 2;
+	DEBUG_ASSERTCRASH((Int)surface_desc.Width >= tilePixelExtent*tilesPerRow, ("Bitmap too small."));
+#endif
+	if (surface_desc.Format == WW3D_FORMAT_A1R5G5B5) {
+		Int tileNdx;
+		Int pixelBytes = 2;
+		for (tileNdx=0; tileNdx < htMap->m_numBitmapTiles; tileNdx++) {
+			TileData *pTile = htMap->getSourceTile(tileNdx);
+			if (!pTile) continue;
+			ICoord2D position = pTile->m_tileLocationInTexture;
+			if (position.x<=0) continue; // all real tile offsets start at 2.  jba.
+
+			Int i,j;
+			for (j=0; j<tilePixelExtent; j++) {
+				UnsignedByte *pBGR = pTile->getRGBDataForWidth(tilePixelExtent);
+				pBGR += (tilePixelExtent-1-j)*TILE_BYTES_PER_PIXEL*tilePixelExtent; // invert to match.
+				Int row = position.y+j;
+				UnsignedByte *pBGRX = pBits + row*pitch;
+
+				Int column = position.x;
+				pBGRX += column*pixelBytes;
+				for (i=0; i<tilePixelExtent; i++) {
+					*((Short*)pBGRX) = 0x8000 + ((pBGR[2]>>3)<<10) + ((pBGR[1]>>3)<<5) + (pBGR[0]>>3);
+					pBGRX +=pixelBytes;
+					pBGR +=TILE_BYTES_PER_PIXEL;
+				}
+			}
+		}
+		// Now draw the 4 pixel border around each tile class.
+		Int texClass;
+		for (texClass=0; texClass<htMap->m_numTextureClasses; texClass++) {
+			Int width = htMap->m_textureClasses[texClass].width;
+			ICoord2D origin = htMap->m_textureClasses[texClass].positionInTexture;
+			if (origin.x<=0) continue;
+			width *= TILE_PIXEL_EXTENT;
+			// Duplicate 4 columns of pixels before and after.
+			Int j;
+			for (j=0; j<width; j++) {
+				Int row = origin.y+j;
+				UnsignedByte *pBGRX = pBits + row*pitch;
+
+				Int column = origin.x;
+				pBGRX += column*pixelBytes;
+				// copy before
+				memcpy(pBGRX-(4)*pixelBytes, pBGRX+(width-4)*pixelBytes, 4*pixelBytes);
+				// copy after
+				memcpy(pBGRX+(width*pixelBytes), pBGRX, 4*pixelBytes);
+			}
+
+			// Duplicate 4 rows of pixels before and after.
+			for (j=0; j<4; j++) {
+				// copy before.
+				Int row = origin.y-j-1;
+				UnsignedByte *pBGRX = pBits + row*pitch;
+				UnsignedByte *target = pBGRX+(origin.x-4)*pixelBytes;
+				memcpy(target, target+width*pitch, (width+8)*pixelBytes);
+				// copy after.
+				row = origin.y+j;
+				pBGRX = pBits + row*pitch;
+				target = pBGRX+(origin.x-4)*pixelBytes;
+				memcpy(target+width*pitch, target, (width+8)*pixelBytes);
+			}
+		}
+	}
+	surface_level->Unlock();
+	REF_PTR_RELEASE(surface_level);
+	TerrainTex_Build_DX12_Mips(this);
+	return(surface_desc.Height);
+}
+
+//=============================================================================
+// updateFlatTerrainTextureDX12
+//=============================================================================
+/** Direct3D 12 version of TerrainTextureClass::updateFlat. */
+//=============================================================================
+Bool TerrainTextureClass::updateFlatTerrainTextureDX12(WorldHeightMap *htMap, Int xCell, Int yCell, Int cellWidth, Int pixelsPerCell)
+{
+	SurfaceClass *surface_level = Get_Surface_Level(0);
+	if (surface_level == nullptr) {
+		return false;
+	}
+	SurfaceClass::SurfaceDescription surface_desc;
+	surface_level->Get_Description(surface_desc);
+	DEBUG_ASSERTCRASH((Int)surface_desc.Width == cellWidth*pixelsPerCell, ("Bitmap too small."));
+	DEBUG_ASSERTCRASH((Int)surface_desc.Height == cellWidth*pixelsPerCell, ("Bitmap too small."));
+	if (surface_desc.Width != cellWidth*pixelsPerCell) {
+		REF_PTR_RELEASE(surface_level);
+		return false;
+	}
+
+	int pitch = 0;
+	UnsignedByte *pBits = (UnsignedByte *)surface_level->Lock(&pitch);
+	if (pBits == nullptr) {
+		REF_PTR_RELEASE(surface_level);
+		return false;
+	}
+
+	if (surface_desc.Format == WW3D_FORMAT_A1R5G5B5) {
+		Int pixelBytes = 2;
+		Int cellX, cellY;
+		for (cellX = 0; cellX < cellWidth; cellX++) {
+			for (cellY = 0; cellY < cellWidth; cellY++) {
+				UnsignedByte *pBGRX_data = pBits;
+				UnsignedByte *pBGR = htMap->getPointerToTileData(xCell+cellX, yCell+cellY, pixelsPerCell);
+				if (pBGR == nullptr) continue; // past end of defined terrain. [3/24/2003]
+				Int k, l;
+				for (k=pixelsPerCell-1; k>=0; k--) {
+					UnsignedByte *pBGRX = pBGRX_data + (pixelsPerCell*(cellWidth-cellY-1)+k)*pitch +
+						cellX*pixelsPerCell*pixelBytes;
+					for (l=0; l<pixelsPerCell; l++) {
+						*((Short*)pBGRX) = 0x8000 + ((pBGR[2]>>3)<<10) + ((pBGR[1]>>3)<<5) + (pBGR[0]>>3);
+						pBGRX +=pixelBytes;
+						pBGR +=TILE_BYTES_PER_PIXEL;
+					}
+				}
+			}
+		}
+	}
+
+	surface_level->Unlock();
+	REF_PTR_RELEASE(surface_level);
+	TerrainTex_Build_DX12_Mips(this);
+	return(surface_desc.Height);
+}
+
+//=============================================================================
+// updateAlphaEdgeTextureDX12
+//=============================================================================
+/** Direct3D 12 version of AlphaEdgeTextureClass::update. */
+//=============================================================================
+int AlphaEdgeTextureClass::updateAlphaEdgeTextureDX12(WorldHeightMap *htMap)
+{
+	SurfaceClass *surface_level = Get_Surface_Level(0);
+	if (surface_level == nullptr) {
+		return 0;
+	}
+	SurfaceClass::SurfaceDescription surface_desc;
+	surface_level->Get_Description(surface_desc);
+
+	int pitch = 0;
+	UnsignedByte *pBits = (UnsignedByte *)surface_level->Lock(&pitch);
+	if (pBits == nullptr) {
+		REF_PTR_RELEASE(surface_level);
+		return 0;
+	}
+
+	Int tilePixelExtent = TILE_PIXEL_EXTENT; // blend tiles are 1/4 tiles.
+
+	if (surface_desc.Format == WW3D_FORMAT_A8R8G8B8) {
+		Int cellX, cellY;
+		for (cellX = 0; (UnsignedInt)cellX < surface_desc.Width; cellX++) {
+			for (cellY = 0; (UnsignedInt)cellY < surface_desc.Height; cellY++) {
+				UnsignedByte *pBGR = pBits + cellY*pitch + cellX*4;
+				pBGR[2] = 255-cellY/2;
+				pBGR[0] = cellX/2;
+				pBGR[3] = cellX/2;  // alpha.
+				pBGR[3] = 128;  // alpha.
+			}
+		}
+		Int tileNdx;
+		Int pixelBytes = 4;
+		for (tileNdx=0; tileNdx < htMap->m_numEdgeTiles; tileNdx++) {
+			TileData *pTile = htMap->getEdgeTile(tileNdx);
+			if (!pTile) continue;
+			ICoord2D position = pTile->m_tileLocationInTexture;
+			if (position.x<=0) continue; // all real edge offsets start at 4.  jba.
+			Int i,j;
+			Int column = position.x;
+			for (j=0; j<tilePixelExtent; j++) {
+				Int row = position.y+j;
+				UnsignedByte *pBGR = pTile->getRGBDataForWidth(tilePixelExtent);
+				pBGR += (tilePixelExtent-1-j)*TILE_BYTES_PER_PIXEL*tilePixelExtent; // invert to match.
+				UnsignedByte *pBGRX = pBits + row*pitch;
+				pBGRX += column*pixelBytes;
+
+				for (i=0; i<tilePixelExtent; i++) {
+					pBGRX[0] = pBGR[0];  //r
+					pBGRX[1] = pBGR[1];	//g
+					pBGRX[2] = pBGR[2];	//b
+					if (pBGR[0]==0 && pBGR[1]==0 && pBGR[2]==0) {
+						pBGRX[3] = 0x80;
+					} else if (pBGR[0]==0xff && pBGR[1]==0xff && pBGR[2]==0xff) {
+						pBGRX[3] = 0x00;
+					}	else {
+						pBGRX[3] = 0xff;
+					}
+
+					pBGRX += pixelBytes;
+					pBGR += TILE_BYTES_PER_PIXEL;
+				}
+			}
+		}
+	}
+	surface_level->Unlock();
+	REF_PTR_RELEASE(surface_level);
+	TerrainTex_Build_DX12_Mips(this);
+	return(surface_desc.Height);
+}
 
 /******************************************************************************
 						TerrainTextureClass
@@ -95,6 +344,10 @@ TerrainTextureClass::TerrainTextureClass(int height, int width) :
 //=============================================================================
 int TerrainTextureClass::update(WorldHeightMap *htMap)
 {
+	if (DX12Device::Is_Active()) {
+		return updateTerrainTextureDX12(htMap);
+	}
+
 	// D3DTexture is our texture;
 
 	IDirect3DSurface8 *surface_level;
@@ -364,6 +617,7 @@ int TerrainTextureClass::update(WorldHeightMap *htMap)
 //=============================================================================
 void TerrainTextureClass::setLOD(Int LOD)
 {
+	// Direct3D 12 has no SetLOD; the texture keeps its full resolution there.
 	if (Peek_D3D_Texture()) Peek_D3D_Texture()->SetLOD(LOD);
 }
 //=============================================================================
@@ -375,6 +629,10 @@ void TerrainTextureClass::setLOD(Int LOD)
 //=============================================================================
 Bool TerrainTextureClass::updateFlat(WorldHeightMap *htMap, Int xCell, Int yCell, Int cellWidth, Int pixelsPerCell)
 {
+	if (DX12Device::Is_Active()) {
+		return updateFlatTerrainTextureDX12(htMap, xCell, yCell, cellWidth, pixelsPerCell);
+	}
+
 	// D3DTexture is our texture;
 
 	IDirect3DSurface8 *surface_level;
@@ -489,6 +747,12 @@ AlphaTerrainTextureClass::AlphaTerrainTextureClass( TextureClass *pBaseTex ):
 	TextureClass(8, 8,
 		WW3D_FORMAT_A1R5G5B5, MIP_LEVELS_1 )
 {
+	if (DX12Device::Is_Active()) {
+		// Share the base texture's Direct3D 12 texture; this releases the throw away 8x8 one.
+		Set_DX12_Texture(pBaseTex->Peek_DX12_Texture());
+		return;
+	}
+
 	// Attach the base texture's d3d texture.
 	IDirect3DTexture8 * d3d_tex = pBaseTex->Peek_D3D_Texture();
 	Set_D3D_Base_Texture(d3d_tex);
@@ -769,6 +1033,10 @@ int AlphaEdgeTextureClass::update256(WorldHeightMap *htMap)
 
 int AlphaEdgeTextureClass::update(WorldHeightMap *htMap)
 {
+	if (DX12Device::Is_Active()) {
+		return updateAlphaEdgeTextureDX12(htMap);
+	}
+
 	// D3DTexture is our texture;
 
 	IDirect3DSurface8 *surface_level;

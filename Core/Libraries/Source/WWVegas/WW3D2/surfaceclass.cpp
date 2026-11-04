@@ -291,6 +291,12 @@ static void Copy_Texels
 				dst_row[dstx + x] = bgra[3];
 				continue;
 			}
+			// BitmapHandlerClass makes any non zero alpha opaque in A1R5G5B5. A filtered texel rounds
+			// its averaged alpha at one half instead, as D3DX box filtering does.
+			if (dst_format == WW3D_FORMAT_A1R5G5B5 && count > 1)
+			{
+				bgra[3] = (bgra[3] >= 128) ? 255 : 0;
+			}
 			BitmapHandlerClass::Write_B8G8R8A8(dst_row + (dstx + x) * dst_bpp, dst_format, bgra);
 		}
 	}
@@ -452,6 +458,49 @@ DX12TextureClass *SurfaceClass::Create_DX12_Texture(unsigned levels)
 	texture->Unlock(texture->Get_Level_Count() - 1);
 
 	return texture;
+}
+
+void SurfaceClass::Generate_DX12_Mipmaps(DX12TextureClass *texture, unsigned first_level)
+{
+	if (texture == nullptr || first_level == 0 || first_level >= texture->Get_Level_Count())
+	{
+		return;
+	}
+
+	const WW3DFormat format = texture->Get_Format();
+	if (Is_DXT_Format(format) || !Is_Convertible_Format(format))
+	{
+		WWDEBUG_SAY(("SurfaceClass: cannot generate mipmaps for format %d in Direct3D 12 mode", (int)format));
+		return;
+	}
+
+	// The source level is read back with a new lock, so its texels must still be on the CPU. A
+	// texture without a CPU copy dropped them at its last unlock, and filtering the zero filled
+	// level would turn every generated mip black.
+	if (!texture->Keeps_CPU_Copy())
+	{
+		WWDEBUG_SAY(("SurfaceClass: cannot generate mipmaps for a texture without a CPU copy in Direct3D 12 mode"));
+		return;
+	}
+
+	// The source level is only read, so unlocking it does not upload it again. Each written level
+	// stays locked until the next one has been filtered from it; its unlock then uploads it once.
+	int src_pitch = 0;
+	unsigned char *src = static_cast<unsigned char *>(texture->Lock(first_level - 1, &src_pitch, nullptr, true));
+	for (unsigned level = first_level; level < texture->Get_Level_Count(); ++level)
+	{
+		int mip_pitch = 0;
+		unsigned char *mip = static_cast<unsigned char *>(texture->Lock(level, &mip_pitch));
+		Copy_Texels
+		(
+			mip, mip_pitch, format, 0, 0, texture->Get_Width(level), texture->Get_Height(level),
+			src, src_pitch, format, 0, 0, texture->Get_Width(level - 1), texture->Get_Height(level - 1)
+		);
+		texture->Unlock(level - 1);
+		src = mip;
+		src_pitch = mip_pitch;
+	}
+	texture->Unlock(texture->Get_Level_Count() - 1);
 }
 
 void SurfaceClass::Copy_DX12(const RECT &dest, const SurfaceClass *source, const RECT &src)

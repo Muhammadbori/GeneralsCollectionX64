@@ -2167,6 +2167,11 @@ void DX12Device::End_Frame(bool present)
 	FrameSlotPrepared = false;
 
 	Process_Deferred();
+	if (present && (FrameNumber % 300) == 0)
+	{
+		// Heartbeat, so the log shows whether frames keep coming.
+		Debug_Log("frame %llu: presented", FrameNumber);
+	}
 	Flush_Debug_Messages();
 	++FrameNumber;
 }

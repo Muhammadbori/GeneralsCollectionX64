@@ -60,6 +60,8 @@
 #include "WW3D2/textureloader.h"
 #include "WW3D2/ww3dformat.h"
 #include "WW3D2/colorspace.h"
+#include "WW3D2/Backend/DX12/dx12device.h"
+#include "WW3D2/Backend/DX12/dx12resource.h"
 #include <WWDebug/wwprofile.h>
 #include "WWDebug/wwmemlog.h"
 #include "WWLib/ffactory.h"
@@ -654,6 +656,23 @@ void W3DAssetManager::Remap_Palette(SurfaceClass *surface, const int color, Bool
 }
 
 //---------------------------------------------------------------------
+/** Direct3D 12 mode: textures loaded from files do not keep a CPU copy of their texels, so reading
+	a level back would return zeros. Loads the texels from the texture's file again instead, into a
+	CPU only surface, and updates desc to that surface's size and format. */
+static SurfaceClass *loadDX12RecolorSource(TextureClass *texture, SurfaceClass::SurfaceDescription &desc)
+{
+	const bool compressed = desc.Format == WW3D_FORMAT_DXT1 || desc.Format == WW3D_FORMAT_DXT2 ||
+		desc.Format == WW3D_FORMAT_DXT3 || desc.Format == WW3D_FORMAT_DXT4 || desc.Format == WW3D_FORMAT_DXT5;
+	DX12TextureClass *source = TextureLoader::Load_DX12_Surface_Immediate(texture->Get_Full_Path(), desc.Format, compressed);
+	if (source == nullptr)
+		return nullptr;
+	SurfaceClass *surface = NEW_REF(SurfaceClass,(source,0));
+	REF_PTR_RELEASE(source);
+	surface->Get_Description(desc);
+	return surface;
+}
+
+//---------------------------------------------------------------------
 TextureClass * W3DAssetManager::Recolor_Texture_One_Time(TextureClass *texture, const int color)
 {
 	const char *name=texture->Get_Texture_Name();
@@ -673,6 +692,13 @@ TextureClass * W3DAssetManager::Recolor_Texture_One_Time(TextureClass *texture, 
 	psize=Get_Bytes_Per_Pixel(desc.Format);
 	DEBUG_ASSERTCRASH( psize == 2 || psize == 4, ("Can't Recolor Texture %s", name) );
 
+	if (DX12Device::Is_Active())
+	{
+		oldsurf=loadDX12RecolorSource(texture, desc);
+		if (oldsurf == nullptr)
+			return nullptr;
+	}
+	else
 	oldsurf=texture->Get_Surface_Level();
 
 	newsurf=NEW_REF(SurfaceClass,(desc.Width,desc.Height,desc.Format));

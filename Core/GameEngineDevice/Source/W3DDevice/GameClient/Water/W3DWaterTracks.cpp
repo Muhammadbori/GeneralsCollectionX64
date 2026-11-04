@@ -62,6 +62,8 @@
 #include "WW3D2/camera.h"
 #include "WW3D2/assetmgr.h"
 #include "WW3D2/dx8wrapper.h"
+#include "WW3D2/Backend/DX12/dx12device.h"
+#include "WW3D2/Backend/DX12/dx12resource.h"
 
 //number of vertex pages allocated - allows double buffering of vertex updates.
 //while one is being rendered, another is being updated.  Improves HW parallelism.
@@ -310,6 +312,30 @@ Int WaterTracksObj::render(DX8VertexBufferClass	*vertexBuffer, Int batchStart)
 	Real	widthFrac;
 	Real	heightFrac;
 
+	// Direct3D 12 mode: the vertex buffer has no Direct3D 8 buffer, lock its DX12 buffer instead
+	// (a non-discard lock appends like D3DLOCK_NOOVERWRITE, a discard lock moves it to fresh memory).
+	DX12BufferClass *dx12Buffer = nullptr;
+	if (DX12Device::Is_Active())
+	{
+		dx12Buffer = vertexBuffer ? vertexBuffer->Get_DX12_Buffer() : nullptr;
+		if (dx12Buffer == nullptr)
+			return batchStart;
+		const unsigned int fvfSize = vertexBuffer->FVF_Info().Get_FVF_Size();
+		if (batchStart < (WATER_VB_PAGES*WATER_STRIP_X*WATER_STRIP_Y-m_x*m_y))
+		{
+			vb = (VertexFormatXYZDUV1 *)dx12Buffer->Lock(batchStart*fvfSize, m_x*m_y*fvfSize, false);
+			if (vb == nullptr)
+				return batchStart;
+		}
+		else
+		{
+			vb = (VertexFormatXYZDUV1 *)dx12Buffer->Lock(0, m_x*m_y*fvfSize, true);
+			if (vb == nullptr)
+				return batchStart;
+			batchStart=0;	//reset start of page to first vertex
+		}
+	}
+	else
 	if (batchStart < (WATER_VB_PAGES*WATER_STRIP_X*WATER_STRIP_Y-m_x*m_y))
 	{
 		//we have room in current VB, append new verts
@@ -480,6 +506,9 @@ Int WaterTracksObj::render(DX8VertexBufferClass	*vertexBuffer, Int batchStart)
 	vb->v1=1.0f;
 	vb++;
 
+	if (dx12Buffer)
+		dx12Buffer->Unlock();
+	else
 	vertexBuffer->Get_DX8_Vertex_Buffer()->Unlock();
 
 	Int idxCount=(m_y-1)*(m_x*2+2) - 2;	//index count

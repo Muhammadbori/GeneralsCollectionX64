@@ -1311,6 +1311,11 @@ Int FlatShroudTextureShader::set(Int stage)
 	//force WW3D2 system to set it's states so it won't later overwrite our custom settings.
 	if (stage < 2)
 		DX8Wrapper::Set_Texture(stage, W3DShaderManager::getShaderTexture(stage));
+	else if (DX12Device::Is_Active())
+	{	//Direct3D 12 mode has no Direct3D 8 textures, so bind the engine texture's Direct3D 12 texture.
+		TextureClass *shroudTexture=W3DShaderManager::getShaderTexture(stage);
+		DX8Wrapper::Set_DX12_Texture(stage, shroudTexture ? shroudTexture->Peek_DX12_Texture() : nullptr);
+	}
 	else	//stages larger than 1 are not supported by W3D so set them directly
 		DX8Wrapper::Set_DX8_Texture(stage, W3DShaderManager::getShaderTexture(stage)->Peek_D3D_Texture());
 
@@ -2945,6 +2950,11 @@ enum GraphicsVenderID CPP_11(: Int)
 //=============================================================================
 ChipsetType W3DShaderManager::getChipset()
 {
+	//Direct3D 12 mode has no pixel shaders, no 8-stage texture pipeline and no Direct3D 8 render targets,
+	//so neither the device nor a chipset override (-noshaders, INI ChipsetType) may select those variants.
+	if (DX12Device::Is_Active())
+		return DC_UNKNOWN;
+
 	//check if globaldata has an override for current chipset
 	if (TheGlobalData && TheGlobalData->m_chipSetType != DC_UNKNOWN)
 		return (ChipsetType)TheGlobalData->m_chipSetType;
@@ -3102,6 +3112,22 @@ HRESULT W3DShaderManager::LoadAndCreateD3DShader(const char* strFilePath, const 
 #define MIN_ACCEPTED_MEMORY	(1024*1024*256)	//256 MB
 #define MIN_ACCEPTED_TEXTURE_MEMORY	(1024*1024*30)	//30 MB
 
+/**Chipset used to estimate the hardware class (recommended detail level). getChipset() returns DC_UNKNOWN
+	in Direct3D 12 mode so that rendering takes the fixed-function paths, but the recommended detail level is
+	saved in Options.ini and also used by later Direct3D 8 runs. Any adapter that runs Direct3D 12 is at
+	least a pixel shader 2.0 class card, so report that (or the chipset override) instead.*/
+static ChipsetType getHardwareChipset()
+{
+	if (DX12Device::Is_Active())
+	{
+		if (TheGlobalData && TheGlobalData->m_chipSetType != DC_UNKNOWN)
+			return (ChipsetType)TheGlobalData->m_chipSetType;
+		return DC_GENERIC_PIXEL_SHADER_2_0;
+	}
+
+	return W3DShaderManager::getChipset();
+}
+
 /**Hack to give gameengine access to this function*/
 Bool testMinimumRequirements(ChipsetType *videoChipType, CpuType *cpuType, Int *cpuFreq, MemValueType *numRAM, Real *intBenchIndex, Real *floatBenchIndex, Real *memBenchIndex)
 {
@@ -3111,7 +3137,7 @@ Bool testMinimumRequirements(ChipsetType *videoChipType, CpuType *cpuType, Int *
 Bool W3DShaderManager::testMinimumRequirements(ChipsetType *videoChipType, CpuType *cpuType, Int *cpuFreq, MemValueType *numRAM, Real *intBenchIndex, Real *floatBenchIndex, Real *memBenchIndex)
 {
 	if (videoChipType)
-		*videoChipType = getChipset();
+		*videoChipType = getHardwareChipset();
 
 	if (cpuType)
 	{
@@ -3156,7 +3182,7 @@ StaticGameLODLevel W3DShaderManager::getGPUPerformanceIndex()
 	ChipsetType	chipType;
 	StaticGameLODLevel detailSetting=STATIC_GAME_LOD_LOW;	//assume lowest settings for now.
 
-	if ((chipType=getChipset()) != DC_UNKNOWN)
+	if ((chipType=getHardwareChipset()) != DC_UNKNOWN)
 	{
 		//a known video card so we can make some assumptions
 		if (chipType >=	DC_GEFORCE2)
