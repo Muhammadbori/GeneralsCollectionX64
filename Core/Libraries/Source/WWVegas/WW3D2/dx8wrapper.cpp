@@ -146,7 +146,8 @@ unsigned							DX8Wrapper::RenderStates[256];
 unsigned							DX8Wrapper::TextureStageStates[MAX_TEXTURE_STAGES][32];
 IDirect3DBaseTexture8 *		DX8Wrapper::Textures[MAX_TEXTURE_STAGES];
 DX12TextureClass *			DX8Wrapper::DX12Textures[MAX_TEXTURE_STAGES];
-D3DMATERIAL8					DX8Wrapper::DX8Material;
+DX8Wrapper::DX12DeviceStateStruct DX8Wrapper::DX12Device_State;
+D3DMATERIAL8				DX8Wrapper::DX8Material;
 D3DLIGHT8						DX8Wrapper::DX8Lights[4];
 D3DVIEWPORT8					DX8Wrapper::DX12Viewport;
 RenderStateStruct				DX8Wrapper::render_state;
@@ -387,6 +388,7 @@ void DX8Wrapper::Shutdown()
 	}
 
 	Release_DX12_Textures();
+	Release_DX12_Device_State();
 	if (DX12Device::Is_Active()) {
 		DX12Device::Shutdown();
 	}
@@ -473,28 +475,22 @@ void DX8Wrapper::Invalidate_Cached_Render_States()
 {
 	render_state_changed=0;
 
-	// In Direct3D 12 mode the caches are the device state, so they must stay valid. Nothing can
-	// change the state behind the wrapper's back because there is no Direct3D 8 device.
-	const bool keep_states = DX12Device::Is_Active();
-
 	int a;
-	if (!keep_states) {
-		for (a=0;a<sizeof(RenderStates)/sizeof(unsigned);++a) {
-			RenderStates[a]=0x12345678;
-		}
+	for (a=0;a<sizeof(RenderStates)/sizeof(unsigned);++a) {
+		RenderStates[a]=0x12345678;
 	}
 	for (a=0;a<MAX_TEXTURE_STAGES;++a)
 	{
-		if (!keep_states) {
-			for (int b=0; b<32;b++)
-			{
-				TextureStageStates[a][b]=0x12345678;
-			}
+		for (int b=0; b<32;b++)
+		{
+			TextureStageStates[a][b]=0x12345678;
 		}
 		//Need to explicitly set texture to null, otherwise app will not be able to
 		//set it to null because of redundant state checker. MW
 		if (_Get_D3D_Device8())
 			_Get_D3D_Device8()->SetTexture(a,nullptr);
+		if (DX12Device::Is_Active())
+			Device_Set_DX12_Texture(a,nullptr);
 		if (Textures[a] != nullptr) {
 			Textures[a]->Release();
 		}
@@ -508,7 +504,8 @@ void DX8Wrapper::Invalidate_Cached_Render_States()
 	Release_Render_State();
 
 	// (gth) clear the matrix shadows too
-	if (!keep_states) {
+	// In Direct3D 12 mode DX8Transforms holds the device transforms, which stay as they are.
+	if (!DX12Device::Is_Active()) {
 		memset(&DX8Transforms, 0, sizeof(DX8Transforms));
 	}
 }
@@ -527,73 +524,113 @@ void DX8Wrapper::Set_DX12_Texture(unsigned stage, DX12TextureClass* texture)
 
 	SNAPSHOT_SAY(("DX12 - SetTexture(%x) ",texture));
 	REF_PTR_SET(DX12Textures[stage],texture);
+	Device_Set_DX12_Texture(stage,texture);
 	DX8_RECORD_TEXTURE_CHANGE();
 }
 
-// Direct3D 8 device defaults, so that every state a draw reads has a defined value.
+void DX8Wrapper::Device_Set_DX12_Texture(unsigned stage, DX12TextureClass* texture)
+{
+	if (stage>=MAX_TEXTURE_STAGES) return;
+	REF_PTR_SET(DX12Device_State.Textures[stage],texture);
+}
+
+void DX8Wrapper::Device_Set_Stream(DX12BufferClass* buffer, unsigned stride)
+{
+	REF_PTR_SET(DX12Device_State.StreamBuffer,buffer);
+	DX12Device_State.StreamStride=stride;
+}
+
+void DX8Wrapper::Device_Set_Indices(DX12BufferClass* buffer, unsigned base_vertex_index)
+{
+	REF_PTR_SET(DX12Device_State.IndexBuffer,buffer);
+	DX12Device_State.IndexBaseVertex=base_vertex_index;
+}
+
+// Releases the textures and buffers the Direct3D 12 device state mirror holds, as the Direct3D 8
+// code does by binding null before releasing the device.
+void DX8Wrapper::Release_DX12_Device_State()
+{
+	for (unsigned i=0;i<MAX_TEXTURE_STAGES;++i) {
+		REF_PTR_RELEASE(DX12Device_State.Textures[i]);
+	}
+	REF_PTR_RELEASE(DX12Device_State.StreamBuffer);
+	DX12Device_State.StreamStride=0;
+	REF_PTR_RELEASE(DX12Device_State.IndexBuffer);
+	DX12Device_State.IndexBaseVertex=0;
+}
+
+// Puts the Direct3D 12 device state mirror into the state of a newly created Direct3D 8 device.
+// The wrapper's caches are not touched; like in Direct3D 8 they stay invalidated until set.
 void DX8Wrapper::Set_DX12_Default_Device_States()
 {
+	Release_DX12_Device_State();
+
+	DX12DeviceStateStruct& dev=DX12Device_State;
 	unsigned a;
-	for (a=0;a<sizeof(RenderStates)/sizeof(unsigned);++a) {
-		RenderStates[a]=0;
+	for (a=0;a<sizeof(dev.RenderStates)/sizeof(unsigned);++a) {
+		dev.RenderStates[a]=0;
 	}
-	RenderStates[D3DRS_ZENABLE]=D3DZB_TRUE;
-	RenderStates[D3DRS_FILLMODE]=D3DFILL_SOLID;
-	RenderStates[D3DRS_SHADEMODE]=D3DSHADE_GOURAUD;
-	RenderStates[D3DRS_ZWRITEENABLE]=TRUE;
-	RenderStates[D3DRS_LASTPIXEL]=TRUE;
-	RenderStates[D3DRS_SRCBLEND]=D3DBLEND_ONE;
-	RenderStates[D3DRS_DESTBLEND]=D3DBLEND_ZERO;
-	RenderStates[D3DRS_CULLMODE]=D3DCULL_CCW;
-	RenderStates[D3DRS_ZFUNC]=D3DCMP_LESSEQUAL;
-	RenderStates[D3DRS_ALPHAFUNC]=D3DCMP_ALWAYS;
-	RenderStates[D3DRS_FOGEND]=F2DW(1.0f);
-	RenderStates[D3DRS_FOGDENSITY]=F2DW(1.0f);
-	RenderStates[D3DRS_STENCILFAIL]=D3DSTENCILOP_KEEP;
-	RenderStates[D3DRS_STENCILZFAIL]=D3DSTENCILOP_KEEP;
-	RenderStates[D3DRS_STENCILPASS]=D3DSTENCILOP_KEEP;
-	RenderStates[D3DRS_STENCILFUNC]=D3DCMP_ALWAYS;
-	RenderStates[D3DRS_STENCILMASK]=0xffffffff;
-	RenderStates[D3DRS_STENCILWRITEMASK]=0xffffffff;
-	RenderStates[D3DRS_TEXTUREFACTOR]=0xffffffff;
-	RenderStates[D3DRS_CLIPPING]=TRUE;
-	RenderStates[D3DRS_LIGHTING]=TRUE;
-	RenderStates[D3DRS_COLORVERTEX]=TRUE;
-	RenderStates[D3DRS_LOCALVIEWER]=TRUE;
-	RenderStates[D3DRS_DIFFUSEMATERIALSOURCE]=D3DMCS_COLOR1;
-	RenderStates[D3DRS_SPECULARMATERIALSOURCE]=D3DMCS_COLOR2;
-	RenderStates[D3DRS_POINTSIZE]=F2DW(1.0f);
-	RenderStates[D3DRS_POINTSCALE_A]=F2DW(1.0f);
-	RenderStates[D3DRS_POINTSIZE_MAX]=F2DW(64.0f);
-	RenderStates[D3DRS_MULTISAMPLEANTIALIAS]=TRUE;
-	RenderStates[D3DRS_MULTISAMPLEMASK]=0xffffffff;
-	RenderStates[D3DRS_PATCHSEGMENTS]=F2DW(1.0f);
-	RenderStates[D3DRS_COLORWRITEENABLE]=0x0000000f;
-	RenderStates[D3DRS_BLENDOP]=D3DBLENDOP_ADD;
+	dev.RenderStates[D3DRS_ZENABLE]=D3DZB_TRUE;
+	dev.RenderStates[D3DRS_FILLMODE]=D3DFILL_SOLID;
+	dev.RenderStates[D3DRS_SHADEMODE]=D3DSHADE_GOURAUD;
+	dev.RenderStates[D3DRS_ZWRITEENABLE]=TRUE;
+	dev.RenderStates[D3DRS_LASTPIXEL]=TRUE;
+	dev.RenderStates[D3DRS_SRCBLEND]=D3DBLEND_ONE;
+	dev.RenderStates[D3DRS_DESTBLEND]=D3DBLEND_ZERO;
+	dev.RenderStates[D3DRS_CULLMODE]=D3DCULL_CCW;
+	dev.RenderStates[D3DRS_ZFUNC]=D3DCMP_LESSEQUAL;
+	dev.RenderStates[D3DRS_ALPHAFUNC]=D3DCMP_ALWAYS;
+	dev.RenderStates[D3DRS_FOGEND]=F2DW(1.0f);
+	dev.RenderStates[D3DRS_FOGDENSITY]=F2DW(1.0f);
+	dev.RenderStates[D3DRS_STENCILFAIL]=D3DSTENCILOP_KEEP;
+	dev.RenderStates[D3DRS_STENCILZFAIL]=D3DSTENCILOP_KEEP;
+	dev.RenderStates[D3DRS_STENCILPASS]=D3DSTENCILOP_KEEP;
+	dev.RenderStates[D3DRS_STENCILFUNC]=D3DCMP_ALWAYS;
+	dev.RenderStates[D3DRS_STENCILMASK]=0xffffffff;
+	dev.RenderStates[D3DRS_STENCILWRITEMASK]=0xffffffff;
+	dev.RenderStates[D3DRS_TEXTUREFACTOR]=0xffffffff;
+	dev.RenderStates[D3DRS_CLIPPING]=TRUE;
+	dev.RenderStates[D3DRS_LIGHTING]=TRUE;
+	dev.RenderStates[D3DRS_COLORVERTEX]=TRUE;
+	dev.RenderStates[D3DRS_LOCALVIEWER]=TRUE;
+	dev.RenderStates[D3DRS_DIFFUSEMATERIALSOURCE]=D3DMCS_COLOR1;
+	dev.RenderStates[D3DRS_SPECULARMATERIALSOURCE]=D3DMCS_COLOR2;
+	dev.RenderStates[D3DRS_POINTSIZE]=F2DW(1.0f);
+	dev.RenderStates[D3DRS_POINTSCALE_A]=F2DW(1.0f);
+	dev.RenderStates[D3DRS_POINTSIZE_MAX]=F2DW(64.0f);
+	dev.RenderStates[D3DRS_MULTISAMPLEANTIALIAS]=TRUE;
+	dev.RenderStates[D3DRS_MULTISAMPLEMASK]=0xffffffff;
+	dev.RenderStates[D3DRS_PATCHSEGMENTS]=F2DW(1.0f);
+	dev.RenderStates[D3DRS_COLORWRITEENABLE]=0x0000000f;
+	dev.RenderStates[D3DRS_BLENDOP]=D3DBLENDOP_ADD;
 
 	for (a=0;a<MAX_TEXTURE_STAGES;++a) {
+		unsigned* tss=dev.TextureStageStates[a];
 		for (int b=0;b<32;++b) {
-			TextureStageStates[a][b]=0;
+			tss[b]=0;
 		}
-		TextureStageStates[a][D3DTSS_COLOROP]=(a==0) ? D3DTOP_MODULATE : D3DTOP_DISABLE;
-		TextureStageStates[a][D3DTSS_COLORARG1]=D3DTA_TEXTURE;
-		TextureStageStates[a][D3DTSS_COLORARG2]=D3DTA_CURRENT;
-		TextureStageStates[a][D3DTSS_ALPHAOP]=(a==0) ? D3DTOP_SELECTARG1 : D3DTOP_DISABLE;
-		TextureStageStates[a][D3DTSS_ALPHAARG1]=D3DTA_TEXTURE;
-		TextureStageStates[a][D3DTSS_ALPHAARG2]=D3DTA_CURRENT;
-		TextureStageStates[a][D3DTSS_COLORARG0]=D3DTA_CURRENT;
-		TextureStageStates[a][D3DTSS_ALPHAARG0]=D3DTA_CURRENT;
-		TextureStageStates[a][D3DTSS_RESULTARG]=D3DTA_CURRENT;
-		TextureStageStates[a][D3DTSS_TEXCOORDINDEX]=a;
-		TextureStageStates[a][D3DTSS_ADDRESSU]=D3DTADDRESS_WRAP;
-		TextureStageStates[a][D3DTSS_ADDRESSV]=D3DTADDRESS_WRAP;
-		TextureStageStates[a][D3DTSS_ADDRESSW]=D3DTADDRESS_WRAP;
-		TextureStageStates[a][D3DTSS_MAGFILTER]=D3DTEXF_POINT;
-		TextureStageStates[a][D3DTSS_MINFILTER]=D3DTEXF_POINT;
-		TextureStageStates[a][D3DTSS_MIPFILTER]=D3DTEXF_NONE;
-		TextureStageStates[a][D3DTSS_MAXANISOTROPY]=1;
-		TextureStageStates[a][D3DTSS_TEXTURETRANSFORMFLAGS]=D3DTTFF_DISABLE;
+		tss[D3DTSS_COLOROP]=(a==0) ? D3DTOP_MODULATE : D3DTOP_DISABLE;
+		tss[D3DTSS_COLORARG1]=D3DTA_TEXTURE;
+		tss[D3DTSS_COLORARG2]=D3DTA_CURRENT;
+		tss[D3DTSS_ALPHAOP]=(a==0) ? D3DTOP_SELECTARG1 : D3DTOP_DISABLE;
+		tss[D3DTSS_ALPHAARG1]=D3DTA_TEXTURE;
+		tss[D3DTSS_ALPHAARG2]=D3DTA_CURRENT;
+		tss[D3DTSS_COLORARG0]=D3DTA_CURRENT;
+		tss[D3DTSS_ALPHAARG0]=D3DTA_CURRENT;
+		tss[D3DTSS_RESULTARG]=D3DTA_CURRENT;
+		tss[D3DTSS_TEXCOORDINDEX]=a;
+		tss[D3DTSS_ADDRESSU]=D3DTADDRESS_WRAP;
+		tss[D3DTSS_ADDRESSV]=D3DTADDRESS_WRAP;
+		tss[D3DTSS_ADDRESSW]=D3DTADDRESS_WRAP;
+		tss[D3DTSS_MAGFILTER]=D3DTEXF_POINT;
+		tss[D3DTSS_MINFILTER]=D3DTEXF_POINT;
+		tss[D3DTSS_MIPFILTER]=D3DTEXF_NONE;
+		tss[D3DTSS_MAXANISOTROPY]=1;
+		tss[D3DTSS_TEXTURETRANSFORMFLAGS]=D3DTTFF_DISABLE;
 	}
+
+	dev.FVF=0;
+	dev.PixelShader=0;
 
 	for (a=0;a<=D3DTS_WORLD;++a) {
 		wrapper::D3DMatrixIdentity(&DX8Transforms[a]);
@@ -822,6 +859,7 @@ void DX8Wrapper::Release_Device()
 {
 	if (DX12Device::Is_Active()) {
 		// The Direct3D 12 device itself is destroyed by Shutdown.
+		Release_DX12_Device_State();
 		if (CurrentCaps) {
 			for (unsigned i=0;i<MAX_VERTEX_STREAMS;++i)
 			{
@@ -2062,7 +2100,6 @@ void DX8Wrapper::End_Scene(bool flip_frames)
 	Set_Index_Buffer(nullptr,0);
 	for (int i=0;i<CurrentCaps->Get_Max_Textures_Per_Pass();++i) Set_Texture(i,nullptr);
 	Set_Material(nullptr);
-	Release_DX12_Textures();
 }
 
 
@@ -2205,7 +2242,7 @@ void DX8Wrapper::Get_Viewport(D3DVIEWPORT8* pViewport)
 HRESULT DX8Wrapper::Get_DX8_Render_State_Raw(D3DRENDERSTATETYPE state, DWORD* value)
 {
 	if (D3DDevice == nullptr) {
-		if (value) *value = RenderStates[state];
+		if (value) *value = DX12Device::Is_Active() ? DX12Device_State.RenderStates[state] : RenderStates[state];
 		return D3D_OK;
 	}
 	DX8_RECORD_DX8_CALLS();
@@ -2507,10 +2544,16 @@ void DX8Wrapper::Draw_Sorting_IB_VB(
 		0,
 		static_cast<DX8VertexBufferClass*>(dyn_vb_access.VertexBuffer)->Get_DX8_Vertex_Buffer(),
 		dyn_vb_access.FVF_Info().Get_FVF_Size()));
+	if (DX12Device::Is_Active()) {
+		Device_Set_Stream(
+			static_cast<DX8VertexBufferClass*>(dyn_vb_access.VertexBuffer)->Get_DX12_Buffer(),
+			dyn_vb_access.FVF_Info().Get_FVF_Size());
+	}
 	// If using FVF format VB, set the FVF as vertex shader (may not be needed here KM)
 	unsigned fvf=dyn_vb_access.FVF_Info().Get_FVF();
 	if (fvf!=0) {
 		DX8CALL(SetVertexShader(fvf));
+		if (DX12Device::Is_Active()) Device_Set_Vertex_Shader(fvf);
 	}
 	DX8_RECORD_VERTEX_BUFFER_CHANGE();
 
@@ -2542,6 +2585,11 @@ void DX8Wrapper::Draw_Sorting_IB_VB(
 	DX8CALL(SetIndices(
 		static_cast<DX8IndexBufferClass*>(dyn_ib_access.IndexBuffer)->Get_DX8_Index_Buffer(),
 		dyn_vb_access.VertexBufferOffset));
+	if (DX12Device::Is_Active()) {
+		Device_Set_Indices(
+			static_cast<DX8IndexBufferClass*>(dyn_ib_access.IndexBuffer)->Get_DX12_Buffer(),
+			dyn_vb_access.VertexBufferOffset);
+	}
 	DX8_RECORD_INDEX_BUFFER_CHANGE();
 
 	DX8_RECORD_DRAW_CALLS();
@@ -2550,9 +2598,7 @@ void DX8Wrapper::Draw_Sorting_IB_VB(
 			D3DPT_TRIANGLELIST,
 			dyn_ib_access.IndexBufferOffset,
 			polygon_count,
-			dyn_vb_access.VertexBufferOffset,
-			dyn_vb_access.VertexBuffer,
-			dyn_ib_access.IndexBuffer);
+			true);
 	}
 	else {
 		DX8CALL(DrawIndexedPrimitive(
@@ -2674,9 +2720,7 @@ void DX8Wrapper::Draw(
 						primitive_type,
 						start_index+render_state.iba_offset,
 						polygon_count,
-						render_state.index_base_offset+render_state.vba_offset,
-						render_state.vertex_buffers[0],
-						render_state.index_buffer);
+						true);
 				}
 				else {
 					DX8CALL(DrawIndexedPrimitive(
@@ -2778,89 +2822,92 @@ void DX8Wrapper::Draw_Strip(
 
 // ----------------------------------------------------------------------------
 //
-// Direct3D 12 draw. Everything the Direct3D 8 device would have used is read
-// back from the wrapper's caches, which Apply_Render_State_Changes has just
-// brought up to date.
+// Direct3D 12 draws. Everything comes from DX12Device_State, the mirror of what
+// the Direct3D 8 device would hold, plus DX8Transforms, DX8Material and the
+// viewport DX12Device already has. The wrapper caches are never read here.
 //
 // ----------------------------------------------------------------------------
 
-// Cache entries still holding the Invalidate_Cached_Render_States marker were never set.
-static unsigned DX12_State(unsigned value, unsigned default_value)
+// Vertices (or indices) a Direct3D 8 draw of primitive_count primitives reads. 0 for unknown types.
+static unsigned DX12_Primitive_Vertex_Count(unsigned primitive_type, unsigned primitive_count)
 {
-	return (value==0x12345678) ? default_value : value;
+	switch (primitive_type) {
+	case D3DPT_POINTLIST: return primitive_count;
+	case D3DPT_LINELIST: return primitive_count*2;
+	case D3DPT_LINESTRIP: return primitive_count+1;
+	case D3DPT_TRIANGLELIST: return primitive_count*3;
+	case D3DPT_TRIANGLESTRIP: return primitive_count+2;
+	case D3DPT_TRIANGLEFAN: return primitive_count+2;
+	default: return 0;
+	}
 }
 
-void DX8Wrapper::Draw_DX12(
-	unsigned primitive_type,
-	unsigned start_index,
-	unsigned polygon_count,
-	int base_vertex,
-	VertexBufferClass* vertex_buffer,
-	IndexBufferClass* index_buffer)
+// Writes a triangle fan as a triangle list into per-frame memory. src holds the fan's indices, or
+// is null for the vertices 0..primitive_count+1. Returns the list's GPU address, 0 on failure.
+static unsigned long long DX12_Fan_To_List(const unsigned short* src, unsigned primitive_count)
 {
-	if (vertex_buffer==nullptr || index_buffer==nullptr || polygon_count==0) return;
+	void* cpu=nullptr;
+	unsigned long long gpu=0;
+	if (!DX12Device::Allocate_Frame_Memory(primitive_count*3*sizeof(unsigned short),&cpu,&gpu)) return 0;
 
-	DX12BufferClass* vb=static_cast<DX8VertexBufferClass*>(vertex_buffer)->Get_DX12_Buffer();
-	DX12BufferClass* ib=static_cast<DX8IndexBufferClass*>(index_buffer)->Get_DX12_Buffer();
-	if (vb==nullptr || ib==nullptr) return;
+	unsigned short* dest=(unsigned short*)cpu;
+	for (unsigned i=1;i<=primitive_count;++i) {
+		*dest++=src ? src[0] : 0;
+		*dest++=src ? src[i] : (unsigned short)i;
+		*dest++=src ? src[i+1] : (unsigned short)(i+1);
+	}
+	return gpu;
+}
 
-	const unsigned fvf=vertex_buffer->FVF_Info().Get_FVF();
-	if (fvf==0) {
-		// Vertex shader declarations are not supported in Direct3D 12 mode yet.
-		return;
+bool DX8Wrapper::Fill_DX12_Draw_State(DX12DrawDesc& desc)
+{
+	const DX12DeviceStateStruct& dev=DX12Device_State;
+
+	if (dev.PixelShader!=0) {
+		static bool logged=false;
+		if (!logged) {
+			logged=true;
+			WWDEBUG_SAY(("DX12: skipping draws with a pixel shader, which Direct3D 12 mode does not support yet"));
+		}
+		return false;
+	}
+	if (dev.FVF==0) {
+		static bool logged=false;
+		if (!logged) {
+			logged=true;
+			WWDEBUG_SAY(("DX12: skipping draws without an FVF vertex format (vertex shaders are not supported yet)"));
+		}
+		return false;
 	}
 
-	unsigned index_count=0;
-	switch (primitive_type) {
-	case D3DPT_POINTLIST: index_count=polygon_count; break;
-	case D3DPT_LINELIST: index_count=polygon_count*2; break;
-	case D3DPT_LINESTRIP: index_count=polygon_count+1; break;
-	case D3DPT_TRIANGLELIST: index_count=polygon_count*3; break;
-	case D3DPT_TRIANGLESTRIP: index_count=polygon_count+2; break;
-	case D3DPT_TRIANGLEFAN: index_count=polygon_count+2; break;
-	default: WWASSERT(0); return;
-	}
+	const unsigned* rs=dev.RenderStates;
 
-	DX12DrawDesc desc;
-	memset(&desc,0,sizeof(desc));
-
-	desc.PrimitiveType=primitive_type;
-	desc.IndexCount=index_count;
-	desc.StartIndex=start_index;
-	desc.BaseVertex=base_vertex;
-
-	desc.VertexAddress=vb->Get_GPU_Address();
-	desc.VertexBufferSize=vb->Get_Size();
-	desc.VertexStride=vertex_buffer->FVF_Info().Get_FVF_Size();
-	desc.FVF=fvf;
-
-	desc.IndexAddress=ib->Get_GPU_Address();
-	desc.IndexBufferSize=ib->Get_Size();
+	desc.FVF=dev.FVF;
 
 	desc.World=&DX8Transforms[D3DTS_WORLD].m[0][0];
 	desc.View=&DX8Transforms[D3DTS_VIEW].m[0][0];
 	desc.Projection=&DX8Transforms[D3DTS_PROJECTION].m[0][0];
 
-	desc.AlphaBlendEnable=DX12_State(RenderStates[D3DRS_ALPHABLENDENABLE],FALSE)!=0;
-	desc.SrcBlend=DX12_State(RenderStates[D3DRS_SRCBLEND],D3DBLEND_ONE);
-	desc.DestBlend=DX12_State(RenderStates[D3DRS_DESTBLEND],D3DBLEND_ZERO);
-	desc.BlendOp=DX12_State(RenderStates[D3DRS_BLENDOP],D3DBLENDOP_ADD);
-	desc.ColorWriteMask=DX12_State(RenderStates[D3DRS_COLORWRITEENABLE],0xf)&0xf;
-	desc.ZEnable=DX12_State(RenderStates[D3DRS_ZENABLE],D3DZB_TRUE)!=D3DZB_FALSE;
-	desc.ZWriteEnable=DX12_State(RenderStates[D3DRS_ZWRITEENABLE],TRUE)!=0;
-	desc.ZFunc=DX12_State(RenderStates[D3DRS_ZFUNC],D3DCMP_LESSEQUAL);
-	desc.CullMode=DX12_State(RenderStates[D3DRS_CULLMODE],D3DCULL_CCW);
-	desc.FillMode=DX12_State(RenderStates[D3DRS_FILLMODE],D3DFILL_SOLID);
-	desc.DepthBias=(int)DX12_State(RenderStates[D3DRS_ZBIAS],0);
-	desc.AlphaTestEnable=DX12_State(RenderStates[D3DRS_ALPHATESTENABLE],FALSE)!=0;
-	desc.AlphaFunc=DX12_State(RenderStates[D3DRS_ALPHAFUNC],D3DCMP_ALWAYS);
-	desc.AlphaRef=DX12_State(RenderStates[D3DRS_ALPHAREF],0)&0xff;
-	desc.SpecularEnable=DX12_State(RenderStates[D3DRS_SPECULARENABLE],FALSE)!=0;
-	desc.TextureFactor=DX12_State(RenderStates[D3DRS_TEXTUREFACTOR],0xffffffff);
+	desc.AlphaBlendEnable=rs[D3DRS_ALPHABLENDENABLE]!=0;
+	desc.SrcBlend=rs[D3DRS_SRCBLEND];
+	desc.DestBlend=rs[D3DRS_DESTBLEND];
+	desc.BlendOp=rs[D3DRS_BLENDOP];
+	desc.ColorWriteMask=rs[D3DRS_COLORWRITEENABLE]&0xf;
+	desc.ZEnable=rs[D3DRS_ZENABLE]!=D3DZB_FALSE;
+	desc.ZWriteEnable=rs[D3DRS_ZWRITEENABLE]!=0;
+	desc.ZFunc=rs[D3DRS_ZFUNC];
+	desc.CullMode=rs[D3DRS_CULLMODE];
+	desc.FillMode=rs[D3DRS_FILLMODE];
+	desc.DepthBias=(int)rs[D3DRS_ZBIAS];
+	desc.AlphaTestEnable=rs[D3DRS_ALPHATESTENABLE]!=0;
+	desc.AlphaFunc=rs[D3DRS_ALPHAFUNC];
+	desc.AlphaRef=rs[D3DRS_ALPHAREF]&0xff;
+	desc.SpecularEnable=rs[D3DRS_SPECULARENABLE]!=0;
+	desc.TextureFactor=rs[D3DRS_TEXTUREFACTOR];
 
 	// There is no lighting emulation yet. Vertices without a diffuse color are white when unlit;
 	// lit ones get the material diffuse as the closest approximation.
-	if (DX12_State(RenderStates[D3DRS_LIGHTING],TRUE)) {
+	if (rs[D3DRS_LIGHTING]) {
 		desc.MaterialDiffuse[0]=DX8Material.Diffuse.r;
 		desc.MaterialDiffuse[1]=DX8Material.Diffuse.g;
 		desc.MaterialDiffuse[2]=DX8Material.Diffuse.b;
@@ -2871,26 +2918,133 @@ void DX8Wrapper::Draw_DX12(
 	}
 
 	for (unsigned stage=0;stage<DX12_MAX_STAGES;++stage) {
-		const unsigned* tss=TextureStageStates[stage];
-		desc.ColorOp[stage]=DX12_State(tss[D3DTSS_COLOROP],(stage==0) ? D3DTOP_MODULATE : D3DTOP_DISABLE);
-		desc.ColorArg0[stage]=DX12_State(tss[D3DTSS_COLORARG0],D3DTA_CURRENT);
-		desc.ColorArg1[stage]=DX12_State(tss[D3DTSS_COLORARG1],D3DTA_TEXTURE);
-		desc.ColorArg2[stage]=DX12_State(tss[D3DTSS_COLORARG2],D3DTA_CURRENT);
-		desc.AlphaOp[stage]=DX12_State(tss[D3DTSS_ALPHAOP],(stage==0) ? D3DTOP_SELECTARG1 : D3DTOP_DISABLE);
-		desc.AlphaArg0[stage]=DX12_State(tss[D3DTSS_ALPHAARG0],D3DTA_CURRENT);
-		desc.AlphaArg1[stage]=DX12_State(tss[D3DTSS_ALPHAARG1],D3DTA_TEXTURE);
-		desc.AlphaArg2[stage]=DX12_State(tss[D3DTSS_ALPHAARG2],D3DTA_CURRENT);
-		desc.TexCoordIndex[stage]=DX12_State(tss[D3DTSS_TEXCOORDINDEX],stage);
-		desc.MinFilter[stage]=DX12_State(tss[D3DTSS_MINFILTER],D3DTEXF_POINT);
-		desc.MagFilter[stage]=DX12_State(tss[D3DTSS_MAGFILTER],D3DTEXF_POINT);
-		desc.MipFilter[stage]=DX12_State(tss[D3DTSS_MIPFILTER],D3DTEXF_NONE);
-		desc.AddressU[stage]=DX12_State(tss[D3DTSS_ADDRESSU],D3DTADDRESS_WRAP);
-		desc.AddressV[stage]=DX12_State(tss[D3DTSS_ADDRESSV],D3DTADDRESS_WRAP);
-		desc.MaxAnisotropy[stage]=DX12_State(tss[D3DTSS_MAXANISOTROPY],1);
-		desc.Textures[stage]=DX12Textures[stage];
+		const unsigned* tss=dev.TextureStageStates[stage];
+		desc.ColorOp[stage]=tss[D3DTSS_COLOROP];
+		desc.ColorArg0[stage]=tss[D3DTSS_COLORARG0];
+		desc.ColorArg1[stage]=tss[D3DTSS_COLORARG1];
+		desc.ColorArg2[stage]=tss[D3DTSS_COLORARG2];
+		desc.AlphaOp[stage]=tss[D3DTSS_ALPHAOP];
+		desc.AlphaArg0[stage]=tss[D3DTSS_ALPHAARG0];
+		desc.AlphaArg1[stage]=tss[D3DTSS_ALPHAARG1];
+		desc.AlphaArg2[stage]=tss[D3DTSS_ALPHAARG2];
+		desc.TexCoordIndex[stage]=tss[D3DTSS_TEXCOORDINDEX];
+		desc.MinFilter[stage]=tss[D3DTSS_MINFILTER];
+		desc.MagFilter[stage]=tss[D3DTSS_MAGFILTER];
+		desc.MipFilter[stage]=tss[D3DTSS_MIPFILTER];
+		desc.AddressU[stage]=tss[D3DTSS_ADDRESSU];
+		desc.AddressV[stage]=tss[D3DTSS_ADDRESSV];
+		desc.MaxAnisotropy[stage]=tss[D3DTSS_MAXANISOTROPY];
+		desc.Textures[stage]=dev.Textures[stage];
+	}
+
+	return true;
+}
+
+void DX8Wrapper::Draw_DX12(unsigned primitive_type, unsigned start, unsigned primitive_count, bool indexed)
+{
+	const DX12DeviceStateStruct& dev=DX12Device_State;
+
+	const unsigned count=DX12_Primitive_Vertex_Count(primitive_type,primitive_count);
+	if (count==0) {
+		WWASSERT(primitive_count==0);
+		return;
+	}
+	// Like Direct3D 8, a draw without the buffers it reads does nothing.
+	if (dev.StreamBuffer==nullptr || dev.StreamStride==0) return;
+	if (indexed && dev.IndexBuffer==nullptr) return;
+
+	DX12DrawDesc desc;
+	memset(&desc,0,sizeof(desc));
+	if (!Fill_DX12_Draw_State(desc)) return;
+
+	desc.VertexAddress=dev.StreamBuffer->Get_GPU_Address();
+	desc.VertexBufferSize=dev.StreamBuffer->Get_Size();
+	desc.VertexStride=dev.StreamStride;
+
+	if (primitive_type==D3DPT_TRIANGLEFAN) {
+		// Direct3D 12 has no fans; draw the equivalent triangle list.
+		unsigned long long list=0;
+		if (indexed) {
+			const unsigned char* indices=dev.IndexBuffer->Peek_CPU_Data();
+			if (indices==nullptr || (unsigned long long)(start+count)*sizeof(unsigned short)>dev.IndexBuffer->Get_Size()) {
+				static bool logged=false;
+				if (!logged) {
+					logged=true;
+					WWDEBUG_SAY(("DX12: skipping an indexed triangle fan outside its index buffer"));
+				}
+				return;
+			}
+			list=DX12_Fan_To_List((const unsigned short*)indices+start,primitive_count);
+			desc.BaseVertex=(int)dev.IndexBaseVertex;
+		}
+		else {
+			if (count>0x10000) return;
+			list=DX12_Fan_To_List(nullptr,primitive_count);
+			desc.BaseVertex=(int)start;
+		}
+		if (list==0) return;
+		desc.PrimitiveType=D3DPT_TRIANGLELIST;
+		desc.IndexCount=primitive_count*3;
+		desc.StartIndex=0;
+		desc.IndexAddress=list;
+		desc.IndexBufferSize=primitive_count*3*sizeof(unsigned short);
+	}
+	else if (indexed) {
+		desc.PrimitiveType=primitive_type;
+		desc.IndexCount=count;
+		desc.StartIndex=start;
+		desc.BaseVertex=(int)dev.IndexBaseVertex;
+		desc.IndexAddress=dev.IndexBuffer->Get_GPU_Address();
+		desc.IndexBufferSize=dev.IndexBuffer->Get_Size();
+	}
+	else {
+		desc.PrimitiveType=primitive_type;
+		desc.VertexCount=count;
+		desc.StartVertex=start;
 	}
 
 	DX12Device::Draw(desc);
+}
+
+void DX8Wrapper::Draw_Primitive_UP_DX12(unsigned primitive_type, unsigned primitive_count, const void* vertex_data, unsigned vertex_stride)
+{
+	const unsigned count=DX12_Primitive_Vertex_Count(primitive_type,primitive_count);
+	WWASSERT(count!=0 || primitive_count==0);
+
+	DX12DrawDesc desc;
+	memset(&desc,0,sizeof(desc));
+	if (count!=0 && vertex_data!=nullptr && vertex_stride!=0 && Fill_DX12_Draw_State(desc)) {
+		const unsigned size=count*vertex_stride;
+		void* cpu=nullptr;
+		unsigned long long gpu=0;
+		if (DX12Device::Allocate_Frame_Memory(size,&cpu,&gpu)) {
+			memcpy(cpu,vertex_data,size);
+			desc.VertexAddress=gpu;
+			desc.VertexBufferSize=size;
+			desc.VertexStride=vertex_stride;
+
+			bool draw=true;
+			if (primitive_type==D3DPT_TRIANGLEFAN) {
+				const unsigned long long list=(count<=0x10000) ? DX12_Fan_To_List(nullptr,primitive_count) : 0;
+				desc.PrimitiveType=D3DPT_TRIANGLELIST;
+				desc.IndexCount=primitive_count*3;
+				desc.IndexAddress=list;
+				desc.IndexBufferSize=primitive_count*3*sizeof(unsigned short);
+				draw=list!=0;
+			}
+			else {
+				desc.PrimitiveType=primitive_type;
+				desc.VertexCount=count;
+			}
+			if (draw) {
+				DX12Device::Draw(desc);
+			}
+		}
+	}
+
+	// Direct3D 8 leaves stream 0 unbound after DrawPrimitiveUP; the indices stay bound
+	// (only DrawIndexedPrimitiveUP also resets them).
+	Device_Set_Stream(nullptr,0);
 }
 
 void DX8Wrapper::Apply_Render_State_Changes()
@@ -2987,6 +3141,11 @@ void DX8Wrapper::Apply_Render_State_Changes()
 						i,
 						static_cast<DX8VertexBufferClass*>(render_state.vertex_buffers[i])->Get_DX8_Vertex_Buffer(),
 						render_state.vertex_buffers[i]->FVF_Info().Get_FVF_Size()));
+					if (DX12Device::Is_Active() && i==0) {
+						Device_Set_Stream(
+							static_cast<DX8VertexBufferClass*>(render_state.vertex_buffers[i])->Get_DX12_Buffer(),
+							render_state.vertex_buffers[i]->FVF_Info().Get_FVF_Size());
+					}
 					DX8_RECORD_VERTEX_BUFFER_CHANGE();
 					{
 						// If the VB format is FVF, set the FVF as a vertex shader
@@ -3004,6 +3163,7 @@ void DX8Wrapper::Apply_Render_State_Changes()
 				}
 			} else {
 				DX8CALL(SetStreamSource(i,nullptr,0));
+				if (DX12Device::Is_Active() && i==0) Device_Set_Stream(nullptr,0);
 				DX8_RECORD_VERTEX_BUFFER_CHANGE();
 			}
 		}
@@ -3018,6 +3178,11 @@ void DX8Wrapper::Apply_Render_State_Changes()
 				DX8CALL(SetIndices(
 					static_cast<DX8IndexBufferClass*>(render_state.index_buffer)->Get_DX8_Index_Buffer(),
 					render_state.index_base_offset+render_state.vba_offset));
+				if (DX12Device::Is_Active()) {
+					Device_Set_Indices(
+						static_cast<DX8IndexBufferClass*>(render_state.index_buffer)->Get_DX12_Buffer(),
+						render_state.index_base_offset+render_state.vba_offset);
+				}
 				DX8_RECORD_INDEX_BUFFER_CHANGE();
 				break;
 			case BUFFER_TYPE_SORTING:
@@ -3031,6 +3196,7 @@ void DX8Wrapper::Apply_Render_State_Changes()
 			DX8CALL(SetIndices(
 				nullptr,
 				0));
+			if (DX12Device::Is_Active()) Device_Set_Indices(nullptr,0);
 			DX8_RECORD_INDEX_BUFFER_CHANGE();
 		}
 	}

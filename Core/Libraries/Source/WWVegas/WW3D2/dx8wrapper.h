@@ -60,6 +60,8 @@
 #include "WW3D2/vertmaterial.h"
 #include "WW3D2/Backend/DX12/dx12device.h"
 
+#include <cstddef>
+
 /*
 ** Registry value names
 */
@@ -95,6 +97,7 @@ class DynamicIBAccessClass;
 class TextureClass;
 class LightClass;
 class SurfaceClass;
+class DX12BufferClass;
 
 struct DX8FrameStatistics
 {
@@ -272,13 +275,21 @@ class DX8Wrapper
 		unsigned short min_vertex_index=0,
 		unsigned short vertex_count=0);
 
-	static void Draw_DX12(
-		unsigned primitive_type,
-		unsigned start_index,
-		unsigned polygon_count,
-		int base_vertex,
-		VertexBufferClass* vertex_buffer,
-		IndexBufferClass* index_buffer);
+	// Direct3D 12 mode: draws from DX12Device_State, the mirror of the Direct3D 8 device state.
+	// start is the start index when indexed, the start vertex otherwise.
+	static void Draw_DX12(unsigned primitive_type, unsigned start, unsigned primitive_count, bool indexed);
+	static void Draw_Primitive_UP_DX12(unsigned primitive_type, unsigned primitive_count, const void* vertex_data, unsigned vertex_stride);
+	static bool Fill_DX12_Draw_State(DX12DrawDesc& desc);
+
+	// Direct3D 12 mode: the only writers of DX12Device_State, called where the Direct3D 8 code
+	// reaches the device.
+	static void Device_Set_Render_State(D3DRENDERSTATETYPE state, unsigned value);
+	static void Device_Set_Texture_Stage_State(unsigned stage, D3DTEXTURESTAGESTATETYPE state, unsigned value);
+	static void Device_Set_DX12_Texture(unsigned stage, DX12TextureClass* texture);
+	static void Device_Set_Stream(DX12BufferClass* buffer, unsigned stride);
+	static void Device_Set_Indices(DX12BufferClass* buffer, unsigned base_vertex_index);
+	static void Device_Set_Vertex_Shader(DWORD vertex_shader);
+	static void Device_Set_Pixel_Shader(DWORD pixel_shader);
 
 public:
 #ifdef EXTENDED_STATS
@@ -550,6 +561,7 @@ public:
 	** TextureStageStates[][], Textures[], Pixel_Shader, the shader constant shadows and the
 	** deferred render_state) and leave it untouched, exactly like a direct device call.
 	** Callers must keep calling Invalidate_Cached_Render_States() wherever they did before.
+	** In Direct3D 12 mode they write DX12Device_State, the stand-in for the Direct3D 8 device.
 	**
 	** Functions returning HRESULT do not assert or log on failure; the caller checks the result.
 	** The cursor functions may be called from the mouse thread and do no thread checks.
@@ -563,6 +575,17 @@ public:
 	static void Set_Pixel_Shader_Constant_Raw(int reg, const void* data, int count);
 	static void Set_Stream_Source_Raw(unsigned stream, IDirect3DVertexBuffer8* vertex_buffer, unsigned stride);
 	static void Set_Indices_Raw(IDirect3DIndexBuffer8* index_buffer, unsigned base_vertex_index);
+
+	// Raw setters taking engine objects, for code that used to pass the engine object's Direct3D 8
+	// object; these also work in Direct3D 12 mode. The nullptr overloads keep literal nullptr calls
+	// unambiguous and behave like the Direct3D 8 pointer versions.
+	static void Set_DX8_Texture_Raw(unsigned int stage, TextureBaseClass* texture);
+	static void Set_DX8_Texture_Raw(unsigned int stage, std::nullptr_t);
+	static void Set_Stream_Source_Raw(unsigned stream, VertexBufferClass* vertex_buffer, unsigned stride);
+	static void Set_Stream_Source_Raw(unsigned stream, std::nullptr_t, unsigned stride);
+	static void Set_Indices_Raw(IndexBufferClass* index_buffer, unsigned base_vertex_index);
+	static void Set_Indices_Raw(std::nullptr_t, unsigned base_vertex_index);
+
 	static void Get_Viewport(D3DVIEWPORT8* pViewport);
 
 	// Draw with whatever is currently bound on the device. No deferred state is applied.
@@ -662,6 +685,7 @@ protected:
 	static void Enumerate_DX12_Device();
 	static void Set_Default_Global_Render_States();
 	static void Set_DX12_Default_Device_States();
+	static void Release_DX12_Device_State();
 	static bool Set_DX12_Render_Device(bool reset_device, bool restore_assets);
 	static void Release_DX12_Textures();
 
@@ -758,8 +782,26 @@ protected:
 	static unsigned						TextureStageStates[MAX_TEXTURE_STAGES][32];
 	static IDirect3DBaseTexture8 *	Textures[MAX_TEXTURE_STAGES];
 
-	// Direct3D 12 mode: state the Direct3D 8 device used to hold, read back when drawing.
+	// Direct3D 12 mode: cache of Set_DX12_Texture, the counterpart of Textures[].
 	static DX12TextureClass *		DX12Textures[MAX_TEXTURE_STAGES];
+
+	// Direct3D 12 mode: what the Direct3D 8 device would hold. Written only where the Direct3D 8
+	// code makes the device call (cached setters after their redundancy check, raw setters always),
+	// so it stays independent of the caches above, which game code relies on going stale. Draws
+	// read this, DX8Transforms, DX8Material, DX8Lights/CurrentDX8LightEnables and DX12Viewport.
+	struct DX12DeviceStateStruct {
+		unsigned RenderStates[256];
+		unsigned TextureStageStates[MAX_TEXTURE_STAGES][32];
+		DX12TextureClass * Textures[MAX_TEXTURE_STAGES];	// owned references
+		DX12BufferClass * StreamBuffer;							// stream 0, owned reference
+		unsigned StreamStride;
+		DX12BufferClass * IndexBuffer;							// owned reference
+		unsigned IndexBaseVertex;
+		unsigned FVF;												// last Set_Vertex_Shader value (FVF code; 0 = none)
+		unsigned PixelShader;										// last pixel shader handle (0 = fixed function)
+	};
+	static DX12DeviceStateStruct		DX12Device_State;
+
 	static D3DMATERIAL8					DX8Material;
 	static D3DLIGHT8						DX8Lights[4];
 	static D3DVIEWPORT8					DX12Viewport;
@@ -812,6 +854,7 @@ WWINLINE void DX8Wrapper::Set_Vertex_Shader(DWORD vertex_shader)
 
 	Vertex_Shader=vertex_shader;
 	DX8CALL(SetVertexShader(Vertex_Shader));
+	if (DX12Device::Is_Active()) Device_Set_Vertex_Shader(vertex_shader);
 }
 
 WWINLINE void DX8Wrapper::Set_Pixel_Shader(DWORD pixel_shader)
@@ -821,6 +864,7 @@ WWINLINE void DX8Wrapper::Set_Pixel_Shader(DWORD pixel_shader)
 
 	Pixel_Shader=pixel_shader;
 	DX8CALL(SetPixelShader(Pixel_Shader));
+	if (DX12Device::Is_Active()) Device_Set_Pixel_Shader(pixel_shader);
 }
 
 WWINLINE void DX8Wrapper::Set_Vertex_Shader_Constant(int reg, const void* data, int count)
@@ -969,6 +1013,7 @@ WWINLINE void DX8Wrapper::Set_DX8_Render_State(D3DRENDERSTATETYPE state, unsigne
 
 	RenderStates[state]=value;
 	DX8CALL(SetRenderState( state, value ));
+	if (DX12Device::Is_Active()) Device_Set_Render_State(state,value);
 	DX8_RECORD_RENDER_STATE_CHANGE();
 }
 
@@ -1000,11 +1045,18 @@ WWINLINE void DX8Wrapper::Set_DX8_Texture_Stage_State(unsigned stage, D3DTEXTURE
 
 	TextureStageStates[stage][(unsigned int)state]=value;
 	DX8CALL(SetTextureStageState( stage, state, value ));
+	if (DX12Device::Is_Active()) Device_Set_Texture_Stage_State(stage,state,value);
 	DX8_RECORD_TEXTURE_STAGE_STATE_CHANGE();
 }
 
 WWINLINE void DX8Wrapper::Set_DX8_Texture(unsigned int stage, IDirect3DBaseTexture8* texture)
 {
+	if (DX12Device::Is_Active()) {
+		// There are no Direct3D 8 textures; null goes through the Direct3D 12 texture cache.
+		if (texture==nullptr && stage<MAX_TEXTURE_STAGES) Set_DX12_Texture(stage,nullptr);
+		return;
+	}
+
   	if (stage >= MAX_TEXTURE_STAGES)
   	{	DX8CALL(SetTexture(stage, texture));
   		return;
@@ -1046,21 +1098,52 @@ WWINLINE void DX8Wrapper::_Copy_DX8_Rects(
 
 WWINLINE void DX8Wrapper::Set_DX8_Render_State_Raw(D3DRENDERSTATETYPE state, unsigned value)
 {
+	if (DX12Device::Is_Active()) {
+		Device_Set_Render_State(state,value);
+		return;
+	}
 	DX8CALL(SetRenderState( state, value ));
 }
 
 WWINLINE void DX8Wrapper::Set_DX8_Texture_Stage_State_Raw(unsigned stage, D3DTEXTURESTAGESTATETYPE state, unsigned value)
 {
+	if (DX12Device::Is_Active()) {
+		Device_Set_Texture_Stage_State(stage,state,value);
+		return;
+	}
 	DX8CALL(SetTextureStageState( stage, state, value ));
 }
 
 WWINLINE void DX8Wrapper::Set_DX8_Texture_Raw(unsigned int stage, IDirect3DBaseTexture8* texture)
 {
+	if (DX12Device::Is_Active()) {
+		// A Direct3D 8 texture cannot exist in Direct3D 12 mode, so only null reaches here.
+		if (texture==nullptr) Device_Set_DX12_Texture(stage,nullptr);
+		return;
+	}
 	DX8CALL(SetTexture( stage, texture ));
+}
+
+WWINLINE void DX8Wrapper::Set_DX8_Texture_Raw(unsigned int stage, TextureBaseClass* texture)
+{
+	if (DX12Device::Is_Active()) {
+		Device_Set_DX12_Texture(stage,texture ? texture->Peek_DX12_Texture() : nullptr);
+		return;
+	}
+	Set_DX8_Texture_Raw(stage,texture ? texture->Peek_D3D_Base_Texture() : nullptr);
+}
+
+WWINLINE void DX8Wrapper::Set_DX8_Texture_Raw(unsigned int stage, std::nullptr_t)
+{
+	Set_DX8_Texture_Raw(stage,(IDirect3DBaseTexture8*)nullptr);
 }
 
 WWINLINE void DX8Wrapper::Set_Pixel_Shader_Raw(DWORD pixel_shader)
 {
+	if (DX12Device::Is_Active()) {
+		Device_Set_Pixel_Shader(pixel_shader);
+		return;
+	}
 	DX8CALL(SetPixelShader( pixel_shader ));
 }
 
@@ -1076,16 +1159,57 @@ WWINLINE void DX8Wrapper::Set_Pixel_Shader_Constant_Raw(int reg, const void* dat
 
 WWINLINE void DX8Wrapper::Set_Stream_Source_Raw(unsigned stream, IDirect3DVertexBuffer8* vertex_buffer, unsigned stride)
 {
+	if (DX12Device::Is_Active()) {
+		// A Direct3D 8 buffer cannot exist in Direct3D 12 mode, so only null reaches here.
+		if (stream==0 && vertex_buffer==nullptr) Device_Set_Stream(nullptr,stride);
+		return;
+	}
 	DX8CALL(SetStreamSource( stream, vertex_buffer, stride ));
+}
+
+WWINLINE void DX8Wrapper::Set_Stream_Source_Raw(unsigned stream, VertexBufferClass* vertex_buffer, unsigned stride)
+{
+	if (DX12Device::Is_Active()) {
+		if (stream==0) Device_Set_Stream(vertex_buffer ? static_cast<DX8VertexBufferClass*>(vertex_buffer)->Get_DX12_Buffer() : nullptr,stride);
+		return;
+	}
+	Set_Stream_Source_Raw(stream,vertex_buffer ? static_cast<DX8VertexBufferClass*>(vertex_buffer)->Get_DX8_Vertex_Buffer() : nullptr,stride);
+}
+
+WWINLINE void DX8Wrapper::Set_Stream_Source_Raw(unsigned stream, std::nullptr_t, unsigned stride)
+{
+	Set_Stream_Source_Raw(stream,(IDirect3DVertexBuffer8*)nullptr,stride);
 }
 
 WWINLINE void DX8Wrapper::Set_Indices_Raw(IDirect3DIndexBuffer8* index_buffer, unsigned base_vertex_index)
 {
+	if (DX12Device::Is_Active()) {
+		if (index_buffer==nullptr) Device_Set_Indices(nullptr,base_vertex_index);
+		return;
+	}
 	DX8CALL(SetIndices( index_buffer, base_vertex_index ));
+}
+
+WWINLINE void DX8Wrapper::Set_Indices_Raw(IndexBufferClass* index_buffer, unsigned base_vertex_index)
+{
+	if (DX12Device::Is_Active()) {
+		Device_Set_Indices(index_buffer ? static_cast<DX8IndexBufferClass*>(index_buffer)->Get_DX12_Buffer() : nullptr,base_vertex_index);
+		return;
+	}
+	Set_Indices_Raw(index_buffer ? static_cast<DX8IndexBufferClass*>(index_buffer)->Get_DX8_Index_Buffer() : nullptr,base_vertex_index);
+}
+
+WWINLINE void DX8Wrapper::Set_Indices_Raw(std::nullptr_t, unsigned base_vertex_index)
+{
+	Set_Indices_Raw((IDirect3DIndexBuffer8*)nullptr,base_vertex_index);
 }
 
 WWINLINE void DX8Wrapper::Draw_Primitive_Raw(unsigned primitive_type, unsigned start_vertex, unsigned primitive_count)
 {
+	if (DX12Device::Is_Active()) {
+		Draw_DX12(primitive_type,start_vertex,primitive_count,false);
+		return;
+	}
 	DX8CALL(DrawPrimitive( (D3DPRIMITIVETYPE)primitive_type, start_vertex, primitive_count ));
 }
 
@@ -1096,12 +1220,49 @@ WWINLINE void DX8Wrapper::Draw_Indexed_Primitive_Raw(
 	unsigned start_index,
 	unsigned primitive_count)
 {
+	if (DX12Device::Is_Active()) {
+		Draw_DX12(primitive_type,start_index,primitive_count,true);
+		return;
+	}
 	DX8CALL(DrawIndexedPrimitive( (D3DPRIMITIVETYPE)primitive_type, min_index, vertex_count, start_index, primitive_count ));
 }
 
 WWINLINE void DX8Wrapper::Draw_Primitive_UP(unsigned primitive_type, unsigned primitive_count, const void* vertex_data, unsigned vertex_stride)
 {
+	if (DX12Device::Is_Active()) {
+		Draw_Primitive_UP_DX12(primitive_type,primitive_count,vertex_data,vertex_stride);
+		return;
+	}
 	DX8CALL(DrawPrimitiveUP( (D3DPRIMITIVETYPE)primitive_type, primitive_count, vertex_data, vertex_stride ));
+}
+
+// ----------------------------------------------------------------------------
+//
+// Direct3D 12 mode: writes to the mirror of the Direct3D 8 device state.
+// Textures and buffers are reference counted and live in dx8wrapper.cpp.
+//
+// ----------------------------------------------------------------------------
+
+WWINLINE void DX8Wrapper::Device_Set_Render_State(D3DRENDERSTATETYPE state, unsigned value)
+{
+	if ((unsigned)state<256) DX12Device_State.RenderStates[state]=value;
+}
+
+WWINLINE void DX8Wrapper::Device_Set_Texture_Stage_State(unsigned stage, D3DTEXTURESTAGESTATETYPE state, unsigned value)
+{
+	if (stage<MAX_TEXTURE_STAGES && (unsigned)state<32) DX12Device_State.TextureStageStates[stage][(unsigned int)state]=value;
+}
+
+WWINLINE void DX8Wrapper::Device_Set_Vertex_Shader(DWORD vertex_shader)
+{
+	// Direct3D 8 vertex shader handles have bit 0 set, which no FVF code has. Programmable vertex
+	// shaders do not exist in Direct3D 12 mode, so a handle leaves no usable vertex format.
+	DX12Device_State.FVF=(vertex_shader&1) ? 0 : vertex_shader;
+}
+
+WWINLINE void DX8Wrapper::Device_Set_Pixel_Shader(DWORD pixel_shader)
+{
+	DX12Device_State.PixelShader=pixel_shader;
 }
 
 WWINLINE Vector4 DX8Wrapper::Convert_Color(unsigned color)

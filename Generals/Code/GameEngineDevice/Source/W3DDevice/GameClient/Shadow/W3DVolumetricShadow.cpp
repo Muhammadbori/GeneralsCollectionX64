@@ -1259,7 +1259,7 @@ void W3DVolumetricShadow::RenderMeshVolume(Int meshIndex, Int lightIndex, const 
 		return;
 	if (vbSlot->m_VB->m_DX8VertexBuffer->Get_DX8_Vertex_Buffer() != lastActiveVertexBuffer)
 	{	lastActiveVertexBuffer=vbSlot->m_VB->m_DX8VertexBuffer->Get_DX8_Vertex_Buffer();
-		DX8Wrapper::Set_Stream_Source_Raw(0,lastActiveVertexBuffer,
+		DX8Wrapper::Set_Stream_Source_Raw(0,vbSlot->m_VB->m_DX8VertexBuffer,
 			vbSlot->m_VB->m_DX8VertexBuffer->FVF_Info().Get_FVF_Size());	//12 bytes per vertex.
 	}
 
@@ -1271,7 +1271,7 @@ void W3DVolumetricShadow::RenderMeshVolume(Int meshIndex, Int lightIndex, const 
 
 	DEBUG_ASSERTCRASH(ibSlot->m_size >= numIndex,("Overflowing Shadow Index Buffer Slot"));
 
-	DX8Wrapper::Set_Indices_Raw(ibSlot->m_IB->m_DX8IndexBuffer->Get_DX8_Index_Buffer(),vbSlot->m_start);
+	DX8Wrapper::Set_Indices_Raw(ibSlot->m_IB->m_DX8IndexBuffer,vbSlot->m_start);
 
 	if (DX8Wrapper::_Is_Triangle_Draw_Enabled())
 	{

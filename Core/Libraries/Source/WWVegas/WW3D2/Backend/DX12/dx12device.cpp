@@ -283,6 +283,8 @@ DX12PSConstants LastPSConstants;
 UINT64 LastPSConstantsGPU = 0;
 
 bool LoggedTriangleFan = false;
+bool LoggedIndexOverflow = false;
+bool LoggedVertexOverflow = false;
 bool LoggedSamplerHeapFull = false;
 unsigned LastBadFVF = 0;
 
@@ -2075,10 +2077,46 @@ void DX12Device::Draw(const DX12DrawDesc & desc)
 	{
 		return;
 	}
-	if (desc.VertexAddress == 0 || desc.IndexAddress == 0 || desc.IndexCount == 0
-		|| desc.VertexStride == 0 || desc.VertexBufferSize == 0 || desc.IndexBufferSize == 0)
+	if (desc.VertexAddress == 0 || desc.VertexStride == 0 || desc.VertexBufferSize == 0)
 	{
 		return;
+	}
+
+	const bool indexed = desc.IndexAddress != 0;
+	if (indexed)
+	{
+		if (desc.IndexCount == 0 || desc.IndexBufferSize == 0)
+		{
+			return;
+		}
+		if ((unsigned long long)desc.StartIndex + desc.IndexCount > desc.IndexBufferSize / 2
+			|| desc.BaseVertex < 0 || (unsigned long long)desc.BaseVertex * desc.VertexStride >= desc.VertexBufferSize)
+		{
+			if (!LoggedIndexOverflow)
+			{
+				WWDEBUG_SAY(("DX12: indexed draw out of range (indices %u+%u of %u, base vertex %d of %u), draw skipped",
+					desc.StartIndex, desc.IndexCount, desc.IndexBufferSize / 2, desc.BaseVertex, desc.VertexBufferSize / desc.VertexStride));
+				LoggedIndexOverflow = true;
+			}
+			return;
+		}
+	}
+	else
+	{
+		if (desc.VertexCount == 0)
+		{
+			return;
+		}
+		if (((unsigned long long)desc.StartVertex + desc.VertexCount) * desc.VertexStride > desc.VertexBufferSize)
+		{
+			if (!LoggedVertexOverflow)
+			{
+				WWDEBUG_SAY(("DX12: draw out of range (vertices %u+%u of %u), draw skipped",
+					desc.StartVertex, desc.VertexCount, desc.VertexBufferSize / desc.VertexStride));
+				LoggedVertexOverflow = true;
+			}
+			return;
+		}
 	}
 
 	D3D_PRIMITIVE_TOPOLOGY topology;
@@ -2108,7 +2146,7 @@ void DX12Device::Draw(const DX12DrawDesc & desc)
 	case PRIM_TRIANGLEFAN:
 		if (!LoggedTriangleFan)
 		{
-			WWDEBUG_SAY(("DX12: triangle fans are not supported yet, draw skipped"));
+			WWDEBUG_SAY(("DX12: triangle fans must be converted to lists before DX12Device::Draw, draw skipped"));
 			LoggedTriangleFan = true;
 		}
 		return;
@@ -2274,11 +2312,14 @@ void DX12Device::Draw(const DX12DrawDesc & desc)
 	vertex_view.StrideInBytes = desc.VertexStride;
 	CommandList->IASetVertexBuffers(0, 1, &vertex_view);
 
-	D3D12_INDEX_BUFFER_VIEW index_view;
-	index_view.BufferLocation = desc.IndexAddress;
-	index_view.SizeInBytes = desc.IndexBufferSize;
-	index_view.Format = DXGI_FORMAT_R16_UINT;
-	CommandList->IASetIndexBuffer(&index_view);
+	if (indexed)
+	{
+		D3D12_INDEX_BUFFER_VIEW index_view;
+		index_view.BufferLocation = desc.IndexAddress;
+		index_view.SizeInBytes = desc.IndexBufferSize;
+		index_view.Format = DXGI_FORMAT_R16_UINT;
+		CommandList->IASetIndexBuffer(&index_view);
+	}
 
 	CommandList->SetGraphicsRootConstantBufferView(0, vs_gpu);
 	CommandList->SetGraphicsRootConstantBufferView(1, ps_gpu);
@@ -2287,7 +2328,14 @@ void DX12Device::Draw(const DX12DrawDesc & desc)
 	CommandList->SetGraphicsRootDescriptorTable(4, samplers[0]);
 	CommandList->SetGraphicsRootDescriptorTable(5, samplers[1]);
 
-	CommandList->DrawIndexedInstanced(desc.IndexCount, 1, desc.StartIndex, desc.BaseVertex, 0);
+	if (indexed)
+	{
+		CommandList->DrawIndexedInstanced(desc.IndexCount, 1, desc.StartIndex, desc.BaseVertex, 0);
+	}
+	else
+	{
+		CommandList->DrawInstanced(desc.VertexCount, 1, desc.StartVertex, 0);
+	}
 }
 
 unsigned DX12Device::Allocate_SRV_Slot()

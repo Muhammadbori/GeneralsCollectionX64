@@ -39,12 +39,19 @@ enum
 
 // One draw call, described with plain values so this header does not depend on Direct3D 8 types.
 // Enumerations keep their Direct3D 8 numbering (D3DPRIMITIVETYPE, D3DBLEND, D3DCMPFUNC, D3DTOP, ...).
+//
+// IndexAddress 0 draws VertexCount vertices from StartVertex without indices; otherwise IndexCount
+// 16-bit indices from StartIndex, offset by BaseVertex. Point, line and triangle lists and strips
+// are supported; DX8Wrapper converts triangle fans to triangle lists. Draws that would read past
+// the end of a buffer are skipped.
 struct DX12DrawDesc
 {
 	unsigned PrimitiveType;
 	unsigned IndexCount;
 	unsigned StartIndex;
 	int BaseVertex;
+	unsigned VertexCount;
+	unsigned StartVertex;
 
 	unsigned long long VertexAddress;
 	unsigned VertexBufferSize;

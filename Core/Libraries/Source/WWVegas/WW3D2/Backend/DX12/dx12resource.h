@@ -120,6 +120,10 @@ public:
 	// GPU address of the start of the buffer's current memory.
 	unsigned long long Get_GPU_Address() const;
 
+	// CPU visible contents of the whole buffer: the mapped upload memory of a static buffer (write
+	// combined, so read sparingly) or the shadow copy of a dynamic one.
+	const unsigned char * Peek_CPU_Data() const { return Dynamic ? Shadow : CPUAddress; }
+
 protected:
 	virtual ~DX12BufferClass() override;
 
