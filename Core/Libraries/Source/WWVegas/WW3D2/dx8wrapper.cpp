@@ -2314,7 +2314,10 @@ HRESULT DX8Wrapper::Create_DX12_Shader(const char* name, bool vertex_shader, con
 HRESULT DX8Wrapper::Delete_Vertex_Shader(DWORD handle)
 {
 	if (DX12Device::Is_Active()) {
-		DX12Device::Delete_Game_Shader(handle);
+		// Only free a handle of the kind this call is for, as Direct3D 8 keeps the two handle spaces apart.
+		if (DX12Device::Is_Game_Shader(handle, true)) {
+			DX12Device::Delete_Game_Shader(handle);
+		}
 		return D3D_OK;
 	}
 	if (D3DDevice == nullptr)
@@ -2326,7 +2329,10 @@ HRESULT DX8Wrapper::Delete_Vertex_Shader(DWORD handle)
 HRESULT DX8Wrapper::Delete_Pixel_Shader(DWORD handle)
 {
 	if (DX12Device::Is_Active()) {
-		DX12Device::Delete_Game_Shader(handle);
+		// Only free a handle of the kind this call is for, as Direct3D 8 keeps the two handle spaces apart.
+		if (DX12Device::Is_Game_Shader(handle, false)) {
+			DX12Device::Delete_Game_Shader(handle);
+		}
 		return D3D_OK;
 	}
 	if (D3DDevice == nullptr)
