@@ -1207,6 +1207,7 @@ bool Flush_Frame_And_Wait()
 		Frames[FrameIndex].FenceValue = fence;
 		FrameIndex = (FrameIndex + 1) % FRAME_COUNT;
 		FrameSlotPrepared = false;
+		DX12Device::Invalidate_Frame_Memory();
 		Wait_For_Fence(fence);
 		Process_Deferred();
 		return false;

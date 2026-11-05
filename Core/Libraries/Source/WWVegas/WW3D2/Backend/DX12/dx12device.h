@@ -249,6 +249,9 @@ public:
 	static void Queue_Texture_Upload(DX12TextureClass * texture, unsigned level, ID3D12Resource * upload);
 	static bool Allocate_Frame_Memory(unsigned size, void ** cpu, unsigned long long * gpu);
 	static unsigned long long Get_Frame_Number() { return FrameNumber; }
+	// Starts a new frame number when a frame slot is given up without a present, so dynamic buffers
+	// stop using memory from that slot.
+	static void Invalidate_Frame_Memory() { ++FrameNumber; }
 
 	// Game shaders: HLSL ports of the game's Direct3D 8 shaders, identified by name (see
 	// dx12gameshaders.h for the HLSL contract). Register_Game_Shader adds or replaces a shader in the
