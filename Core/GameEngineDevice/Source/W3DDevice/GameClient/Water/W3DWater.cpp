@@ -354,6 +354,8 @@ WaterRenderObjClass::WaterRenderObjClass()
 	m_indexBufferD3D=nullptr;
 	m_gridVertexBufferDX12=nullptr;
 	m_gridIndexBufferDX12=nullptr;
+	m_seaVertexBufferDX12=nullptr;
+	m_pBumpTextureDX12=nullptr;
 	m_vertexBufferD3DOffset=0;
 
 	m_dwWavePixelShader=0;
@@ -630,6 +632,34 @@ HRESULT WaterRenderObjClass::initBumpMap(LPDIRECT3DTEXTURE8 *pTex, TextureClass 
 }
 
 //-------------------------------------------------------------------------------------------------
+/** Direct3D 12 mode: creates the bump map the shader water (wave_ps) reads on stage 0. Direct3D 12
+	*   mode has no signed texture formats, so the du/dv of the Direct3D 8 V8U8 bump map are stored
+	*   in red/green of an A8R8G8B8 texture, biased by 128 (see dx12shaders_water.cpp). The caustics
+	*   frames initBumpMap converts are not loaded in either game (see init), so Direct3D 8 draws the
+	*   sea with no bump texture, which texbem reads as no perturbation: the texture is a single flat
+	*   texel (du = dv = 0). */
+//-------------------------------------------------------------------------------------------------
+void WaterRenderObjClass::initBumpMapDX12()
+{
+	REF_PTR_RELEASE(m_pBumpTextureDX12);
+	m_pBumpTextureDX12=MSGNEW("TextureClass") TextureClass(1,1,WW3D_FORMAT_A8R8G8B8,MIP_LEVELS_1);
+
+	SurfaceClass *surface=m_pBumpTextureDX12->Get_Surface_Level();
+	if (surface)
+	{
+		int pitch;
+		void *pBits = surface->Lock(&pitch);
+		if (pBits)
+		{
+			const unsigned int bytesPerPixel = surface->Get_Bytes_Per_Pixel();
+			surface->Draw_Pixel(0, 0, 0xff808080, bytesPerPixel, pBits, pitch);	//du = dv = 0
+			surface->Unlock();
+		}
+		REF_PTR_RELEASE(surface);
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
 /** Create and fill a D3D vertex buffer with water surface vertices */
 //-------------------------------------------------------------------------------------------------
 HRESULT WaterRenderObjClass::generateVertexBuffer( Int sizeX, Int sizeY, Int vertexSize, Bool doStatic)
@@ -661,10 +691,44 @@ HRESULT WaterRenderObjClass::generateVertexBuffer( Int sizeX, Int sizeY, Int ver
 
 	if (DX12Device::Is_Active())
 	{
-		//Direct3D 12 mode: no raw Direct3D 8 buffers. Only the dynamic grid mesh buffer is supported;
-		//the static sea patch belongs to the pixel/vertex shader water, which this mode turns into type 0.
-		if (doStatic || m_numVertices > 0xffff)
+		//Direct3D 12 mode: no raw Direct3D 8 buffers, engine buffers instead: the dynamic grid mesh
+		//buffer, or the static sea patch of the pixel/vertex shader water.
+		if (m_numVertices > 0xffff)
 			return E_FAIL;
+
+		if (doStatic)
+		{
+			//SEA_PATCH_VERTEX is the XYZ|DIFFUSE|TEX1 vertex; wave_vs reads it through its declaration.
+			//The buffer is made again instead of locked again (setTimeOfDay), since the GPU may still
+			//read a static buffer drawn earlier.
+			REF_PTR_RELEASE(m_seaVertexBufferDX12);
+			m_seaVertexBufferDX12=NEW_REF(DX8VertexBufferClass,(DX8_FVF_XYZDUV1,m_numVertices,DX8VertexBufferClass::USAGE_DEFAULT));
+			DEBUG_ASSERTCRASH(m_seaVertexBufferDX12->FVF_Info().Get_FVF_Size() == sizeof(SEA_PATCH_VERTEX), ("Sea patch vertex size does not match DX8_FVF_XYZDUV1"));
+
+			{
+				DX8VertexBufferClass::WriteLockClass lockVtxBuffer(m_seaVertexBufferDX12);
+				pVertices=(SEA_PATCH_VERTEX*)lockVtxBuffer.Get_Vertex_Array();
+
+				Int x,z;
+				for (z=0; z<sizeY; z++)
+				{
+					for (x=0; x<sizeX; x++)
+					{
+						pVertices->x=(float)x;
+						pVertices->y=m_level;
+						pVertices->z=(float)z;
+
+						pVertices->tu=(float)x*PATCH_UV_SCALE;
+						pVertices->tv=(float)z*PATCH_UV_SCALE;
+						pVertices->c=setting->transparentWaterDiffuse;	//vertex alpha/color
+						pVertices++;
+					}
+				}
+			}
+
+			m_vertexBufferD3DOffset=0;
+			return S_OK;
+		}
 
 		if (m_gridVertexBufferDX12 == nullptr)
 		{
@@ -878,6 +942,8 @@ void WaterRenderObjClass::ReleaseResources()
 	SAFE_RELEASE(m_indexBufferD3D);
 	REF_PTR_RELEASE(m_gridVertexBufferDX12);
 	REF_PTR_RELEASE(m_gridIndexBufferDX12);
+	REF_PTR_RELEASE(m_seaVertexBufferDX12);
+	REF_PTR_RELEASE(m_pBumpTextureDX12);
 
 	if (m_waterTrackSystem)
 		m_waterTrackSystem->ReleaseResources();
@@ -934,11 +1000,9 @@ void WaterRenderObjClass::ReAcquireResources()
 	//allocate the right size depending on usage
 	if (DX12Device::Is_Active())
 	{
-		//Direct3D 12 mode: the grid mesh uses engine buffers (generateIndexBuffer/generateVertexBuffer
-		//create them in this mode). The shader water needs vertex/pixel shaders (wave.vso/wave.pso),
-		//which this mode does not provide yet, so skip it (init forces it off) but still restore the
-		//water tracks and textures below. Render targets exist, but only the shader water uses the
-		//reflection texture, so m_pReflectionTexture is not made either.
+		//Direct3D 12 mode: the grid mesh and the sea patch use engine buffers (generateIndexBuffer/
+		//generateVertexBuffer create them in this mode), the wave shaders are the HLSL ports
+		//"wave_vs"/"wave_ps" (dx12shaders_water.cpp) and the bump map is a TextureClass.
 		if (m_meshData)
 		{
 			//Create new grid data
@@ -946,6 +1010,50 @@ void WaterRenderObjClass::ReAcquireResources()
 				return;
 			if (FAILED(generateVertexBuffer(m_gridCellsX+1,m_gridCellsY+1,sizeof(MaterMeshVertexFormat),false)))
 				return;
+		}
+		else
+		if (m_waterType == WATER_TYPE_2_PVSHADER)
+		{
+			//pixel/vertex shader based water assets.
+			DWORD Declaration[]=
+			{
+				(D3DVSD_STREAM(0)),
+				(D3DVSD_REG(0, D3DVSDT_FLOAT3)), // Position
+				(D3DVSD_REG(1, D3DVSDT_D3DCOLOR)), // Diffuse
+				(D3DVSD_REG(2, D3DVSDT_FLOAT2)), // Bump map texture
+				(D3DVSD_END())
+			};
+
+			Bool seaReady = SUCCEEDED(generateIndexBuffer(PATCH_SIZE,PATCH_SIZE))
+				&& SUCCEEDED(generateVertexBuffer(PATCH_SIZE,PATCH_SIZE,sizeof(SEA_PATCH_VERTEX),true))
+				&& SUCCEEDED(W3DShaderManager::LoadAndCreateD3DShader("shaders\\wave.pso", &Declaration[0], 0, false, &m_dwWavePixelShader))
+				&& SUCCEEDED(W3DShaderManager::LoadAndCreateD3DShader("shaders\\wave.vso", &Declaration[0], 0, true, &m_dwWaveVertexShader));
+
+			if (seaReady)
+			{
+				// Create reflection texture
+				m_pReflectionTexture = DX8Wrapper::Create_Render_Target (SEA_REFLECTION_SIZE, SEA_REFLECTION_SIZE);
+				initBumpMapDX12();
+				seaReady = m_pReflectionTexture != nullptr && m_pBumpTextureDX12 != nullptr;
+			}
+
+			if (!seaReady)
+			{
+				//Without the shaders (or the reflection texture) this mode cannot draw the shader water,
+				//so use the translucent water like hardware without pixel/vertex shaders, instead of
+				//drawing nothing.
+				if (m_dwWavePixelShader)
+					DX8Wrapper::Delete_Pixel_Shader(m_dwWavePixelShader);
+				if (m_dwWaveVertexShader)
+					DX8Wrapper::Delete_Vertex_Shader(m_dwWaveVertexShader);
+				m_dwWavePixelShader=0;
+				m_dwWaveVertexShader=0;
+				REF_PTR_RELEASE(m_pReflectionTexture);
+				REF_PTR_RELEASE(m_pBumpTextureDX12);
+				REF_PTR_RELEASE(m_seaVertexBufferDX12);
+				REF_PTR_RELEASE(m_gridIndexBufferDX12);
+				m_waterType = WATER_TYPE_0_TRANSLUCENT;
+			}
 		}
 	}
 	else
@@ -992,6 +1100,19 @@ void WaterRenderObjClass::ReAcquireResources()
 	if (m_waterTrackSystem)
 		m_waterTrackSystem->ReAcquireResources();
 
+	if (DX12Device::Is_Active())
+	{
+		//Direct3D 12 mode cannot run Direct3D 8 shader bytecode: the three shaders below are HLSL ports
+		//(dx12shaders_water.cpp) created by name. A shader without a port leaves its handle 0, as
+		//on hardware without pixel shaders.
+		if (W3DShaderManager::getChipset() >= DC_GENERIC_PIXEL_SHADER_1_1)
+		{
+			DX8Wrapper::Create_DX12_Shader("water_river_ps", false, nullptr, &m_riverWaterPixelShader);
+			DX8Wrapper::Create_DX12_Shader("water_bump_ps", false, nullptr, &m_waterPixelShader);
+			DX8Wrapper::Create_DX12_Shader("water_trapezoid_ps", false, nullptr, &m_trapezoidWaterPixelShader);
+		}
+	}
+	else
 	if (W3DShaderManager::getChipset() >= DC_GENERIC_PIXEL_SHADER_1_1)
 	{
 		ID3DXBuffer *compiledShader;
@@ -1095,12 +1216,6 @@ Int WaterRenderObjClass::init(Real waterLevel, Real dx, Real dy, SceneClass *par
 
 	m_parentScene=parentScene;
 	m_waterType = type;
-
-	//Direct3D 12 mode has no pixel/vertex shaders yet, so shader water falls back to the translucent
-	//fixed function water. Shader water is the only type that renders the reflection (renderMirror
-	//into m_pReflectionTexture, drawn by drawSea with the wave shaders), so there is no reflection.
-	if (DX12Device::Is_Active() && m_waterType == WATER_TYPE_2_PVSHADER)
-		m_waterType = WATER_TYPE_0_TRANSLUCENT;
 
 	/// Hack for now
 	//m_waterType = WATER_TYPE_0_TRANSLUCENT;
@@ -1517,7 +1632,7 @@ void WaterRenderObjClass::loadSetting( Setting *setting, TimeOfDay timeOfDay )
 void WaterRenderObjClass::updateRenderTargetTextures(CameraClass *cam)
 {
 	if (DX12Device::Is_Active() && m_pReflectionTexture == nullptr)
-		return;	//no reflection texture: shader water, its only user, is forced off in Direct3D 12 mode (see init).
+		return;	//no reflection texture: Direct3D 12 mode then draws translucent water instead (see ReAcquireResources).
 
 	if (m_waterType == WATER_TYPE_2_PVSHADER && getClippedWaterPlane(cam, nullptr) &&
 		TheTerrainRenderObject && TheTerrainRenderObject->getMap())
@@ -1924,6 +2039,9 @@ void WaterRenderObjClass::drawSea(RenderInfoClass & rinfo)
 	DX8Wrapper::Set_DX8_Texture_Stage_State_Raw(1, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP);
 	DX8Wrapper::Set_DX8_Texture_Stage_State_Raw(1, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP);
 
+	if (DX12Device::Is_Active())
+		DX8Wrapper::Set_DX8_Texture_Raw( 0, m_pBumpTextureDX12);	//wave_ps decodes its biased du/dv (see initBumpMapDX12)
+	else
 	DX8Wrapper::Set_DX8_Texture_Raw( 0, m_pBumpTexture[(Int)m_fBumpFrame]);
 #ifdef MIPMAP_BUMP_TEXTURE
 	DX8Wrapper::Set_DX8_Texture_Stage_State_Raw( 0, D3DTSS_MIPFILTER, D3DTEXF_POINT );
@@ -1980,8 +2098,16 @@ void WaterRenderObjClass::drawSea(RenderInfoClass & rinfo)
 	patchMatrix._33=PATCH_SCALE;
 	patchMatrix._44=1.0f;
 
+	if (DX12Device::Is_Active())
+	{
+		DX8Wrapper::Set_Stream_Source_Raw(0,m_seaVertexBufferDX12,sizeof(WaterRenderObjClass::SEA_PATCH_VERTEX));
+		DX8Wrapper::Set_Indices_Raw(m_gridIndexBufferDX12,0);
+	}
+	else
+	{
 	DX8Wrapper::Set_Stream_Source_Raw(0,m_vertexBufferD3D,sizeof(WaterRenderObjClass::SEA_PATCH_VERTEX));
 	DX8Wrapper::Set_Indices_Raw(m_indexBufferD3D,0);
+	}
 
 	for (startY=patchY=(seaBox.Center.Y-seaBox.Extent.Y)/(PATCH_WIDTH*PATCH_SCALE); (patchY*PATCH_WIDTH*PATCH_SCALE)<(seaBox.Center.Y+seaBox.Extent.Y); patchY++)
 	{
@@ -2040,8 +2166,16 @@ void WaterRenderObjClass::drawSea(RenderInfoClass & rinfo)
 		//do second pass to apply the shroud on water plane
 		W3DShaderManager::setTexture(0,TheTerrainRenderObject->getShroud()->getShroudTexture());
 		W3DShaderManager::setShader(W3DShaderManager::ST_SHROUD_TEXTURE, 0);
+		if (DX12Device::Is_Active())
+		{
+			DX8Wrapper::Set_Stream_Source_Raw(0,m_seaVertexBufferDX12,sizeof(WaterRenderObjClass::SEA_PATCH_VERTEX));
+			DX8Wrapper::Set_Indices_Raw(m_gridIndexBufferDX12,0);
+		}
+		else
+		{
 		DX8Wrapper::Set_Stream_Source_Raw(0,m_vertexBufferD3D,sizeof(WaterRenderObjClass::SEA_PATCH_VERTEX));
 		DX8Wrapper::Set_Indices_Raw(m_indexBufferD3D,0);
+		}
 		for (startY=patchY=(seaBox.Center.Y-seaBox.Extent.Y)/(PATCH_WIDTH*PATCH_SCALE); (patchY*PATCH_WIDTH*PATCH_SCALE)<(seaBox.Center.Y+seaBox.Extent.Y); patchY++)
 		{
 			for (startX=patchX=(seaBox.Center.X-seaBox.Extent.X)/(PATCH_WIDTH*PATCH_SCALE); (patchX*PATCH_WIDTH*PATCH_SCALE)<(seaBox.Center.X+seaBox.Extent.X); patchX++)

@@ -18,9 +18,14 @@ set(WW3D2_SRC
     Backend/DX12/dx12device.h
     Backend/DX12/dx12ffp.cpp
     Backend/DX12/dx12ffp.h
+    Backend/DX12/dx12gameshaders.cpp
+    Backend/DX12/dx12gameshaders.h
     Backend/DX12/dx12resource.cpp
     Backend/DX12/dx12resource.h
     Backend/DX12/dx12shaders.h
+    Backend/DX12/dx12shaders_terrain.cpp
+    Backend/DX12/dx12shaders_trees.cpp
+    Backend/DX12/dx12shaders_water.cpp
     bitmaphandler.cpp
     bitmaphandler.h
     bmp2d.cpp

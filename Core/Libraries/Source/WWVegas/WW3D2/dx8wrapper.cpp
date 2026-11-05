@@ -630,7 +630,10 @@ void DX8Wrapper::Set_DX12_Default_Device_States()
 	}
 
 	dev.FVF=0;
+	dev.VertexShader=0;
 	dev.PixelShader=0;
+	memset(dev.VertexShaderConstants,0,sizeof(dev.VertexShaderConstants));
+	memset(dev.PixelShaderConstants,0,sizeof(dev.PixelShaderConstants));
 
 	// A new device has every light disabled. CurrentDX8LightEnables doubles as the device's enables.
 	memset(DX8Lights,0,sizeof(DX8Lights));
@@ -2295,8 +2298,25 @@ HRESULT DX8Wrapper::Create_Pixel_Shader(const DWORD* function, DWORD* handle)
 	return D3DDevice->CreatePixelShader(function, handle);
 }
 
+HRESULT DX8Wrapper::Create_DX12_Shader(const char* name, bool vertex_shader, const DWORD* declaration, DWORD* handle)
+{
+	if (handle) *handle = 0;
+	if (!DX12Device::Is_Active() || name == nullptr || handle == nullptr)
+		return E_FAIL;
+	static_assert(sizeof(DWORD) == sizeof(unsigned), "vertex declaration tokens are 32-bit");
+	const unsigned result = DX12Device::Create_Game_Shader(name, vertex_shader, reinterpret_cast<const unsigned*>(declaration));
+	if (result == 0)
+		return E_FAIL;
+	*handle = result;
+	return D3D_OK;
+}
+
 HRESULT DX8Wrapper::Delete_Vertex_Shader(DWORD handle)
 {
+	if (DX12Device::Is_Active()) {
+		DX12Device::Delete_Game_Shader(handle);
+		return D3D_OK;
+	}
 	if (D3DDevice == nullptr)
 		return D3D_OK;
 	DX8_RECORD_DX8_CALLS();
@@ -2305,6 +2325,10 @@ HRESULT DX8Wrapper::Delete_Vertex_Shader(DWORD handle)
 
 HRESULT DX8Wrapper::Delete_Pixel_Shader(DWORD handle)
 {
+	if (DX12Device::Is_Active()) {
+		DX12Device::Delete_Game_Shader(handle);
+		return D3D_OK;
+	}
 	if (D3DDevice == nullptr)
 		return D3D_OK;
 	DX8_RECORD_DX8_CALLS();
@@ -2855,6 +2879,10 @@ void DX8Wrapper::Draw_Strip(
 //
 // ----------------------------------------------------------------------------
 
+static_assert(DX12_MAX_STAGES<=MAX_TEXTURE_STAGES, "the Direct3D 12 stages come from the Direct3D 8 state mirror");
+static_assert(DX12_MAX_VS_CONSTANTS==MAX_VERTEX_SHADER_CONSTANTS && DX12_MAX_PS_CONSTANTS==MAX_PIXEL_SHADER_CONSTANTS,
+	"the shader constant registers come from the Direct3D 8 state mirror");
+
 // Vertices (or indices) a Direct3D 8 draw of primitive_count primitives reads. 0 for unknown types.
 static unsigned DX12_Primitive_Vertex_Count(unsigned primitive_type, unsigned primitive_count)
 {
@@ -2890,19 +2918,21 @@ bool DX8Wrapper::Fill_DX12_Draw_State(DX12DrawDesc& desc)
 {
 	const DX12DeviceStateStruct& dev=DX12Device_State;
 
-	if (dev.PixelShader!=0) {
+	// Programmable shaders are the game shaders of Create_DX12_Shader; other handles cannot be drawn.
+	if (dev.PixelShader!=0 && !DX12Device::Is_Game_Shader(dev.PixelShader,false)) {
 		static bool logged=false;
 		if (!logged) {
 			logged=true;
-			WWDEBUG_SAY(("DX12: skipping draws with a pixel shader, which Direct3D 12 mode does not support yet"));
+			WWDEBUG_SAY(("DX12: skipping draws with a pixel shader that is not a game shader"));
 		}
 		return false;
 	}
-	if (dev.FVF==0) {
+	const bool game_vertex_shader=dev.FVF==0 && DX12Device::Is_Game_Shader(dev.VertexShader,true);
+	if (dev.FVF==0 && !game_vertex_shader) {
 		static bool logged=false;
 		if (!logged) {
 			logged=true;
-			WWDEBUG_SAY(("DX12: skipping draws without an FVF vertex format (vertex shaders are not supported yet)"));
+			WWDEBUG_SAY(("DX12: skipping draws without an FVF vertex format or a game vertex shader"));
 		}
 		return false;
 	}
@@ -2910,6 +2940,10 @@ bool DX8Wrapper::Fill_DX12_Draw_State(DX12DrawDesc& desc)
 	const unsigned* rs=dev.RenderStates;
 
 	desc.FVF=dev.FVF;
+	desc.VertexShader=game_vertex_shader ? dev.VertexShader : 0;
+	desc.PixelShader=dev.PixelShader;
+	desc.VertexShaderConstants=&dev.VertexShaderConstants[0][0];
+	desc.PixelShaderConstants=&dev.PixelShaderConstants[0][0];
 
 	desc.World=&DX8Transforms[D3DTS_WORLD].m[0][0];
 	desc.View=&DX8Transforms[D3DTS_VIEW].m[0][0];

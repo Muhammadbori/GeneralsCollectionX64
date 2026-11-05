@@ -25,7 +25,14 @@
 //
 // Draws: DX8Wrapper describes each draw with DX12DrawDesc. The fixed-function state picks a
 // generated vertex and pixel shader (dx12ffp.h), the vertex format picks an input layout, and
-// both shaders and the render states pick a pipeline state.
+// both shaders and the render states pick a pipeline state. Game shader handles replace the
+// generated vertex shader (with an input layout from the Direct3D 8 vertex declaration) or pixel
+// shader (compiled per wrapper variant: projection, alpha test, fog) with HLSL ports of the game's
+// shaders (dx12gameshaders.h).
+//
+// Root signature: b0 fixed-function VS constants, b1 fixed-function PS constants, b2 game PS
+// constants, b3 game VS constants (root CBVs), then one descriptor table per stage for t0..t7 and
+// for s0..s7.
 //
 // -dx12debug: the debug layer is enabled (GPU-based validation stays off) and its messages are
 // written to dx12debug.log every frame, together with shader compile errors and failed calls.
@@ -39,6 +46,7 @@
 
 #include "WW3D2/Backend/DX12/dx12device.h"
 #include "WW3D2/Backend/DX12/dx12ffp.h"
+#include "WW3D2/Backend/DX12/dx12gameshaders.h"
 #include "WW3D2/Backend/DX12/dx12resource.h"
 #include "WWDebug/wwdebug.h"
 
@@ -89,7 +97,18 @@ enum
 	MAX_PENDING_UPLOAD_BYTES = 64 * 1024 * 1024,
 	CONSTANT_ALIGNMENT = 256,
 	MAX_INPUT_ELEMENTS = 16,
+
+	// Root signature parameters.
+	ROOT_VS_CONSTANTS = 0,
+	ROOT_PS_CONSTANTS = 1,
+	ROOT_GAME_PS_CONSTANTS = 2,
+	ROOT_GAME_VS_CONSTANTS = 3,
+	ROOT_TEXTURES = 4,
+	ROOT_SAMPLERS = ROOT_TEXTURES + DX12_MAX_STAGES,
+	ROOT_PARAMETER_COUNT = ROOT_SAMPLERS + DX12_MAX_STAGES,
 };
+
+static_assert(DX12_GAME_MAX_INPUTS <= MAX_INPUT_ELEMENTS, "game vertex shader inputs must fit an input layout");
 
 // D3DPRIMITIVETYPE
 enum
@@ -176,6 +195,7 @@ struct PSOKey
 	unsigned VertexShader;	// ShaderEntry::Id
 	unsigned PixelShader;
 	unsigned FVF;
+	unsigned InputLayout;	// game vertex shader input layout id, 0 = the FVF layout
 	unsigned TopologyType;
 	unsigned AlphaBlendEnable;
 	unsigned SrcBlend;
@@ -238,6 +258,29 @@ struct FFPKeyEqual
 
 typedef std::unordered_map<DX12VSKey, ShaderEntry, FFPKeyHash<DX12VSKey>, FFPKeyEqual<DX12VSKey>> VertexShaderMap;
 typedef std::unordered_map<DX12PSKey, ShaderEntry, FFPKeyHash<DX12PSKey>, FFPKeyEqual<DX12PSKey>> PixelShaderMap;
+
+struct GamePSVariantLess
+{
+	bool operator()(const DX12GamePSVariant & a, const DX12GamePSVariant & b) const { return memcmp(&a, &b, sizeof(a)) < 0; }
+};
+
+// Compiled code of one registered game shader: the vertex shader, or each pixel shader variant.
+struct GameShaderCache
+{
+	GameShaderCache() : VertexCompiled(false), Draws(0) {}
+
+	ShaderEntry Vertex;
+	bool VertexCompiled;
+	unsigned Draws; // draws since the last heartbeat, for -dx12debug
+	std::map<DX12GamePSVariant, ShaderEntry, GamePSVariantLess> Pixel;
+};
+
+// A game vertex shader input layout; its id is the index plus 1.
+struct GameLayout
+{
+	DX12GameInputLayout Source;
+	FVFLayout Layout;
+};
 
 ComPtr<IDXGIFactory4> Factory;
 ComPtr<IDXGIAdapter1> Adapter;
@@ -317,12 +360,17 @@ PixelShaderMap PixelShaders;
 unsigned NextShaderId = 1;
 std::map<PSOKey, ComPtr<ID3D12PipelineState>, PSOKeyLess> PipelineStates;
 
-// The shaders of the last draw. Map elements do not move, so the pointers stay valid until the
-// maps are cleared.
-DX12FFPKey LastFFPKey;
-bool LastFFPKeyValid = false;
+// The generated shaders of the last draw. Map elements do not move, so the pointers stay valid
+// until the maps are cleared.
+DX12VSKey LastVSKey;
+DX12PSKey LastPSKey;
 const ShaderEntry * LastVertexShader = nullptr;
 const ShaderEntry * LastPixelShader = nullptr;
+
+// Game shaders, by registry number, and their input layouts.
+std::vector<GameShaderCache> GameShaderCaches;
+std::vector<GameLayout> GameLayouts;
+bool ColorVertexFormatSupported = true;		// DXGI_FORMAT_B8G8R8A8_UNORM in vertex buffers, for D3DVSDT_D3DCOLOR
 
 // -dx12debug
 FILE * DebugLog = nullptr;
@@ -348,11 +396,19 @@ DX12VSConstants LastVSConstants;
 UINT64 LastVSConstantsGPU = 0;
 DX12PSConstants LastPSConstants;
 UINT64 LastPSConstantsGPU = 0;
+DX12GameVSConstants LastGameVSConstants;
+UINT64 LastGameVSConstantsGPU = 0;
+DX12GamePSConstants LastGamePSConstants;
+UINT64 LastGamePSConstantsGPU = 0;
+
+// Bound for stages whose sampler no shader reads. Valid while the sampler heap exists.
+D3D12_GPU_DESCRIPTOR_HANDLE DefaultSampler;
 
 bool LoggedTriangleFan = false;
 bool LoggedIndexOverflow = false;
 bool LoggedVertexOverflow = false;
 bool LoggedSamplerHeapFull = false;
+bool LoggedGameLayoutStride = false;
 unsigned LastBadFVF = 0;
 
 // d3d12.dll, dxgi.dll and d3dcompiler_47.dll are loaded at run time so that the game still starts
@@ -1023,6 +1079,8 @@ void Restore_Command_List_State()
 	BoundStencilRef = NO_STENCIL_REF;
 	LastVSConstantsGPU = 0;
 	LastPSConstantsGPU = 0;
+	LastGameVSConstantsGPU = 0;
+	LastGamePSConstantsGPU = 0;
 
 	ID3D12DescriptorHeap * heaps[] = { SRVHeap.Get(), SamplerHeap.Get() };
 	CommandList->SetDescriptorHeaps(2, heaps);
@@ -1175,6 +1233,95 @@ const ShaderEntry & Get_Pixel_Shader(const DX12PSKey & key)
 		Debug_Log("frame %llu: compiled %s", DX12Device::Get_Frame_Number(), name);
 	}
 	return PixelShaders.insert(PixelShaderMap::value_type(key, entry)).first->second;
+}
+
+// The compiled code of a registered game shader; variant is for pixel shaders. A failed compile is
+// cached with null Code.
+const ShaderEntry & Get_Game_Shader(int index, const DX12GamePSVariant * variant)
+{
+	static const ShaderEntry none;
+	if (index < 0 || index >= (int)GameShaderCaches.size())
+	{
+		return none;
+	}
+
+	GameShaderCache & cache = GameShaderCaches[index];
+	const bool vertex_shader = DX12GameShaders_Is_Vertex_Shader(index);
+	DX12GamePSVariant key;
+	memset(&key, 0, sizeof(key));
+	ShaderEntry * entry;
+	if (vertex_shader)
+	{
+		if (cache.VertexCompiled)
+		{
+			return cache.Vertex;
+		}
+		cache.VertexCompiled = true;
+		entry = &cache.Vertex;
+	}
+	else
+	{
+		if (variant)
+		{
+			key = *variant;
+		}
+		std::map<DX12GamePSVariant, ShaderEntry, GamePSVariantLess>::iterator it = cache.Pixel.find(key);
+		if (it != cache.Pixel.end())
+		{
+			return it->second;
+		}
+		entry = &cache.Pixel[key];
+	}
+
+	std::string source;
+	const char * entry_point = "";
+	const char * target = "";
+	DX12GameShaders_Generate(index, vertex_shader ? nullptr : &key, source, &entry_point, &target);
+
+	char name[128];
+	if (vertex_shader)
+		snprintf(name, sizeof(name), "game_%s", DX12GameShaders_Get_Name(index));
+	else
+		snprintf(name, sizeof(name), "game_%s_%08x", DX12GameShaders_Get_Name(index), DX12FFP_Hash(&key, sizeof(key)));
+
+	entry->Id = NextShaderId++;
+	entry->Code = Compile_Shader(source, name, entry_point, target);
+	if (entry->Code)
+	{
+		Debug_Log("frame %llu: compiled %s", DX12Device::Get_Frame_Number(), name);
+	}
+	return *entry;
+}
+
+// Returns the id of the input layout for a game vertex shader declaration, adding it when new.
+unsigned Intern_Game_Layout(const DX12GameInputLayout & source)
+{
+	for (size_t i = 0; i < GameLayouts.size(); ++i)
+	{
+		if (memcmp(&GameLayouts[i].Source, &source, sizeof(source)) == 0)
+		{
+			return (unsigned)i + 1;
+		}
+	}
+
+	GameLayout layout;
+	memset(&layout, 0, sizeof(layout));
+	layout.Source = source;
+	for (unsigned i = 0; i < source.ElementCount; ++i)
+	{
+		D3D12_INPUT_ELEMENT_DESC & element = layout.Layout.Elements[i];
+		element.SemanticName = "V";
+		element.SemanticIndex = source.Elements[i].Register;
+		element.Format = (DXGI_FORMAT)source.Elements[i].Format;
+		element.InputSlot = 0;
+		element.AlignedByteOffset = source.Elements[i].Offset;
+		element.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
+		element.InstanceDataStepRate = 0;
+	}
+	layout.Layout.ElementCount = source.ElementCount;
+	layout.Layout.Size = source.Size;
+	GameLayouts.push_back(layout);
+	return (unsigned)GameLayouts.size();
 }
 
 // Builds the input layout for a Direct3D 8 FVF. Fails for formats without a position or with
@@ -1418,6 +1565,8 @@ ID3D12PipelineState * Get_Pipeline_State(const PSOKey & key, const FVFLayout & l
 		if (FAILED(hr))
 		{
 			WWDEBUG_SAY(("DX12: CreateGraphicsPipelineState failed (0x%08x) for FVF 0x%x", (unsigned)hr, key.FVF));
+			Debug_Log("frame %llu: CreateGraphicsPipelineState failed (0x%08x) for FVF 0x%x, input layout %u, shaders %u/%u",
+				DX12Device::Get_Frame_Number(), (unsigned)hr, key.FVF, key.InputLayout, key.VertexShader, key.PixelShader);
 			pso.Reset();
 		}
 	}
@@ -1671,37 +1820,43 @@ void Enumerate_Display_Modes()
 
 bool Create_Root_Signature()
 {
-	D3D12_DESCRIPTOR_RANGE ranges[4];
+	// One single descriptor range per stage texture and sampler, since textures keep their own slots.
+	D3D12_DESCRIPTOR_RANGE ranges[2 * DX12_MAX_STAGES];
 	memset(ranges, 0, sizeof(ranges));
-	for (int i = 0; i < 4; ++i)
+	for (int i = 0; i < 2 * DX12_MAX_STAGES; ++i)
 	{
-		ranges[i].RangeType = (i < 2) ? D3D12_DESCRIPTOR_RANGE_TYPE_SRV : D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
+		ranges[i].RangeType = (i < DX12_MAX_STAGES) ? D3D12_DESCRIPTOR_RANGE_TYPE_SRV : D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
 		ranges[i].NumDescriptors = 1;
-		ranges[i].BaseShaderRegister = i & 1;
+		ranges[i].BaseShaderRegister = i % DX12_MAX_STAGES;
 		ranges[i].RegisterSpace = 0;
 		ranges[i].OffsetInDescriptorsFromTableStart = 0;
 	}
 
-	// 0: b0 VS constants, 1: b1 PS constants, 2/3: t0/t1, 4/5: s0/s1.
-	D3D12_ROOT_PARAMETER params[6];
+	D3D12_ROOT_PARAMETER params[ROOT_PARAMETER_COUNT];
 	memset(params, 0, sizeof(params));
-	params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
-	params[0].Descriptor.ShaderRegister = 0;
-	params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
-	params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
-	params[1].Descriptor.ShaderRegister = 1;
-	params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-	for (int i = 0; i < 4; ++i)
+	params[ROOT_VS_CONSTANTS].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+	params[ROOT_VS_CONSTANTS].Descriptor.ShaderRegister = 0;
+	params[ROOT_VS_CONSTANTS].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+	params[ROOT_PS_CONSTANTS].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+	params[ROOT_PS_CONSTANTS].Descriptor.ShaderRegister = 1;
+	params[ROOT_PS_CONSTANTS].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	params[ROOT_GAME_PS_CONSTANTS].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+	params[ROOT_GAME_PS_CONSTANTS].Descriptor.ShaderRegister = 2;
+	params[ROOT_GAME_PS_CONSTANTS].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	params[ROOT_GAME_VS_CONSTANTS].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+	params[ROOT_GAME_VS_CONSTANTS].Descriptor.ShaderRegister = 3;
+	params[ROOT_GAME_VS_CONSTANTS].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+	for (int i = 0; i < 2 * DX12_MAX_STAGES; ++i)
 	{
-		params[2 + i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-		params[2 + i].DescriptorTable.NumDescriptorRanges = 1;
-		params[2 + i].DescriptorTable.pDescriptorRanges = &ranges[i];
-		params[2 + i].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+		params[ROOT_TEXTURES + i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+		params[ROOT_TEXTURES + i].DescriptorTable.NumDescriptorRanges = 1;
+		params[ROOT_TEXTURES + i].DescriptorTable.pDescriptorRanges = &ranges[i];
+		params[ROOT_TEXTURES + i].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 	}
 
 	D3D12_ROOT_SIGNATURE_DESC desc;
 	memset(&desc, 0, sizeof(desc));
-	desc.NumParameters = 6;
+	desc.NumParameters = ROOT_PARAMETER_COUNT;
 	desc.pParameters = params;
 	desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT
 		| D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS
@@ -2005,6 +2160,20 @@ bool Init_Device(HWND hwnd)
 		return false;
 	}
 
+	DefaultSampler = Get_Sampler(2, 2, 0, 1, 1, 1);
+
+	// Direct3D 11 class hardware reads B8G8R8A8 vertex colors, but check rather than fail later.
+	D3D12_FEATURE_DATA_FORMAT_SUPPORT format_support;
+	memset(&format_support, 0, sizeof(format_support));
+	format_support.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+	ColorVertexFormatSupported = SUCCEEDED(D3D->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &format_support, sizeof(format_support)))
+		&& (format_support.Support1 & D3D12_FORMAT_SUPPORT1_IA_VERTEX_BUFFER) != 0;
+	if (!ColorVertexFormatSupported)
+	{
+		WWDEBUG_SAY(("DX12: B8G8R8A8 vertex colors are not supported; game vertex shaders with D3DCOLOR inputs are unavailable"));
+		Debug_Log("B8G8R8A8_UNORM is not a vertex format here; game vertex shaders with D3DVSDT_D3DCOLOR inputs fail");
+	}
+
 	memset(&CurrentViewport, 0, sizeof(CurrentViewport));
 	memset(&CurrentScissor, 0, sizeof(CurrentScissor));
 	HasPresented = false;
@@ -2049,9 +2218,11 @@ void Release_All()
 	VertexShaders.clear();
 	PixelShaders.clear();
 	NextShaderId = 1;
-	LastFFPKeyValid = false;
 	LastVertexShader = nullptr;
 	LastPixelShader = nullptr;
+	GameShaderCaches.clear();
+	GameLayouts.clear();
+	DX12GameShaders_Clear();
 	RootSignature.Reset();
 	SamplerCache.clear();
 	WhiteTexture.Reset();
@@ -2106,6 +2277,8 @@ void Release_All()
 	BoundStencilRef = NO_STENCIL_REF;
 	LastVSConstantsGPU = 0;
 	LastPSConstantsGPU = 0;
+	LastGameVSConstantsGPU = 0;
+	LastGamePSConstantsGPU = 0;
 }
 
 bool Create_Depth_Buffer(unsigned width, unsigned height)
@@ -2200,6 +2373,143 @@ void DX12Device_Write_DSV(unsigned slot, ID3D12Resource * resource)
 	D3D->CreateDepthStencilView(resource, &desc, DSV_Handle(slot));
 }
 
+// -dx12debug: runs a small game shader pair through the registry (registration, creation with a
+// vertex declaration, a pixel shader variant) and creates pipeline states for every pairing with the
+// generated shaders, which checks that their signatures match.
+static void Run_Game_Shader_Self_Test()
+{
+	static const char vs_source[] =
+		"struct GameVSInput\n"
+		"{\n"
+		"\tfloat3 Position : V0;\n"
+		"\tfloat4 Diffuse : V1;\n"
+		"\tfloat2 Tex : V2;\n"
+		"};\n"
+		"\n"
+		"GameVSOutput SelfTestVS(GameVSInput input)\n"
+		"{\n"
+		"\tGameVSOutput output = (GameVSOutput)0;\n"
+		"\tfloat4 position = float4(input.Position, 1.0);\n"
+		"\toutput.Position = float4(dot(position, c[4]), dot(position, c[5]), dot(position, c[6]), dot(position, c[7]));\n"
+		"\toutput.Diffuse = input.Diffuse;\n"
+		"\toutput.Tex0 = float4(input.Tex, 0.0, 1.0);\n"
+		"\toutput.Fog = 1.0;\n"
+		"\treturn output;\n"
+		"}\n";
+	static const char ps_source[] =
+		"float4 SelfTestPS(GamePSInput input)\n"
+		"{\n"
+		"\tfloat4 t0 = Texture0.Sample(Sampler0, input.Tex0.xy);\n"
+		"\tfloat4 r0 = input.Diffuse * t0;\n"
+		"\tr0.rgb = saturate(r0.rgb * c[0].rgb * 2.0);\n"
+		"\treturn r0;\n"
+		"}\n";
+	// D3DVSD_STREAM(0), D3DVSD_REG(0, D3DVSDT_FLOAT3), D3DVSD_REG(1, D3DVSDT_D3DCOLOR),
+	// D3DVSD_REG(2, D3DVSDT_FLOAT2), D3DVSD_END()
+	static const unsigned declaration[] = { 0x20000000, 0x40020000, 0x40040001, 0x40010002, 0xffffffff };
+	const unsigned fvf = FVF_XYZ | FVF_DIFFUSE | (1 << FVF_TEXCOUNT_SHIFT);
+
+	DX12Device::Register_Game_Shader("dx12_selftest_vs", true, vs_source, "SelfTestVS");
+	DX12Device::Register_Game_Shader("dx12_selftest_ps", false, ps_source, "SelfTestPS");
+
+	const unsigned vs = DX12Device::Create_Game_Shader("dx12_selftest_vs", true, declaration);
+	const unsigned ps = DX12Device::Create_Game_Shader("DX12_SelfTest_PS", false, nullptr);	// names compare without case
+	const unsigned missing = DX12Device::Create_Game_Shader("dx12_selftest_missing_ps", false, nullptr);
+	bool ok = vs != 0 && (vs & 1) != 0 && ps != 0 && (ps & 1) == 0 && missing == 0
+		&& DX12Device::Is_Game_Shader(vs, true) && DX12Device::Is_Game_Shader(ps, false) && !DX12Device::Is_Game_Shader(vs, false);
+	const char * failed = ok ? nullptr : "registration or creation";
+
+	int vs_index = -1;
+	int ps_index = -1;
+	unsigned layout_id = 0;
+	if (ok)
+	{
+		DX12GameShaders_Resolve_Handle(vs, true, &vs_index, &layout_id);
+		DX12GameShaders_Resolve_Handle(ps, false, &ps_index, nullptr);
+
+		DX12GamePSVariant variant;
+		memset(&variant, 0, sizeof(variant));
+		variant.Projected[1] = 3;
+		variant.AlphaFunc = 7;		// D3DCMP_GREATEREQUAL
+		variant.Fog = 1;
+		const ShaderEntry & game_vs = Get_Game_Shader(vs_index, nullptr);
+		const ShaderEntry & game_ps = Get_Game_Shader(ps_index, &variant);
+
+		// Generated shaders for one modulated texture with fog.
+		DX12VSKey vs_key;
+		memset(&vs_key, 0, sizeof(vs_key));
+		vs_key.FVF = fvf;
+		for (unsigned stage = 0; stage < DX12_MAX_STAGES; ++stage)
+		{
+			vs_key.TexCoordSet[stage] = 0xff;
+		}
+		vs_key.TexCoordSet[0] = 0;
+		vs_key.Fog = FFP_VS_FOG_LINEAR;
+		DX12PSKey ps_key;
+		memset(&ps_key, 0, sizeof(ps_key));
+		ps_key.Stages[0].ColorOp = 4;		// D3DTOP_MODULATE
+		ps_key.Stages[0].ColorArg1 = 2;		// D3DTA_TEXTURE
+		ps_key.Stages[0].ColorArg2 = 0;		// D3DTA_DIFFUSE
+		ps_key.Stages[0].AlphaOp = 2;		// D3DTOP_SELECTARG1
+		ps_key.Stages[0].AlphaArg1 = 2;
+		ps_key.Stages[0].Texture = FFP_TEXTURE_SAMPLED;
+		ps_key.Fog = 1;
+		const ShaderEntry & ffp_vs = Get_Vertex_Shader(vs_key);
+		const ShaderEntry & ffp_ps = Get_Pixel_Shader(ps_key);
+		FVFLayout ffp_layout;
+		ok = game_vs.Code && game_ps.Code && ffp_vs.Code && ffp_ps.Code && Decode_FVF(fvf, ffp_layout)
+			&& layout_id >= 1 && layout_id <= GameLayouts.size();
+		failed = ok ? nullptr : "compile";
+
+		if (ok)
+		{
+			PSOKey key;
+			memset(&key, 0, sizeof(key));
+			key.TopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+			key.ColorWriteMask = 0xf;
+			key.ZEnable = 1;
+			key.ZWriteEnable = 1;
+			key.ZFunc = 4;				// D3DCMP_LESSEQUAL
+			key.CullMode = 1;			// D3DCULL_NONE
+			key.FillMode = 3;			// D3DFILL_SOLID
+			key.RTVFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
+			key.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
+
+			const FVFLayout & game_layout = GameLayouts[layout_id - 1].Layout;
+			key.VertexShader = game_vs.Id;
+			key.PixelShader = game_ps.Id;
+			key.InputLayout = layout_id;
+			ok = Get_Pipeline_State(key, game_layout, game_vs.Code.Get(), game_ps.Code.Get()) != nullptr;
+			key.PixelShader = ffp_ps.Id;
+			ok = ok && Get_Pipeline_State(key, game_layout, game_vs.Code.Get(), ffp_ps.Code.Get()) != nullptr;
+			key.VertexShader = ffp_vs.Id;
+			key.PixelShader = game_ps.Id;
+			key.InputLayout = 0;
+			key.FVF = fvf;
+			ok = ok && Get_Pipeline_State(key, ffp_layout, ffp_vs.Code.Get(), game_ps.Code.Get()) != nullptr;
+			failed = ok ? nullptr : "pipeline state";
+		}
+	}
+
+	DX12Device::Delete_Game_Shader(vs);
+	DX12Device::Delete_Game_Shader(ps);
+	if (ok && (DX12Device::Is_Game_Shader(vs, true) || DX12Device::Is_Game_Shader(ps, false)))
+	{
+		ok = false;
+		failed = "delete";
+	}
+
+	if (ok)
+	{
+		Debug_Log("game shader self test passed");
+	}
+	else
+	{
+		WWDEBUG_SAY(("DX12: game shader self test failed (%s)", failed));
+		Debug_Log("game shader self test FAILED (%s)", failed);
+	}
+}
+
 bool DX12Device::Init(void * hwnd)
 {
 	if (Device)
@@ -2235,6 +2545,22 @@ bool DX12Device::Init(void * hwnd)
 	Device = D3D.Get();
 	Width = 0;
 	Height = 0;
+
+	// The registry is filled once per device, before the game creates any shader.
+	DX12_Register_Game_Shaders();
+	if (DX12Device_DebugLayer)
+	{
+#if DX12_GAME_SHADERS_ENABLED
+		Run_Game_Shader_Self_Test();
+#endif
+		const int count = DX12GameShaders_Get_Count();
+		Debug_Log("%d game shaders registered%s", count, DX12_GAME_SHADERS_ENABLED ? "" : " (game shaders are disabled)");
+		for (int i = 0; i < count; ++i)
+		{
+			Debug_Log("  %s (%s)", DX12GameShaders_Get_Name(i), DX12GameShaders_Is_Vertex_Shader(i) ? "vertex" : "pixel");
+		}
+		Flush_Debug_Messages();
+	}
 	return true;
 }
 
@@ -2525,6 +2851,23 @@ void DX12Device::Submit_Frame(bool present)
 			DebugTargetSelects, DebugTargetCopies);
 		DebugTargetSelects = 0;
 		DebugTargetCopies = 0;
+
+		// Which game shaders drew since the last heartbeat.
+		std::string used;
+		for (size_t i = 0; i < GameShaderCaches.size(); ++i)
+		{
+			if (GameShaderCaches[i].Draws != 0)
+			{
+				char item[96];
+				snprintf(item, sizeof(item), " %s=%u", DX12GameShaders_Get_Name((int)i), GameShaderCaches[i].Draws);
+				used += item;
+				GameShaderCaches[i].Draws = 0;
+			}
+		}
+		if (!used.empty())
+		{
+			Debug_Log("frame %llu: game shader draws:%s", FrameNumber, used.c_str());
+		}
 	}
 	Flush_Debug_Messages();
 	++FrameNumber;
@@ -2697,8 +3040,40 @@ void DX12Device::Draw(const DX12DrawDesc & desc)
 		return;
 	}
 
-	FVFLayout layout;
-	if (!Decode_FVF(desc.FVF, layout) || layout.Size > desc.VertexStride)
+	// Game shaders, from the handles of the Direct3D 8 state mirror. A game vertex shader reads the
+	// vertex through the input layout of its Direct3D 8 vertex declaration instead of the FVF.
+	int game_vs = -1;
+	int game_ps = -1;
+	unsigned game_layout_id = 0;
+	if (desc.VertexShader != 0 && !DX12GameShaders_Resolve_Handle(desc.VertexShader, true, &game_vs, &game_layout_id))
+	{
+		return;
+	}
+	if (desc.PixelShader != 0 && !DX12GameShaders_Resolve_Handle(desc.PixelShader, false, &game_ps, nullptr))
+	{
+		return;
+	}
+
+	FVFLayout fvf_layout;
+	const FVFLayout * layout = &fvf_layout;
+	if (game_vs >= 0)
+	{
+		if (game_layout_id == 0 || game_layout_id > GameLayouts.size())
+		{
+			return;
+		}
+		layout = &GameLayouts[game_layout_id - 1].Layout;
+		if (layout->Size > desc.VertexStride)
+		{
+			if (!LoggedGameLayoutStride)
+			{
+				WWDEBUG_SAY(("DX12: game vertex shader declaration of %u bytes is larger than the stride %u, draw skipped", layout->Size, desc.VertexStride));
+				LoggedGameLayoutStride = true;
+			}
+			return;
+		}
+	}
+	else if (!Decode_FVF(desc.FVF, fvf_layout) || fvf_layout.Size > desc.VertexStride)
 	{
 		if (LastBadFVF != desc.FVF)
 		{
@@ -2729,25 +3104,84 @@ void DX12Device::Draw(const DX12DrawDesc & desc)
 	}
 
 	DX12FFPKey ffp;
-	DX12FFP_Build_Key(desc, render_states, texture_stage_states, ffp);
-	if (!LastFFPKeyValid || memcmp(&ffp, &LastFFPKey, sizeof(ffp)) != 0)
+	DX12FFP_Build_Key(desc, render_states, texture_stage_states, game_ps >= 0, ffp);
+	if (game_vs >= 0)
 	{
-		LastVertexShader = &Get_Vertex_Shader(ffp.VS);
-		LastPixelShader = &Get_Pixel_Shader(ffp.PS);
-		LastFFPKey = ffp;
-		LastFFPKeyValid = true;
+		// Like Direct3D 8, a vertex shader writes the fog factor itself (oFog), used with
+		// D3DRS_FOGENABLE, and its specular color (oD1) is added with D3DRS_SPECULARENABLE.
+		ffp.PS.Fog = render_states[FFP_RS_FOGENABLE] != 0 ? 1 : 0;
+		ffp.PS.FogTableMode = 0;
+		if (game_ps < 0)
+			ffp.PS.Specular = render_states[FFP_RS_SPECULARENABLE] != 0 ? 1 : 0;
 	}
-	if (!LastVertexShader->Code || !LastPixelShader->Code)
+
+	ID3DBlob * vertex_code = nullptr;
+	unsigned vertex_id = 0;
+	if (game_vs >= 0)
+	{
+		const ShaderEntry & entry = Get_Game_Shader(game_vs, nullptr);
+		vertex_code = entry.Code.Get();
+		vertex_id = entry.Id;
+	}
+	else
+	{
+		if (!LastVertexShader || memcmp(&ffp.VS, &LastVSKey, sizeof(LastVSKey)) != 0)
+		{
+			LastVertexShader = &Get_Vertex_Shader(ffp.VS);
+			LastVSKey = ffp.VS;
+		}
+		vertex_code = LastVertexShader->Code.Get();
+		vertex_id = LastVertexShader->Id;
+	}
+
+	ID3DBlob * pixel_code = nullptr;
+	unsigned pixel_id = 0;
+	if (game_ps >= 0)
+	{
+		DX12GamePSVariant variant;
+		memset(&variant, 0, sizeof(variant));
+		for (unsigned stage = 0; stage < DX12_MAX_STAGES; ++stage)
+		{
+			variant.Projected[stage] = ffp.PS.Stages[stage].Projected;
+		}
+		variant.AlphaFunc = ffp.PS.AlphaFunc;
+		variant.Fog = ffp.PS.Fog;
+		variant.FogTableMode = ffp.PS.FogTableMode;
+		const ShaderEntry & entry = Get_Game_Shader(game_ps, &variant);
+		pixel_code = entry.Code.Get();
+		pixel_id = entry.Id;
+	}
+	else
+	{
+		if (!LastPixelShader || memcmp(&ffp.PS, &LastPSKey, sizeof(LastPSKey)) != 0)
+		{
+			LastPixelShader = &Get_Pixel_Shader(ffp.PS);
+			LastPSKey = ffp.PS;
+		}
+		pixel_code = LastPixelShader->Code.Get();
+		pixel_id = LastPixelShader->Id;
+	}
+
+	if (!vertex_code || !pixel_code)
 	{
 		return;
+	}
+	if (game_vs >= 0)
+	{
+		++GameShaderCaches[game_vs].Draws;
+	}
+	if (game_ps >= 0)
+	{
+		++GameShaderCaches[game_ps].Draws;
 	}
 
 	// Pipeline state. States that do not matter are normalized to share pipeline states.
 	PSOKey key;
 	memset(&key, 0, sizeof(key));
-	key.VertexShader = LastVertexShader->Id;
-	key.PixelShader = LastPixelShader->Id;
-	key.FVF = desc.FVF;
+	key.VertexShader = vertex_id;
+	key.PixelShader = pixel_id;
+	key.FVF = game_vs >= 0 ? 0 : desc.FVF;
+	key.InputLayout = game_vs >= 0 ? game_layout_id : 0;
 	key.TopologyType = (unsigned)topology_type;
 	key.AlphaBlendEnable = desc.AlphaBlendEnable ? 1 : 0;
 	if (desc.AlphaBlendEnable)
@@ -2795,23 +3229,24 @@ void DX12Device::Draw(const DX12DrawDesc & desc)
 		key.StencilWriteMask = render_states[FFP_RS_STENCILWRITEMASK] & 0xff;
 	}
 
-	ID3D12PipelineState * pso = Get_Pipeline_State(key, layout, LastVertexShader->Code.Get(), LastPixelShader->Code.Get());
+	ID3D12PipelineState * pso = Get_Pipeline_State(key, *layout, vertex_code, pixel_code);
 	if (!pso)
 	{
 		return;
 	}
 
-	// Textures. Stages that do not sample their texture get the white texture.
+	// Textures. Stages that do not sample their texture get the white texture; a game pixel shader
+	// may sample every stage.
 	D3D12_RESOURCE_BARRIER barriers[DX12_MAX_STAGES];
 	unsigned barrier_count = 0;
 	D3D12_GPU_DESCRIPTOR_HANDLE textures[DX12_MAX_STAGES];
 	D3D12_GPU_DESCRIPTOR_HANDLE samplers[DX12_MAX_STAGES];
 	for (int stage = 0; stage < DX12_MAX_STAGES; ++stage)
 	{
-		bool sampled = ffp.PS.Stages[stage].Texture == FFP_TEXTURE_SAMPLED;
+		bool sampled = game_ps >= 0 || ffp.PS.Stages[stage].Texture == FFP_TEXTURE_SAMPLED;
 		textures[stage] = Bind_Texture(sampled ? desc.Textures[stage] : nullptr, barriers, barrier_count);
-		samplers[stage] = Get_Sampler(desc.MinFilter[stage], desc.MagFilter[stage], desc.MipFilter[stage],
-			desc.AddressU[stage], desc.AddressV[stage], desc.MaxAnisotropy[stage]);
+		samplers[stage] = sampled ? Get_Sampler(desc.MinFilter[stage], desc.MagFilter[stage], desc.MipFilter[stage],
+			desc.AddressU[stage], desc.AddressV[stage], desc.MaxAnisotropy[stage]) : DefaultSampler;
 	}
 	if (barrier_count > 0)
 	{
@@ -2833,6 +3268,48 @@ void DX12Device::Draw(const DX12DrawDesc & desc)
 	UINT64 vs_gpu = Upload_Constants(&vs, sizeof(vs), &LastVSConstants, LastVSConstantsGPU);
 	UINT64 ps_gpu = Upload_Constants(&ps, sizeof(ps), &LastPSConstants, LastPSConstantsGPU);
 	if (vs_gpu == 0 || ps_gpu == 0)
+	{
+		return;
+	}
+
+	// The Direct3D 8 shader constant registers. Without a game shader the root parameter gets any
+	// valid address, which no shader reads.
+	UINT64 game_vs_gpu = vs_gpu;
+	UINT64 game_ps_gpu = ps_gpu;
+	if (game_vs >= 0)
+	{
+		DX12GameVSConstants game_vs_constants;
+		if (desc.VertexShaderConstants)
+			memcpy(game_vs_constants.C, desc.VertexShaderConstants, sizeof(game_vs_constants.C));
+		else
+			memset(game_vs_constants.C, 0, sizeof(game_vs_constants.C));
+		game_vs_gpu = Upload_Constants(&game_vs_constants, sizeof(game_vs_constants), &LastGameVSConstants, LastGameVSConstantsGPU);
+	}
+	if (game_ps >= 0)
+	{
+		// ps.1.x constant registers hold -1 .. 1.
+		DX12GamePSConstants game_ps_constants;
+		for (unsigned i = 0; i < DX12_MAX_PS_CONSTANTS; ++i)
+		{
+			for (unsigned c = 0; c < 4; ++c)
+			{
+				float value = desc.PixelShaderConstants ? desc.PixelShaderConstants[i * 4 + c] : 0.0f;
+				game_ps_constants.C[i][c] = value < -1.0f ? -1.0f : (value > 1.0f ? 1.0f : value);
+			}
+		}
+		for (unsigned stage = 0; stage < DX12_MAX_STAGES; ++stage)
+		{
+			const unsigned * t = texture_stage_states + stage * FFP_TSS_COUNT;
+			const unsigned matrix[4] = { t[FFP_TSS_BUMPENVMAT00], t[FFP_TSS_BUMPENVMAT01], t[FFP_TSS_BUMPENVMAT10], t[FFP_TSS_BUMPENVMAT11] };
+			memcpy(game_ps_constants.BumpEnvMat[stage], matrix, sizeof(matrix));
+			memcpy(&game_ps_constants.BumpEnvLuminance[stage][0], &t[FFP_TSS_BUMPENVLSCALE], sizeof(float));
+			memcpy(&game_ps_constants.BumpEnvLuminance[stage][1], &t[FFP_TSS_BUMPENVLOFFSET], sizeof(float));
+			game_ps_constants.BumpEnvLuminance[stage][2] = 0.0f;
+			game_ps_constants.BumpEnvLuminance[stage][3] = 0.0f;
+		}
+		game_ps_gpu = Upload_Constants(&game_ps_constants, sizeof(game_ps_constants), &LastGamePSConstants, LastGamePSConstantsGPU);
+	}
+	if (game_vs_gpu == 0 || game_ps_gpu == 0)
 	{
 		return;
 	}
@@ -2872,12 +3349,15 @@ void DX12Device::Draw(const DX12DrawDesc & desc)
 		CommandList->IASetIndexBuffer(&index_view);
 	}
 
-	CommandList->SetGraphicsRootConstantBufferView(0, vs_gpu);
-	CommandList->SetGraphicsRootConstantBufferView(1, ps_gpu);
-	CommandList->SetGraphicsRootDescriptorTable(2, textures[0]);
-	CommandList->SetGraphicsRootDescriptorTable(3, textures[1]);
-	CommandList->SetGraphicsRootDescriptorTable(4, samplers[0]);
-	CommandList->SetGraphicsRootDescriptorTable(5, samplers[1]);
+	CommandList->SetGraphicsRootConstantBufferView(ROOT_VS_CONSTANTS, vs_gpu);
+	CommandList->SetGraphicsRootConstantBufferView(ROOT_PS_CONSTANTS, ps_gpu);
+	CommandList->SetGraphicsRootConstantBufferView(ROOT_GAME_PS_CONSTANTS, game_ps_gpu);
+	CommandList->SetGraphicsRootConstantBufferView(ROOT_GAME_VS_CONSTANTS, game_vs_gpu);
+	for (int stage = 0; stage < DX12_MAX_STAGES; ++stage)
+	{
+		CommandList->SetGraphicsRootDescriptorTable(ROOT_TEXTURES + stage, textures[stage]);
+		CommandList->SetGraphicsRootDescriptorTable(ROOT_SAMPLERS + stage, samplers[stage]);
+	}
 
 	if (indexed)
 	{
@@ -3378,4 +3858,94 @@ bool DX12Device::Allocate_Frame_Memory(unsigned size, void ** cpu, unsigned long
 	*gpu = page->GPU + page->Offset;
 	page->Offset += aligned;
 	return true;
+}
+
+void DX12Device::Register_Game_Shader(const char * name, bool vertex_shader, const char * hlsl_source, const char * entry_point)
+{
+	const int index = DX12GameShaders_Register(name, vertex_shader, hlsl_source, entry_point);
+	if (index < 0)
+	{
+		WWDEBUG_SAY(("DX12: game shader registration of %s rejected", name ? name : "(null)"));
+		Debug_Log("game shader registration of %s rejected (empty name, source or entry point, or a reserved entry point)", name ? name : "(null)");
+		return;
+	}
+
+	// A new registration, or new source for an existing one: compile it again on next use.
+	if ((size_t)index >= GameShaderCaches.size())
+	{
+		GameShaderCaches.resize(index + 1);
+	}
+	else
+	{
+		GameShaderCaches[index] = GameShaderCache();
+	}
+	Debug_Log("registered game %s shader %s (entry point %s)", vertex_shader ? "vertex" : "pixel", name, entry_point);
+}
+
+bool DX12Device::Is_Game_Shader_Registered(const char * name, bool vertex_shader)
+{
+	return DX12GameShaders_Find(name, vertex_shader) >= 0;
+}
+
+unsigned DX12Device::Create_Game_Shader(const char * name, bool vertex_shader, const unsigned * declaration)
+{
+	if (!Device || !DX12_GAME_SHADERS_ENABLED || !name)
+	{
+		return 0;
+	}
+	WWASSERT(Is_Main_Thread());
+
+	const char * kind = vertex_shader ? "vertex" : "pixel";
+	const int index = DX12GameShaders_Find(name, vertex_shader);
+	if (index < 0)
+	{
+		Debug_Log("game %s shader %s is not registered; the game falls back", kind, name);
+		return 0;
+	}
+
+	unsigned layout_id = 0;
+	if (vertex_shader)
+	{
+		DX12GameInputLayout source;
+		std::string error;
+		if (!DX12GameShaders_Parse_Declaration(declaration, source, error))
+		{
+			WWDEBUG_SAY(("DX12: game vertex shader %s: %s", name, error.c_str()));
+			Debug_Log("game vertex shader %s: unsupported vertex declaration: %s", name, error.c_str());
+			return 0;
+		}
+		for (unsigned i = 0; i < source.ElementCount; ++i)
+		{
+			if (source.Elements[i].Format == DXGI_FORMAT_B8G8R8A8_UNORM && !ColorVertexFormatSupported)
+			{
+				Debug_Log("game vertex shader %s: D3DVSDT_D3DCOLOR inputs are not supported by this adapter", name);
+				return 0;
+			}
+		}
+		layout_id = Intern_Game_Layout(source);
+	}
+
+	// Compiled now (the plain variant for a pixel shader) so a shader that does not compile fails here
+	// and the game falls back, instead of drawing nothing.
+	const ShaderEntry & entry = Get_Game_Shader(index, nullptr);
+	if (!entry.Code)
+	{
+		WWDEBUG_SAY(("DX12: game %s shader %s does not compile", kind, name));
+		Debug_Log("game %s shader %s does not compile; the game falls back", kind, name);
+		return 0;
+	}
+
+	const unsigned handle = DX12GameShaders_Allocate_Handle(index, vertex_shader, layout_id);
+	Debug_Log("created game %s shader %s, handle 0x%x", kind, name, handle);
+	return handle;
+}
+
+void DX12Device::Delete_Game_Shader(unsigned handle)
+{
+	DX12GameShaders_Free_Handle(handle);
+}
+
+bool DX12Device::Is_Game_Shader(unsigned handle, bool vertex_shader)
+{
+	return DX12GameShaders_Resolve_Handle(handle, vertex_shader, nullptr, nullptr);
 }

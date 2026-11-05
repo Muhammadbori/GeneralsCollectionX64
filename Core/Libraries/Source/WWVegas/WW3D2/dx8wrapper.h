@@ -290,6 +290,8 @@ class DX8Wrapper
 	static void Device_Set_Indices(DX12BufferClass* buffer, unsigned base_vertex_index);
 	static void Device_Set_Vertex_Shader(DWORD vertex_shader);
 	static void Device_Set_Pixel_Shader(DWORD pixel_shader);
+	static void Device_Set_Vertex_Shader_Constant(int reg, const void* data, int count);
+	static void Device_Set_Pixel_Shader_Constant(int reg, const void* data, int count);
 
 public:
 #ifdef EXTENDED_STATS
@@ -631,6 +633,15 @@ public:
 	static HRESULT Create_Pixel_Shader(const DWORD* function, DWORD* handle);
 	static HRESULT Delete_Vertex_Shader(DWORD handle);
 	static HRESULT Delete_Pixel_Shader(DWORD handle);
+
+	// Direct3D 12 mode only: creates the game shader registered under name (an HLSL port of a
+	// Direct3D 8 shader, see Backend/DX12/dx12gameshaders.h) instead of creating one from bytecode.
+	// declaration is the Direct3D 8 vertex declaration for a vertex shader and is ignored for a pixel
+	// shader. The handle works with Set_Vertex_Shader / Set_Pixel_Shader(_Raw) and the Delete
+	// functions like a Direct3D 8 handle (vertex shader handles have bit 0 set). Fails with E_FAIL,
+	// and a zero handle, outside Direct3D 12 mode and when the shader is not registered, does not
+	// compile or has an unsupported declaration.
+	static HRESULT Create_DX12_Shader(const char* name, bool vertex_shader, const DWORD* declaration, DWORD* handle);
 	static HRESULT Create_Texture_Raw(
 		unsigned width,
 		unsigned height,
@@ -829,7 +840,10 @@ protected:
 		DX12BufferClass * IndexBuffer;							// owned reference
 		unsigned IndexBaseVertex;
 		unsigned FVF;												// last Set_Vertex_Shader value (FVF code; 0 = none)
+		unsigned VertexShader;										// last Set_Vertex_Shader value (FVF code or vertex shader handle)
 		unsigned PixelShader;										// last pixel shader handle (0 = fixed function)
+		float VertexShaderConstants[MAX_VERTEX_SHADER_CONSTANTS][4];
+		float PixelShaderConstants[MAX_PIXEL_SHADER_CONSTANTS][4];
 	};
 	static DX12DeviceStateStruct		DX12Device_State;
 
@@ -907,6 +921,7 @@ WWINLINE void DX8Wrapper::Set_Vertex_Shader_Constant(int reg, const void* data, 
 
 	memcpy(&Vertex_Shader_Constants[reg],data,memsize);
 	DX8CALL(SetVertexShaderConstant(reg,data,count));
+	if (DX12Device::Is_Active()) Device_Set_Vertex_Shader_Constant(reg,data,count);
 }
 
 WWINLINE void DX8Wrapper::Set_Pixel_Shader_Constant(int reg, const void* data, int count)
@@ -918,6 +933,7 @@ WWINLINE void DX8Wrapper::Set_Pixel_Shader_Constant(int reg, const void* data, i
 
 	memcpy(&Pixel_Shader_Constants[reg],data,memsize);
 	DX8CALL(SetPixelShaderConstant(reg,data,count));
+	if (DX12Device::Is_Active()) Device_Set_Pixel_Shader_Constant(reg,data,count);
 }
 // shader system updates KJM ^
 
@@ -1180,11 +1196,19 @@ WWINLINE void DX8Wrapper::Set_Pixel_Shader_Raw(DWORD pixel_shader)
 
 WWINLINE void DX8Wrapper::Set_Vertex_Shader_Constant_Raw(int reg, const void* data, int count)
 {
+	if (DX12Device::Is_Active()) {
+		Device_Set_Vertex_Shader_Constant(reg,data,count);
+		return;
+	}
 	DX8CALL(SetVertexShaderConstant( reg, data, count ));
 }
 
 WWINLINE void DX8Wrapper::Set_Pixel_Shader_Constant_Raw(int reg, const void* data, int count)
 {
+	if (DX12Device::Is_Active()) {
+		Device_Set_Pixel_Shader_Constant(reg,data,count);
+		return;
+	}
 	DX8CALL(SetPixelShaderConstant( reg, data, count ));
 }
 
@@ -1286,14 +1310,28 @@ WWINLINE void DX8Wrapper::Device_Set_Texture_Stage_State(unsigned stage, D3DTEXT
 
 WWINLINE void DX8Wrapper::Device_Set_Vertex_Shader(DWORD vertex_shader)
 {
-	// Direct3D 8 vertex shader handles have bit 0 set, which no FVF code has. Programmable vertex
-	// shaders do not exist in Direct3D 12 mode, so a handle leaves no usable vertex format.
+	// Direct3D 8 vertex shader handles have bit 0 set, which no FVF code has. A handle (a game vertex
+	// shader, Create_DX12_Shader) leaves no FVF; the draw reads the vertex through its declaration.
 	DX12Device_State.FVF=(vertex_shader&1) ? 0 : vertex_shader;
+	DX12Device_State.VertexShader=vertex_shader;
 }
 
 WWINLINE void DX8Wrapper::Device_Set_Pixel_Shader(DWORD pixel_shader)
 {
 	DX12Device_State.PixelShader=pixel_shader;
+}
+
+// Registers outside the Direct3D 8 range are dropped, as the Direct3D 8 device rejects the call.
+WWINLINE void DX8Wrapper::Device_Set_Vertex_Shader_Constant(int reg, const void* data, int count)
+{
+	if (reg<0 || count<=0 || data==nullptr || (unsigned)reg+(unsigned)count>MAX_VERTEX_SHADER_CONSTANTS) return;
+	memcpy(&DX12Device_State.VertexShaderConstants[reg][0],data,sizeof(float)*4*count);
+}
+
+WWINLINE void DX8Wrapper::Device_Set_Pixel_Shader_Constant(int reg, const void* data, int count)
+{
+	if (reg<0 || count<=0 || data==nullptr || (unsigned)reg+(unsigned)count>MAX_PIXEL_SHADER_CONSTANTS) return;
+	memcpy(&DX12Device_State.PixelShaderConstants[reg][0],data,sizeof(float)*4*count);
 }
 
 WWINLINE Vector4 DX8Wrapper::Convert_Color(unsigned color)

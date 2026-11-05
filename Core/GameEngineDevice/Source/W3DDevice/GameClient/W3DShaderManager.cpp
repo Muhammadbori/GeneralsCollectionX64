@@ -73,6 +73,7 @@
 #include "Common/GameLOD.h"
 #include "d3dx8tex.h"
 #include "WW3D2/dx8caps.h"
+#include "WW3D2/Backend/DX12/dx12gameshaders.h"
 
 
 // Turn this on to turn off pixel shaders. jba[4/3/2003]
@@ -322,8 +323,9 @@ Bool ScreenBWFilter::preRender(Bool &skipRender, CustomScenePassModes &scenePass
 Bool ScreenBWFilter::postRender(FilterModes mode, Coord2D &scrollDelta,Bool &doExtraRender)
 {
 	IDirect3DTexture8 * tex =	W3DShaderManager::endRenderToTexture();
-	DEBUG_ASSERTCRASH(tex, ("Require rendered texture."));
-	if (!tex) return false;
+	TextureClass *targetTex = DX12Device::Is_Active() ? W3DShaderManager::getRenderTargetTexture() : nullptr;	//Direct3D 12 mode renders into this instead.
+	DEBUG_ASSERTCRASH(tex || targetTex, ("Require rendered texture."));
+	if (!tex && !targetTex) return false;
 	if (!set(mode)) return false;
 
 	struct _TRANS_LIT_TEX_VERTEX {
@@ -336,6 +338,8 @@ Bool ScreenBWFilter::postRender(FilterModes mode, Coord2D &scrollDelta,Bool &doE
 	Int xpos, ypos, width, height;
 
 	DX8Wrapper::Set_DX8_Texture_Raw(0,tex);	//previously rendered frame inside this texture
+	if (targetTex)
+		DX8Wrapper::Set_DX8_Texture_Raw(0,targetTex);	//Direct3D 12 mode: previously rendered frame inside this texture
 	TheTacticalView->getOrigin(&xpos,&ypos);
 	width=TheTacticalView->getWidth();
 	height=TheTacticalView->getHeight();
@@ -495,7 +499,8 @@ Int ScreenBWFilterDOT3::init()
 	}
 
 	if (DX12Device::Is_Active())
-	{	//Direct3D 12 mode reports no chipset, but its fixed-function shaders do the DOT3 and multiply-add blends.
+	{	//Direct3D 12 mode: used when the monochrome pixel shader port is unavailable (no chipset with -noshaders or
+		//DX12_GAME_SHADERS_ENABLED 0); its fixed-function shaders do the DOT3 and multiply-add blends.
 		W3DFilters[FT_VIEW_BW_FILTER]=&screenBWFilterDOT3;
 		return TRUE;
 	}
@@ -2642,13 +2647,18 @@ void W3DShaderManager::init()
 
 	if (DX12Device::Is_Active())
 	{
-		//Direct3D 12 mode has no Direct3D 8 surfaces (and reports no chipset, so the block below is skipped).
+		//Direct3D 12 mode has no Direct3D 8 surfaces, so the block below is skipped.
 		//Our effects that need an offscreen render target get a render target texture of the back buffer size
 		//instead, made here like the Direct3D 8 one.
 		updateRenderTargetTexture();
 	}
 
 	ChipsetType res=DC_UNKNOWN;
+	if (DX12Device::Is_Active())
+	{
+		m_currentChipset = W3DShaderManager::getChipset();	//cache the current chipset.
+	}
+	else
 	if ((res=W3DShaderManager::getChipset()) != 0)
 	{
 		m_currentChipset = res;	//cache the current chipset.
@@ -3035,10 +3045,21 @@ enum GraphicsVenderID CPP_11(: Int)
 //=============================================================================
 ChipsetType W3DShaderManager::getChipset()
 {
-	//Direct3D 12 mode has no pixel shaders, no 8-stage texture pipeline and no Direct3D 8 render targets,
-	//so neither the device nor a chipset override (-noshaders, INI ChipsetType) may select those variants.
+	//Direct3D 12 mode runs HLSL ports of our pixel and vertex shaders, registered by name (see
+	//Backend/DX12/dx12gameshaders.h), so report a generic pixel shader 1.1 card. LoadAndCreateD3DShader fails
+	//for every shader without a port, and each effect then falls back exactly as on a card without it.
+	//A chipset override (-noshaders, INI ChipsetType) of a pixel shader card is used as is; any older one gives
+	//no chipset, which keeps every effect on its fixed-function path (the 8-stage terrain of the TNT and
+	//GeForce2 class relies on that hardware and is never selected).
 	if (DX12Device::Is_Active())
+	{
+#if !DX12_GAME_SHADERS_ENABLED
 		return DC_UNKNOWN;
+#endif
+		if (TheGlobalData && TheGlobalData->m_chipSetType != DC_UNKNOWN)
+			return TheGlobalData->m_chipSetType >= DC_GENERIC_PIXEL_SHADER_1_1 ? (ChipsetType)TheGlobalData->m_chipSetType : DC_UNKNOWN;
+		return DC_GENERIC_PIXEL_SHADER_1_1;
+	}
 
 	//check if globaldata has an override for current chipset
 	if (TheGlobalData && TheGlobalData->m_chipSetType != DC_UNKNOWN)
@@ -3136,6 +3157,36 @@ HRESULT W3DShaderManager::LoadAndCreateD3DShader(const char* strFilePath, const 
 	if (getChipset() < DC_GENERIC_PIXEL_SHADER_1_1)
 		return E_FAIL;	//don't allow loading any shaders if hardware can't handle it.
 
+	if (DX12Device::Is_Active())
+	{
+		//Direct3D 12 mode cannot run Direct3D 8 shader bytecode. The shader is an HLSL port registered under the
+		//file name without directory and extension plus its stage: "shaders\\terrain.pso" is "terrain_ps" and
+		//"shaders\\Trees.vso" is "Trees_vs". Without a port this fails and the caller falls back.
+		//The shader file must still exist in the game data, exactly as the Direct3D 8 path requires, so a game
+		//that does not ship a shader (e.g. Generals has no Trees.vso or fterrain*.pso) takes the same fallback.
+		File *shaderFile = TheFileSystem->openFile(strFilePath, File::READ | File::BINARY);
+		if (shaderFile == nullptr)
+		{
+			OutputDebugString("Could not find file \n" );
+			return E_FAIL;
+		}
+		shaderFile->close();
+		shaderFile = nullptr;
+
+		const char *fileName = strFilePath;
+		for (const char *c = strFilePath; *c; ++c)
+		{
+			if (*c == '\\' || *c == '/' || *c == ':')
+				fileName = c + 1;
+		}
+		AsciiString shaderName(fileName);
+		const char *extension = strrchr(fileName, '.');
+		if (extension)
+			shaderName.truncateBy((Int)strlen(extension));
+		shaderName.concat(ShaderType ? "_vs" : "_ps");
+		return DX8Wrapper::Create_DX12_Shader(shaderName.str(), ShaderType != 0, pDeclaration, pHandle);
+	}
+
 	try
 	{
 		File *file = nullptr;
@@ -3197,10 +3248,10 @@ HRESULT W3DShaderManager::LoadAndCreateD3DShader(const char* strFilePath, const 
 #define MIN_ACCEPTED_MEMORY	(1024*1024*256)	//256 MB
 #define MIN_ACCEPTED_TEXTURE_MEMORY	(1024*1024*30)	//30 MB
 
-/**Chipset used to estimate the hardware class (recommended detail level). getChipset() returns DC_UNKNOWN
-	in Direct3D 12 mode so that rendering takes the fixed-function paths, but the recommended detail level is
-	saved in Options.ini and also used by later Direct3D 8 runs. Any adapter that runs Direct3D 12 is at
-	least a pixel shader 2.0 class card, so report that (or the chipset override) instead.*/
+/**Chipset used to estimate the hardware class (recommended detail level). getChipset() returns the chipset whose
+	rendering paths Direct3D 12 mode can run (a generic pixel shader 1.1 card, or DC_UNKNOWN without game shaders),
+	but the recommended detail level is saved in Options.ini and also used by later Direct3D 8 runs. Any adapter
+	that runs Direct3D 12 is at least a pixel shader 2.0 class card, so report that (or the chipset override) instead.*/
 static ChipsetType getHardwareChipset()
 {
 	if (DX12Device::Is_Active())

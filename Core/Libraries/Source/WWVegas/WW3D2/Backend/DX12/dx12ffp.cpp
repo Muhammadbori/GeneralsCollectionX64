@@ -283,22 +283,6 @@ void Append(std::string & text, const char * format, ...)
 	}
 }
 
-// Vertex shader output and pixel shader input. Always complete so every vertex shader fits every
-// pixel shader.
-void Append_Interface(std::string & text, const char * name)
-{
-	Append(text, "\nstruct %s\n{\n", name);
-	text += "\tfloat4 Position : SV_Position;\n";
-	text += "\tfloat4 Diffuse : COLOR0;\n";
-	text += "\tfloat4 Specular : COLOR1;\n";
-	for (unsigned stage = 0; stage < DX12_MAX_STAGES; ++stage)
-	{
-		Append(text, "\tfloat4 TexCoord%u : TEXCOORD%u;\n", stage, stage);
-	}
-	Append(text, "\tfloat Fog : TEXCOORD%u;\n", (unsigned)DX12_MAX_STAGES);
-	text += "};\n";
-}
-
 const char * Material_Source(unsigned source, const char * material)
 {
 	if (source == MCS_COLOR1)
@@ -306,6 +290,42 @@ const char * Material_Source(unsigned source, const char * material)
 	if (source == MCS_COLOR2)
 		return "vertex_specular";
 	return material;
+}
+
+// Texture coordinates of one stage: the set or generated vector and the texture matrix. Pretransformed
+// vertices skip the texture matrix but still honor PROJECTED. Returns the projection divisor.
+unsigned Stage_TexCoords(unsigned stage, const unsigned * t, unsigned fvf, bool rhw, unsigned texcount, DX12VSKey & vs,
+	bool & uses_normal, bool & uses_reflection)
+{
+	unsigned index = t[FFP_TSS_TEXCOORDINDEX];
+	unsigned set = index & TCI_SET_MASK;
+	unsigned gen = index >> TCI_GEN_SHIFT;
+	if (gen > TCI_CAMERASPACEREFLECTIONVECTOR || rhw)
+		gen = TCI_PASSTHRU;
+
+	unsigned flags = t[FFP_TSS_TEXTURETRANSFORMFLAGS];
+	unsigned count = flags & TTFF_COUNT_MASK;
+	if (count > 4)
+		count = 0;
+
+	// Texgen ignores the set; keep it out of the key so equivalent states share a shader.
+	vs.TexCoordSet[stage] = gen == TCI_PASSTHRU ? (unsigned char)(set < FVF_MAX_TEXCOORDS ? set : FVF_MAX_TEXCOORDS) : 0;
+	vs.TexGen[stage] = (unsigned char)gen;
+	vs.TexTransform[stage] = rhw ? 0 : (unsigned char)count;
+
+	unsigned divisor = 0;
+	if (flags & TTFF_PROJECTED)
+	{
+		divisor = count;
+		if (divisor == 0 && gen == TCI_PASSTHRU && set < texcount)
+			divisor = TexCoordDimensions[(fvf >> (16 + set * 2)) & 3];
+	}
+
+	if (gen == TCI_CAMERASPACENORMAL || gen == TCI_CAMERASPACEREFLECTIONVECTOR)
+		uses_normal = true;
+	if (gen == TCI_CAMERASPACEREFLECTIONVECTOR)
+		uses_reflection = true;
+	return divisor;
 }
 
 // Texture coordinate set as the four components Direct3D 8 feeds the texture matrix: the first
@@ -444,7 +464,21 @@ void DX12FFP_Fill_Fallback_States(const DX12DrawDesc & desc, unsigned * rs, unsi
 	}
 }
 
-void DX12FFP_Build_Key(const DX12DrawDesc & desc, const unsigned * rs, const unsigned * tss, DX12FFPKey & key)
+void DX12FFP_Append_Interface(std::string & text, const char * name)
+{
+	Append(text, "\nstruct %s\n{\n", name);
+	text += "\tfloat4 Position : SV_Position;\n";
+	text += "\tfloat4 Diffuse : COLOR0;\n";
+	text += "\tfloat4 Specular : COLOR1;\n";
+	for (unsigned stage = 0; stage < DX12_MAX_STAGES; ++stage)
+	{
+		Append(text, "\tfloat4 Tex%u : TEXCOORD%u;\n", stage, stage);
+	}
+	text += "\tfloat Fog : FOG;\n";
+	text += "};\n";
+}
+
+void DX12FFP_Build_Key(const DX12DrawDesc & desc, const unsigned * rs, const unsigned * tss, bool game_pixel_shader, DX12FFPKey & key)
 {
 	memset(&key, 0, sizeof(key));
 	DX12VSKey & vs = key.VS;
@@ -461,8 +495,9 @@ void DX12FFP_Build_Key(const DX12DrawDesc & desc, const unsigned * rs, const uns
 
 	vs.FVF = fvf;
 
-	// Texture stage cascade. A disabled color stage ends it; DOTPRODUCT3 also writes the alpha.
-	for (unsigned stage = 0; stage < DX12_MAX_STAGES; ++stage)
+	// Texture stage cascade. A disabled color stage ends it; DOTPRODUCT3 also writes the alpha. A game
+	// pixel shader replaces the stages.
+	for (unsigned stage = 0; stage < DX12_MAX_STAGES && !game_pixel_shader; ++stage)
 	{
 		const unsigned * t = tss + stage * FFP_TSS_COUNT;
 		unsigned color_op = Normalize_Op(t[FFP_TSS_COLOROP]);
@@ -488,12 +523,19 @@ void DX12FFP_Build_Key(const DX12DrawDesc & desc, const unsigned * rs, const uns
 	}
 
 	// Textures and their coordinates, only for stages that read them. PREMODULATE reads the
-	// texture of the next stage.
+	// texture of the next stage. A game pixel shader gets the coordinates of every stage in its tN
+	// registers, as with Direct3D 8 ps.1.x, whatever texture is bound.
 	bool uses_normal = false;
 	bool uses_reflection = false;
 	for (unsigned stage = 0; stage < DX12_MAX_STAGES; ++stage)
 	{
 		vs.TexCoordSet[stage] = TEXCOORD_UNUSED;
+
+		if (game_pixel_shader)
+		{
+			ps.Stages[stage].Projected = (unsigned char)Stage_TexCoords(stage, tss + stage * FFP_TSS_COUNT, fvf, rhw, texcount, vs, uses_normal, uses_reflection);
+			continue;
+		}
 
 		DX12PSStageKey & s = ps.Stages[stage];
 		if (s.ColorOp == 0)
@@ -514,37 +556,7 @@ void DX12FFP_Build_Key(const DX12DrawDesc & desc, const unsigned * rs, const uns
 			continue;
 		}
 		s.Texture = FFP_TEXTURE_SAMPLED;
-
-		const unsigned * t = tss + stage * FFP_TSS_COUNT;
-		unsigned index = t[FFP_TSS_TEXCOORDINDEX];
-		unsigned set = index & TCI_SET_MASK;
-		unsigned gen = index >> TCI_GEN_SHIFT;
-		if (gen > TCI_CAMERASPACEREFLECTIONVECTOR || rhw)
-			gen = TCI_PASSTHRU;
-
-		// Pretransformed vertices skip the texture matrix but still honor PROJECTED.
-		unsigned flags = t[FFP_TSS_TEXTURETRANSFORMFLAGS];
-		unsigned count = flags & TTFF_COUNT_MASK;
-		if (count > 4)
-			count = 0;
-
-		// Texgen ignores the set; keep it out of the key so equivalent states share a shader.
-		vs.TexCoordSet[stage] = gen == TCI_PASSTHRU ? (unsigned char)(set < FVF_MAX_TEXCOORDS ? set : FVF_MAX_TEXCOORDS) : 0;
-		vs.TexGen[stage] = (unsigned char)gen;
-		vs.TexTransform[stage] = rhw ? 0 : (unsigned char)count;
-
-		if (flags & TTFF_PROJECTED)
-		{
-			unsigned divisor = count;
-			if (divisor == 0 && gen == TCI_PASSTHRU && set < texcount)
-				divisor = TexCoordDimensions[(fvf >> (16 + set * 2)) & 3];
-			s.Projected = (unsigned char)divisor;
-		}
-
-		if (gen == TCI_CAMERASPACENORMAL || gen == TCI_CAMERASPACEREFLECTIONVECTOR)
-			uses_normal = true;
-		if (gen == TCI_CAMERASPACEREFLECTIONVECTOR)
-			uses_reflection = true;
+		s.Projected = (unsigned char)Stage_TexCoords(stage, tss + stage * FFP_TSS_COUNT, fvf, rhw, texcount, vs, uses_normal, uses_reflection);
 	}
 
 	// Lighting. Pretransformed vertices are never lit.
@@ -601,8 +613,10 @@ void DX12FFP_Build_Key(const DX12DrawDesc & desc, const unsigned * rs, const uns
 		}
 	}
 
-	// Only when the vertex shader can output a nonzero specular color.
-	ps.Specular = (rs[FFP_RS_SPECULARENABLE] != 0 && (vs.Specular || (!vs.Lighting && has_specular))) ? 1 : 0;
+	// Only when the vertex shader can output a nonzero specular color. A game pixel shader reads the
+	// specular color itself (v1).
+	if (!game_pixel_shader)
+		ps.Specular = (rs[FFP_RS_SPECULARENABLE] != 0 && (vs.Specular || (!vs.Lighting && has_specular))) ? 1 : 0;
 
 	unsigned alpha_func = rs[FFP_RS_ALPHAFUNC];
 	if (rs[FFP_RS_ALPHATESTENABLE] != 0 && alpha_func >= CMP_NEVER && alpha_func < CMP_ALWAYS)
@@ -772,7 +786,7 @@ void DX12FFP_Generate_Vertex_Shader(const DX12VSKey & key, std::string & hlsl)
 	hlsl.clear();
 	Append(hlsl, "#define MAX_STAGES %u\n#define MAX_LIGHTS %u\n", (unsigned)DX12_MAX_STAGES, (unsigned)DX12_MAX_LIGHTS);
 	hlsl += DX12VertexShaderPrologue;
-	Append_Interface(hlsl, "VSOutput");
+	DX12FFP_Append_Interface(hlsl, "VSOutput");
 
 	hlsl += "\nstruct VSInput\n{\n";
 	hlsl += rhw ? "\tfloat4 Position : POSITION;\n" : "\tfloat3 Position : POSITION;\n";
@@ -902,7 +916,7 @@ void DX12FFP_Generate_Vertex_Shader(const DX12VSKey & key, std::string & hlsl)
 	{
 		if (key.TexCoordSet[stage] == TEXCOORD_UNUSED)
 		{
-			Append(hlsl, "\toutput.TexCoord%u = float4(0.0, 0.0, 0.0, 0.0);\n", stage);
+			Append(hlsl, "\toutput.Tex%u = float4(0.0, 0.0, 0.0, 0.0);\n", stage);
 			continue;
 		}
 
@@ -928,7 +942,7 @@ void DX12FFP_Generate_Vertex_Shader(const DX12VSKey & key, std::string & hlsl)
 		hlsl += ";\n";
 		if (key.TexTransform[stage] != 0)
 			Append(hlsl, "\ttex_coord%u = mul(tex_coord%u, TextureMatrix[%u]);\n", stage, stage, stage);
-		Append(hlsl, "\toutput.TexCoord%u = tex_coord%u;\n", stage, stage);
+		Append(hlsl, "\toutput.Tex%u = tex_coord%u;\n", stage, stage);
 	}
 
 	// Fog factor (1 = no fog), or the depth for table fog.
@@ -972,7 +986,7 @@ void DX12FFP_Generate_Pixel_Shader(const DX12PSKey & key, std::string & hlsl)
 		Append(hlsl, "SamplerState Sampler%u : register(s%u);\n", stage, stage);
 	}
 	hlsl += DX12PixelShaderPrologue;
-	Append_Interface(hlsl, "PSInput");
+	DX12FFP_Append_Interface(hlsl, "PSInput");
 
 	hlsl += "\nfloat4 PSMain(PSInput input) : SV_Target\n{\n";
 	hlsl += "\tfloat4 diffuse = input.Diffuse;\n";
@@ -987,9 +1001,9 @@ void DX12FFP_Generate_Pixel_Shader(const DX12PSKey & key, std::string & hlsl)
 		if (s.Texture == FFP_TEXTURE_SAMPLED)
 		{
 			if (s.Projected >= 1 && s.Projected <= 4)
-				Append(hlsl, "\tfloat2 uv%u = input.TexCoord%u.xy / input.TexCoord%u.%c;\n", stage, stage, stage, components[s.Projected]);
+				Append(hlsl, "\tfloat2 uv%u = input.Tex%u.xy / input.Tex%u.%c;\n", stage, stage, stage, components[s.Projected]);
 			else
-				Append(hlsl, "\tfloat2 uv%u = input.TexCoord%u.xy;\n", stage, stage);
+				Append(hlsl, "\tfloat2 uv%u = input.Tex%u.xy;\n", stage, stage);
 			Append(hlsl, "\tfloat4 tex%u = Texture%u.Sample(Sampler%u, uv%u);\n", stage, stage, stage, stage);
 		}
 		else if (s.Texture == FFP_TEXTURE_WHITE)
@@ -1035,6 +1049,13 @@ void DX12FFP_Generate_Pixel_Shader(const DX12PSKey & key, std::string & hlsl)
 	if (key.Specular)
 		hlsl += "\n\tcurrent.rgb = saturate(current.rgb + specular.rgb);\n";
 
+	DX12FFP_Append_Alpha_Test_And_Fog(key, "", hlsl);
+
+	hlsl += "\treturn current;\n}\n";
+}
+
+void DX12FFP_Append_Alpha_Test_And_Fog(const DX12PSKey & key, const char * prefix, std::string & hlsl)
+{
 	if (key.AlphaFunc != 0)
 	{
 		static const char * const compare[8] = { "", "", "<", "==", "<=", ">", "!=", ">=" };
@@ -1045,7 +1066,7 @@ void DX12FFP_Generate_Pixel_Shader(const DX12PSKey & key, std::string & hlsl)
 		else if (key.AlphaFunc < CMP_ALWAYS)
 		{
 			hlsl += "\n\tfloat alpha_test = round(current.a * 255.0);\n";
-			Append(hlsl, "\tif (!(alpha_test %s AlphaRef.x))\n\t\tdiscard;\n", compare[key.AlphaFunc]);
+			Append(hlsl, "\tif (!(alpha_test %s %sAlphaRef.x))\n\t\tdiscard;\n", compare[key.AlphaFunc], prefix);
 		}
 	}
 
@@ -1058,14 +1079,12 @@ void DX12FFP_Generate_Pixel_Shader(const DX12PSKey & key, std::string & hlsl)
 	{
 		hlsl += "\n\tfloat fog_depth = input.Fog;\n";
 		if (key.FogTableMode == FOG_LINEAR)
-			hlsl += "\tfloat fog = saturate((Fog.x - fog_depth) * Fog.y);\n";
+			Append(hlsl, "\tfloat fog = saturate((%sFog.x - fog_depth) * %sFog.y);\n", prefix, prefix);
 		else if (key.FogTableMode == FOG_EXP)
-			hlsl += "\tfloat fog = saturate(exp(-Fog.z * fog_depth));\n";
+			Append(hlsl, "\tfloat fog = saturate(exp(-%sFog.z * fog_depth));\n", prefix);
 		else
-			hlsl += "\tfloat fog_density = Fog.z * fog_depth;\n\tfloat fog = saturate(exp(-fog_density * fog_density));\n";
+			Append(hlsl, "\tfloat fog_density = %sFog.z * fog_depth;\n\tfloat fog = saturate(exp(-fog_density * fog_density));\n", prefix);
 	}
 	if (key.Fog != 0)
-		hlsl += "\tcurrent.rgb = lerp(FogColor.rgb, current.rgb, fog);\n";
-
-	hlsl += "\treturn current;\n}\n";
+		Append(hlsl, "\tcurrent.rgb = lerp(%sFogColor.rgb, current.rgb, fog);\n", prefix);
 }

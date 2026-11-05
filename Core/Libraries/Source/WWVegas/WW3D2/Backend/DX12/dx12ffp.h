@@ -25,6 +25,12 @@
 // Everything that varies continuously (matrices, colors, light parameters, fog distances, alpha
 // reference, texture factor) goes to the constant buffers filled by DX12FFP_Fill_Constants.
 //
+// Game pixel shaders (dx12gameshaders.h) replace the texture stages: with one, the vertex shader
+// computes the texture coordinates of every stage, as Direct3D 8 does for the ps.1.x tN registers,
+// and the pixel shader key keeps only what is applied around the game shader (projection, alpha
+// test, fog). All vertex shaders, generated or ported, write the same output signature
+// (DX12FFP_Append_Interface), so any vertex shader fits any pixel shader.
+//
 // Lighting is done in camera space, as in Direct3D 8. Normals go through the inverse transpose of
 // the world-view matrix, so non-uniform scales light correctly; without D3DRS_NORMALIZENORMALS a
 // uniform scale s changes the normal length by 1/s, as with the Direct3D 8 reference rasterizer.
@@ -92,7 +98,13 @@ enum
 	FFP_TSS_ALPHAOP = 4,
 	FFP_TSS_ALPHAARG1 = 5,
 	FFP_TSS_ALPHAARG2 = 6,
+	FFP_TSS_BUMPENVMAT00 = 7,
+	FFP_TSS_BUMPENVMAT01 = 8,
+	FFP_TSS_BUMPENVMAT10 = 9,
+	FFP_TSS_BUMPENVMAT11 = 10,
 	FFP_TSS_TEXCOORDINDEX = 11,
+	FFP_TSS_BUMPENVLSCALE = 22,
+	FFP_TSS_BUMPENVLOFFSET = 23,
 	FFP_TSS_TEXTURETRANSFORMFLAGS = 24,
 	FFP_TSS_COLORARG0 = 26,
 	FFP_TSS_ALPHAARG0 = 27,
@@ -137,6 +149,7 @@ struct DX12VSKey
 	unsigned char TexCoordSet[DX12_MAX_STAGES];		// texture coordinate set of each stage, 0xff = stage samples no texture
 	unsigned char TexGen[DX12_MAX_STAGES];			// D3DTSS_TCI_* >> 16, 0 = the set itself
 	unsigned char TexTransform[DX12_MAX_STAGES];	// D3DTTFF_COUNT1..4, 0 = no texture matrix
+	unsigned char Pad[2];
 };
 
 struct DX12PSStageKey
@@ -154,6 +167,7 @@ struct DX12PSStageKey
 	unsigned char Pad[2];
 };
 
+// With a game pixel shader only Stages[].Projected, AlphaFunc, Fog and FogTableMode are set.
 struct DX12PSKey
 {
 	DX12PSStageKey Stages[DX12_MAX_STAGES];
@@ -169,7 +183,7 @@ struct DX12FFPKey
 	DX12PSKey PS;
 };
 
-static_assert(sizeof(DX12VSKey) == 24, "DX12VSKey must not have padding");
+static_assert(sizeof(DX12VSKey) == 20 + 3 * DX12_MAX_STAGES, "DX12VSKey must not have padding");
 static_assert(sizeof(DX12PSStageKey) == 12, "DX12PSStageKey must not have padding");
 static_assert(sizeof(DX12PSKey) == 12 * DX12_MAX_STAGES + 4, "DX12PSKey must not have padding");
 
@@ -229,12 +243,26 @@ struct DX12FFPViewport
 // desc without RenderStates or TextureStageStates. There is no lighting and no fog then.
 void DX12FFP_Fill_Fallback_States(const DX12DrawDesc & desc, unsigned * render_states, unsigned * texture_stage_states);
 
-void DX12FFP_Build_Key(const DX12DrawDesc & desc, const unsigned * render_states, const unsigned * texture_stage_states, DX12FFPKey & key);
+// game_pixel_shader: the draw uses a game pixel shader instead of the texture stages.
+void DX12FFP_Build_Key(const DX12DrawDesc & desc, const unsigned * render_states, const unsigned * texture_stage_states,
+	bool game_pixel_shader, DX12FFPKey & key);
 void DX12FFP_Fill_Constants(const DX12DrawDesc & desc, const unsigned * render_states, const DX12FFPKey & key,
 	const DX12FFPViewport & viewport, DX12VSConstants & vs, DX12PSConstants & ps);
+
+// Appends the vertex shader output and pixel shader input struct that every shader uses, named name:
+//	float4 Position : SV_Position;
+//	float4 Diffuse : COLOR0;		// v0
+//	float4 Specular : COLOR1;		// v1
+//	float4 Tex0 : TEXCOORD0; ... float4 Tex7 : TEXCOORD7;	// texture coordinates of stages 0..7
+//	float Fog : FOG;				// fog factor (1 = no fog), or the depth for table fog
+void DX12FFP_Append_Interface(std::string & hlsl, const char * name);
 
 // HLSL for the vertex shader VSMain (vs_5_0) and the pixel shader PSMain (ps_5_0).
 void DX12FFP_Generate_Vertex_Shader(const DX12VSKey & key, std::string & hlsl);
 void DX12FFP_Generate_Pixel_Shader(const DX12PSKey & key, std::string & hlsl);
+
+// The end of a pixel shader: the alpha test and fog of key on the float4 'current', reading the fog
+// factor or depth from 'input.Fog' and the PSConstants members with names prefixed by prefix.
+void DX12FFP_Append_Alpha_Test_And_Fog(const DX12PSKey & key, const char * prefix, std::string & hlsl);
 
 unsigned DX12FFP_Hash(const void * data, unsigned size);

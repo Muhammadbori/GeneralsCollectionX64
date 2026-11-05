@@ -20,6 +20,9 @@
 // material caches as before, and in Direct3D 12 mode hands each draw to DX12Device, which
 // emulates the fixed-function pipeline with generated shaders (dx12ffp.h) and a pipeline state cache.
 //
+// The game's Direct3D 8 vertex and pixel shaders run as HLSL ports, registered by name and selected
+// through the same handles Direct3D 8 used (dx12gameshaders.h).
+//
 // The Direct3D 12 path is selected with -dx12 while the port is in progress. Once it covers
 // everything the Direct3D 8 path is deleted. -dx12debug sets DX12Device_DebugLayer, which enables
 // the Direct3D 12 debug layer and writes its messages to dx12debug.log.
@@ -38,8 +41,10 @@ extern bool DX12Device_DebugLayer;
 
 enum
 {
-	DX12_MAX_STAGES = 2,
+	DX12_MAX_STAGES = 8,
 	DX12_MAX_LIGHTS = 4,
+	DX12_MAX_VS_CONSTANTS = 96,		// Direct3D 8 vs.1.1 constant registers c0..c95
+	DX12_MAX_PS_CONSTANTS = 8,		// Direct3D 8 ps.1.1 constant registers c0..c7
 };
 
 // D3DMATERIAL8, colors as rgba.
@@ -143,6 +148,16 @@ struct DX12DrawDesc
 	const float * TextureMatrices[DX12_MAX_STAGES];	// D3DTS_TEXTURE0 + stage, 4x4 row major; null is identity
 	DX12MaterialDesc Material;
 	DX12LightDesc Lights[DX12_MAX_LIGHTS];
+
+	// Game shaders (dx12gameshaders.h). VertexShader is a game vertex shader handle (bit 0 set) or 0
+	// for fixed-function vertex processing with FVF; PixelShader a game pixel shader handle or 0 for
+	// the fixed-function texture stages. Draws with a handle that is not a live game shader of its
+	// kind are skipped. The constants are the Direct3D 8 shader constant registers, read only while
+	// the matching game shader is used.
+	unsigned VertexShader;
+	unsigned PixelShader;
+	const float * VertexShaderConstants;	// DX12_MAX_VS_CONSTANTS float4 registers
+	const float * PixelShaderConstants;		// DX12_MAX_PS_CONSTANTS float4 registers
 };
 
 class DX12Device
@@ -230,6 +245,20 @@ public:
 	static void Queue_Texture_Upload(DX12TextureClass * texture, unsigned level, ID3D12Resource * upload);
 	static bool Allocate_Frame_Memory(unsigned size, void ** cpu, unsigned long long * gpu);
 	static unsigned long long Get_Frame_Number() { return FrameNumber; }
+
+	// Game shaders: HLSL ports of the game's Direct3D 8 shaders, identified by name (see
+	// dx12gameshaders.h for the HLSL contract). Register_Game_Shader adds or replaces a shader in the
+	// registry; it is called by the DX12_Register_*_Shaders functions while the device initializes.
+	// Create_Game_Shader compiles a registered shader and returns a handle for DX12DrawDesc (vertex
+	// shader handles have bit 0 set like Direct3D 8 ones), or 0 when the name is not registered, the
+	// shader does not compile or, for a vertex shader, the Direct3D 8 vertex declaration (D3DVSD_*
+	// tokens, ending with D3DVSD_END) is not supported. Handles stay valid until Delete_Game_Shader
+	// or Shutdown. Main thread only.
+	static void Register_Game_Shader(const char * name, bool vertex_shader, const char * hlsl_source, const char * entry_point);
+	static bool Is_Game_Shader_Registered(const char * name, bool vertex_shader);
+	static unsigned Create_Game_Shader(const char * name, bool vertex_shader, const unsigned * declaration);
+	static void Delete_Game_Shader(unsigned handle);
+	static bool Is_Game_Shader(unsigned handle, bool vertex_shader);
 
 private:
 	// Executes the commands recorded so far (starting a frame for pending uploads when none is being

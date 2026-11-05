@@ -542,8 +542,9 @@ DX8Caps::DX8Caps(const D3DADAPTER_IDENTIFIER8& adapter_id)
 	DXLOG(("Device id: 0x%x\r\n",adapter_id.DeviceId));
 	COMPACTLOG(("%s\tDirect3D 12\t",VendorNames[VendorId]));
 
-	// The renderer emulates the Direct3D 8 fixed-function pipeline with two texture stages. The
-	// vendor specific hacks for 2002 era hardware do not apply.
+	// The renderer emulates the Direct3D 8 fixed-function pipeline with eight texture stages and runs
+	// HLSL ports of the game's vs.1.1 / ps.1.1 shaders. The vendor specific hacks for 2002 era
+	// hardware do not apply.
 	SupportTnL=true;
 	SupportDXTC=true;
 	supportGamma=false;
@@ -558,12 +559,18 @@ DX8Caps::DX8Caps(const D3DADAPTER_IDENTIFIER8& adapter_id)
 	SupportCubemaps=false;
 	CanDoMultiPass=true;
 	IsFogAllowed=true;
-	MaxTexturesPerPass=2;
-	MaxSimultaneousTextures=2;
+	// All eight stages, as a Direct3D 8 driver on Direct3D 9 class hardware reports. Only the WW3D
+	// material passes read MaxTexturesPerPass (how many render_state textures they apply and reset);
+	// the terrain picks its 2-stage, 8-stage or pixel shader path from the chipset
+	// (W3DShaderManager::getChipset), not from these counts.
+	MaxTexturesPerPass=8;
+	MaxSimultaneousTextures=8;
 
-	// Zero shader versions keep the game on its fixed-function paths.
-	VertexShaderVersion=0;
-	PixelShaderVersion=0;
+	// Shader model 1.1, the version of every game shader. W3DShaderManager::getChipset reports a
+	// pixel shader 1.1 class chipset in Direct3D 12 mode; each shader exists only when its HLSL port
+	// is registered (dx12gameshaders.h), otherwise its creation fails and the game falls back.
+	VertexShaderVersion=D3DVS_VERSION(1,1);
+	PixelShaderVersion=D3DPS_VERSION(1,1);
 
 	unsigned i;
 	for (i=0;i<WW3D_FORMAT_COUNT;++i) {
@@ -693,7 +700,7 @@ void DX8Caps::Init_DX12_Caps()
 		D3DTEXOPCAPS_MODULATEINVALPHA_ADDCOLOR|D3DTEXOPCAPS_MODULATEINVCOLOR_ADDALPHA|
 		D3DTEXOPCAPS_DOTPRODUCT3|D3DTEXOPCAPS_MULTIPLYADD|D3DTEXOPCAPS_LERP;
 	Caps.MaxTextureBlendStages=8;
-	Caps.MaxSimultaneousTextures=2;
+	Caps.MaxSimultaneousTextures=8;
 	Caps.VertexProcessingCaps=
 		D3DVTXPCAPS_TEXGEN|
 		D3DVTXPCAPS_MATERIALSOURCE7|
@@ -709,10 +716,10 @@ void DX8Caps::Init_DX12_Caps()
 	Caps.MaxVertexIndex=0xffffff;
 	Caps.MaxStreams=2;
 	Caps.MaxStreamStride=256;
-	Caps.VertexShaderVersion=0;
-	Caps.MaxVertexShaderConst=0;
-	Caps.PixelShaderVersion=0;
-	Caps.MaxPixelShaderValue=0.0f;
+	Caps.VertexShaderVersion=D3DVS_VERSION(1,1);
+	Caps.MaxVertexShaderConst=96;
+	Caps.PixelShaderVersion=D3DPS_VERSION(1,1);
+	Caps.MaxPixelShaderValue=1.0f;
 }
 
 //Don't really need this but I added this function to free static variables so

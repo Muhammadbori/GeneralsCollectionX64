@@ -157,7 +157,8 @@ protected:
 	LPDIRECT3DVERTEXBUFFER8 m_vertexBufferD3D;		///<D3D vertex buffer
 	LPDIRECT3DINDEXBUFFER8	m_indexBufferD3D;	///<D3D index buffer
 	DX8VertexBufferClass	*m_gridVertexBufferDX12;	///<grid mesh vertex buffer in Direct3D 12 mode (replaces m_vertexBufferD3D)
-	DX8IndexBufferClass		*m_gridIndexBufferDX12;		///<grid mesh index buffer in Direct3D 12 mode (replaces m_indexBufferD3D)
+	DX8IndexBufferClass		*m_gridIndexBufferDX12;		///<grid mesh index buffer in Direct3D 12 mode (replaces m_indexBufferD3D), also the sea patch strips
+	DX8VertexBufferClass	*m_seaVertexBufferDX12;		///<static sea patch vertex buffer of the shader water in Direct3D 12 mode (replaces m_vertexBufferD3D)
 	Int						m_vertexBufferD3DOffset;	///<location to start writing vertices
 	DWORD					m_dwWavePixelShader;	///<handle to D3D pixel shader
 	DWORD					m_dwWaveVertexShader;	///<handle to D3D vertex shader
@@ -165,6 +166,7 @@ protected:
 	Int m_numIndices;				///<number of indices in D3D index buffer
 	LPDIRECT3DTEXTURE8 m_pBumpTexture[NUM_BUMP_FRAMES]; ///<animation frames
 	LPDIRECT3DTEXTURE8 m_pBumpTexture2[NUM_BUMP_FRAMES]; ///<animation frames
+	TextureClass *m_pBumpTextureDX12;	///<bump map of the shader water in Direct3D 12 mode, du/dv biased by 128 in red/green (replaces m_pBumpTexture)
 	Real				m_fBumpFrame;	///<current animation frame
 	Real				m_fBumpScale;	///<scales bump map uv perturbation
 	TextureClass * m_pReflectionTexture;	///<render target for reflection
@@ -244,6 +246,7 @@ protected:
 	void renderSkyBody(Matrix3D *mat);	///<draw the sky body (sun, moon, etc.)
 	void renderWaterMesh();			///<draw the water surface mesh (deformed 3d mesh).
 	HRESULT initBumpMap(LPDIRECT3DTEXTURE8 *pTex, TextureClass *pBumpSource);	///<copies data into bump-map format.
+	void initBumpMapDX12();	///<Direct3D 12 mode: creates m_pBumpTextureDX12.
 	void renderMirror(CameraClass *cam);	///< Draw reflected scene into texture
 	void drawSea(RenderInfoClass & rinfo);	///< Draw the surface of the water
 	///bounding box of frustum clipped polygon plane
