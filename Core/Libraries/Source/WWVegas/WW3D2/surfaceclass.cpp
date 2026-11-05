@@ -196,6 +196,34 @@ static bool Is_Convertible_Format(WW3DFormat format)
 	}
 }
 
+// BitmapHandlerClass::Write_B8G8R8A8 truncates 8 bit channels to the 4, 5 and 6 bit channels of
+// 16 bit formats, and its reads expand them with a plain shift, so a filtered texel would come out
+// darker than D3DX makes it. Adding half a step first rounds each channel to the nearest value.
+static void Round_To_Format_Precision(unsigned char *bgra, WW3DFormat format)
+{
+	unsigned half[4] = { 0, 0, 0, 0 };
+	switch (format)
+	{
+	case WW3D_FORMAT_A4R4G4B4:
+		half[0] = half[1] = half[2] = half[3] = 8;
+		break;
+	case WW3D_FORMAT_A1R5G5B5:
+		half[0] = half[1] = half[2] = 4;
+		break;
+	case WW3D_FORMAT_R5G6B5:
+		half[0] = half[2] = 4;
+		half[1] = 2;
+		break;
+	default:
+		return;
+	}
+	for (int i = 0; i < 4; ++i)
+	{
+		const unsigned value = bgra[i] + half[i];
+		bgra[i] = (unsigned char)((value > 255) ? 255 : value);
+	}
+}
+
 // CPU copy of a rectangle between two locked surfaces, used in Direct3D 12 mode in place of
 // CopyRects and D3DXLoadSurfaceFromSurface. Both pointers point at the top left texel of their
 // surface. Same size and format copies rows (DXT formats copy whole 4x4 blocks); anything else
@@ -297,6 +325,7 @@ static void Copy_Texels
 			{
 				bgra[3] = (bgra[3] >= 128) ? 255 : 0;
 			}
+			Round_To_Format_Precision(bgra, dst_format);
 			BitmapHandlerClass::Write_B8G8R8A8(dst_row + (dstx + x) * dst_bpp, dst_format, bgra);
 		}
 	}

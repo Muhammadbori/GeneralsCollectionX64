@@ -2899,11 +2899,12 @@ void W3DShaderManager::startRenderToTexture()
 	{
 		//Direct3D 12 mode has no Direct3D 8 surfaces, so select the render target texture with the default
 		//depth buffer.  The texture follows the back buffer size, which changes without a device reset there.
+		//Like Set_Render_Target_Raw below, this leaves DX8Wrapper::Is_Render_To_Texture() unchanged so that
+		//dazzles still draw into the filtered view.
 		if (m_renderingToTexture || m_renderTargetTexture==nullptr || !updateRenderTargetTexture()) return;
-		DX8Wrapper::Set_Render_Target_With_Z(m_renderTargetTexture);
 
 		//If the target could not be selected, permanently disable RTT like the Direct3D 8 path below.
-		if (!DX8Wrapper::Is_Render_To_Texture())
+		if (!DX8Wrapper::Set_DX12_Render_Target_Raw(m_renderTargetTexture))
 		{
 			REF_PTR_RELEASE(m_renderTargetTexture);
 			return;
@@ -2966,7 +2967,7 @@ IDirect3DTexture8 *W3DShaderManager::endRenderToTexture()
 	{
 		//Direct3D 12 mode: restore the back buffer and default depth buffer.  There are no Direct3D 8 textures to
 		//return; the rendered image is in getRenderTargetTexture().
-		DX8Wrapper::Set_Render_Target((IDirect3DSurface8 *)nullptr);
+		DX8Wrapper::Set_DX12_Render_Target_Raw(nullptr);
 
 		//assume render target texture will be in stage 0, with the same states as below.
 		DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP);

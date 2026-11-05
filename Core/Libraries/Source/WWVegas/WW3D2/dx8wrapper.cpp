@@ -4240,6 +4240,18 @@ void DX8Wrapper::Set_DX12_Render_Target(TextureClass * texture, ZTextureClass * 
 	DX12Viewport.MaxZ=1.0f;
 }
 
+// Like Set_Render_Target_Raw in Direct3D 8 mode, this keeps IsRenderToTexture, so effects that skip
+// render to texture passes (e.g. dazzles) still draw into the screen filter target.
+bool DX8Wrapper::Set_DX12_Render_Target_Raw(TextureClass * texture)
+{
+	if (!DX12Device::Is_Active()) return false;
+
+	const bool was_render_to_texture=IsRenderToTexture;
+	Set_DX12_Render_Target(texture, nullptr);
+	IsRenderToTexture=was_render_to_texture;
+	return DX12Device::Is_Render_To_Texture()==(texture!=nullptr);
+}
+
 TextureClass *
 DX8Wrapper::Create_Render_Target (int width, int height, WW3DFormat format)
 {

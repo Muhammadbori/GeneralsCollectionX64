@@ -87,7 +87,8 @@ enum
 	FRAME_COUNT = 2,
 	BACK_BUFFER_COUNT = 3,
 	// RTV slots 0 .. BACK_BUFFER_COUNT - 1 are the back buffers, DSV slot 0 the default depth buffer.
-	RTV_HEAP_SIZE = BACK_BUFFER_COUNT + 256,
+	// Every W3DShadowTexture (one per projected shadow model) is a render target with an RTV slot.
+	RTV_HEAP_SIZE = BACK_BUFFER_COUNT + 1024,
 	DSV_HEAP_SIZE = 64,
 	SRV_HEAP_SIZE = 16384,
 	SAMPLER_HEAP_SIZE = 2048,
@@ -147,6 +148,11 @@ const int ZBIAS_TO_DEPTH_BIAS = -84;
 
 // dx12debug.log keeps the full text of this many messages per message ID; later ones are counted.
 const unsigned DEBUG_LOG_MAX_MESSAGES_PER_ID = 1000;
+
+// End_Frame(false) keeps recording into the frame's command list. After this many in a row without
+// a present (render to texture passes while the main scene is skipped, TiVO fast forward), the
+// commands are submitted so that one command list does not grow without bound.
+const unsigned MAX_FRAME_ENDS_WITHOUT_PRESENT = 16;
 
 struct FramePage
 {
@@ -326,6 +332,7 @@ unsigned FrameIndex = 0;
 bool FrameSlotPrepared = false;
 bool FrameHasRenderTarget = false;
 bool Recording = false;
+unsigned FrameEndsWithoutPresent = 0;	// End_Frame(false) calls since the last submit
 ComPtr<ID3D12GraphicsCommandList> CommandList;
 
 // Used for uploads outside of frames (white texture, uploads piling up during loading).
@@ -375,6 +382,8 @@ bool ColorVertexFormatSupported = true;		// DXGI_FORMAT_B8G8R8A8_UNORM in vertex
 // -dx12debug
 FILE * DebugLog = nullptr;
 bool DebugLogStarted = false;
+char DebugLogDirectory[MAX_PATH] = "";	// DX12Device_Set_Debug_Log_Directory; empty is the current directory
+char DebugLogPath[MAX_PATH] = "";		// the file the first open in this process used
 std::mutex DebugLogMutex;
 ComPtr<ID3D12InfoQueue> InfoQueue;
 std::map<unsigned, unsigned> DebugMessageCounts;
@@ -408,6 +417,8 @@ bool LoggedTriangleFan = false;
 bool LoggedIndexOverflow = false;
 bool LoggedVertexOverflow = false;
 bool LoggedSamplerHeapFull = false;
+bool LoggedRTVHeapFull = false;		// guarded by ResourceMutex
+bool LoggedDSVHeapFull = false;		// guarded by ResourceMutex
 bool LoggedGameLayoutStride = false;
 unsigned LastBadFVF = 0;
 
@@ -466,7 +477,10 @@ void Debug_Log(const char * format, ...)
 	fputc('\n', DebugLog);
 }
 
-// The first open in a process starts a new log, later ones (after a device shutdown) append.
+// The first open in a process starts a new log, later ones (after a device shutdown) append to the
+// same file. The log goes to the directory set with DX12Device_Set_Debug_Log_Directory (the user
+// data directory), or to the current directory when none was set or the file cannot be created
+// there. Its first line is its full path.
 void Open_Debug_Log()
 {
 	std::lock_guard<std::mutex> lock(DebugLogMutex);
@@ -474,12 +488,43 @@ void Open_Debug_Log()
 	{
 		return;
 	}
-	DebugLog = fopen("dx12debug.log", DebugLogStarted ? "a" : "w");
+	if (DebugLogStarted)
+	{
+		DebugLog = fopen(DebugLogPath, "a");
+	}
+	else
+	{
+		const size_t length = strlen(DebugLogDirectory);
+		if (length != 0)
+		{
+			const char last = DebugLogDirectory[length - 1];
+			const char * separator = (last == '\\' || last == '/') ? "" : "\\";
+			int written = snprintf(DebugLogPath, sizeof(DebugLogPath), "%s%sdx12debug.log", DebugLogDirectory, separator);
+			if (written > 0 && written < (int)sizeof(DebugLogPath))
+			{
+				DebugLog = fopen(DebugLogPath, "w");
+			}
+		}
+		if (!DebugLog)
+		{
+			snprintf(DebugLogPath, sizeof(DebugLogPath), "dx12debug.log");
+			DebugLog = fopen(DebugLogPath, "w");
+		}
+		// Appends after a device shutdown go to this file even if the current directory changes.
+		char full_path[MAX_PATH];
+		DWORD full_length = GetFullPathNameA(DebugLogPath, MAX_PATH, full_path, nullptr);
+		if (full_length != 0 && full_length < MAX_PATH)
+		{
+			snprintf(DebugLogPath, sizeof(DebugLogPath), "%s", full_path);
+		}
+	}
 	if (!DebugLog)
 	{
-		WWDEBUG_SAY(("DX12: could not open dx12debug.log"));
+		WWDEBUG_SAY(("DX12: could not open %s", DebugLogPath));
 		return;
 	}
+	fprintf(DebugLog, "dx12debug.log: %s\n", DebugLogPath);
+	fflush(DebugLog);
 	DebugLogStarted = true;
 	DebugMessageCounts.clear();
 	DebugMessagesDiscarded = 0;
@@ -568,6 +613,22 @@ void Close_Debug_Log()
 	}
 }
 
+// Writes dx12debug.log to disk now, on the main thread with the pending debug layer messages, so
+// that a crash after an error does not lose its last lines.
+void Flush_Debug_Log_Now()
+{
+	if (Is_Main_Thread())
+	{
+		Flush_Debug_Messages();
+		return;
+	}
+	std::lock_guard<std::mutex> lock(DebugLogMutex);
+	if (DebugLog)
+	{
+		fflush(DebugLog);
+	}
+}
+
 void Log_Failure(const char * what, HRESULT hr)
 {
 	WWDEBUG_SAY(("DX12: %s failed (0x%08x)", what, (unsigned)hr));
@@ -577,6 +638,7 @@ void Log_Failure(const char * what, HRESULT hr)
 		WWDEBUG_SAY(("DX12: device removed, reason 0x%08x", (unsigned)D3D->GetDeviceRemovedReason()));
 		Debug_Log("device removed, reason 0x%08x", (unsigned)D3D->GetDeviceRemovedReason());
 	}
+	Flush_Debug_Log_Now();
 }
 
 D3D12_RESOURCE_BARRIER Make_Transition(ID3D12Resource * resource, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after)
@@ -1124,9 +1186,29 @@ bool Flush_Frame_And_Wait()
 	}
 	if (FAILED(reset))
 	{
+		// The frame cannot continue; end it as Submit_Frame would, so that the next Begin_Frame finds
+		// the back buffer in the present state and starts on the next frame slot.
 		Log_Failure("CommandList::Reset (flush)", reset);
+		if (SUCCEEDED(hr) && FrameHasRenderTarget && SUCCEEDED(UploadAllocator->Reset())
+			&& SUCCEEDED(UploadList->Reset(UploadAllocator.Get(), nullptr)))
+		{
+			Transition(UploadList.Get(), BackBuffers[BackBufferIndex].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+			if (SUCCEEDED(UploadList->Close()))
+			{
+				ID3D12CommandList * lists[] = { UploadList.Get() };
+				Queue->ExecuteCommandLists(1, lists);
+			}
+		}
 		Recording = false;
 		FrameHasRenderTarget = false;
+		FrameEndsWithoutPresent = 0;
+		// The upload list is only reset once the GPU is done with it.
+		UINT64 fence = Signal_Queue();
+		Frames[FrameIndex].FenceValue = fence;
+		FrameIndex = (FrameIndex + 1) % FRAME_COUNT;
+		FrameSlotPrepared = false;
+		Wait_For_Fence(fence);
+		Process_Deferred();
 		return false;
 	}
 	Restore_Command_List_State();
@@ -1182,6 +1264,7 @@ ComPtr<ID3DBlob> Compile_Shader(const std::string & source, const char * name, c
 		WWDEBUG_SAY(("DX12: compiling %s (%s) failed (0x%08x): %s", name, target, (unsigned)hr, output));
 		Debug_Log("frame %llu: compiling %s (%s) failed (0x%08x):\n%s", DX12Device::Get_Frame_Number(), name, target, (unsigned)hr, output);
 		Debug_Log_Source(source);
+		Flush_Debug_Log_Now();
 		return nullptr;
 	}
 	return code;
@@ -1567,6 +1650,7 @@ ID3D12PipelineState * Get_Pipeline_State(const PSOKey & key, const FVFLayout & l
 			WWDEBUG_SAY(("DX12: CreateGraphicsPipelineState failed (0x%08x) for FVF 0x%x", (unsigned)hr, key.FVF));
 			Debug_Log("frame %llu: CreateGraphicsPipelineState failed (0x%08x) for FVF 0x%x, input layout %u, shaders %u/%u",
 				DX12Device::Get_Frame_Number(), (unsigned)hr, key.FVF, key.InputLayout, key.VertexShader, key.PixelShader);
+			Flush_Debug_Log_Now();
 			pso.Reset();
 		}
 	}
@@ -2323,6 +2407,12 @@ bool Has_Render_Target()
 
 } // namespace
 
+void DX12Device_Set_Debug_Log_Directory(const char * directory)
+{
+	std::lock_guard<std::mutex> lock(DebugLogMutex);
+	snprintf(DebugLogDirectory, sizeof(DebugLogDirectory), "%s", directory ? directory : "");
+}
+
 // Used by DX12TextureClass. Descriptor writes are free threaded, so this may run on the loader
 // thread; the slot is not visible to the main thread until the texture is handed over. Bind_Texture
 // later rewrites an equivalent default view once on first use.
@@ -2772,7 +2862,7 @@ void DX12Device::End_Frame(bool present)
 		return;
 	}
 
-	if (Recording && !present)
+	if (Recording && !present && ++FrameEndsWithoutPresent < MAX_FRAME_ENDS_WITHOUT_PRESENT)
 	{
 		// Direct3D 8 EndScene without Present costs nothing; ending the command list here would take
 		// a frame slot per render to texture pass and make the next frame wait for the GPU.
@@ -2787,6 +2877,7 @@ void DX12Device::Submit_Frame(bool present)
 	{
 		return;
 	}
+	FrameEndsWithoutPresent = 0;
 
 	if (!Recording)
 	{
@@ -2885,6 +2976,8 @@ void DX12Device::Clear(bool clear_color, bool clear_z_stencil, unsigned argb, fl
 	{
 		return;
 	}
+	// A pending upload to the target has to land before the clear, not overwrite it later.
+	Record_Uploads(CommandList.Get());
 	Ensure_Target_States();
 
 	// Like Direct3D 8, clear only the current viewport of the current target.
@@ -3401,18 +3494,29 @@ void DX12Device::Free_SRV_Slot(unsigned slot)
 
 unsigned DX12Device::Allocate_RTV_Slot()
 {
-	std::lock_guard<std::mutex> lock(ResourceMutex);
-	if (!FreeRTVSlots.empty())
 	{
-		unsigned slot = FreeRTVSlots.back();
-		FreeRTVSlots.pop_back();
-		return slot;
+		std::lock_guard<std::mutex> lock(ResourceMutex);
+		if (!FreeRTVSlots.empty())
+		{
+			unsigned slot = FreeRTVSlots.back();
+			FreeRTVSlots.pop_back();
+			return slot;
+		}
+		if (NextRTVSlot < RTV_HEAP_SIZE)
+		{
+			return NextRTVSlot++;
+		}
+		if (LoggedRTVHeapFull)
+		{
+			return 0;
+		}
+		LoggedRTVHeapFull = true;
 	}
-	if (NextRTVSlot < RTV_HEAP_SIZE)
-	{
-		return NextRTVSlot++;
-	}
-	WWDEBUG_SAY(("DX12: out of render target view slots"));
+	// Reported once; render targets created from here on (projected shadow textures) are missing.
+	WWDEBUG_SAY(("DX12: out of render target view slots (%d)", (int)RTV_HEAP_SIZE - BACK_BUFFER_COUNT));
+	Debug_Log("frame %llu: out of render target view slots (%d), further render targets are not created",
+		Get_Frame_Number(), (int)RTV_HEAP_SIZE - BACK_BUFFER_COUNT);
+	Flush_Debug_Log_Now();
 	return 0;
 }
 
@@ -3428,18 +3532,29 @@ void DX12Device::Free_RTV_Slot(unsigned slot)
 
 unsigned DX12Device::Allocate_DSV_Slot()
 {
-	std::lock_guard<std::mutex> lock(ResourceMutex);
-	if (!FreeDSVSlots.empty())
 	{
-		unsigned slot = FreeDSVSlots.back();
-		FreeDSVSlots.pop_back();
-		return slot;
+		std::lock_guard<std::mutex> lock(ResourceMutex);
+		if (!FreeDSVSlots.empty())
+		{
+			unsigned slot = FreeDSVSlots.back();
+			FreeDSVSlots.pop_back();
+			return slot;
+		}
+		if (NextDSVSlot < DSV_HEAP_SIZE)
+		{
+			return NextDSVSlot++;
+		}
+		if (LoggedDSVHeapFull)
+		{
+			return 0;
+		}
+		LoggedDSVHeapFull = true;
 	}
-	if (NextDSVSlot < DSV_HEAP_SIZE)
-	{
-		return NextDSVSlot++;
-	}
-	WWDEBUG_SAY(("DX12: out of depth stencil view slots"));
+	// Reported once; depth targets created from here on are missing.
+	WWDEBUG_SAY(("DX12: out of depth stencil view slots (%d)", (int)DSV_HEAP_SIZE - 1));
+	Debug_Log("frame %llu: out of depth stencil view slots (%d), further depth targets are not created",
+		Get_Frame_Number(), (int)DSV_HEAP_SIZE - 1);
+	Flush_Debug_Log_Now();
 	return 0;
 }
 

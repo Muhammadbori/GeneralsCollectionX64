@@ -58,6 +58,7 @@
 #include "WW3D2/texture.h"
 #include "WW3D2/surfaceclass.h"
 #include "WW3D2/textureloader.h"
+#include "WW3D2/ddsfile.h"
 #include "WW3D2/ww3dformat.h"
 #include "WW3D2/colorspace.h"
 #include "WW3D2/Backend/DX12/dx12device.h"
@@ -661,9 +662,24 @@ void W3DAssetManager::Remap_Palette(SurfaceClass *surface, const int color, Bool
 	CPU only surface, and updates desc to that surface's size and format. */
 static SurfaceClass *loadDX12RecolorSource(TextureClass *texture, SurfaceClass::SurfaceDescription &desc)
 {
-	const bool compressed = desc.Format == WW3D_FORMAT_DXT1 || desc.Format == WW3D_FORMAT_DXT2 ||
-		desc.Format == WW3D_FORMAT_DXT3 || desc.Format == WW3D_FORMAT_DXT4 || desc.Format == WW3D_FORMAT_DXT5;
-	DX12TextureClass *source = TextureLoader::Load_DX12_Surface_Immediate(texture->Get_Full_Path(), desc.Format, compressed);
+	WW3DFormat format = desc.Format;
+	bool compressed = format == WW3D_FORMAT_DXT1 || format == WW3D_FORMAT_DXT2 ||
+		format == WW3D_FORMAT_DXT3 || format == WW3D_FORMAT_DXT4 || format == WW3D_FORMAT_DXT5;
+	// The loader reads the DDS file only for compressed formats and otherwise only the TGA file. A
+	// texture held in a DXT DDS file but described in another format is loaded from the DDS file in
+	// the format it holds. DDSFileClass reads only DXT files, so any other DDS file uses the TGA file.
+	if (!compressed)
+	{
+		DDSFileClass dds(texture->Get_Full_Path(), 0);
+		const WW3DFormat dds_format = dds.Get_Format();
+		if (dds.Is_Available() && (dds_format == WW3D_FORMAT_DXT1 || dds_format == WW3D_FORMAT_DXT2 ||
+			dds_format == WW3D_FORMAT_DXT3 || dds_format == WW3D_FORMAT_DXT4 || dds_format == WW3D_FORMAT_DXT5))
+		{
+			format = WW3D_FORMAT_UNKNOWN;
+			compressed = true;
+		}
+	}
+	DX12TextureClass *source = TextureLoader::Load_DX12_Surface_Immediate(texture->Get_Full_Path(), format, compressed);
 	if (source == nullptr)
 		return nullptr;
 	SurfaceClass *surface = NEW_REF(SurfaceClass,(source,0));

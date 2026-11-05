@@ -38,6 +38,9 @@ struct tagRECT;
 class DX12TextureClass;
 
 extern bool DX12Device_DebugLayer;
+// Directory for dx12debug.log, normally the user data directory; set before the device initializes.
+// Without one, or when the file cannot be created there, the log goes to the current directory.
+void DX12Device_Set_Debug_Log_Directory(const char * directory);
 
 enum
 {
@@ -192,7 +195,8 @@ public:
 	static void Begin_Frame();
 	// Ends the frame and presents it. Without present, like Direct3D 8 EndScene without Present
 	// (render to texture passes before the main scene), a frame being recorded continues in the same
-	// command list and ends with the next present; outside a frame, pending uploads are executed.
+	// command list and ends with the next present (or is submitted after 16 such calls in a row);
+	// outside a frame, pending uploads are executed.
 	static void End_Frame(bool present);
 	// Clears the current viewport of the current render target and, when one is bound, its depth
 	// stencil buffer.

@@ -658,6 +658,10 @@ public:
 	static HRESULT Get_Render_Target_Surface(IDirect3DSurface8** surface);
 	static HRESULT Get_Depth_Stencil_Surface(IDirect3DSurface8** surface);
 	static HRESULT Set_Render_Target_Raw(IDirect3DSurface8* render_target, IDirect3DSurface8* depth_buffer);
+	// Direct3D 12 version of Set_Render_Target_Raw: selects a render target texture with the default
+	// depth buffer (null selects the back buffer) and leaves IsRenderToTexture unchanged. Returns false
+	// outside Direct3D 12 mode or when the texture could not be selected.
+	static bool Set_DX12_Render_Target_Raw(TextureClass* texture);
 	static HRESULT Copy_Rects(
 		IDirect3DSurface8* pSourceSurface,
 		CONST RECT* pSourceRectsArray,

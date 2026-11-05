@@ -98,6 +98,7 @@ static void drawFramerateBar();
 #include "WW3D2/render2dsentence.h"
 #include "WW3D2/sortingrenderer.h"
 #include "WW3D2/textureloader.h"
+#include "WW3D2/Backend/DX12/dx12device.h"
 #include "WW3D2/dx8webbrowser.h"
 #include "WW3D2/mesh.h"
 #include "WW3D2/hlod.h"
@@ -840,6 +841,10 @@ void W3DDisplay::init()
 		{
 			SortingRendererClass::SetMinVertexBufferSize(1);
 		}
+		// The user data directory is known only now in Generals (it comes from the INI files), so set the
+		// -dx12debug log directory again before the DX12 device opens the log.
+		if (DX12Device_DebugLayer)
+			DX12Device_Set_Debug_Log_Directory(TheGlobalData->getPath_UserData().str());
 		if (WW3D::Init( ApplicationHWnd ) != WW3D_ERROR_OK)
 			throw ERROR_INVALID_D3D;	//failed to initialize.  User probably doesn't have DX 8.1
 

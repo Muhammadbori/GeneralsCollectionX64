@@ -43,6 +43,7 @@ Bool TheDebugIgnoreSyncErrors = FALSE;
 extern Int DX8Wrapper_PreserveFPU;
 extern bool DX8Wrapper_UseDX12;
 extern bool DX12Device_DebugLayer;
+extern void DX12Device_Set_Debug_Log_Directory(const char * directory);
 
 #ifdef DEBUG_CRC
 Int TheCRCFirstFrameToLog = -1;
@@ -138,6 +139,7 @@ Int parseDX12(char *args[], int)
 Int parseDX12Debug(char *args[], int)
 {
 	DX12Device_DebugLayer = true;
+	DX12Device_Set_Debug_Log_Directory(TheGlobalData->getPath_UserData().str());
 
 	return 1;
 }
