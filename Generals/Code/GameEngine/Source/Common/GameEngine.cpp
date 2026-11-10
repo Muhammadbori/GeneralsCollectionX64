@@ -701,9 +701,13 @@ Bool GameEngine::canUpdateRegularGameLogic(UnsignedInt logicTimeQueryFlags)
 	const Bool useFastMode = TheGlobalData->m_TiVOFastMode && TheGameLogic->isInReplayGame();
 #endif
 
-	if (useFastMode || logicTimeScaleFps >= maxRenderFps)
+	// TheSuperHackers @info The script fast forward runs the logic on every engine update, as before.
+	const Bool useScriptFastForward = TheFramePacer->isScriptFastForward();
+
+	if (useFastMode || useScriptFastForward || logicTimeScaleFps >= maxRenderFps)
 	{
-		// Logic time scale is uncapped or larger equal Render FPS. Update straight away.
+		// Logic time scale is uncapped or larger equal the actual update FPS limit. Update straight away.
+		// Outside of network games the update FPS limit is raised to the logic time scale FPS when that is larger.
 		return true;
 	}
 	else

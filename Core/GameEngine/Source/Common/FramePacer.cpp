@@ -40,7 +40,9 @@ FramePacer::FramePacer()
 	m_updateTime = 1.0f / (Real)BaseFps; // initialized to something to avoid division by zero on first use
 	m_logicFramePhase = 1.0f;
 	m_enableFpsLimit = FALSE;
-	m_enableLogicTimeScale = FALSE;
+	// TheSuperHackers @tweak The logic time scale is enabled by default so that the simulation runs at
+	// LOGICFRAMES_PER_SECOND outside of network games, independent of the render frame rate.
+	m_enableLogicTimeScale = TRUE;
 	m_isTimeFrozen = FALSE;
 	m_isGameHalted = FALSE;
 }
@@ -107,10 +109,7 @@ Bool FramePacer::isActualFramesPerSecondLimitEnabled() const
 {
 	Bool allowFpsLimit = true;
 
-	if (TheTacticalView != nullptr)
-	{
-		allowFpsLimit &= TheTacticalView->getTimeMultiplier()<=1 && !TheScriptEngine->isTimeFast();
-	}
+	allowFpsLimit &= !isScriptFastForward();
 
 	if (TheGameLogic != nullptr)
 	{
@@ -127,9 +126,33 @@ Bool FramePacer::isActualFramesPerSecondLimitEnabled() const
 	return allowFpsLimit;
 }
 
+Bool FramePacer::isScriptFastForward() const
+{
+	if (TheTacticalView != nullptr)
+	{
+		return TheTacticalView->getTimeMultiplier() > 1 || TheScriptEngine->isTimeFast();
+	}
+	return false;
+}
+
 Int FramePacer::getActualFramesPerSecondLimit() const
 {
-	return isActualFramesPerSecondLimitEnabled() ? getFramesPerSecondLimit() : RenderFpsPreset::UncappedFpsValue;
+	if (!isActualFramesPerSecondLimitEnabled())
+	{
+		return RenderFpsPreset::UncappedFpsValue;
+	}
+
+	Int fpsLimit = getFramesPerSecondLimit();
+
+	// TheSuperHackers @tweak Outside of network games the update loop is raised to the logic time scale fps
+	// when that is above the render fps limit, so that one logic update per engine update reaches the chosen
+	// game speed. The raw value is used so that frozen time and halted game do not change the loop rate.
+	if (TheNetwork == nullptr && isLogicTimeScaleEnabled())
+	{
+		fpsLimit = std::max(fpsLimit, getLogicTimeScaleFps());
+	}
+
+	return fpsLimit;
 }
 
 Real FramePacer::getUpdateTime()  const
@@ -212,6 +235,7 @@ Int FramePacer::getActualLogicTimeScaleFps(LogicTimeQueryFlags flags) const
 	}
 
 	// Returns uncapped value to align with the render update as per the original game behavior.
+	// This is only used while the time scale is temporarily disabled, for example for the single frame step.
 	return RenderFpsPreset::UncappedFpsValue;
 }
 
@@ -222,7 +246,7 @@ Real FramePacer::getActualLogicTimeScaleRatio(LogicTimeQueryFlags flags) const
 
 Real FramePacer::getActualLogicTimeScaleOverFpsRatio(LogicTimeQueryFlags flags) const
 {
-	// Clamps ratio to min 1, because the logic frame rate is currently capped by the render frame rate.
+	// Clamps ratio to max 1, because at most one logic update happens per render update.
 	return min(1.0f, (Real)getActualLogicTimeScaleFps(flags) / getUpdateFps());
 }
 

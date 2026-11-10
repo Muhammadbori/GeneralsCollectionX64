@@ -406,7 +406,7 @@ void setFPSTextBox( Int sliderPos )
 		GadgetStaticTextSetText(staticTextGameSpeed, text);
 		return;
 	}
-	else if( sliderPos == TheGlobalData->m_framesPerSecondLimit )
+	else if( sliderPos == LOGICFRAMES_PER_SECOND )
 	{
 		// set different color
 		staticTextGameSpeed->winEnable(FALSE);
@@ -422,12 +422,13 @@ void reallyDoStart()
 
 	//NameKeyType sliderGameSpeedID = TheNameKeyGenerator->nameToKey( "SkirmishGameOptionsMenu.wnd:SliderGameSpeed" );
 	GameWindow *sliderGameSpeed = TheWindowManager->winGetWindowFromId( parentSkirmishGameOptions, sliderGameSpeedID );
-	Int maxFPS = GadgetSliderGetPosition( sliderGameSpeed );
-	DEBUG_LOG(("GameSpeedSlider was at %d", maxFPS));
-	if (maxFPS > GREATER_NO_FPS_LIMIT)
-		maxFPS = 1000;
-	if (maxFPS < 15)
-		maxFPS = 15;
+	// TheSuperHackers @tweak The game speed is the logic time scale FPS. It no longer sets the render FPS limit.
+	Int gameSpeedFps = GadgetSliderGetPosition( sliderGameSpeed );
+	DEBUG_LOG(("GameSpeedSlider was at %d", gameSpeedFps));
+	if (gameSpeedFps > GREATER_NO_FPS_LIMIT)
+		gameSpeedFps = 1000; // as fast as possible
+	if (gameSpeedFps < 15)
+		gameSpeedFps = 15;
 
   TheWritableGlobalData->m_mapName = TheSkirmishGameInfo->getMap();
   TheSkirmishGameInfo->startGame(0);
@@ -447,7 +448,7 @@ void reallyDoStart()
 		msg->appendIntegerArgument(GAME_SKIRMISH);
 		msg->appendIntegerArgument(DIFFICULTY_NORMAL);	// not really used; just specified so we can add the game speed last
 		msg->appendIntegerArgument(0);									// not really used; just specified so we can add the game speed last
-		msg->appendIntegerArgument(maxFPS);							// FPS limit
+		msg->appendIntegerArgument(gameSpeedFps);				// game speed
 	}
 	else
 	{
@@ -457,7 +458,7 @@ void reallyDoStart()
 		msg->appendIntegerArgument(GAME_SINGLE_PLAYER);
 		msg->appendIntegerArgument(DIFFICULTY_NORMAL);	// not really used; just specified so we can add the game speed last
 		msg->appendIntegerArgument(0);									// not really used; just specified so we can add the game speed last
-		msg->appendIntegerArgument(maxFPS);							// FPS limit
+		msg->appendIntegerArgument(gameSpeedFps);				// game speed
 	}
 }
 
@@ -1347,7 +1348,7 @@ void SkirmishGameOptionsMenuInit( WindowLayout *layout, void *userData )
 	// set up the game speed slider
 //	NameKeyType sliderGameSpeedID = TheNameKeyGenerator->nameToKey( "SkirmishGameOptionsMenu.wnd:SliderGameSpeed" );
 	GameWindow *sliderGameSpeed = TheWindowManager->winGetWindowFromId( parentSkirmishGameOptions, sliderGameSpeedID );
-	Int sliderPos = max(15,min(61,prefs.getInt("FPS", TheGlobalData->m_framesPerSecondLimit)));
+	Int sliderPos = max(15,min(61,prefs.getInt("FPS", LOGICFRAMES_PER_SECOND)));
 	GadgetSliderSetPosition( sliderGameSpeed, sliderPos );
 	setFPSTextBox(sliderPos);
 	buttonStart->winSetText(TheGameText->fetch("GUI:Start"));

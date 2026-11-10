@@ -882,15 +882,22 @@ bool GameLogic::onNewGame(MAYBE_UNUSED GameMessage *msg)
 	if ( msg->getArgumentCount() >= 3 )
 		rankPoints = msg->getArgument( 2 )->integer;
 
+	// TheSuperHackers @tweak The optional fourth argument is the game speed. It used to set the render FPS limit,
+	// which also set the game speed because the logic was updated once per render update. It now sets the logic
+	// time scale FPS instead and leaves the render FPS limit alone. Without the argument the game runs at the
+	// normal speed. The value 1000 and above, sent by the "--" game speed slider position, means as fast as possible.
+	Int gameSpeedFps = LOGICFRAMES_PER_SECOND;
 	if ( msg->getArgumentCount() >= 4 )
 	{
-		Int maxFPS = msg->getArgument( 3 )->integer;
-		if (maxFPS < 1 || maxFPS > 1000)
-			maxFPS = TheGlobalData->m_framesPerSecondLimit;
-		DEBUG_LOG(("Setting max FPS limit to %d FPS", maxFPS));
-		TheFramePacer->setFramesPerSecondLimit(maxFPS);
-		TheWritableGlobalData->m_useFpsLimit = true;
+		gameSpeedFps = msg->getArgument( 3 )->integer;
+		if (gameSpeedFps < 1)
+			gameSpeedFps = LOGICFRAMES_PER_SECOND;
+		else if (gameSpeedFps >= 1000)
+			gameSpeedFps = RenderFpsPreset::UncappedFpsValue;
 	}
+	DEBUG_LOG(("Setting the logic time scale to %d FPS", gameSpeedFps));
+	TheFramePacer->setLogicTimeScaleFps(gameSpeedFps);
+	TheFramePacer->enableLogicTimeScale(TRUE);
 
 	// prepare for new game
 	prepareNewGame( gameMode, diff, rankPoints );

@@ -196,7 +196,8 @@ static void restartMissionMenu()
 
 	Int rankPointsStartedWith = TheGameLogic->getRankPointsToAddAtGameStart();// must write down before reset
 	GameDifficulty diff = TheScriptEngine->getGlobalDifficulty();
-	Int fps = TheFramePacer->getFramesPerSecondLimit();
+	// TheSuperHackers @tweak Keep the current game speed on restart. It no longer is the render FPS limit.
+	Int gameSpeedFps = TheFramePacer->getLogicTimeScaleFps();
 
 	TheGameLogic->clearGameData(FALSE);
 	TheGameEngine->setQuitting(FALSE);
@@ -213,7 +214,7 @@ static void restartMissionMenu()
 		msg->appendIntegerArgument((Int)gameMode);
 		msg->appendIntegerArgument(diff);
 		msg->appendIntegerArgument(rankPointsStartedWith);
-		msg->appendIntegerArgument(fps);
+		msg->appendIntegerArgument(gameSpeedFps);
 		DEBUG_LOG(("Restarting game mode %d, Diff=%d, RankPoints=%d", (Int)gameMode,
 																																		TheScriptEngine->getGlobalDifficulty(),
 																																		rankPointsStartedWith)

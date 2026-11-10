@@ -46,7 +46,8 @@ public:
 	void enableFramesPerSecondLimit( Bool enable ); ///< Enable or disable the update fps limit.
 	Bool isFramesPerSecondLimitEnabled() const; ///< Returns whether the fps limit is enabled here.
 	Bool isActualFramesPerSecondLimitEnabled() const; ///< Returns whether the fps limit is actually enabled when considering all game settings and setups.
-	Int  getActualFramesPerSecondLimit() const; // Get the actual update fps limit.
+	Bool isScriptFastForward() const; ///< Returns whether a script or the tactical view fast forwards the game time.
+	Int  getActualFramesPerSecondLimit() const; ///< Get the actual update fps limit. Outside of network games it is raised to the logic time scale fps.
 
 	Real getUpdateTime() const; ///< Get the last update delta time in seconds.
 	Real getUpdateFps() const; ///< Get the last update fps.
@@ -57,9 +58,9 @@ public:
 	Bool isTimeFrozen() const;
 	Bool isGameHalted() const;
 
-	void setLogicTimeScaleFps( Int fps ); ///< Set the logic time scale fps and therefore scale the simulation time. Is capped by the max render fps and does not apply to network matches.
+	void setLogicTimeScaleFps( Int fps ); ///< Set the logic time scale fps and therefore the simulation speed. Does not apply to network matches. Use RenderFpsPreset::UncappedFpsValue for as fast as possible.
 	Int  getLogicTimeScaleFps() const; ///< Get the raw logic time scale fps value.
-	void enableLogicTimeScale( Bool enable ); ///< Enable or disable the logic time scale setup. If disabled, the simulation time scale is bound to the render frame time or network update time.
+	void enableLogicTimeScale( Bool enable ); ///< Enable or disable the logic time scale setup. Enabled by default. If disabled, the simulation time scale is bound to the render frame time or network update time.
 	Bool isLogicTimeScaleEnabled() const; ///< Check whether the logic time scale setup is enabled.
 	Int  getActualLogicTimeScaleFps(LogicTimeQueryFlags flags = 0) const; ///< Get the real logic time scale fps, depending on the max render fps, network state and enabled state.
 	Real getActualLogicTimeScaleRatio(LogicTimeQueryFlags flags = 0) const; ///< Get the real logic time scale ratio, depending on the max render fps, network state and enabled state.

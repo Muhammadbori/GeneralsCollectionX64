@@ -67,9 +67,11 @@ public:
 #if RTS_DEBUG
 		MinFpsValue = 5,
 #else
-		MinFpsValue = LOGICFRAMES_PER_SECOND,
+		MinFpsValue = 15, ///< Matches the slowest skirmish game speed.
 #endif
 		StepFpsValue = 5,
+		MaxSteppedFpsValue = 60, ///< Matches the fastest numbered skirmish game speed. The next step is "as fast as possible".
+		MaxFpsValue = 1000, ///< Values at or above this mean as fast as possible.
 	};
 
 	static UnsignedInt getNextFpsValue(UnsignedInt value);
