@@ -29,6 +29,7 @@
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
 
 #include "Common/FramePacer.h"
+#include "Common/FrameShots.h"
 #include "Common/GameEngine.h"
 #include "Common/ReplaySimulation.h"
 
@@ -53,6 +54,10 @@ Int GameMain()
 	{
 		// run it
 		TheGameEngine->execute();
+		if (FrameShots::getFailureExitCode() != 0)
+		{
+			exitcode = FrameShots::getFailureExitCode();
+		}
 	}
 
 	// since execute() returned, we are exiting the game

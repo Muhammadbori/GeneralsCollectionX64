@@ -34,6 +34,7 @@
 
 
 Bool FrameShots::s_enabled = FALSE;
+Int FrameShots::s_failureExitCode = 0;
 
 namespace
 {
@@ -259,6 +260,21 @@ void FrameShots::capture(UnsignedInt listedFrame)
 		TheGameLogic->getFrame(),
 		(double)TheFramePacer->getLogicFramePhase());
 	fflush(s_csv);
+}
+
+void FrameShots::failStartup(const char *message, Int exitCode)
+{
+	DEBUG_LOG(("Startup failure: %s", message));
+	s_failureExitCode = (exitCode != 0) ? exitCode : 1;
+	if (!s_enabled)
+	{
+		// A person is probably watching. With -shotFrames nobody may be there, so no dialog then.
+		MessageBoxA(nullptr, message, "Command & Conquer", MB_OK | MB_ICONERROR);
+	}
+	if (TheGameEngine != nullptr)
+	{
+		TheGameEngine->setQuitting(TRUE);
+	}
 }
 
 void FrameShots::exitGame()

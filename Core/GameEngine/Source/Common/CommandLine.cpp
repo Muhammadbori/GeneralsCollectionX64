@@ -102,6 +102,23 @@ static void ConvertShortMapPathToLongMapPath(AsciiString &mapName)
 	// remove the .map from the end.
 	token.truncateBy(4);
 
+	// TheSuperHackers @bugfix The long form <dir>\<name>\<name>.map is already complete. Expanding it again would
+	// give <dir>\<name>\<name>\<name>.map, a map that does not exist.
+	if (actualpath.isNotEmpty())
+	{
+		AsciiString lastDir = actualpath;
+		lastDir.removeLastChar(); // the trailing separator
+		const char *lastSeparator = lastDir.reverseFind('\\');
+		const char *lastComponent = lastSeparator ? lastSeparator + 1 : lastDir.str();
+		if (stricmp(lastComponent, token.str()) == 0)
+		{
+			actualpath.concat(token);
+			actualpath.concat(".map");
+			mapName = actualpath;
+			return;
+		}
+	}
+
 	actualpath.concat(token);
 	actualpath.concat('\\');
 	actualpath.concat(token);

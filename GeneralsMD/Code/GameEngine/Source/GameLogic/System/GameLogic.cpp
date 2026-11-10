@@ -34,6 +34,7 @@
 #include "Common/BuildAssistant.h"
 #include "Common/CRCDebug.h"
 #include "Common/FramePacer.h"
+#include "Common/FrameShots.h"
 #include "Common/GameAudio.h"
 #include "Common/GameEngine.h"
 #include "Common/GameLOD.h"
@@ -1351,7 +1352,16 @@ void GameLogic::tryStartNewGame( Bool loadingSaveGame )
 	loadMapINI( TheGlobalData->m_mapName );
 
 	// load a map
-	TheTerrainLogic->loadMap( TheGlobalData->m_mapName, false );
+	if( !TheTerrainLogic->loadMap( TheGlobalData->m_mapName, false ) && !loadingSaveGame
+		&& TheGlobalData->m_initialFile.isNotEmpty() && TheGlobalData->m_mapName.compareNoCase( TheGlobalData->m_initialFile ) == 0 )
+	{
+		// TheSuperHackers @bugfix A map given with -file that cannot be opened must not start an empty world.
+		AsciiString message;
+		message.format( "The map given with -file could not be opened: %s\n"
+			"-file takes the short form, for example Maps\\Tournament Desert.map", TheGlobalData->m_initialFile.str() );
+		FrameShots::failStartup( message.str(), 3 );
+		throw QuitGameException();
+	}
 	// anytime the world's size changes, must reset the partition mgr
 	//ThePartitionManager->init();
 

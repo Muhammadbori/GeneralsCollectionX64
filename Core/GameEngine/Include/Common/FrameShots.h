@@ -30,6 +30,12 @@ public:
 
 	static Bool isEnabled() { return s_enabled; }
 
+	/// Ends a command line started game that cannot run (for example the -file map does not exist): logs the
+	/// message, shows it in a message box unless frame shots are on (unattended runs must not block), and makes the
+	/// engine quit with a non-zero exit code, see getFailureExitCode().
+	static void failStartup(const char *message, Int exitCode);
+	static Int getFailureExitCode() { return s_failureExitCode; } ///< 0 unless failStartup was called.
+
 	static void onLogicUpdated(); ///< Call after every regular logic update.
 	static void onClientUpdated(); ///< Call once per engine update, after the client update that draws.
 
@@ -40,4 +46,5 @@ private:
 	static void exitGame();
 
 	static Bool s_enabled;
+	static Int s_failureExitCode;
 };
