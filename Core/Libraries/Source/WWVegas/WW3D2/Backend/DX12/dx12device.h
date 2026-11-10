@@ -46,8 +46,12 @@ extern bool DX12Device_NoShaderCache;
 // Without one the shader cache is off.
 void DX12Device_Set_User_Data_Directory(const char * directory);
 
+// TheSuperHackers @feature -dx12stats writes the performance counter lines to <user data>\dx12stats.log
+// without the debug layer, with frame times and the main thread time of the sections below.
+extern bool DX12Device_Stats;
+
 // TheSuperHackers @info Per-frame performance counters, always counted (plain increments). With
-// -dx12debug, dx12device.cpp writes their per-frame averages to dx12debug.log at every 300-frame
+// -dx12debug or -dx12stats, dx12device.cpp writes their per-frame averages at every 300-frame
 // heartbeat and at shutdown. Times are QueryPerformanceCounter ticks. Main thread only, except the
 // texture upload counters, which are updated under the device's resource mutex.
 enum DX12FenceWaitSite
@@ -88,6 +92,65 @@ struct DX12FrameCounters
 	unsigned long long FenceWaits[DX12_WAIT_SITE_COUNT];
 	unsigned long long FenceWaitTicks[DX12_WAIT_SITE_COUNT];
 	unsigned long long PresentTicks;
+
+	// Main thread time of sections of the frame (DX12StatsScope).
+	unsigned long long TextureLoadTicks;	// TextureLoader on the main thread: file reads, decoding, creation and upload
+	unsigned long long TextureCreateTicks;	// DX12TextureClass resource creation
+	unsigned long long TextureUploadTicks;	// DX12TextureClass level uploads: upload buffer, conversion, queueing
+	unsigned long long UploadExecutes;		// Execute_Uploads_Now calls that executed uploads
+	unsigned long long UploadExecuteTicks;	// Execute_Uploads_Now, its fence wait included
+	unsigned long long UploadRecordTicks;	// Record_Uploads
+	unsigned long long DrawTicks;			// DX12Device::Draw
+	unsigned long long DrawFillTicks;		// DX8Wrapper::Fill_DX12_Draw_State
+	unsigned long long BufferTicks;			// DX12BufferClass lock, unlock and moves to frame memory
+	unsigned long long SubmitTicks;			// Submit_Frame: uploads, gamma pass, close, execute, present
+};
+
+unsigned long long DX12Device_Query_Ticks();
+// True on the thread that created the device; false without a device.
+bool DX12Device_Is_Main_Thread();
+
+// Adds the time of a scope on the main thread to a tick counter of DX12Device_Counters. With a depth
+// variable, nested scopes that share it count only the outermost one.
+class DX12StatsScope
+{
+public:
+	explicit DX12StatsScope(unsigned long long & counter, int * depth = nullptr) : Counter(nullptr), Depth(nullptr), Start(0)
+	{
+		if (!DX12Device_Is_Main_Thread())
+		{
+			return;
+		}
+		if (depth)
+		{
+			Depth = depth;
+			if ((*depth)++ != 0)
+			{
+				return;
+			}
+		}
+		Counter = &counter;
+		Start = DX12Device_Query_Ticks();
+	}
+	~DX12StatsScope()
+	{
+		if (Counter)
+		{
+			*Counter += DX12Device_Query_Ticks() - Start;
+		}
+		if (Depth)
+		{
+			--*Depth;
+		}
+	}
+
+private:
+	DX12StatsScope(const DX12StatsScope &);
+	DX12StatsScope & operator=(const DX12StatsScope &);
+
+	unsigned long long * Counter;
+	int * Depth;
+	unsigned long long Start;
 };
 
 // The counters of the frame being built.

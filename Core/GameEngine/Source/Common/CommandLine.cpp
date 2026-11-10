@@ -45,6 +45,7 @@ extern Int DX8Wrapper_PreserveFPU;
 extern bool DX8Wrapper_UseDX12;
 extern bool DX12Device_DebugLayer;
 extern bool DX12Device_NoShaderCache;
+extern bool DX12Device_Stats;
 extern void DX12Device_Set_Debug_Log_Directory(const char * directory);
 
 #ifdef DEBUG_CRC
@@ -216,6 +217,15 @@ Int parseUserDataDir(char *args[], int num)
 Int parseNoShaderCache(char *args[], int)
 {
 	DX12Device_NoShaderCache = true;
+
+	return 1;
+}
+
+// TheSuperHackers @feature Write the Direct3D 12 performance counters to dx12stats.log in the user data
+// folder, without the debug layer.
+Int parseDX12Stats(char *args[], int)
+{
+	DX12Device_Stats = true;
 
 	return 1;
 }
@@ -1307,6 +1317,9 @@ static CommandLineParam paramsForStartup[] =
 
 	// TheSuperHackers @feature 2026 Enable the Direct3D 12 debug layer and log its messages to dx12debug.log.
 	{ "-dx12debug", parseDX12Debug },
+
+	// TheSuperHackers @feature 2026 Write the Direct3D 12 performance counters to dx12stats.log.
+	{ "-dx12stats", parseDX12Stats },
 
 	// TheSuperHackers @feature 2026 Use another user data folder (settings, replays, saves, logs).
 	{ "-userDataDir", parseUserDataDir },

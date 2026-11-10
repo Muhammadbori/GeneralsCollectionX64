@@ -2922,6 +2922,7 @@ static unsigned long long DX12_Fan_To_List(const unsigned short* src, unsigned p
 
 bool DX8Wrapper::Fill_DX12_Draw_State(DX12DrawDesc& desc)
 {
+	DX12StatsScope stats_scope(DX12Device_Counters.DrawFillTicks);
 	const DX12DeviceStateStruct& dev=DX12Device_State;
 
 	// Programmable shaders are the game shaders of Create_DX12_Shader; other handles cannot be drawn.

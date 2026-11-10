@@ -63,6 +63,9 @@
 #include "Backend/DX12/dx12resource.h"
 
 bool TextureLoader::TextureLoadSuspended;
+
+// TheSuperHackers @info Nesting depth of the -dx12stats texture load scopes on the main thread.
+static int _DX12StatsLoadDepth = 0;
 int TextureLoader::TextureInactiveOverrideTime = 0;
 
 #define USE_MANAGED_TEXTURES
@@ -867,6 +870,7 @@ void TextureLoader::Request_Thumbnail(TextureBaseClass *tc)
 	// from retiring any tasks related to this texture. It also
 	// serializes calls to Request_Thumbnail from multiple threads.
 	FastCriticalSectionClass::LockClass lock(_ForegroundCriticalSection);
+	DX12StatsScope stats_scope(DX12Device_Counters.TextureLoadTicks, &_DX12StatsLoadDepth);
 
 	// Has a Direct3D texture already been loaded?
 	if (tc->Has_Texture_Object()) {
@@ -910,6 +914,7 @@ void TextureLoader::Request_Background_Loading(TextureBaseClass *tc)
 	// serializes calls to Request_Background_Loading from other
 	// threads.
 	FastCriticalSectionClass::LockClass foreground_lock(_ForegroundCriticalSection);
+	DX12StatsScope stats_scope(DX12Device_Counters.TextureLoadTicks, &_DX12StatsLoadDepth);
 
 	// Has the texture already been loaded?
 	if (tc->Is_Initialized()) {
@@ -941,6 +946,7 @@ void TextureLoader::Request_Foreground_Loading(TextureBaseClass *tc)
 	// serializes calls to Request_Foreground_Loading from other
 	// threads.
 	FastCriticalSectionClass::LockClass foreground_lock(_ForegroundCriticalSection);
+	DX12StatsScope stats_scope(DX12Device_Counters.TextureLoadTicks, &_DX12StatsLoadDepth);
 
 	// Has the texture already been loaded?
 	if (tc->Is_Initialized()) {
@@ -1087,6 +1093,7 @@ void TextureLoader::Update(void (*network_callback)())
 	// grab foreground lock to prevent any other thread from
 	// modifying texture tasks.
 	FastCriticalSectionClass::LockClass lock(_ForegroundCriticalSection);
+	DX12StatsScope stats_scope(DX12Device_Counters.TextureLoadTicks, &_DX12StatsLoadDepth);
 
 	unsigned long time = timeGetTime();
 

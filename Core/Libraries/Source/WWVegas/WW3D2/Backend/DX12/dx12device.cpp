@@ -73,6 +73,7 @@ void DX12Device_Write_SRV(unsigned slot, ID3D12Resource * resource, unsigned dxg
 
 DX12FrameCounters DX12Device_Counters;
 bool DX12Device_DebugLayer = false;
+bool DX12Device_Stats = false;
 bool DX12Device_NoShaderCache = false;
 
 bool DX12Device::Requested = false;
@@ -409,18 +410,31 @@ ComPtr<ID3D12Resource> WhiteTexture;
 
 // Performance counters (dx12device.h). Counters is the frame being built; it is folded into the
 // period totals at each present and written at the heartbeat.
+enum { LONG_FRAME_LIMITS = 4 };
+const double LongFrameLimitMs[LONG_FRAME_LIMITS] = { 33.4, 50.0, 100.0, 250.0 };
+const double StatsFrameLogMs = 50.0;	// -dx12stats writes a line for each frame at least this long
+
 struct CounterPeriod
 {
 	CounterPeriod() { memset(this, 0, sizeof(*this)); }
 
 	unsigned Frames;
 	DX12FrameCounters Sum;
-	unsigned long long MaxPipelineCreateTicks;
-	unsigned long long MaxShaderCompileTicks;
-	unsigned long long MaxFenceWaitTicks[DX12_WAIT_SITE_COUNT];
-	unsigned long long MaxPresentTicks;
+	DX12FrameCounters Max;			// the largest single frame value of each counter
+	// Frame times, present to present.
+	unsigned long long FrameTicks;
+	unsigned long long MaxFrameTicks;
+	unsigned LongFrames[LONG_FRAME_LIMITS];		// frames longer than LongFrameLimitMs
+	unsigned long long LostTicks;				// the time of each frame beyond the first limit
+	DX12FrameCounters LongSum;		// the counters of the frames longer than the first limit
 };
 CounterPeriod CountersPeriod;
+UINT64 LastFoldTicks = 0;		// when the last presented frame was folded; 0 before the first
+
+// -dx12stats
+FILE * StatsLog = nullptr;
+bool StatsLogStarted = false;
+UINT64 StatsLogStartTicks = 0;
 
 // Gamma (brightness option), applied as a final color curve on the presented back buffer. The ramp is
 // kept without a device too, so a ramp set before the device exists still applies.
@@ -1018,6 +1032,7 @@ void Record_Uploads(ID3D12GraphicsCommandList * list)
 	{
 		return;
 	}
+	DX12StatsScope stats_scope(DX12Device_Counters.UploadRecordTicks);
 
 	std::vector<PendingUpload> uploads;
 	{
@@ -1084,6 +1099,8 @@ void Execute_Uploads_Now()
 	{
 		return;
 	}
+	DX12StatsScope stats_scope(DX12Device_Counters.UploadExecuteTicks);
+	++DX12Device_Counters.UploadExecutes;
 
 	if (FAILED(UploadAllocator->Reset()) || FAILED(UploadList->Reset(UploadAllocator.Get(), nullptr)))
 	{
@@ -2477,21 +2494,99 @@ void Fold_Frame_Counters()
 		memset(&DX12Device_Counters, 0, sizeof(DX12Device_Counters));
 	}
 
+	const UINT64 now = Query_Ticks();
+	const UINT64 frame_ticks = LastFoldTicks != 0 ? now - LastFoldTicks : 0;
+	LastFoldTicks = now;
+
+	LARGE_INTEGER frequency;
+	QueryPerformanceFrequency(&frequency);
+	const double frame_ms = frame_ticks * 1000.0 / (double)frequency.QuadPart;
+
 	CounterPeriod & period = CountersPeriod;
 	++period.Frames;
+	period.FrameTicks += frame_ticks;
+	period.MaxFrameTicks = std::max(period.MaxFrameTicks, frame_ticks);
+	const bool long_frame = frame_ms > LongFrameLimitMs[0];
+	for (int i = 0; i < LONG_FRAME_LIMITS; ++i)
+	{
+		if (frame_ms > LongFrameLimitMs[i])
+		{
+			++period.LongFrames[i];
+		}
+	}
+	if (long_frame)
+	{
+		period.LostTicks += frame_ticks - (UINT64)(LongFrameLimitMs[0] * (double)frequency.QuadPart / 1000.0);
+	}
+
 	const unsigned long long * src = (const unsigned long long *)&frame;
-	unsigned long long * dst = (unsigned long long *)&period.Sum;
+	unsigned long long * sum = (unsigned long long *)&period.Sum;
+	unsigned long long * max = (unsigned long long *)&period.Max;
+	unsigned long long * long_sum = (unsigned long long *)&period.LongSum;
 	for (size_t i = 0; i < sizeof(DX12FrameCounters) / sizeof(unsigned long long); ++i)
 	{
-		dst[i] += src[i];
+		sum[i] += src[i];
+		max[i] = std::max(max[i], src[i]);
+		if (long_frame)
+		{
+			long_sum[i] += src[i];
+		}
 	}
-	period.MaxPipelineCreateTicks = std::max(period.MaxPipelineCreateTicks, frame.PipelineCreateTicks);
-	period.MaxShaderCompileTicks = std::max(period.MaxShaderCompileTicks, frame.ShaderCompileTicks);
-	for (int site = 0; site < DX12_WAIT_SITE_COUNT; ++site)
+
+	if (StatsLog && frame_ms >= StatsFrameLogMs)
 	{
-		period.MaxFenceWaitTicks[site] = std::max(period.MaxFenceWaitTicks[site], frame.FenceWaitTicks[site]);
+		const double ms_per_tick = 1000.0 / (double)frequency.QuadPart;
+		fprintf(StatsLog, "long frame %llu: t=%.3f frame_ms=%.1f tex_load_ms=%.1f tex_create_ms=%.1f tex_upload_ms=%.1f tex_uploads=%llu tex_upload_kb=%.0f"
+			" upload_exec=%llu upload_exec_ms=%.1f upload_record_ms=%.1f draws=%llu draw_ms=%.1f fill_ms=%.1f buffer_ms=%.1f submit_ms=%.1f present_ms=%.1f"
+			" compiles=%llu compile_ms=%.1f cache_hits=%llu pso_creates=%llu pso_ms=%.1f wait_slot_ms=%.1f wait_flush_ms=%.1f\n",
+			DX12Device::Get_Frame_Number(), (now - StatsLogStartTicks) * ms_per_tick / 1000.0, frame_ms,
+			frame.TextureLoadTicks * ms_per_tick, frame.TextureCreateTicks * ms_per_tick, frame.TextureUploadTicks * ms_per_tick,
+			frame.TextureUploads, frame.TextureUploadBytes / 1024.0,
+			frame.UploadExecutes, frame.UploadExecuteTicks * ms_per_tick, frame.UploadRecordTicks * ms_per_tick,
+			frame.DrawCalls, frame.DrawTicks * ms_per_tick, frame.DrawFillTicks * ms_per_tick, frame.BufferTicks * ms_per_tick,
+			frame.SubmitTicks * ms_per_tick, frame.PresentTicks * ms_per_tick,
+			frame.ShaderCompiles, frame.ShaderCompileTicks * ms_per_tick, frame.ShaderCacheHits,
+			frame.PipelineCreates, frame.PipelineCreateTicks * ms_per_tick,
+			frame.FenceWaitTicks[DX12_WAIT_FRAME_SLOT] * ms_per_tick, frame.FenceWaitTicks[DX12_WAIT_FLUSH] * ms_per_tick);
 	}
-	period.MaxPresentTicks = std::max(period.MaxPresentTicks, frame.PresentTicks);
+}
+
+// The first open in a process starts <user data>\dx12stats.log (or dx12stats.log in the current
+// directory without a user data directory), later ones append to it.
+void Open_Stats_Log()
+{
+	if (StatsLog)
+	{
+		return;
+	}
+	static char path[MAX_PATH] = "";
+	if (!StatsLogStarted)
+	{
+		snprintf(path, sizeof(path), "%sdx12stats.log", UserDataDirectory);
+		StatsLog = fopen(path, "w");
+		StatsLogStartTicks = Query_Ticks();
+	}
+	else
+	{
+		StatsLog = fopen(path, "a");
+	}
+	if (!StatsLog)
+	{
+		WWDEBUG_SAY(("DX12: could not open %s", path));
+		return;
+	}
+	StatsLogStarted = true;
+	fprintf(StatsLog, "dx12stats.log: %s\n", path);
+	fflush(StatsLog);
+}
+
+void Close_Stats_Log()
+{
+	if (StatsLog)
+	{
+		fclose(StatsLog);
+		StatsLog = nullptr;
+	}
 }
 
 // Writes one line with the per-frame averages of the period (times in milliseconds, with the largest
@@ -2500,7 +2595,7 @@ void Write_Counters(const char * label, unsigned long long frame_number)
 {
 	const CounterPeriod period = CountersPeriod;
 	CountersPeriod = CounterPeriod();
-	if (!DX12Device_DebugLayer)
+	if (!DebugLog && !StatsLog)
 	{
 		return;
 	}
@@ -2511,7 +2606,7 @@ void Write_Counters(const char * label, unsigned long long frame_number)
 	const double frames = period.Frames > 0 ? (double)period.Frames : 1.0;
 	const DX12FrameCounters & s = period.Sum;
 
-	char line[2048];
+	char line[4096];
 	int length = snprintf(line, sizeof(line),
 		"%s %llu: counters frames=%u draws=%.1f skipped=%.1f pso_binds=%.1f pso_creates=%.2f pso_ms=%.3f pso_ms_max=%.3f"
 		" compiles=%.2f compile_ms=%.3f compile_ms_max=%.3f shader_cache_hits=%.2f shader_cache_stores=%.2f const_uploads=%.1f const_reuses=%.1f const_kb=%.1f"
@@ -2519,8 +2614,8 @@ void Write_Counters(const char * label, unsigned long long frame_number)
 		" tex_uploads=%.2f tex_upload_kb=%.1f srv_writes=%.2f samplers=%.2f root_sets=%.1f root_sets_skipped=%.1f barriers=%.1f",
 		label, frame_number, period.Frames,
 		s.DrawCalls / frames, (s.DrawCalls - s.DrawsRecorded) / frames, s.PipelineBinds / frames,
-		s.PipelineCreates / frames, s.PipelineCreateTicks * ms_per_tick / frames, period.MaxPipelineCreateTicks * ms_per_tick,
-		s.ShaderCompiles / frames, s.ShaderCompileTicks * ms_per_tick / frames, period.MaxShaderCompileTicks * ms_per_tick,
+		s.PipelineCreates / frames, s.PipelineCreateTicks * ms_per_tick / frames, period.Max.PipelineCreateTicks * ms_per_tick,
+		s.ShaderCompiles / frames, s.ShaderCompileTicks * ms_per_tick / frames, period.Max.ShaderCompileTicks * ms_per_tick,
 		s.ShaderCacheHits / frames, s.ShaderCacheStores / frames,
 		s.ConstantUploads / frames, s.ConstantReuses / frames, s.ConstantBytes / 1024.0 / frames,
 		s.FrameMemoryBytes / 1024.0 / frames, s.BufferFullCopies / frames, s.BufferFullCopyBytes / 1024.0 / frames,
@@ -2534,14 +2629,55 @@ void Write_Counters(const char * label, unsigned long long frame_number)
 		length += snprintf(line + length, sizeof(line) - length, " wait_%s=%.2f wait_%s_ms=%.3f wait_%s_ms_max=%.3f",
 			site_names[site], s.FenceWaits[site] / frames,
 			site_names[site], s.FenceWaitTicks[site] * ms_per_tick / frames,
-			site_names[site], period.MaxFenceWaitTicks[site] * ms_per_tick);
+			site_names[site], period.Max.FenceWaitTicks[site] * ms_per_tick);
 	}
 	if (length > 0 && length < (int)sizeof(line))
 	{
-		snprintf(line + length, sizeof(line) - length, " present_ms=%.3f present_ms_max=%.3f",
-			s.PresentTicks * ms_per_tick / frames, period.MaxPresentTicks * ms_per_tick);
+		length += snprintf(line + length, sizeof(line) - length, " present_ms=%.3f present_ms_max=%.3f",
+			s.PresentTicks * ms_per_tick / frames, period.Max.PresentTicks * ms_per_tick);
 	}
+
+	// Frame times and the sections of the frame: per-frame average, largest single frame, and the
+	// average over the frames longer than the first limit (long_).
+	if (length > 0 && length < (int)sizeof(line))
+	{
+		length += snprintf(line + length, sizeof(line) - length,
+			" frame_ms=%.2f frame_ms_max=%.1f long33=%u long50=%u long100=%u long250=%u lost_ms=%.0f upload_execs=%.2f",
+			period.FrameTicks * ms_per_tick / frames, period.MaxFrameTicks * ms_per_tick,
+			period.LongFrames[0], period.LongFrames[1], period.LongFrames[2], period.LongFrames[3],
+			period.LostTicks * ms_per_tick, s.UploadExecutes / frames);
+	}
+	struct Section { const char * name; size_t offset; };
+	static const Section sections[] = {
+		{ "tex_load", offsetof(DX12FrameCounters, TextureLoadTicks) },
+		{ "tex_create", offsetof(DX12FrameCounters, TextureCreateTicks) },
+		{ "tex_upload", offsetof(DX12FrameCounters, TextureUploadTicks) },
+		{ "upload_exec", offsetof(DX12FrameCounters, UploadExecuteTicks) },
+		{ "upload_record", offsetof(DX12FrameCounters, UploadRecordTicks) },
+		{ "draw", offsetof(DX12FrameCounters, DrawTicks) },
+		{ "fill", offsetof(DX12FrameCounters, DrawFillTicks) },
+		{ "buffer", offsetof(DX12FrameCounters, BufferTicks) },
+		{ "submit", offsetof(DX12FrameCounters, SubmitTicks) },
+		{ "compile", offsetof(DX12FrameCounters, ShaderCompileTicks) },
+		{ "pso", offsetof(DX12FrameCounters, PipelineCreateTicks) },
+	};
+	const double long_frames = period.LongFrames[0] > 0 ? (double)period.LongFrames[0] : 1.0;
+	for (size_t i = 0; i < sizeof(sections) / sizeof(sections[0]) && length > 0 && length < (int)sizeof(line); ++i)
+	{
+		const unsigned long long sum = *(const unsigned long long *)((const char *)&period.Sum + sections[i].offset);
+		const unsigned long long max = *(const unsigned long long *)((const char *)&period.Max + sections[i].offset);
+		const unsigned long long long_sum = *(const unsigned long long *)((const char *)&period.LongSum + sections[i].offset);
+		length += snprintf(line + length, sizeof(line) - length, " %s_ms=%.3f %s_ms_max=%.1f long_%s_ms=%.1f",
+			sections[i].name, sum * ms_per_tick / frames, sections[i].name, max * ms_per_tick,
+			sections[i].name, long_sum * ms_per_tick / long_frames);
+	}
+
 	Debug_Log("%s", line);
+	if (StatsLog)
+	{
+		fprintf(StatsLog, "%s t=%.3f\n", line, (Query_Ticks() - StatsLogStartTicks) * ms_per_tick / 1000.0);
+		fflush(StatsLog);
+	}
 }
 
 // Gamma pass ---------------------------------------------------------------------------------------
@@ -3260,6 +3396,16 @@ bool Has_Render_Target()
 
 } // namespace
 
+unsigned long long DX12Device_Query_Ticks()
+{
+	return Query_Ticks();
+}
+
+bool DX12Device_Is_Main_Thread()
+{
+	return MainThreadID != 0 && Is_Main_Thread();
+}
+
 void DX12Device_Set_User_Data_Directory(const char * directory)
 {
 	UserDataDirectory[0] = '\0';
@@ -3501,6 +3647,10 @@ bool DX12Device::Init(void * hwnd)
 		return false;
 	}
 	Flush_Debug_Messages();
+	if (DX12Device_Stats)
+	{
+		Open_Stats_Log();
+	}
 
 	Device = D3D.Get();
 	Width = 0;
@@ -3553,6 +3703,7 @@ void DX12Device::Shutdown()
 	Device = nullptr;
 	Release_All();
 	Close_Debug_Log();
+	Close_Stats_Log();
 	Width = 0;
 	Height = 0;
 }
@@ -3758,6 +3909,7 @@ void DX12Device::Submit_Frame(bool present)
 		return;
 	}
 	FrameEndsWithoutPresent = 0;
+	const UINT64 submit_start = Query_Ticks();
 
 	// Only a frame the game recorded gets the gamma pass. A present without a recorded frame shows a
 	// back buffer that may already have been through the curve.
@@ -3826,6 +3978,7 @@ void DX12Device::Submit_Frame(bool present)
 	FrameSlotPrepared = false;
 
 	Process_Deferred();
+	DX12Device_Counters.SubmitTicks += Query_Ticks() - submit_start;
 	if (present)
 	{
 		Fold_Frame_Counters();
@@ -3953,6 +4106,7 @@ void DX12Device::Draw(const DX12DrawDesc & desc)
 	{
 		return;
 	}
+	DX12StatsScope stats_scope(DX12Device_Counters.DrawTicks);
 	++DX12Device_Counters.DrawCalls;
 	if (desc.VertexAddress == 0 || desc.VertexStride == 0 || desc.VertexBufferSize == 0)
 	{

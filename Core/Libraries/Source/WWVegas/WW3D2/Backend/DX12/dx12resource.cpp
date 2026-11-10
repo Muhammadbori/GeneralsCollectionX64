@@ -396,6 +396,7 @@ bool DX12TextureClass::Init(unsigned width, unsigned height, WW3DFormat format, 
 	if (device == nullptr) {
 		return false;
 	}
+	DX12StatsScope stats_scope(DX12Device_Counters.TextureCreateTicks);
 
 	D3D12_HEAP_PROPERTIES heap;
 	memset(&heap, 0, sizeof(heap));
@@ -444,6 +445,7 @@ bool DX12TextureClass::Init_Target(unsigned width, unsigned height, WW3DFormat f
 	if (device == nullptr) {
 		return false;
 	}
+	DX12StatsScope stats_scope(DX12Device_Counters.TextureCreateTicks);
 
 	Width = width;
 	Height = height;
@@ -622,6 +624,7 @@ void DX12TextureClass::Upload_Level(unsigned level)
 	if (device == nullptr || Resource == nullptr) {
 		return;
 	}
+	DX12StatsScope stats_scope(DX12Device_Counters.TextureUploadTicks);
 
 	D3D12_RESOURCE_DESC desc;
 	Build_Texture_Desc(desc, Width, Height, LevelCount, Format);
@@ -745,6 +748,7 @@ DX12BufferClass::~DX12BufferClass()
 void * DX12BufferClass::Lock(unsigned offset, unsigned size, bool discard)
 {
 	WWASSERT(offset + size <= Size);
+	DX12StatsScope stats_scope(DX12Device_Counters.BufferTicks);
 
 	if (Dynamic) {
 		if (discard) {
@@ -766,6 +770,7 @@ void * DX12BufferClass::Lock(unsigned offset, unsigned size, bool discard)
 
 void DX12BufferClass::Unlock()
 {
+	DX12StatsScope stats_scope(DX12Device_Counters.BufferTicks);
 	if (Dynamic) {
 		if (CPUAddress && LockSize) {
 			memcpy(CPUAddress + LockOffset, Shadow + LockOffset, LockSize);
@@ -782,6 +787,7 @@ unsigned long long DX12BufferClass::Get_GPU_Address() const
 	if (Dynamic && (CPUAddress == nullptr || FrameNumber != DX12Device::Get_Frame_Number())) {
 		// Drawn in a later frame without being locked again: the memory it pointed at belongs to
 		// an earlier frame and may already be reused or released.
+		DX12StatsScope stats_scope(DX12Device_Counters.BufferTicks);
 		Move_To_Frame_Memory(true);
 	}
 	return GPUAddress;
