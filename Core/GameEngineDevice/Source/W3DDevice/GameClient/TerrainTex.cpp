@@ -53,6 +53,7 @@
 #include "Common/GlobalData.h"
 #include "WW3D2/dx8wrapper.h"
 #include "WW3D2/surfaceclass.h"
+#include "WW3D2/Backend/DX12/dx12resource.h"
 #include "d3dx8tex.h"
 
 /******************************************************************************
@@ -60,8 +61,8 @@
 ******************************************************************************/
 // In Direct3D 12 mode these textures have no IDirect3DTexture8. The update functions fill
 // level 0 through SurfaceClass, address rows with the locked pitch, and build the mip chain
-// on the CPU in place of D3DXFilterTexture. Direct3D 12 has no SetLOD, so texture reduction
-// is not applied and the textures keep their full resolution.
+// on the CPU in place of D3DXFilterTexture. Direct3D 12 has no SetLOD; texture reduction is applied as
+// the texture's minimum mip level (DX12TextureClass::Set_Min_LOD), which the sampler clamps to.
 
 //=============================================================================
 // TerrainTex_Build_DX12_Mips
@@ -171,6 +172,9 @@ int TerrainTextureClass::updateTerrainTextureDX12(WorldHeightMap *htMap)
 	surface_level->Unlock();
 	REF_PTR_RELEASE(surface_level);
 	TerrainTex_Build_DX12_Mips(this);
+	if (WW3D::Get_Texture_Reduction() && Peek_DX12_Texture()) {
+		Peek_DX12_Texture()->Set_Min_LOD(WW3D::Get_Texture_Reduction()); // as SetLOD in Direct3D 8
+	}
 	return(surface_desc.Height);
 }
 
@@ -617,7 +621,11 @@ int TerrainTextureClass::update(WorldHeightMap *htMap)
 //=============================================================================
 void TerrainTextureClass::setLOD(Int LOD)
 {
-	// Direct3D 12 has no SetLOD; the texture keeps its full resolution there.
+	if (DX12Device::Is_Active()) {
+		// Direct3D 12 has no SetLOD; the texture's minimum mip level is applied by the sampler.
+		if (Peek_DX12_Texture()) Peek_DX12_Texture()->Set_Min_LOD((unsigned)LOD);
+		return;
+	}
 	if (Peek_D3D_Texture()) Peek_D3D_Texture()->SetLOD(LOD);
 }
 //=============================================================================

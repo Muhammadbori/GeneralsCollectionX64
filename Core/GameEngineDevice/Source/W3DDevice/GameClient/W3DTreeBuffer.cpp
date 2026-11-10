@@ -180,8 +180,8 @@ int W3DTreeBuffer::W3DTreeTextureClass::update(W3DTreeBuffer *buffer)
 
 	if (DX12Device::Is_Active()) {
 		// Direct3D 12 mode: same tile copy, written through the DX12 texture's Lock with its own
-		// row pitch, then a CPU box filter for the mip chain. Texture reduction (SetLOD) is not
-		// supported in this mode.
+		// row pitch, then a CPU box filter for the mip chain. Texture reduction (SetLOD in
+		// Direct3D 8) is the texture's minimum mip level here.
 		DX12TextureClass *tex = Peek_DX12_Texture();
 		if (tex == nullptr) {
 			return 0;
@@ -221,6 +221,9 @@ int W3DTreeBuffer::W3DTreeTextureClass::update(W3DTreeBuffer *buffer)
 		}
 		tex->Unlock(0);
 		dx12FilterTreeTextureMips(tex);
+		if (WW3D::Get_Texture_Reduction()) {
+			tex->Set_Min_LOD((unsigned)WW3D::Get_Texture_Reduction()); // as SetLOD in Direct3D 8
+		}
 		return (Int)tex->Get_Height(0);
 	}
 
@@ -296,6 +299,12 @@ int W3DTreeBuffer::W3DTreeTextureClass::update(W3DTreeBuffer *buffer)
 //=============================================================================
 void W3DTreeBuffer::W3DTreeTextureClass::setLOD(Int LOD) const
 {
+	if (DX12Device::Is_Active()) {
+		if (Peek_DX12_Texture()) {
+			Peek_DX12_Texture()->Set_Min_LOD((unsigned)LOD);
+		}
+		return;
+	}
 	if (Peek_D3D_Texture()) {
 		DX8_ErrorCode(Peek_D3D_Texture()->SetLOD((DWORD)LOD));
 	}

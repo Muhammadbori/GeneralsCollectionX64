@@ -317,6 +317,7 @@ DX12TextureClass::DX12TextureClass() :
 	Width(0),
 	Height(0),
 	LevelCount(0),
+	MinLOD(0),
 	Format(WW3D_FORMAT_UNKNOWN),
 	KeepCPUCopy(false),
 	CPUOnly(false),

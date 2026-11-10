@@ -1721,8 +1721,12 @@ D3D12_GPU_DESCRIPTOR_HANDLE Bind_Texture(DX12TextureClass * texture, D3D12_RESOU
 
 // D3DTEXTUREFILTERTYPE: 0 none, 1 point, 2 linear, 3 anisotropic, 4/5 cubic (treated as linear).
 // D3DTEXTUREADDRESS equals D3D12_TEXTURE_ADDRESS_MODE (1 wrap .. 5 mirror once).
-D3D12_GPU_DESCRIPTOR_HANDLE Get_Sampler(unsigned min_filter, unsigned mag_filter, unsigned mip_filter, unsigned address_u, unsigned address_v, unsigned max_anisotropy)
+// min_lod is the texture's SetLOD level: the most detailed mip level that is sampled. Without a mip
+// filter Direct3D 8 samples that level only, so it becomes the single level here.
+D3D12_GPU_DESCRIPTOR_HANDLE Get_Sampler(unsigned min_filter, unsigned mag_filter, unsigned mip_filter, unsigned address_u, unsigned address_v, unsigned max_anisotropy, unsigned min_lod)
 {
+	if (min_lod > 15)
+		min_lod = 15;
 	if (min_filter > 3)
 		min_filter = 2;
 	if (mag_filter > 3)
@@ -1740,7 +1744,7 @@ D3D12_GPU_DESCRIPTOR_HANDLE Get_Sampler(unsigned min_filter, unsigned mag_filter
 	if (max_anisotropy > 16)
 		max_anisotropy = 16;
 
-	unsigned key = min_filter | (mag_filter << 2) | (mip_filter << 4) | (address_u << 6) | (address_v << 9) | ((max_anisotropy - 1) << 12);
+	unsigned key = min_filter | (mag_filter << 2) | (mip_filter << 4) | (address_u << 6) | (address_v << 9) | ((max_anisotropy - 1) << 12) | (min_lod << 16);
 
 	unsigned index = 0;
 	std::map<unsigned, unsigned>::iterator it = SamplerCache.find(key);
@@ -1780,8 +1784,8 @@ D3D12_GPU_DESCRIPTOR_HANDLE Get_Sampler(unsigned min_filter, unsigned mag_filter
 		desc.MipLODBias = 0.0f;
 		desc.MaxAnisotropy = max_anisotropy;
 		desc.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
-		desc.MinLOD = 0.0f;
-		desc.MaxLOD = (mip_filter == 0) ? 0.0f : D3D12_FLOAT32_MAX;
+		desc.MinLOD = (float)min_lod;
+		desc.MaxLOD = (mip_filter == 0) ? (float)min_lod : D3D12_FLOAT32_MAX;
 
 		D3D12_CPU_DESCRIPTOR_HANDLE cpu = SamplerHeapCPU;
 		cpu.ptr += (SIZE_T)index * SamplerDescriptorSize;
@@ -2608,7 +2612,7 @@ bool Init_Device(HWND hwnd)
 		return false;
 	}
 
-	DefaultSampler = Get_Sampler(2, 2, 0, 1, 1, 1);
+	DefaultSampler = Get_Sampler(2, 2, 0, 1, 1, 1, 0);
 
 	// Direct3D 11 class hardware reads B8G8R8A8 vertex colors, but check rather than fail later.
 	D3D12_FEATURE_DATA_FORMAT_SUPPORT format_support;
@@ -3713,7 +3717,8 @@ void DX12Device::Draw(const DX12DrawDesc & desc)
 		bool sampled = game_ps >= 0 || ffp.PS.Stages[stage].Texture == FFP_TEXTURE_SAMPLED;
 		textures[stage] = Bind_Texture(sampled ? desc.Textures[stage] : nullptr, barriers, barrier_count);
 		samplers[stage] = sampled ? Get_Sampler(desc.MinFilter[stage], desc.MagFilter[stage], desc.MipFilter[stage],
-			desc.AddressU[stage], desc.AddressV[stage], desc.MaxAnisotropy[stage]) : DefaultSampler;
+			desc.AddressU[stage], desc.AddressV[stage], desc.MaxAnisotropy[stage],
+			desc.Textures[stage] ? desc.Textures[stage]->Get_Min_LOD() : 0) : DefaultSampler;
 	}
 	if (barrier_count > 0)
 	{

@@ -77,6 +77,11 @@ public:
 	unsigned Get_Width(unsigned level = 0) const;
 	unsigned Get_Height(unsigned level = 0) const;
 	unsigned Get_Level_Count() const { return LevelCount; }
+	// Counterpart of IDirect3DTexture8::SetLOD: the most detailed mip level that is sampled. It is
+	// applied as the sampler's minimum LOD at draw time, so it can change at any time. Clamped to the
+	// last level, as Direct3D 8 does.
+	void Set_Min_LOD(unsigned lod) { MinLOD = (LevelCount > 0 && lod >= LevelCount) ? LevelCount - 1 : lod; }
+	unsigned Get_Min_LOD() const { return MinLOD; }
 	WW3DFormat Get_Format() const { return Format; }
 	bool Is_CPU_Only() const { return CPUOnly; }
 	// True when every level keeps its CPU copy after Unlock, so a later Lock still sees its texels.
@@ -117,6 +122,7 @@ protected:
 	unsigned Width;
 	unsigned Height;
 	unsigned LevelCount;
+	unsigned MinLOD;
 	WW3DFormat Format;
 	bool KeepCPUCopy;
 	bool CPUOnly;
