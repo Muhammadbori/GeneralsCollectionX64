@@ -602,17 +602,6 @@ Int parseNoStaticLOD(char *args[], int num)
 }
 
 //=============================================================================
-//=============================================================================
-Int parseFPSLimit(char *args[], int num)
-{
-	if (num > 1)
-	{
-		TheWritableGlobalData->m_framesPerSecondLimit = atoi(args[1]);
-	}
-	return 2;
-}
-
-//=============================================================================
 Int parseNoViewLimit(char *args[], int)
 {
 	TheWritableGlobalData->m_useCameraConstraints = FALSE;
@@ -714,16 +703,6 @@ Int parseDisplayDebug(char *args[], int)
 	return 1;
 }
 
-Int parseFile(char *args[], int num)
-{
-	if (num > 1)
-	{
-		TheWritableGlobalData->m_initialFile = args[1];
-		ConvertShortMapPathToLongMapPath(TheWritableGlobalData->m_initialFile);
-	}
-	return 2;
-}
-
 
 Int parsePreloadEverything( char *args[], int num )
 {
@@ -766,6 +745,30 @@ Int parseLoadSave(char *args[], int num)
 		return 2;
 	}
 	return 1;
+}
+
+// TheSuperHackers @feature Available in Release too. Sets the render FPS limit only. Outside network games the
+// game speed no longer follows the render frame rate, and network games disable the limit, so this gives no
+// multiplayer advantage.
+Int parseFPSLimit(char *args[], int num)
+{
+	if (num > 1)
+	{
+		TheWritableGlobalData->m_framesPerSecondLimit = atoi(args[1]);
+	}
+	return 2;
+}
+
+// TheSuperHackers @feature Available in Release too. Starts the given map as a single player game and quits
+// when it ends, for unattended test runs.
+Int parseFile(char *args[], int num)
+{
+	if (num > 1)
+	{
+		TheWritableGlobalData->m_initialFile = args[1];
+		ConvertShortMapPathToLongMapPath(TheWritableGlobalData->m_initialFile);
+	}
+	return 2;
 }
 
 // TheSuperHackers @feature Save the rendered image at the given logic frames, see FrameShots.
@@ -1270,6 +1273,8 @@ static CommandLineParam paramsForEngineInit[] =
 	{ "-shotFrames", parseShotFrames },
 	{ "-shotDir", parseShotDir },
 	{ "-shotExit", parseShotExit },
+	{ "-fps", parseFPSLimit },
+	{ "-file", parseFile },
 
 	// TheSuperHackers @feature xezon 03/08/2025 Force full viewport for 'Control Bar Pro' Addons like GenTool did it.
 	{ "-forcefullviewport", parseFullViewport },
@@ -1355,7 +1360,6 @@ static CommandLineParam paramsForEngineInit[] =
 	{ "-lowDetail", parseLowDetail },
 	{ "-noDynamicLOD", parseNoDynamicLOD },
 	{ "-noStaticLOD", parseNoStaticLOD },
-	{ "-fps", parseFPSLimit },
 	{ "-wireframe", parseWireframe },
 	{ "-showCollision", parseShowCollision },
 	{ "-noShowClientPhysics", parseNoShowClientPhysics },
@@ -1364,7 +1368,6 @@ static CommandLineParam paramsForEngineInit[] =
 	{ "-jabber", parseJabber },
 	{ "-munkee", parseMunkee },
 	{ "-displayDebug", parseDisplayDebug },
-	{ "-file", parseFile },
 
 //	{ "-preload", parsePreload },
 
