@@ -73,7 +73,8 @@ struct DX12FrameCounters
 	unsigned long long TextureUploadBytes;
 	unsigned long long SRVWrites;
 	unsigned long long SamplerCreates;
-	unsigned long long RootParameterSets;
+	unsigned long long RootParameterSets;	// root arguments actually set
+	unsigned long long RootParameterSetsSkipped;	// root arguments a draw left alone because they were already bound
 	unsigned long long Barriers;
 	unsigned long long FenceWaits[DX12_WAIT_SITE_COUNT];
 	unsigned long long FenceWaitTicks[DX12_WAIT_SITE_COUNT];

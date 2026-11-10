@@ -432,6 +432,35 @@ D3D12_RECT CurrentScissor;
 ID3D12PipelineState * BoundPipelineState = nullptr;
 D3D_PRIMITIVE_TOPOLOGY BoundTopology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
 UINT BoundStencilRef = NO_STENCIL_REF;
+
+// The root arguments and input assembler views that Draw bound on the command list being recorded,
+// so a draw sets only what changed. Everything that can make them undefined calls
+// Invalidate_Draw_Bindings: Restore_Command_List_State (a reset command list and every
+// SetGraphicsRootSignature / SetDescriptorHeaps of the main root signature), the gamma pass (its own
+// root signature and pipeline) and Release_All. A GPU address or descriptor handle within one command
+// list always names the same data: frame memory is a bump allocator that is only reset with the
+// frame slot, and descriptor slots are freed only after the GPU is done with them.
+const UINT64 UNBOUND = ~0ull;
+UINT64 BoundRootCBV[ROOT_TEXTURES];					// ROOT_VS_CONSTANTS .. ROOT_GAME_VS_CONSTANTS
+UINT64 BoundRootTable[2 * DX12_MAX_STAGES];			// ROOT_TEXTURES .. ROOT_SAMPLERS + DX12_MAX_STAGES - 1
+D3D12_VERTEX_BUFFER_VIEW BoundVertexView;
+D3D12_INDEX_BUFFER_VIEW BoundIndexView;
+bool BoundVertexViewValid = false;
+bool BoundIndexViewValid = false;
+
+void Invalidate_Draw_Bindings()
+{
+	for (unsigned i = 0; i < ROOT_TEXTURES; ++i)
+	{
+		BoundRootCBV[i] = UNBOUND;
+	}
+	for (unsigned i = 0; i < 2 * DX12_MAX_STAGES; ++i)
+	{
+		BoundRootTable[i] = UNBOUND;
+	}
+	BoundVertexViewValid = false;
+	BoundIndexViewValid = false;
+}
 DX12VSConstants LastVSConstants;
 UINT64 LastVSConstantsGPU = 0;
 DX12PSConstants LastPSConstants;
@@ -1194,6 +1223,9 @@ void Restore_Command_List_State()
 	LastGameVSConstantsGPU = 0;
 	LastGamePSConstantsGPU = 0;
 
+	// A reset command list has no bindings, and setting the root signature leaves every root argument
+	// undefined.
+	Invalidate_Draw_Bindings();
 	ID3D12DescriptorHeap * heaps[] = { SRVHeap.Get(), SamplerHeap.Get() };
 	CommandList->SetDescriptorHeaps(2, heaps);
 	CommandList->SetGraphicsRootSignature(RootSignature.Get());
@@ -2165,7 +2197,7 @@ void Write_Counters(const char * label, unsigned long long frame_number)
 		"%s %llu: counters frames=%u draws=%.1f skipped=%.1f pso_binds=%.1f pso_creates=%.2f pso_ms=%.3f pso_ms_max=%.3f"
 		" compiles=%.2f compile_ms=%.3f compile_ms_max=%.3f const_uploads=%.1f const_reuses=%.1f const_kb=%.1f"
 		" frame_mem_kb=%.1f buf_full_copies=%.1f buf_full_kb=%.1f buf_lock_copies=%.1f buf_lock_kb=%.1f"
-		" tex_uploads=%.2f tex_upload_kb=%.1f srv_writes=%.2f samplers=%.2f root_sets=%.1f barriers=%.1f",
+		" tex_uploads=%.2f tex_upload_kb=%.1f srv_writes=%.2f samplers=%.2f root_sets=%.1f root_sets_skipped=%.1f barriers=%.1f",
 		label, frame_number, period.Frames,
 		s.DrawCalls / frames, (s.DrawCalls - s.DrawsRecorded) / frames, s.PipelineBinds / frames,
 		s.PipelineCreates / frames, s.PipelineCreateTicks * ms_per_tick / frames, period.MaxPipelineCreateTicks * ms_per_tick,
@@ -2174,7 +2206,7 @@ void Write_Counters(const char * label, unsigned long long frame_number)
 		s.FrameMemoryBytes / 1024.0 / frames, s.BufferFullCopies / frames, s.BufferFullCopyBytes / 1024.0 / frames,
 		s.BufferLockCopies / frames, s.BufferLockCopyBytes / 1024.0 / frames,
 		s.TextureUploads / frames, s.TextureUploadBytes / 1024.0 / frames, s.SRVWrites / frames, s.SamplerCreates / frames,
-		s.RootParameterSets / frames, s.Barriers / frames);
+		s.RootParameterSets / frames, s.RootParameterSetsSkipped / frames, s.Barriers / frames);
 
 	static const char * const site_names[DX12_WAIT_SITE_COUNT] = { "slot", "upload", "flush", "other" };
 	for (int site = 0; site < DX12_WAIT_SITE_COUNT && length > 0 && length < (int)sizeof(line); ++site)
@@ -2530,9 +2562,11 @@ void Apply_Gamma_Pass()
 	ID3D12DescriptorHeap * heaps[] = { SRVHeap.Get(), SamplerHeap.Get() };
 	CommandList->SetDescriptorHeaps(2, heaps);
 	CommandList->SetGraphicsRootSignature(GammaRootSignature.Get());
+	Invalidate_Draw_Bindings();
 	CommandList->SetPipelineState(GammaPipelineState.Get());
 	CommandList->SetGraphicsRootDescriptorTable(0, SRV_GPU_Handle(GammaScratchSlot));
 	CommandList->SetGraphicsRootDescriptorTable(1, SRV_GPU_Handle(GammaLUTSlot));
+	DX12Device_Counters.RootParameterSets += 2;
 	CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 	CommandList->DrawInstanced(3, 1, 0, 0);
 
@@ -2857,6 +2891,7 @@ void Release_All()
 	LastPSConstantsGPU = 0;
 	LastGameVSConstantsGPU = 0;
 	LastGamePSConstantsGPU = 0;
+	Invalidate_Draw_Bindings();
 }
 
 bool Create_Depth_Buffer(unsigned width, unsigned height)
@@ -3946,11 +3981,18 @@ void DX12Device::Draw(const DX12DrawDesc & desc)
 		}
 	}
 
+	// Only what differs from the bindings already on the command list is set (Invalidate_Draw_Bindings).
 	D3D12_VERTEX_BUFFER_VIEW vertex_view;
 	vertex_view.BufferLocation = desc.VertexAddress;
 	vertex_view.SizeInBytes = desc.VertexBufferSize;
 	vertex_view.StrideInBytes = desc.VertexStride;
-	CommandList->IASetVertexBuffers(0, 1, &vertex_view);
+	if (!BoundVertexViewValid || BoundVertexView.BufferLocation != vertex_view.BufferLocation
+		|| BoundVertexView.SizeInBytes != vertex_view.SizeInBytes || BoundVertexView.StrideInBytes != vertex_view.StrideInBytes)
+	{
+		CommandList->IASetVertexBuffers(0, 1, &vertex_view);
+		BoundVertexView = vertex_view;
+		BoundVertexViewValid = true;
+	}
 
 	if (indexed)
 	{
@@ -3958,21 +4000,56 @@ void DX12Device::Draw(const DX12DrawDesc & desc)
 		index_view.BufferLocation = desc.IndexAddress;
 		index_view.SizeInBytes = desc.IndexBufferSize;
 		index_view.Format = DXGI_FORMAT_R16_UINT;
-		CommandList->IASetIndexBuffer(&index_view);
+		if (!BoundIndexViewValid || BoundIndexView.BufferLocation != index_view.BufferLocation
+			|| BoundIndexView.SizeInBytes != index_view.SizeInBytes || BoundIndexView.Format != index_view.Format)
+		{
+			CommandList->IASetIndexBuffer(&index_view);
+			BoundIndexView = index_view;
+			BoundIndexViewValid = true;
+		}
 	}
 
-	CommandList->SetGraphicsRootConstantBufferView(ROOT_VS_CONSTANTS, vs_gpu);
-	CommandList->SetGraphicsRootConstantBufferView(ROOT_PS_CONSTANTS, ps_gpu);
-	CommandList->SetGraphicsRootConstantBufferView(ROOT_GAME_PS_CONSTANTS, game_ps_gpu);
-	CommandList->SetGraphicsRootConstantBufferView(ROOT_GAME_VS_CONSTANTS, game_vs_gpu);
-	for (int stage = 0; stage < DX12_MAX_STAGES; ++stage)
+	const UINT64 cbvs[ROOT_TEXTURES] = { vs_gpu, ps_gpu, game_ps_gpu, game_vs_gpu };
+	static_assert(ROOT_VS_CONSTANTS == 0 && ROOT_PS_CONSTANTS == 1 && ROOT_GAME_PS_CONSTANTS == 2 && ROOT_GAME_VS_CONSTANTS == 3,
+		"the constant buffer root parameters come first, in this order");
+	for (unsigned index = 0; index < ROOT_TEXTURES; ++index)
 	{
-		CommandList->SetGraphicsRootDescriptorTable(ROOT_TEXTURES + stage, textures[stage]);
-		CommandList->SetGraphicsRootDescriptorTable(ROOT_SAMPLERS + stage, samplers[stage]);
+		if (BoundRootCBV[index] != cbvs[index])
+		{
+			CommandList->SetGraphicsRootConstantBufferView(index, cbvs[index]);
+			BoundRootCBV[index] = cbvs[index];
+			++DX12Device_Counters.RootParameterSets;
+		}
+		else
+		{
+			++DX12Device_Counters.RootParameterSetsSkipped;
+		}
+	}
+	for (unsigned stage = 0; stage < DX12_MAX_STAGES; ++stage)
+	{
+		if (BoundRootTable[stage] != textures[stage].ptr)
+		{
+			CommandList->SetGraphicsRootDescriptorTable(ROOT_TEXTURES + stage, textures[stage]);
+			BoundRootTable[stage] = textures[stage].ptr;
+			++DX12Device_Counters.RootParameterSets;
+		}
+		else
+		{
+			++DX12Device_Counters.RootParameterSetsSkipped;
+		}
+		if (BoundRootTable[DX12_MAX_STAGES + stage] != samplers[stage].ptr)
+		{
+			CommandList->SetGraphicsRootDescriptorTable(ROOT_SAMPLERS + stage, samplers[stage]);
+			BoundRootTable[DX12_MAX_STAGES + stage] = samplers[stage].ptr;
+			++DX12Device_Counters.RootParameterSets;
+		}
+		else
+		{
+			++DX12Device_Counters.RootParameterSetsSkipped;
+		}
 	}
 
 	++DX12Device_Counters.DrawsRecorded;
-	DX12Device_Counters.RootParameterSets += 4 + 2 * DX12_MAX_STAGES;
 	if (indexed)
 	{
 		CommandList->DrawIndexedInstanced(desc.IndexCount, 1, desc.StartIndex, desc.BaseVertex, 0);
