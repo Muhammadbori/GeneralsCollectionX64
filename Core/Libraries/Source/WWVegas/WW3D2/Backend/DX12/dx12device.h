@@ -236,6 +236,12 @@ public:
 	// the GPU. Main thread only.
 	static DX12TextureClass * Read_Back_Buffer();
 
+	// Brightness: a 256-entry 16-bit ramp per channel, as Direct3D 8 SetGammaRamp takes it. Presented
+	// frames go through it as a final color curve on the back buffer, since the swap chain is never
+	// exclusive fullscreen. A ramp within one 8-bit step of the identity costs nothing: no pass, no
+	// copy, no extra resources. Main thread only.
+	static void Set_Gamma_Ramp(const unsigned short * red, const unsigned short * green, const unsigned short * blue);
+
 	// Resource support for DX12TextureClass and DX12BufferClass.
 	static ID3D12Device * Get_D3D12_Device() { return Device; }
 	static unsigned Allocate_SRV_Slot();

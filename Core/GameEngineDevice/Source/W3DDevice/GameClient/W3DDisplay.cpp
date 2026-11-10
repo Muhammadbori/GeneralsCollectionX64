@@ -562,7 +562,9 @@ void W3DDisplay::getDisplayModeDescription(Int modeIndex, Int *xres, Int *yres, 
 
 void W3DDisplay::setGamma(Real gamma, Real bright, Real contrast, Bool calibrate)
 {
-	if (m_windowed)
+	// TheSuperHackers @feature Direct3D 12 applies the gamma to the game's own frame only, so it works
+	// in a window too.
+	if (m_windowed && !DX12Device::Is_Active())
 		return;	//we don't allow gamma to change in window because it would affect desktop.
 
 	Renderer::Set_Gamma(gamma,bright,contrast,calibrate, false);

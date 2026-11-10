@@ -4802,9 +4802,6 @@ unsigned int DX8Wrapper::Get_Free_Texture_RAM()
 // Contrast - controls the difference between the maximum and the minimum of the curve
 void DX8Wrapper::Set_Gamma(float gamma,float bright,float contrast,bool calibrate,bool uselimit)
 {
-	// Gamma ramps are not supported in Direct3D 12 mode yet.
-	if (DX12Device::Is_Active()) return;
-
 	gamma=Bound(gamma,0.6f,6.0f);
 	bright=Bound(bright,-0.5f,0.5f);
 	contrast=Bound(contrast,0.5f,2.0f);
@@ -4837,6 +4834,14 @@ void DX8Wrapper::Set_Gamma(float gamma,float bright,float contrast,bool calibrat
 		ramp.red[i]=(WORD) (out*65535);
 		ramp.green[i]=(WORD) (out*65535);
 		ramp.blue[i]=(WORD) (out*65535);
+	}
+
+	// TheSuperHackers @feature Direct3D 12 applies the same ramp as a final color curve on the presented
+	// frame (DX12Device::Set_Gamma_Ramp), since its swap chain is never exclusive fullscreen.
+	if (DX12Device::Is_Active())
+	{
+		DX12Device::Set_Gamma_Ramp(ramp.red, ramp.green, ramp.blue);
+		return;
 	}
 
 	if (Get_Current_Caps()->Support_Gamma())	{

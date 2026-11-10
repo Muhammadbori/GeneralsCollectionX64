@@ -394,6 +394,21 @@ unsigned DebugTargetCopies = 0;
 
 ComPtr<ID3D12Resource> WhiteTexture;
 
+// Gamma (brightness option), applied as a final color curve on the presented back buffer. The ramp is
+// kept without a device too, so a ramp set before the device exists still applies.
+unsigned short GammaRamp[3][256];
+bool GammaRampIsIdentity = true;
+bool GammaLUTDirty = false;
+ComPtr<ID3D12RootSignature> GammaRootSignature;
+ComPtr<ID3D12PipelineState> GammaPipelineState;
+ComPtr<ID3D12Resource> GammaLUT;			// 256x1 R16G16B16A16_UNORM, PIXEL_SHADER_RESOURCE between passes
+unsigned GammaLUTSlot = 0;
+ComPtr<ID3D12Resource> GammaScratch;		// copy of the back buffer, PIXEL_SHADER_RESOURCE between passes
+unsigned GammaScratchSlot = 0;
+unsigned GammaScratchWidth = 0;
+unsigned GammaScratchHeight = 0;
+bool GammaFailed = false;					// setting up the pass failed; the curve is not applied until the ramp changes
+
 D3D12_VIEWPORT CurrentViewport;
 D3D12_RECT CurrentScissor;
 
@@ -2049,6 +2064,354 @@ bool Create_White_Texture()
 	return true;
 }
 
+
+// Gamma pass ---------------------------------------------------------------------------------------
+
+const char * const GammaShaderSource =
+	"Texture2D<float4> Scene : register(t0);\n"
+	"Texture2D<float4> Ramp : register(t1);\n"
+	"struct VSOut { float4 Position : SV_Position; };\n"
+	"VSOut VSMain(uint id : SV_VertexID)\n"
+	"{\n"
+	"	// One triangle that covers the whole target.\n"
+	"	float2 uv = float2((id << 1) & 2, id & 2);\n"
+	"	VSOut o;\n"
+	"	o.Position = float4(uv * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);\n"
+	"	return o;\n"
+	"}\n"
+	"float4 PSMain(VSOut i) : SV_Target\n"
+	"{\n"
+	"	float4 c = Scene.Load(int3(i.Position.xy, 0));\n"
+	"	int3 index = int3(round(saturate(c.rgb) * 255.0));\n"
+	"	float r = Ramp.Load(int3(index.r, 0, 0)).r;\n"
+	"	float g = Ramp.Load(int3(index.g, 0, 0)).g;\n"
+	"	float b = Ramp.Load(int3(index.b, 0, 0)).b;\n"
+	"	return float4(r, g, b, c.a);\n"
+	"}\n";
+
+// The root signature and pipeline state of the gamma pass: two SRV tables (t0 scene copy, t1 ramp),
+// no samplers, no input layout, no depth.
+bool Create_Gamma_Pipeline()
+{
+	D3D12_DESCRIPTOR_RANGE ranges[2];
+	memset(ranges, 0, sizeof(ranges));
+	D3D12_ROOT_PARAMETER params[2];
+	memset(params, 0, sizeof(params));
+	for (int i = 0; i < 2; ++i)
+	{
+		ranges[i].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+		ranges[i].NumDescriptors = 1;
+		ranges[i].BaseShaderRegister = i;
+		params[i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+		params[i].DescriptorTable.NumDescriptorRanges = 1;
+		params[i].DescriptorTable.pDescriptorRanges = &ranges[i];
+		params[i].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+	}
+
+	D3D12_ROOT_SIGNATURE_DESC root_desc;
+	memset(&root_desc, 0, sizeof(root_desc));
+	root_desc.NumParameters = 2;
+	root_desc.pParameters = params;
+	root_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS
+		| D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS
+		| D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS;
+
+	ComPtr<ID3DBlob> blob;
+	ComPtr<ID3DBlob> errors;
+	HRESULT hr = D3D12SerializeRootSignatureFunc(&root_desc, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &errors);
+	if (FAILED(hr))
+	{
+		Log_Failure("D3D12SerializeRootSignature (gamma)", hr);
+		return false;
+	}
+	hr = D3D->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), IID_PPV_ARGS(&GammaRootSignature));
+	if (FAILED(hr))
+	{
+		Log_Failure("CreateRootSignature (gamma)", hr);
+		return false;
+	}
+
+	ComPtr<ID3DBlob> vs = Compile_Shader(GammaShaderSource, "gamma", "VSMain", "vs_5_0");
+	ComPtr<ID3DBlob> ps = Compile_Shader(GammaShaderSource, "gamma", "PSMain", "ps_5_0");
+	if (!vs || !ps)
+	{
+		return false;
+	}
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC desc;
+	memset(&desc, 0, sizeof(desc));
+	desc.pRootSignature = GammaRootSignature.Get();
+	desc.VS.pShaderBytecode = vs->GetBufferPointer();
+	desc.VS.BytecodeLength = vs->GetBufferSize();
+	desc.PS.pShaderBytecode = ps->GetBufferPointer();
+	desc.PS.BytecodeLength = ps->GetBufferSize();
+	D3D12_RENDER_TARGET_BLEND_DESC & blend = desc.BlendState.RenderTarget[0];
+	blend.BlendEnable = FALSE;
+	blend.LogicOpEnable = FALSE;
+	blend.SrcBlend = D3D12_BLEND_ONE;
+	blend.DestBlend = D3D12_BLEND_ZERO;
+	blend.BlendOp = D3D12_BLEND_OP_ADD;
+	blend.SrcBlendAlpha = D3D12_BLEND_ONE;
+	blend.DestBlendAlpha = D3D12_BLEND_ZERO;
+	blend.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+	blend.LogicOp = D3D12_LOGIC_OP_NOOP;
+	blend.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+	desc.SampleMask = 0xffffffff;
+	desc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+	desc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	desc.RasterizerState.DepthClipEnable = TRUE;
+	desc.DepthStencilState.DepthEnable = FALSE;
+	desc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+	desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+	desc.DepthStencilState.StencilEnable = FALSE;
+	desc.IBStripCutValue = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED;
+	desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	desc.NumRenderTargets = 1;
+	desc.RTVFormats[0] = DXGI_FORMAT_B8G8R8A8_UNORM;
+	desc.DSVFormat = DXGI_FORMAT_UNKNOWN;
+	desc.SampleDesc.Count = 1;
+
+	hr = D3D->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&GammaPipelineState));
+	if (FAILED(hr))
+	{
+		Log_Failure("CreateGraphicsPipelineState (gamma)", hr);
+		return false;
+	}
+	return true;
+}
+
+ComPtr<ID3D12Resource> Create_Gamma_Texture(unsigned width, unsigned height, DXGI_FORMAT format, D3D12_RESOURCE_STATES state)
+{
+	D3D12_HEAP_PROPERTIES heap;
+	memset(&heap, 0, sizeof(heap));
+	heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+	D3D12_RESOURCE_DESC desc;
+	memset(&desc, 0, sizeof(desc));
+	desc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+	desc.Width = width;
+	desc.Height = height;
+	desc.DepthOrArraySize = 1;
+	desc.MipLevels = 1;
+	desc.Format = format;
+	desc.SampleDesc.Count = 1;
+	desc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+
+	ComPtr<ID3D12Resource> resource;
+	HRESULT hr = D3D->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, state, nullptr, IID_PPV_ARGS(&resource));
+	if (FAILED(hr))
+	{
+		Log_Failure("CreateCommittedResource (gamma)", hr);
+		return nullptr;
+	}
+	return resource;
+}
+
+// Releases the gamma pass resources. While the device lives the GPU may still use them, so they go
+// through the deferred release; at shutdown (device pointer cleared) they are released at once.
+void Release_Gamma_Resources()
+{
+	if (GammaScratch)
+	{
+		DX12Device::Release_When_Idle(GammaScratch.Detach());
+	}
+	if (GammaLUT)
+	{
+		DX12Device::Release_When_Idle(GammaLUT.Detach());
+	}
+	if (GammaScratchSlot)
+	{
+		DX12Device::Free_SRV_Slot(GammaScratchSlot);
+	}
+	if (GammaLUTSlot)
+	{
+		DX12Device::Free_SRV_Slot(GammaLUTSlot);
+	}
+	GammaScratchSlot = 0;
+	GammaLUTSlot = 0;
+	GammaScratchWidth = 0;
+	GammaScratchHeight = 0;
+	GammaPipelineState.Reset();
+	GammaRootSignature.Reset();
+	GammaLUTDirty = true;
+	GammaFailed = false;
+}
+
+// Creates what the gamma pass needs for a back buffer of the given size: the pipeline and the ramp
+// texture once, and a scratch texture that follows the back buffer size (resize, device reset).
+bool Prepare_Gamma_Resources(unsigned width, unsigned height)
+{
+	if (!GammaPipelineState && !Create_Gamma_Pipeline())
+	{
+		return false;
+	}
+
+	if (!GammaLUT)
+	{
+		GammaLUT = Create_Gamma_Texture(256, 1, DXGI_FORMAT_R16G16B16A16_UNORM, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+		GammaLUTSlot = GammaLUT ? DX12Device::Allocate_SRV_Slot() : 0;
+		if (!GammaLUTSlot)
+		{
+			return false;
+		}
+		D3D->CreateShaderResourceView(GammaLUT.Get(), nullptr, SRV_CPU_Handle(GammaLUTSlot));
+		SRVSlotResources[GammaLUTSlot] = GammaLUT.Get();
+		GammaLUTDirty = true;
+	}
+
+	if (!GammaScratch || GammaScratchWidth != width || GammaScratchHeight != height)
+	{
+		// A frame in flight may still read the old scratch texture: release it deferred and describe
+		// the new one in a new slot.
+		if (GammaScratch)
+		{
+			DX12Device::Release_When_Idle(GammaScratch.Detach());
+		}
+		if (GammaScratchSlot)
+		{
+			DX12Device::Free_SRV_Slot(GammaScratchSlot);
+			GammaScratchSlot = 0;
+		}
+		GammaScratch = Create_Gamma_Texture(width, height, DXGI_FORMAT_B8G8R8A8_UNORM, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+		GammaScratchSlot = GammaScratch ? DX12Device::Allocate_SRV_Slot() : 0;
+		if (!GammaScratchSlot)
+		{
+			return false;
+		}
+		D3D->CreateShaderResourceView(GammaScratch.Get(), nullptr, SRV_CPU_Handle(GammaScratchSlot));
+		SRVSlotResources[GammaScratchSlot] = GammaScratch.Get();
+		GammaScratchWidth = width;
+		GammaScratchHeight = height;
+	}
+	return true;
+}
+
+// Records the ramp upload into the frame being recorded when the ramp changed.
+// Ramp texture: PIXEL_SHADER_RESOURCE -> COPY_DEST -> PIXEL_SHADER_RESOURCE.
+bool Record_Gamma_LUT_Upload()
+{
+	if (!GammaLUTDirty)
+	{
+		return true;
+	}
+
+	D3D12_RESOURCE_DESC desc = GammaLUT->GetDesc();
+	D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint;
+	UINT64 total = 0;
+	D3D->GetCopyableFootprints(&desc, 0, 1, 0, &footprint, nullptr, nullptr, &total);
+
+	ComPtr<ID3D12Resource> upload = Create_Upload_Buffer(total);
+	if (!upload)
+	{
+		return false;
+	}
+	void * cpu = nullptr;
+	D3D12_RANGE no_read = { 0, 0 };
+	if (FAILED(upload->Map(0, &no_read, &cpu)))
+	{
+		return false;
+	}
+	unsigned short * texels = (unsigned short *)((unsigned char *)cpu + footprint.Offset);
+	for (int i = 0; i < 256; ++i)
+	{
+		texels[i * 4 + 0] = GammaRamp[0][i];
+		texels[i * 4 + 1] = GammaRamp[1][i];
+		texels[i * 4 + 2] = GammaRamp[2][i];
+		texels[i * 4 + 3] = 0xffff;
+	}
+	upload->Unmap(0, nullptr);
+
+	D3D12_TEXTURE_COPY_LOCATION dst;
+	memset(&dst, 0, sizeof(dst));
+	dst.pResource = GammaLUT.Get();
+	dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+	D3D12_TEXTURE_COPY_LOCATION src;
+	memset(&src, 0, sizeof(src));
+	src.pResource = upload.Get();
+	src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+	src.PlacedFootprint = footprint;
+
+	Transition(CommandList.Get(), GammaLUT.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+	CommandList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+	Transition(CommandList.Get(), GammaLUT.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+	// Released once the GPU has finished this frame.
+	DX12Device::Release_When_Idle(upload.Detach());
+	GammaLUTDirty = false;
+	return true;
+}
+
+// The gamma pass, for a frame that is presented, after everything is drawn and while the back buffer
+// is still in the RENDER_TARGET state. With the identity ramp it does nothing at all. Otherwise:
+//   back buffer RENDER_TARGET -> COPY_SOURCE, scratch PIXEL_SHADER_RESOURCE -> COPY_DEST,
+//   CopyResource(scratch, back buffer),
+//   back buffer COPY_SOURCE -> RENDER_TARGET, scratch COPY_DEST -> PIXEL_SHADER_RESOURCE,
+//   one full-screen triangle reads the scratch copy and the ramp and writes the back buffer
+//   (color through the ramp, alpha unchanged).
+// The back buffer then goes to PRESENT as before. Screenshots read the presented back buffer between
+// frames (Read_Back_Buffer: F12 and -shotFrames), so they include the curve, as intended.
+void Apply_Gamma_Pass()
+{
+	if (GammaRampIsIdentity || GammaFailed || !Recording || !FrameHasRenderTarget)
+	{
+		return;
+	}
+
+	ID3D12Resource * back_buffer = BackBuffers[BackBufferIndex].Get();
+	if (!back_buffer)
+	{
+		return;
+	}
+	const D3D12_RESOURCE_DESC back_desc = back_buffer->GetDesc();
+	if (back_desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM)
+	{
+		return;
+	}
+	if (!Prepare_Gamma_Resources((unsigned)back_desc.Width, back_desc.Height) || !Record_Gamma_LUT_Upload())
+	{
+		WWDEBUG_SAY(("DX12: the gamma pass could not be set up; brightness is not applied"));
+		Debug_Log("frame %llu: the gamma pass could not be set up", DX12Device::Get_Frame_Number());
+		GammaFailed = true;
+		return;
+	}
+
+	D3D12_RESOURCE_BARRIER barriers[2];
+	barriers[0] = Make_Transition(back_buffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+	barriers[1] = Make_Transition(GammaScratch.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+	CommandList->ResourceBarrier(2, barriers);
+	CommandList->CopyResource(GammaScratch.Get(), back_buffer);
+	barriers[0] = Make_Transition(back_buffer, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+	barriers[1] = Make_Transition(GammaScratch.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+	CommandList->ResourceBarrier(2, barriers);
+
+	D3D12_CPU_DESCRIPTOR_HANDLE rtv = RTV_Handle(BackBufferIndex);
+	CommandList->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+
+	D3D12_VIEWPORT viewport;
+	viewport.TopLeftX = 0.0f;
+	viewport.TopLeftY = 0.0f;
+	viewport.Width = (float)back_desc.Width;
+	viewport.Height = (float)back_desc.Height;
+	viewport.MinDepth = 0.0f;
+	viewport.MaxDepth = 1.0f;
+	D3D12_RECT scissor = { 0, 0, (LONG)back_desc.Width, (LONG)back_desc.Height };
+	CommandList->RSSetViewports(1, &viewport);
+	CommandList->RSSetScissorRects(1, &scissor);
+
+	ID3D12DescriptorHeap * heaps[] = { SRVHeap.Get(), SamplerHeap.Get() };
+	CommandList->SetDescriptorHeaps(2, heaps);
+	CommandList->SetGraphicsRootSignature(GammaRootSignature.Get());
+	CommandList->SetPipelineState(GammaPipelineState.Get());
+	CommandList->SetGraphicsRootDescriptorTable(0, SRV_GPU_Handle(GammaScratchSlot));
+	CommandList->SetGraphicsRootDescriptorTable(1, SRV_GPU_Handle(GammaLUTSlot));
+	CommandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	CommandList->DrawInstanced(3, 1, 0, 0);
+
+	// The frame ends right after this; the next command list starts from Restore_Command_List_State.
+	BoundPipelineState = nullptr;
+	BoundTopology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
+}
+
 bool Init_Device(HWND hwnd)
 {
 	Window = hwnd;
@@ -2311,6 +2674,7 @@ void Release_All()
 	RootSignature.Reset();
 	SamplerCache.clear();
 	WhiteTexture.Reset();
+	Release_Gamma_Resources();
 	SRVSlotResources.clear();
 
 	for (int i = 0; i < BACK_BUFFER_COUNT; ++i)
@@ -2880,6 +3244,10 @@ void DX12Device::Submit_Frame(bool present)
 	}
 	FrameEndsWithoutPresent = 0;
 
+	// Only a frame the game recorded gets the gamma pass. A present without a recorded frame shows a
+	// back buffer that may already have been through the curve.
+	const bool was_recording = Recording;
+
 	if (!Recording)
 	{
 		if (!present && !HasPendingUploads.load())
@@ -2896,6 +3264,11 @@ void DX12Device::Submit_Frame(bool present)
 	Record_Uploads(CommandList.Get());
 
 	bool has_render_target = FrameHasRenderTarget;
+	if (present && was_recording)
+	{
+		// The brightness curve, the last thing before the back buffer goes to the present state.
+		Apply_Gamma_Pass();
+	}
 	if (has_render_target)
 	{
 		Transition(CommandList.Get(), BackBuffers[BackBufferIndex].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
@@ -3727,6 +4100,39 @@ bool DX12Device::Copy_Target_To_Texture(DX12TextureClass * dest, const tagRECT *
 	++DebugTargetCopies;
 	Transition(CommandList.Get(), source, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
 	return true;
+}
+
+void DX12Device::Set_Gamma_Ramp(const unsigned short * red, const unsigned short * green, const unsigned short * blue)
+{
+	const unsigned short * channels[3] = { red, green, blue };
+	bool identity = true;
+	bool changed = false;
+	for (int c = 0; c < 3; ++c)
+	{
+		for (int i = 0; i < 256; ++i)
+		{
+			const unsigned short value = channels[c][i];
+			if (GammaRamp[c][i] != value)
+			{
+				changed = true;
+				GammaRamp[c][i] = value;
+			}
+			// Within one 8-bit step (257) of i * 257 counts as the identity. The Direct3D 8 ramp is built
+			// from i / 256, so the default settings give 65535 * i / 256 instead of 65535 * i / 255: the
+			// same 8-bit value or one below it (255 -> 254), which is treated as no curve.
+			const int difference = (int)value - i * 257;
+			if (difference > 257 || difference < -257)
+			{
+				identity = false;
+			}
+		}
+	}
+	GammaRampIsIdentity = identity;
+	if (changed)
+	{
+		GammaLUTDirty = true;
+		GammaFailed = false;
+	}
 }
 
 DX12TextureClass * DX12Device::Read_Back_Buffer()
