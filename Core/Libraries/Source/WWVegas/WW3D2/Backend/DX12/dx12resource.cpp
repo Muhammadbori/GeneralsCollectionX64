@@ -329,7 +329,8 @@ DX12TextureClass::DX12TextureClass() :
 	State(D3D12_RESOURCE_STATE_COMMON),
 	DXGIFormat(DXGI_FORMAT_UNKNOWN),
 	SRVComponentMapping(D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING),
-	NeedsInitialClear(false)
+	NeedsInitialClear(false),
+	QueuedForUpload(false)
 {
 }
 
@@ -387,6 +388,8 @@ bool DX12TextureClass::Init(unsigned width, unsigned height, WW3DFormat format, 
 	DXGIFormat = Get_GPU_Format(format);
 	LevelData.resize(LevelCount);
 	LevelLockedReadOnly.assign(LevelCount, 0);
+	LevelLocked.assign(LevelCount, 0);
+	LevelDirty.assign(LevelCount, 0);
 
 	if (CPUOnly) {
 		return true;
@@ -456,6 +459,8 @@ bool DX12TextureClass::Init_Target(unsigned width, unsigned height, WW3DFormat f
 	KeepCPUCopy = false;
 	LevelData.resize(LevelCount);
 	LevelLockedReadOnly.assign(LevelCount, 0);
+	LevelLocked.assign(LevelCount, 0);
+	LevelDirty.assign(LevelCount, 0);
 
 	D3D12_HEAP_PROPERTIES heap;
 	memset(&heap, 0, sizeof(heap));
@@ -581,7 +586,11 @@ void * DX12TextureClass::Lock(unsigned level, int * pitch, const tagRECT * rect,
 	if (data.empty()) {
 		data.assign(Get_Level_Size(level), 0);
 	}
-	LevelLockedReadOnly[level] = read_only ? 1 : 0;
+	// A second lock of a locked level (Direct3D 8 allows none) keeps the first one's mode.
+	if (!LevelLocked[level]) {
+		LevelLockedReadOnly[level] = read_only ? 1 : 0;
+	}
+	LevelLocked[level] = 1;
 
 	const unsigned level_pitch = Get_Pitch(level);
 	if (pitch) {
@@ -604,16 +613,59 @@ void DX12TextureClass::Unlock(unsigned level)
 		return;
 	}
 
+	bool queue = false;
+	{
+		std::lock_guard<std::mutex> guard(Get_Texture_Lock(this));
+
+		if (!LevelLockedReadOnly[level] && !CPUOnly && !LevelData[level].empty()) {
+			if (DX12Device_Is_Main_Thread()) {
+				// Uploaded with the other dirty levels when the device next records uploads.
+				LevelDirty[level] = 1;
+				if (!QueuedForUpload) {
+					QueuedForUpload = true;
+					queue = true;
+				}
+			} else {
+				Upload_Level(level);
+			}
+		}
+		LevelLockedReadOnly[level] = 0;
+		LevelLocked[level] = 0;
+
+		// A dirty level keeps its CPU copy until it is uploaded.
+		if (!KeepCPUCopy && !LevelDirty[level]) {
+			std::vector<unsigned char>().swap(LevelData[level]);
+		}
+	}
+	if (queue) {
+		DX12Device::Queue_Dirty_Texture(this);
+	}
+}
+
+bool DX12TextureClass::Upload_Dirty_Levels()
+{
 	std::lock_guard<std::mutex> guard(Get_Texture_Lock(this));
 
-	if (!LevelLockedReadOnly[level] && !CPUOnly && !LevelData[level].empty()) {
-		Upload_Level(level);
+	bool still_dirty = false;
+	for (unsigned level = 0; level < LevelCount; ++level) {
+		if (!LevelDirty[level]) {
+			continue;
+		}
+		if (LevelLocked[level]) {
+			// Uploaded after its Unlock instead.
+			still_dirty = true;
+			continue;
+		}
+		if (!LevelData[level].empty()) {
+			Upload_Level(level);
+		}
+		LevelDirty[level] = 0;
+		if (!KeepCPUCopy) {
+			std::vector<unsigned char>().swap(LevelData[level]);
+		}
 	}
-	LevelLockedReadOnly[level] = 0;
-
-	if (!KeepCPUCopy) {
-		std::vector<unsigned char>().swap(LevelData[level]);
-	}
+	QueuedForUpload = still_dirty;
+	return still_dirty;
 }
 
 // Converts the CPU copy of a level into the GPU layout and queues the copy. Called with the

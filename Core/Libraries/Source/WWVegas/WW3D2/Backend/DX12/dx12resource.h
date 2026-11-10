@@ -32,10 +32,15 @@ struct tagRECT;
 
 // A 2D texture. The game reads and writes texels through Lock/Unlock in the texture's own
 // WW3DFormat, exactly as it did with Direct3D 8 surfaces. Each level has a CPU copy while it is
-// locked; Unlock converts the level to the GPU format (BC1-3 for DXT, B8G8R8A8 for everything
-// else) and queues the upload. The CPU copy is kept afterwards only for textures created with
-// keep_cpu_copy (procedural textures that are updated in parts, such as font pages), so a later
-// partial lock still sees the rest of the level.
+// locked; the upload converts the level to the GPU format (BC1-3 for DXT, B8G8R8A8 for everything
+// else) and queues the copy. An Unlock on the loader thread uploads at once. An Unlock on the main
+// thread only marks the level dirty: DX12Device uploads the dirty levels once when it next records
+// the queued uploads (Upload_Dirty_Levels), so a level that is locked many times between frames (the
+// radar shroud, one cell per lock) is converted and copied once, as a Direct3D 8 managed texture is.
+// The uploads reach the GPU at the same point in the frame as before. The CPU copy is kept after
+// the upload only for textures created with keep_cpu_copy (procedural textures that are updated in
+// parts, such as font pages), so a later partial lock still sees the rest of the level; until the
+// upload, every lock sees the CPU copy.
 //
 // A cpu_only texture has no GPU resource. It backs standalone SurfaceClass objects.
 //
@@ -98,6 +103,11 @@ public:
 	void * Lock(unsigned level, int * pitch, const tagRECT * rect = nullptr, bool read_only = false);
 	void Unlock(unsigned level);
 
+	// Main thread only, used by DX12Device: uploads the levels that a main thread Unlock marked dirty
+	// and are not locked now. Returns true when a dirty level is still locked, so the texture must
+	// stay queued for the next call.
+	bool Upload_Dirty_Levels();
+
 	// Main thread only, used by DX12Device while recording.
 	ID3D12Resource * Peek_Resource() const { return Resource; }
 	unsigned Get_SRV_Slot() const { return SRVSlot; }
@@ -128,6 +138,9 @@ protected:
 	bool CPUOnly;
 	std::vector<std::vector<unsigned char>> LevelData;
 	std::vector<unsigned char> LevelLockedReadOnly;
+	std::vector<unsigned char> LevelLocked;		// between Lock and Unlock
+	std::vector<unsigned char> LevelDirty;		// unlocked on the main thread and not uploaded yet
+	bool QueuedForUpload;						// in DX12Device's dirty texture list (holds a reference)
 
 	UsageType Usage;
 	ID3D12Resource * Resource;

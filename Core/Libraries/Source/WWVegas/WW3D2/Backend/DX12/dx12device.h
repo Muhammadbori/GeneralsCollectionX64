@@ -369,6 +369,9 @@ public:
 	static unsigned Allocate_DSV_Slot();
 	static void Free_DSV_Slot(unsigned slot);
 	static void Release_When_Idle(ID3D12Resource * resource);
+	// Keeps a reference to a texture with dirty levels (DX12TextureClass::Unlock on the main thread)
+	// and uploads them with the next recorded uploads. Main thread only.
+	static void Queue_Dirty_Texture(DX12TextureClass * texture);
 	static void Queue_Texture_Upload(DX12TextureClass * texture, unsigned level, ID3D12Resource * upload);
 	static bool Allocate_Frame_Memory(unsigned size, void ** cpu, unsigned long long * gpu);
 	static unsigned long long Get_Frame_Number() { return FrameNumber; }

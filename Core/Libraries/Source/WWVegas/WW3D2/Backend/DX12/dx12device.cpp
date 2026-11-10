@@ -374,6 +374,10 @@ std::vector<DeferredRelease> DeferredReleases;
 std::vector<PendingUpload> PendingUploads;
 UINT64 PendingUploadBytes = 0;
 std::atomic<bool> HasPendingUploads(false);
+// Textures with levels unlocked on the main thread and not uploaded yet, each with a reference.
+// Main thread only.
+std::vector<DX12TextureClass *> DirtyTextures;
+bool UploadingDirtyTextures = false;	// Flush_Dirty_Textures is queueing their uploads
 
 ComPtr<ID3D12RootSignature> RootSignature;
 VertexShaderMap VertexShaders;
@@ -1025,9 +1029,35 @@ void Prepare_Frame_Slot()
 	FrameSlotPrepared = true;
 }
 
+// Uploads the dirty levels of the textures in DirtyTextures (queues their copies). Main thread only.
+void Flush_Dirty_Textures()
+{
+	if (DirtyTextures.empty() || UploadingDirtyTextures)
+	{
+		return;
+	}
+	std::vector<DX12TextureClass *> textures;
+	textures.swap(DirtyTextures);
+	UploadingDirtyTextures = true;
+	for (size_t i = 0; i < textures.size(); ++i)
+	{
+		if (textures[i]->Upload_Dirty_Levels())
+		{
+			// A dirty level is still locked; keep the reference for the next flush.
+			DirtyTextures.push_back(textures[i]);
+		}
+		else
+		{
+			textures[i]->Release_Ref();
+		}
+	}
+	UploadingDirtyTextures = false;
+}
+
 // Records the queued texture uploads into list. Main thread only.
 void Record_Uploads(ID3D12GraphicsCommandList * list)
 {
+	Flush_Dirty_Textures();
 	if (!HasPendingUploads.load())
 	{
 		return;
@@ -1095,7 +1125,7 @@ void Record_Uploads(ID3D12GraphicsCommandList * list)
 // Main thread only, and only outside a frame so the copies stay in submission order.
 void Execute_Uploads_Now()
 {
-	if (Recording || !HasPendingUploads.load())
+	if (Recording || (!HasPendingUploads.load() && DirtyTextures.empty()))
 	{
 		return;
 	}
@@ -3253,6 +3283,14 @@ void Release_All()
 	// With the device pointer already cleared, the target textures release their resources at once.
 	Release_Targets();
 
+	// Dirty levels that were never uploaded are lost with the device, as all GPU contents are.
+	std::vector<DX12TextureClass *> dirty;
+	dirty.swap(DirtyTextures);
+	for (size_t i = 0; i < dirty.size(); ++i)
+	{
+		dirty[i]->Release_Ref();
+	}
+
 	std::vector<PendingUpload> uploads;
 	std::vector<DeferredRelease> releases;
 	{
@@ -3917,7 +3955,7 @@ void DX12Device::Submit_Frame(bool present)
 
 	if (!Recording)
 	{
-		if (!present && !HasPendingUploads.load())
+		if (!present && !HasPendingUploads.load() && DirtyTextures.empty())
 		{
 			return;
 		}
@@ -5029,6 +5067,22 @@ void DX12Device::Release_When_Idle(ID3D12Resource * resource)
 	DeferredReleases.push_back(deferred);
 }
 
+void DX12Device::Queue_Dirty_Texture(DX12TextureClass * texture)
+{
+	if (!texture)
+	{
+		return;
+	}
+	if (!Device)
+	{
+		// Nothing records uploads without a device; this drops the dirty marks.
+		texture->Upload_Dirty_Levels();
+		return;
+	}
+	texture->Add_Ref();
+	DirtyTextures.push_back(texture);
+}
+
 void DX12Device::Queue_Texture_Upload(DX12TextureClass * texture, unsigned level, ID3D12Resource * upload)
 {
 	if (!upload)
@@ -5060,7 +5114,8 @@ void DX12Device::Queue_Texture_Upload(DX12TextureClass * texture, unsigned level
 	}
 
 	// Loading screens create many textures between frames; do not let the staging memory pile up.
-	if (too_many && Is_Main_Thread())
+	// Not while Flush_Dirty_Textures queues uploads, which runs inside the recording of uploads.
+	if (too_many && Is_Main_Thread() && !UploadingDirtyTextures)
 	{
 		if (Recording)
 			Record_Uploads(CommandList.Get());
