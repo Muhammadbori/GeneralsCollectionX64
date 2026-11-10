@@ -22,6 +22,12 @@
 
 void W3D_TakeCompressedScreenshot(ScreenshotFormat format, Int jpegQuality);
 
+// TheSuperHackers @feature Writes the screenshot to the given full file path, without the on screen message.
+void W3D_TakeCompressedScreenshotToFile(ScreenshotFormat format, Int jpegQuality, const char* filePath);
+
+// Returns whether a screenshot thread has not finished writing its file yet.
+Bool W3D_IsScreenshotWritePending();
+
 // Called once per frame on the main thread to show messages for screenshots
 // that the screenshot thread has finished writing.
 void W3D_UpdateScreenshotMessages();

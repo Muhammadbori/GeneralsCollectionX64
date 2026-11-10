@@ -45,6 +45,7 @@ struct ScreenshotThreadData
 	bool is16Bit;
 	char userDataDirectory[_MAX_PATH];
 	char leafname[_MAX_FNAME];
+	char filePath[_MAX_PATH]; // when set, the full output path; no Screenshots folder and no message
 	int quality;
 	ScreenshotFormat format;
 };
@@ -60,6 +61,14 @@ struct ScreenshotWrittenMessage
 };
 static MPSCIntrusiveQueue<ScreenshotWrittenMessage> s_screenshotWrittenQueue;
 
+// Number of screenshot threads that have not finished writing their file.
+static volatile LONG s_pendingScreenshotWrites = 0;
+
+Bool W3D_IsScreenshotWritePending()
+{
+	return InterlockedCompareExchange(&s_pendingScreenshotWrites, 0, 0) != 0;
+}
+
 static DWORD WINAPI screenshotThreadFunc(LPVOID param)
 {
 	ScreenshotThreadData* data = static_cast<ScreenshotThreadData*>(param);
@@ -67,10 +76,18 @@ static DWORD WINAPI screenshotThreadFunc(LPVOID param)
 	// TheSuperHackers @feature bobtista 08/07/2026 Save screenshots into a Screenshots subfolder
 	// to keep the user data root folder tidy.
 	char pathname[_MAX_PATH];
-	strlcpy(pathname, data->userDataDirectory, ARRAY_SIZE(pathname));
-	strlcat(pathname, "Screenshots\\", ARRAY_SIZE(pathname));
-	CreateDirectory(pathname, nullptr);
-	strlcat(pathname, data->leafname, ARRAY_SIZE(pathname));
+	const bool isExplicitPath = data->filePath[0] != '\0';
+	if (isExplicitPath)
+	{
+		strlcpy(pathname, data->filePath, ARRAY_SIZE(pathname));
+	}
+	else
+	{
+		strlcpy(pathname, data->userDataDirectory, ARRAY_SIZE(pathname));
+		strlcat(pathname, "Screenshots\\", ARRAY_SIZE(pathname));
+		CreateDirectory(pathname, nullptr);
+		strlcat(pathname, data->leafname, ARRAY_SIZE(pathname));
+	}
 
 	const unsigned int width = data->width;
 	const unsigned int height = data->height;
@@ -122,7 +139,7 @@ static DWORD WINAPI screenshotThreadFunc(LPVOID param)
 			break;
 	}
 
-	if (success)
+	if (success && !isExplicitPath)
 	{
 		ScreenshotWrittenMessage* message = new ScreenshotWrittenMessage;
 		strlcpy(message->leafname, data->leafname, ARRAY_SIZE(message->leafname));
@@ -136,7 +153,23 @@ static DWORD WINAPI screenshotThreadFunc(LPVOID param)
 	delete[] image;
 	delete data;
 
+	InterlockedDecrement(&s_pendingScreenshotWrites);
+
 	return success;
+}
+
+static Bool startScreenshotThread(ScreenshotThreadData* threadData)
+{
+	InterlockedIncrement(&s_pendingScreenshotWrites);
+	const HANDLE hThread = CreateThread(nullptr, 0, screenshotThreadFunc, threadData, 0, nullptr);
+	if (hThread)
+	{
+		CloseHandle(hThread);
+		return TRUE;
+	}
+	InterlockedDecrement(&s_pendingScreenshotWrites);
+	delete threadData;
+	return FALSE;
 }
 
 void W3D_UpdateScreenshotMessages()
@@ -156,7 +189,7 @@ void W3D_UpdateScreenshotMessages()
 // Direct3D 12 mode has no Direct3D 8 back buffer to copy. DX8Wrapper::Read_Back_Buffer reads the back buffer
 // (between frames, the last presented frame) into a new A8R8G8B8 CPU surface, which the screenshot thread
 // converts and writes like the Direct3D 8 copy.
-static void takeCompressedScreenshotDX12(ScreenshotFormat format, Int jpegQuality, const char* leafname)
+static void takeCompressedScreenshotDX12(ScreenshotFormat format, Int jpegQuality, const char* leafname, const char* filePath)
 {
 	SurfaceClass* surface = DX8Wrapper::Read_Back_Buffer();
 	if (surface == nullptr)
@@ -192,6 +225,7 @@ static void takeCompressedScreenshotDX12(ScreenshotFormat format, Int jpegQualit
 	threadData->format = format;
 	strlcpy(threadData->userDataDirectory, TheGlobalData->getPath_UserData().str(), ARRAY_SIZE(threadData->userDataDirectory));
 	strlcpy(threadData->leafname, leafname, ARRAY_SIZE(threadData->leafname));
+	strlcpy(threadData->filePath, filePath != nullptr ? filePath : "", ARRAY_SIZE(threadData->filePath));
 
 	threadData->pixelData = new unsigned char[threadData->pitch * threadData->height];
 	memcpy(threadData->pixelData, bits, threadData->pitch * threadData->height);
@@ -200,18 +234,15 @@ static void takeCompressedScreenshotDX12(ScreenshotFormat format, Int jpegQualit
 	surface->Release_Ref();
 	surface = nullptr;
 
-	const HANDLE hThread = CreateThread(nullptr, 0, screenshotThreadFunc, threadData, 0, nullptr);
-	if (hThread)
-	{
-		CloseHandle(hThread);
-	}
-	else
-	{
-		delete threadData;
-	}
+	startScreenshotThread(threadData);
 }
 
 void W3D_TakeCompressedScreenshot(ScreenshotFormat format, Int jpegQuality)
+{
+	W3D_TakeCompressedScreenshotToFile(format, jpegQuality, nullptr);
+}
+
+void W3D_TakeCompressedScreenshotToFile(ScreenshotFormat format, Int jpegQuality, const char* filePath)
 {
 	static constexpr const char* const ScreenshotFormatExtensions[] = { "jpg", "png" };
 	static_assert(ARRAY_SIZE(ScreenshotFormatExtensions) == SCREENSHOT_FORMAT_COUNT, "Incorrect array size");
@@ -227,7 +258,7 @@ void W3D_TakeCompressedScreenshot(ScreenshotFormat format, Int jpegQuality)
 
 	if (DX12Device::Is_Active())
 	{
-		takeCompressedScreenshotDX12(format, jpegQuality, leafname);
+		takeCompressedScreenshotDX12(format, jpegQuality, leafname, filePath);
 		return;
 	}
 
@@ -278,6 +309,7 @@ void W3D_TakeCompressedScreenshot(ScreenshotFormat format, Int jpegQuality)
 	threadData->format = format;
 	strlcpy(threadData->userDataDirectory, TheGlobalData->getPath_UserData().str(), ARRAY_SIZE(threadData->userDataDirectory));
 	strlcpy(threadData->leafname, leafname, ARRAY_SIZE(threadData->leafname));
+	strlcpy(threadData->filePath, filePath != nullptr ? filePath : "", ARRAY_SIZE(threadData->filePath));
 
 	// Copy the locked surface with a single memcpy, including any row padding. The pixel
 	// conversion and all file operations are done on the screenshot thread to keep the
@@ -289,13 +321,5 @@ void W3D_TakeCompressedScreenshot(ScreenshotFormat format, Int jpegQuality)
 	surfaceCopy->Release_Ref();
 	surfaceCopy = nullptr;
 
-	const HANDLE hThread = CreateThread(nullptr, 0, screenshotThreadFunc, threadData, 0, nullptr);
-	if (hThread)
-	{
-		CloseHandle(hThread);
-	}
-	else
-	{
-		delete threadData;
-	}
+	startScreenshotThread(threadData);
 }

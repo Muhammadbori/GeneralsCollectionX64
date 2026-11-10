@@ -182,6 +182,9 @@ public:
 	virtual void preloadTextureAssets( AsciiString texture ) = 0;	///< preload texture asset
 
 	virtual void takeScreenShot(ScreenshotFormat format, Int jpegQuality = DEFAULT_JPEG_QUALITY) = 0;			///< saves screenshot in specified format
+	virtual void takeScreenShotToFile(ScreenshotFormat format, const char *filePath) { }	///< saves the last rendered image to the given file path, without a message
+	virtual Bool isScreenShotWritePending() const { return FALSE; }	///< returns true while a screenshot file is still being written
+	virtual UnsignedInt getRenderedFrameCount() const { return 0; }	///< number of rendered frames so far
 	virtual void toggleMovieCapture() = 0;							///< starts saving frames to an avi or frame sequence
 	virtual void toggleLetterBox() = 0;										///< enabled letter-boxed display
 	virtual void enableLetterBox(Bool enable) = 0;						///< forces letter-boxed display on/off

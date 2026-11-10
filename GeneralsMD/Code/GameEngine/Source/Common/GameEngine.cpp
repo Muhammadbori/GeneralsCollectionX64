@@ -33,6 +33,7 @@
 #include "Common/BuildAssistant.h"
 #include "Common/CRCDebug.h"
 #include "Common/FramePacer.h"
+#include "Common/FrameShots.h"
 #include "Common/Radar.h"
 #include "Common/PlayerTemplate.h"
 #include "Common/Team.h"
@@ -893,6 +894,10 @@ void GameEngine::update()
 
 			TheAudio->UPDATE();
 			TheGameClient->UPDATE();
+
+			// TheSuperHackers @feature Save frame shots after the client update has drawn the frame.
+			FrameShots::onClientUpdated();
+
 			TheMessageStream->propagateMessages();
 
 			if (TheNetwork != nullptr)
@@ -905,6 +910,8 @@ void GameEngine::update()
 		if (canUpdateGameLogic(FramePacer::IgnoreFrozenTime))
 		{
 			TheGameLogic->UPDATE();
+
+			FrameShots::onLogicUpdated();
 
 			if (!TheFramePacer->isTimeFrozen())
 			{

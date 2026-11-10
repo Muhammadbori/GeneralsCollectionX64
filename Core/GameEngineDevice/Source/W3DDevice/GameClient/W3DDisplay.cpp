@@ -3200,6 +3200,22 @@ void W3DDisplay::takeScreenShot(ScreenshotFormat format, Int jpegQuality)
 	W3D_TakeCompressedScreenshot(format, jpegQuality);
 }
 
+void W3DDisplay::takeScreenShotToFile(ScreenshotFormat format, const char *filePath)
+{
+	W3D_TakeCompressedScreenshotToFile(format, DEFAULT_JPEG_QUALITY, filePath);
+}
+
+Bool W3DDisplay::isScreenShotWritePending() const
+{
+	return W3D_IsScreenshotWritePending();
+}
+
+UnsignedInt W3DDisplay::getRenderedFrameCount() const
+{
+	// Counts every WW3D::End_Render, in both render paths.
+	return WW3D::Get_Frame_Count();
+}
+
 
 #if defined(RTS_DEBUG)
 

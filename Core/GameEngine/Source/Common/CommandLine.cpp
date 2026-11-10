@@ -28,6 +28,7 @@
 #include "Common/ArchiveFileSystem.h"
 #include "Common/CommandLine.h"
 #include "Common/CRCDebug.h"
+#include "Common/FrameShots.h"
 #include "Common/LocalFileSystem.h"
 #include "Common/version.h"
 #include "Common/WorkingDirectory.h"
@@ -767,6 +768,33 @@ Int parseLoadSave(char *args[], int num)
 	return 1;
 }
 
+// TheSuperHackers @feature Save the rendered image at the given logic frames, see FrameShots.
+Int parseShotFrames(char *args[], int num)
+{
+	if (num > 1)
+	{
+		FrameShots::setFrames(args[1]);
+		return 2;
+	}
+	return 1;
+}
+
+Int parseShotDir(char *args[], int num)
+{
+	if (num > 1)
+	{
+		FrameShots::setDirectory(args[1]);
+		return 2;
+	}
+	return 1;
+}
+
+Int parseShotExit(char *args[], int num)
+{
+	FrameShots::setExitWhenDone(TRUE);
+	return 1;
+}
+
 Int parseLoadReplay(char *args[], int num)
 {
 	if (num > 1)
@@ -1239,6 +1267,9 @@ static CommandLineParam paramsForEngineInit[] =
 
 	// TheSuperHackers @feature bobtista 08/08/2026 Play a replay file from the command line.
 	{ "-loadreplay", parseLoadReplay },
+	{ "-shotFrames", parseShotFrames },
+	{ "-shotDir", parseShotDir },
+	{ "-shotExit", parseShotExit },
 
 	// TheSuperHackers @feature xezon 03/08/2025 Force full viewport for 'Control Bar Pro' Addons like GenTool did it.
 	{ "-forcefullviewport", parseFullViewport },
