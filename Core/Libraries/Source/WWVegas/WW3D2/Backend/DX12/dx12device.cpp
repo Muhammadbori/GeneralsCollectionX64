@@ -355,6 +355,17 @@ D3D12_CPU_DESCRIPTOR_HANDLE SamplerHeapCPU;
 D3D12_GPU_DESCRIPTOR_HANDLE SamplerHeapGPU;
 std::map<unsigned, unsigned> SamplerCache;
 
+// The arguments and result of the last Get_Sampler call of each texture stage in Draw. Get_Sampler
+// maps the same arguments to the same descriptor for as long as SamplerCache lives, so a stage whose
+// arguments did not change reuses the handle without the map lookup. Cleared with SamplerCache.
+struct StageSampler
+{
+	bool Valid;
+	unsigned Args[7];	// min, mag, mip filter, address u, v, max anisotropy, min LOD as passed in
+	D3D12_GPU_DESCRIPTOR_HANDLE Handle;
+};
+StageSampler StageSamplers[DX12_MAX_STAGES];
+
 // Guards the fence counter, deferred releases, SRV slot lists and pending uploads.
 std::mutex ResourceMutex;
 std::vector<DeferredRelease> DeferredReleases;
@@ -1872,6 +1883,27 @@ D3D12_GPU_DESCRIPTOR_HANDLE Get_Sampler(unsigned min_filter, unsigned mag_filter
 	return gpu;
 }
 
+// Get_Sampler for a texture stage of Draw, through the per-stage cache.
+D3D12_GPU_DESCRIPTOR_HANDLE Get_Stage_Sampler(unsigned stage, unsigned min_filter, unsigned mag_filter, unsigned mip_filter, unsigned address_u, unsigned address_v, unsigned max_anisotropy, unsigned min_lod)
+{
+	StageSampler & cache = StageSamplers[stage];
+	if (cache.Valid && cache.Args[0] == min_filter && cache.Args[1] == mag_filter && cache.Args[2] == mip_filter
+		&& cache.Args[3] == address_u && cache.Args[4] == address_v && cache.Args[5] == max_anisotropy && cache.Args[6] == min_lod)
+	{
+		return cache.Handle;
+	}
+	cache.Handle = Get_Sampler(min_filter, mag_filter, mip_filter, address_u, address_v, max_anisotropy, min_lod);
+	cache.Args[0] = min_filter;
+	cache.Args[1] = mag_filter;
+	cache.Args[2] = mip_filter;
+	cache.Args[3] = address_u;
+	cache.Args[4] = address_v;
+	cache.Args[5] = max_anisotropy;
+	cache.Args[6] = min_lod;
+	cache.Valid = true;
+	return cache.Handle;
+}
+
 void Color_To_Float4(unsigned argb, float * out)
 {
 	out[0] = ((argb >> 16) & 0xff) / 255.0f;
@@ -2836,6 +2868,10 @@ void Release_All()
 	DX12GameShaders_Clear();
 	RootSignature.Reset();
 	SamplerCache.clear();
+	for (unsigned stage = 0; stage < DX12_MAX_STAGES; ++stage)
+	{
+		StageSamplers[stage].Valid = false;
+	}
 	WhiteTexture.Reset();
 	Release_Gamma_Resources();
 	SRVSlotResources.clear();
@@ -3889,7 +3925,7 @@ void DX12Device::Draw(const DX12DrawDesc & desc)
 	{
 		bool sampled = game_ps >= 0 || ffp.PS.Stages[stage].Texture == FFP_TEXTURE_SAMPLED;
 		textures[stage] = Bind_Texture(sampled ? desc.Textures[stage] : nullptr, barriers, barrier_count);
-		samplers[stage] = sampled ? Get_Sampler(desc.MinFilter[stage], desc.MagFilter[stage], desc.MipFilter[stage],
+		samplers[stage] = sampled ? Get_Stage_Sampler(stage, desc.MinFilter[stage], desc.MagFilter[stage], desc.MipFilter[stage],
 			desc.AddressU[stage], desc.AddressV[stage], desc.MaxAnisotropy[stage],
 			desc.Textures[stage] ? desc.Textures[stage]->Get_Min_LOD() : 0) : DefaultSampler;
 	}
