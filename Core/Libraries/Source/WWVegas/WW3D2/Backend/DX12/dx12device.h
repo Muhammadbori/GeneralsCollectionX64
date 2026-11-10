@@ -23,9 +23,9 @@
 // The game's Direct3D 8 vertex and pixel shaders run as HLSL ports, registered by name and selected
 // through the same handles Direct3D 8 used (dx12gameshaders.h).
 //
-// The Direct3D 12 path is selected with -dx12 while the port is in progress. Once it covers
-// everything the Direct3D 8 path is deleted. -dx12debug sets DX12Device_DebugLayer, which enables
-// the Direct3D 12 debug layer and writes its messages to dx12debug.log.
+// The game uses the Direct3D 12 path by default; -dx8 selects the Direct3D 8 path, which is deleted
+// later. -dx12debug sets DX12Device_DebugLayer, which enables the Direct3D 12 debug layer and writes
+// its messages to dx12debug.log.
 
 #pragma once
 
@@ -289,12 +289,16 @@ public:
 		unsigned Height;
 	};
 
-	// -dx12 on the command line. Read by DX8Wrapper::Init.
+	// The Direct3D 12 renderer was selected (DX8Wrapper_UseDX12: the game's default, not -dx8). Set by
+	// DX8Wrapper::Init.
 	static bool Is_Requested() { return Requested; }
 	static void Set_Requested(bool requested) { Requested = requested; }
 	static bool Is_Active() { return Device != nullptr; }
 
 	static bool Init(void * hwnd);
+	// Why the last Init or Set_Resolution failed, for the message the game shows: the first failure since
+	// Init was called (a missing DLL, no adapter, or the Direct3D call that failed). Empty when none.
+	static const char * Get_Failure_Reason();
 	static void Shutdown();
 
 	static const char * Get_Adapter_Name();

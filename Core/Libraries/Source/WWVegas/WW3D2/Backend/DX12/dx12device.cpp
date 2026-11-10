@@ -579,6 +579,21 @@ void Read_Compiler_Identity(HMODULE compiler)
 	}
 }
 
+// DX12Device::Get_Failure_Reason: the first failure since Init.
+char FailureReason[256] = "";
+
+void Set_Failure_Reason(const char * format, ...)
+{
+	if (FailureReason[0] != '\0')
+	{
+		return;
+	}
+	va_list args;
+	va_start(args, format);
+	vsnprintf(FailureReason, sizeof(FailureReason), format, args);
+	va_end(args);
+}
+
 bool Load_Libraries()
 {
 	HMODULE d3d12 = LoadLibraryA("d3d12.dll");
@@ -586,6 +601,7 @@ bool Load_Libraries()
 	HMODULE compiler = LoadLibraryA("d3dcompiler_47.dll");
 	if (d3d12 == nullptr || dxgi == nullptr || compiler == nullptr)
 	{
+		Set_Failure_Reason("%s could not be loaded", d3d12 == nullptr ? "d3d12.dll" : (dxgi == nullptr ? "dxgi.dll" : "d3dcompiler_47.dll"));
 		WWDEBUG_SAY(("DX12: missing d3d12.dll, dxgi.dll or d3dcompiler_47.dll"));
 		return false;
 	}
@@ -600,6 +616,7 @@ bool Load_Libraries()
 	if (D3D12CreateDeviceFunc == nullptr || D3D12SerializeRootSignatureFunc == nullptr
 		|| CreateDXGIFactory2Func_ == nullptr || D3DCompileFunc == nullptr)
 	{
+		Set_Failure_Reason("d3d12.dll, dxgi.dll or d3dcompiler_47.dll lacks a required function");
 		WWDEBUG_SAY(("DX12: d3d12.dll, dxgi.dll or d3dcompiler_47.dll lacks a required entry point"));
 		return false;
 	}
@@ -780,6 +797,7 @@ void Flush_Debug_Log_Now()
 
 void Log_Failure(const char * what, HRESULT hr)
 {
+	Set_Failure_Reason("%s failed (0x%08x)", what, (unsigned)hr);
 	WWDEBUG_SAY(("DX12: %s failed (0x%08x)", what, (unsigned)hr));
 	Debug_Log("frame %llu: %s failed (0x%08x)", DX12Device::Get_Frame_Number(), what, (unsigned)hr);
 	if ((hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) && D3D)
@@ -3111,6 +3129,7 @@ bool Init_Device(HWND hwnd)
 
 	if (!Select_Adapter())
 	{
+		Set_Failure_Reason("no graphics adapter supports Direct3D 12 (feature level 11_0)");
 		WWDEBUG_SAY(("DX12: no hardware adapter supports Direct3D 12 at feature level 11_0"));
 		return false;
 	}
@@ -3660,8 +3679,10 @@ bool DX12Device::Init(void * hwnd)
 	{
 		return true;
 	}
+	FailureReason[0] = '\0';
 	if (!hwnd)
 	{
+		Set_Failure_Reason("there is no game window");
 		WWDEBUG_SAY(("DX12: Init needs a window"));
 		return false;
 	}
@@ -3744,6 +3765,11 @@ void DX12Device::Shutdown()
 	Close_Stats_Log();
 	Width = 0;
 	Height = 0;
+}
+
+const char * DX12Device::Get_Failure_Reason()
+{
+	return FailureReason;
 }
 
 const char * DX12Device::Get_Adapter_Name()

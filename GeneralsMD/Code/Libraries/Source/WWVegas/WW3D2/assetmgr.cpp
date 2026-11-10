@@ -377,6 +377,12 @@ void WW3DAssetManager::Log_Texture_Statistics()
 	unsigned total_uninitialized_count=0;
 	StringClass number;
 
+	// TheSuperHackers @info The list reads Direct3D 8 texture descriptions, which Direct3D 12 mode does not have.
+	if (DX12Device::Is_Active()) {
+		WWDEBUG_SAY(("Log_Texture_Statistics: not available in Direct3D 12 mode"));
+		return;
+	}
+
 	WWDEBUG_SAY(("\nInitialized textures ------------------------------------------\n"));
 	Log_Textures(true,total_initialized_count,total_initialized_tex_mem);
 

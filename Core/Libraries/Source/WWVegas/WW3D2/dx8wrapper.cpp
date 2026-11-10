@@ -104,7 +104,8 @@ bool DX8Wrapper_IsWindowed = true;
 // FPU_PRESERVE
 int DX8Wrapper_PreserveFPU = 0;
 
-// -dx12, set by the command line parser before WW3D is initialized.
+// Selects the Direct3D 12 renderer. False here, so the tools stay on Direct3D 8; the game's WinMain sets it
+// before parsing the command line, and -dx8 / -dx12 change it (CommandLine.cpp).
 bool DX8Wrapper_UseDX12 = false;
 
 /***********************************************************************************
@@ -313,9 +314,7 @@ bool DX8Wrapper::Init(void * hwnd, bool lite)
 
 	Invalidate_Cached_Render_States();
 
-	if (DX8Wrapper_UseDX12) {
-		DX12Device::Set_Requested(true);
-	}
+	DX12Device::Set_Requested(DX8Wrapper_UseDX12);
 
 	if (!lite && DX12Device::Is_Requested()) {
 		// Direct3D 8 is not loaded at all in Direct3D 12 mode.

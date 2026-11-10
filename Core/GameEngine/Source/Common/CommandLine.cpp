@@ -147,9 +147,19 @@ Int parseWin(char *args[], int)
 
 //=============================================================================
 //=============================================================================
+// TheSuperHackers @feature The game renders with Direct3D 12 by default (WinMain sets DX8Wrapper_UseDX12
+// before parsing). -dx8 selects the Direct3D 8 renderer, -dx12 the default one. When both are given, the
+// last one on the command line wins.
 Int parseDX12(char *args[], int)
 {
 	DX8Wrapper_UseDX12 = true;
+
+	return 1;
+}
+
+Int parseDX8(char *args[], int)
+{
+	DX8Wrapper_UseDX12 = false;
 
 	return 1;
 }
@@ -1312,8 +1322,10 @@ static CommandLineParam paramsForStartup[] =
 	{ "-win", parseWin },
 	{ "-fullscreen", parseNoWin },
 
-	// TheSuperHackers @feature 2026 Render with Direct3D 12 instead of Direct3D 8 while the port is in progress.
+	// TheSuperHackers @feature 2026 Direct3D 12 is the default renderer. -dx8 selects the Direct3D 8 renderer,
+	// -dx12 the default; the last of the two wins.
 	{ "-dx12", parseDX12 },
+	{ "-dx8", parseDX8 },
 
 	// TheSuperHackers @feature 2026 Enable the Direct3D 12 debug layer and log its messages to dx12debug.log.
 	{ "-dx12debug", parseDX12Debug },

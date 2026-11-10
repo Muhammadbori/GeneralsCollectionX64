@@ -1317,6 +1317,13 @@ void WW3D::Make_Screen_Shot( const char * filename_base , const float gamma, con
 
 	WWASSERT(!IsRendering);
 
+	// TheSuperHackers @info This TGA/BMP path reads the Direct3D 8 back buffer. Direct3D 12 mode has none; its
+	// screenshots go through W3DScreenshot.
+	if (DX12Device::Is_Active()) {
+		WWDEBUG_SAY(( "Make_Screen_Shot: not available in Direct3D 12 mode" ));
+		return;
+	}
+
 	char filename[80];
 
 	char ext[4];
@@ -1509,6 +1516,11 @@ void WW3D::Make_Screen_Shot( const char * filename_base , const float gamma, con
 void WW3D::Start_Movie_Capture( const char * filename_base, float frame_rate )
 {
 #ifdef _WIN32
+	// TheSuperHackers @info Movie capture reads the Direct3D 8 back buffer, which Direct3D 12 mode does not have.
+	if (DX12Device::Is_Active()) {
+		WWDEBUG_SAY(( "Start_Movie_Capture: movie capture is not available in Direct3D 12 mode" ));
+		return;
+	}
 	if (IsCapturing) {
 		Stop_Movie_Capture();
 	}

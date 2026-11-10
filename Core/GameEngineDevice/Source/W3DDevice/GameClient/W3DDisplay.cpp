@@ -44,6 +44,7 @@ static void drawFramerateBar();
 
 // USER INCLUDES //////////////////////////////////////////////////////////////
 #include "Common/FramePacer.h"
+#include "Common/FrameShots.h"
 #include "Common/ThingFactory.h"
 #include "Common/GlobalData.h"
 #include "Common/PerfTimer.h"
@@ -754,6 +755,22 @@ void W3DDisplay::init2DScene()
 
 }
 
+// TheSuperHackers @feature Direct3D 12 is the default renderer and does not fall back to Direct3D 8 on its
+// own. When it cannot start, the game says why and how to get the old renderer, and ends with exit code 4
+// (no message box with -shotFrames, so unattended runs end by themselves).
+static void failDirect3D12Startup(const char *step)
+{
+	const char *reason = DX12Device::Get_Failure_Reason();
+	AsciiString message;
+	message.format("Direct3D 12 could not be started: %s (%s).\n\n"
+		"Start the game with -dx8 to use the old Direct3D 8 renderer.",
+		(reason != nullptr && reason[0] != '\0') ? reason : "unknown reason", step);
+	FrameShots::failStartup(message.str(), 4);
+	WW3D::Shutdown();
+	WWMath::Shutdown();
+	ExitProcess(4);
+}
+
 // W3DDisplay::init ===========================================================
 /** Initialize or re-initialize the W3D display system.  Here we need to
   * create our window, and get our 3D hardware setup and online */
@@ -850,7 +867,11 @@ void W3DDisplay::init()
 		// TheSuperHackers @feature The shader cache lives in the user data folder (-userDataDir included).
 		DX12Device_Set_User_Data_Directory(TheGlobalData->getPath_UserData().str());
 		if (WW3D::Init( ApplicationHWnd ) != WW3D_ERROR_OK)
+		{
+			if (DX12Device::Is_Requested())
+				failDirect3D12Startup("device creation");
 			throw ERROR_INVALID_D3D;	//failed to initialize.  User probably doesn't have DX 8.1
+		}
 
 		WW3D::Set_Prelit_Mode( WW3D::PRELIT_MODE_LIGHTMAP_MULTI_PASS );
 		WW3D::Set_Collision_Box_Display_Mask(0x00);	///<set to 0xff to make collision boxes visible
@@ -938,6 +959,8 @@ void W3DDisplay::init()
 
 		if (renderDeviceError != WW3D_ERROR_OK)
 		{
+			if (DX12Device::Is_Requested())
+				failDirect3D12Startup("setting up the display mode");
 			WW3D::Shutdown();
 			WWMath::Shutdown();
 			throw ERROR_INVALID_D3D;	//failed to initialize.  User probably doesn't have DX 8.1
