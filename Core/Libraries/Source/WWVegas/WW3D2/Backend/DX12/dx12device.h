@@ -38,6 +38,50 @@ struct tagRECT;
 class DX12TextureClass;
 
 extern bool DX12Device_DebugLayer;
+
+// TheSuperHackers @info Per-frame performance counters, always counted (plain increments). With
+// -dx12debug, dx12device.cpp writes their per-frame averages to dx12debug.log at every 300-frame
+// heartbeat and at shutdown. Times are QueryPerformanceCounter ticks. Main thread only, except the
+// texture upload counters, which are updated under the device's resource mutex.
+enum DX12FenceWaitSite
+{
+	DX12_WAIT_FRAME_SLOT,	// Prepare_Frame_Slot: the GPU is two frames behind
+	DX12_WAIT_UPLOADS,		// Execute_Uploads_Now: uploads outside a frame
+	DX12_WAIT_FLUSH,		// Flush_Frame_And_Wait and back buffer readback
+	DX12_WAIT_OTHER,		// initialization, resolution change, shutdown
+	DX12_WAIT_SITE_COUNT
+};
+
+struct DX12FrameCounters
+{
+	unsigned long long DrawCalls;			// DX12Device::Draw calls
+	unsigned long long DrawsRecorded;		// draws that reached the command list
+	unsigned long long PipelineBinds;
+	unsigned long long PipelineCreates;
+	unsigned long long PipelineCreateTicks;
+	unsigned long long ShaderCompiles;
+	unsigned long long ShaderCompileTicks;
+	unsigned long long ConstantUploads;
+	unsigned long long ConstantBytes;
+	unsigned long long ConstantReuses;
+	unsigned long long FrameMemoryBytes;
+	unsigned long long BufferFullCopies;	// dynamic buffer moved to new frame memory with its whole shadow
+	unsigned long long BufferFullCopyBytes;
+	unsigned long long BufferLockCopies;	// dynamic buffer unlock copies
+	unsigned long long BufferLockCopyBytes;
+	unsigned long long TextureUploads;		// one upload buffer per texture level
+	unsigned long long TextureUploadBytes;
+	unsigned long long SRVWrites;
+	unsigned long long SamplerCreates;
+	unsigned long long RootParameterSets;
+	unsigned long long Barriers;
+	unsigned long long FenceWaits[DX12_WAIT_SITE_COUNT];
+	unsigned long long FenceWaitTicks[DX12_WAIT_SITE_COUNT];
+	unsigned long long PresentTicks;
+};
+
+// The counters of the frame being built.
+extern DX12FrameCounters DX12Device_Counters;
 // Directory for dx12debug.log, normally the user data directory; set before the device initializes.
 // Without one, or when the file cannot be created there, the log goes to the current directory.
 void DX12Device_Set_Debug_Log_Directory(const char * directory);

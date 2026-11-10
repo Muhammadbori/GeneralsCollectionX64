@@ -769,6 +769,8 @@ void DX12BufferClass::Unlock()
 	if (Dynamic) {
 		if (CPUAddress && LockSize) {
 			memcpy(CPUAddress + LockOffset, Shadow + LockOffset, LockSize);
+			++DX12Device_Counters.BufferLockCopies;
+			DX12Device_Counters.BufferLockCopyBytes += LockSize;
 		}
 		LockOffset = 0;
 		LockSize = 0;
@@ -795,6 +797,8 @@ void DX12BufferClass::Move_To_Frame_Memory(bool copy_shadow) const
 		GPUAddress = gpu;
 		if (copy_shadow && Shadow) {
 			memcpy(CPUAddress, Shadow, alloc_size ? alloc_size : 4);
+			++DX12Device_Counters.BufferFullCopies;
+			DX12Device_Counters.BufferFullCopyBytes += alloc_size ? alloc_size : 4;
 		}
 	} else {
 		WWDEBUG_SAY(("DX12: failed to allocate %u bytes of frame memory", Size));

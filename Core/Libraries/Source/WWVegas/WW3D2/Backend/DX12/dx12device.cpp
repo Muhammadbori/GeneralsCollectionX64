@@ -71,6 +71,7 @@ using Microsoft::WRL::ComPtr;
 
 void DX12Device_Write_SRV(unsigned slot, ID3D12Resource * resource, unsigned dxgi_format, unsigned mip_levels, unsigned component_mapping);
 
+DX12FrameCounters DX12Device_Counters;
 bool DX12Device_DebugLayer = false;
 
 bool DX12Device::Requested = false;
@@ -394,6 +395,21 @@ unsigned DebugTargetCopies = 0;
 
 ComPtr<ID3D12Resource> WhiteTexture;
 
+// Performance counters (dx12device.h). Counters is the frame being built; it is folded into the
+// period totals at each present and written at the heartbeat.
+struct CounterPeriod
+{
+	CounterPeriod() { memset(this, 0, sizeof(*this)); }
+
+	unsigned Frames;
+	DX12FrameCounters Sum;
+	unsigned long long MaxPipelineCreateTicks;
+	unsigned long long MaxShaderCompileTicks;
+	unsigned long long MaxFenceWaitTicks[DX12_WAIT_SITE_COUNT];
+	unsigned long long MaxPresentTicks;
+};
+CounterPeriod CountersPeriod;
+
 // Gamma (brightness option), applied as a final color curve on the presented back buffer. The ramp is
 // kept without a device too, so a ramp set before the device exists still applies.
 unsigned short GammaRamp[3][256];
@@ -671,6 +687,7 @@ D3D12_RESOURCE_BARRIER Make_Transition(ID3D12Resource * resource, D3D12_RESOURCE
 
 void Transition(ID3D12GraphicsCommandList * list, ID3D12Resource * resource, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after)
 {
+	++DX12Device_Counters.Barriers;
 	D3D12_RESOURCE_BARRIER barrier = Make_Transition(resource, before, after);
 	list->ResourceBarrier(1, &barrier);
 }
@@ -761,12 +778,29 @@ UINT64 Signal_Queue()
 	return value;
 }
 
-void Wait_For_Fence(UINT64 value)
+UINT64 Query_Ticks()
+{
+	LARGE_INTEGER ticks;
+	QueryPerformanceCounter(&ticks);
+	return (UINT64)ticks.QuadPart;
+}
+
+// Counts the waits that block, with their time, by site.
+struct Fence_Wait_Counter
+{
+	Fence_Wait_Counter(unsigned site) : Site(site), Start(Query_Ticks()) { ++DX12Device_Counters.FenceWaits[site]; }
+	~Fence_Wait_Counter() { DX12Device_Counters.FenceWaitTicks[Site] += Query_Ticks() - Start; }
+	unsigned Site;
+	UINT64 Start;
+};
+
+void Wait_For_Fence(UINT64 value, unsigned site = DX12_WAIT_OTHER)
 {
 	if (value == 0 || !Fence || Fence->GetCompletedValue() >= value)
 	{
 		return;
 	}
+	Fence_Wait_Counter counter(site);
 
 	// The event may still be signaled from an earlier wait that timed out, so the completed value,
 	// not the event, decides when the wait is over. Wait in steps so that a removed device cannot
@@ -847,7 +881,7 @@ void Prepare_Frame_Slot()
 	}
 
 	FrameSlot & frame = Frames[FrameIndex];
-	Wait_For_Fence(frame.FenceValue);
+	Wait_For_Fence(frame.FenceValue, DX12_WAIT_FRAME_SLOT);
 
 	if (!frame.Extra.empty() || !frame.Memory.Resource)
 	{
@@ -909,6 +943,7 @@ void Record_Uploads(ID3D12GraphicsCommandList * list)
 	if (!barriers.empty())
 	{
 		list->ResourceBarrier((UINT)barriers.size(), &barriers[0]);
+		DX12Device_Counters.Barriers += barriers.size();
 	}
 
 	for (size_t i = 0; i < uploads.size(); ++i)
@@ -969,7 +1004,7 @@ void Execute_Uploads_Now()
 		Log_Failure("Close (upload list)", hr);
 	}
 
-	Wait_For_Fence(Signal_Queue());
+	Wait_For_Fence(Signal_Queue(), DX12_WAIT_UPLOADS);
 	Process_Deferred();
 }
 
@@ -1189,7 +1224,7 @@ bool Flush_Frame_And_Wait()
 	{
 		Log_Failure("CommandList::Close (flush)", hr);
 	}
-	Wait_For_Fence(Signal_Queue());
+	Wait_For_Fence(Signal_Queue(), DX12_WAIT_FLUSH);
 	Process_Deferred();
 
 	// The GPU is idle, so the frame's allocator can be reset; the frame memory stays in use.
@@ -1223,7 +1258,7 @@ bool Flush_Frame_And_Wait()
 		FrameIndex = (FrameIndex + 1) % FRAME_COUNT;
 		FrameSlotPrepared = false;
 		DX12Device::Invalidate_Frame_Memory();
-		Wait_For_Fence(fence);
+		Wait_For_Fence(fence, DX12_WAIT_FLUSH);
 		Process_Deferred();
 		return false;
 	}
@@ -1273,7 +1308,10 @@ ComPtr<ID3DBlob> Compile_Shader(const std::string & source, const char * name, c
 
 	ComPtr<ID3DBlob> code;
 	ComPtr<ID3DBlob> errors;
+	const UINT64 compile_start = Query_Ticks();
 	HRESULT hr = D3DCompileFunc(source.c_str(), source.size(), name, nullptr, nullptr, entry, target, flags, 0, &code, &errors);
+	++DX12Device_Counters.ShaderCompiles;
+	DX12Device_Counters.ShaderCompileTicks += Query_Ticks() - compile_start;
 	if (FAILED(hr))
 	{
 		const char * output = errors ? (const char *)errors->GetBufferPointer() : "no compiler output";
@@ -1660,7 +1698,10 @@ ID3D12PipelineState * Get_Pipeline_State(const PSOKey & key, const FVFLayout & l
 		desc.SampleDesc.Count = 1;
 		desc.SampleDesc.Quality = 0;
 
+		const UINT64 create_start = Query_Ticks();
 		HRESULT hr = D3D->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&pso));
+		++DX12Device_Counters.PipelineCreates;
+		DX12Device_Counters.PipelineCreateTicks += Query_Ticks() - create_start;
 		if (FAILED(hr))
 		{
 			WWDEBUG_SAY(("DX12: CreateGraphicsPipelineState failed (0x%08x) for FVF 0x%x", (unsigned)hr, key.FVF));
@@ -1704,6 +1745,7 @@ D3D12_GPU_DESCRIPTOR_HANDLE Bind_Texture(DX12TextureClass * texture, D3D12_RESOU
 			if (SRVSlotResources[slot] != resource)
 			{
 				DX12Device_Write_SRV(slot, resource, texture->Get_DXGI_Format(), texture->Get_Level_Count(), texture->Get_SRV_Component_Mapping());
+				++DX12Device_Counters.SRVWrites;
 				SRVSlotResources[slot] = resource;
 			}
 			// Recorded before the batched transitions, while the target is still in its initial state.
@@ -1790,6 +1832,7 @@ D3D12_GPU_DESCRIPTOR_HANDLE Get_Sampler(unsigned min_filter, unsigned mag_filter
 		D3D12_CPU_DESCRIPTOR_HANDLE cpu = SamplerHeapCPU;
 		cpu.ptr += (SIZE_T)index * SamplerDescriptorSize;
 		D3D->CreateSampler(&desc, cpu);
+		++DX12Device_Counters.SamplerCreates;
 	}
 
 	D3D12_GPU_DESCRIPTOR_HANDLE gpu = SamplerHeapGPU;
@@ -1810,8 +1853,11 @@ UINT64 Upload_Constants(const void * data, unsigned size, void * last, UINT64 & 
 {
 	if (last_gpu != 0 && memcmp(data, last, size) == 0)
 	{
+		++DX12Device_Counters.ConstantReuses;
 		return last_gpu;
 	}
+	++DX12Device_Counters.ConstantUploads;
+	DX12Device_Counters.ConstantBytes += size;
 
 	void * cpu = nullptr;
 	unsigned long long gpu = 0;
@@ -2068,6 +2114,83 @@ bool Create_White_Texture()
 	return true;
 }
 
+
+// Adds the counters of the frame just presented to the period and starts a new frame.
+void Fold_Frame_Counters()
+{
+	DX12FrameCounters frame;
+	{
+		// The texture upload counters may be updated by the texture loader thread.
+		std::lock_guard<std::mutex> lock(ResourceMutex);
+		frame = DX12Device_Counters;
+		memset(&DX12Device_Counters, 0, sizeof(DX12Device_Counters));
+	}
+
+	CounterPeriod & period = CountersPeriod;
+	++period.Frames;
+	const unsigned long long * src = (const unsigned long long *)&frame;
+	unsigned long long * dst = (unsigned long long *)&period.Sum;
+	for (size_t i = 0; i < sizeof(DX12FrameCounters) / sizeof(unsigned long long); ++i)
+	{
+		dst[i] += src[i];
+	}
+	period.MaxPipelineCreateTicks = std::max(period.MaxPipelineCreateTicks, frame.PipelineCreateTicks);
+	period.MaxShaderCompileTicks = std::max(period.MaxShaderCompileTicks, frame.ShaderCompileTicks);
+	for (int site = 0; site < DX12_WAIT_SITE_COUNT; ++site)
+	{
+		period.MaxFenceWaitTicks[site] = std::max(period.MaxFenceWaitTicks[site], frame.FenceWaitTicks[site]);
+	}
+	period.MaxPresentTicks = std::max(period.MaxPresentTicks, frame.PresentTicks);
+}
+
+// Writes one line with the per-frame averages of the period (times in milliseconds, with the largest
+// single frame as _max) to dx12debug.log and starts a new period. Only with -dx12debug.
+void Write_Counters(const char * label, unsigned long long frame_number)
+{
+	const CounterPeriod period = CountersPeriod;
+	CountersPeriod = CounterPeriod();
+	if (!DX12Device_DebugLayer)
+	{
+		return;
+	}
+
+	LARGE_INTEGER frequency;
+	QueryPerformanceFrequency(&frequency);
+	const double ms_per_tick = 1000.0 / (double)frequency.QuadPart;
+	const double frames = period.Frames > 0 ? (double)period.Frames : 1.0;
+	const DX12FrameCounters & s = period.Sum;
+
+	char line[2048];
+	int length = snprintf(line, sizeof(line),
+		"%s %llu: counters frames=%u draws=%.1f skipped=%.1f pso_binds=%.1f pso_creates=%.2f pso_ms=%.3f pso_ms_max=%.3f"
+		" compiles=%.2f compile_ms=%.3f compile_ms_max=%.3f const_uploads=%.1f const_reuses=%.1f const_kb=%.1f"
+		" frame_mem_kb=%.1f buf_full_copies=%.1f buf_full_kb=%.1f buf_lock_copies=%.1f buf_lock_kb=%.1f"
+		" tex_uploads=%.2f tex_upload_kb=%.1f srv_writes=%.2f samplers=%.2f root_sets=%.1f barriers=%.1f",
+		label, frame_number, period.Frames,
+		s.DrawCalls / frames, (s.DrawCalls - s.DrawsRecorded) / frames, s.PipelineBinds / frames,
+		s.PipelineCreates / frames, s.PipelineCreateTicks * ms_per_tick / frames, period.MaxPipelineCreateTicks * ms_per_tick,
+		s.ShaderCompiles / frames, s.ShaderCompileTicks * ms_per_tick / frames, period.MaxShaderCompileTicks * ms_per_tick,
+		s.ConstantUploads / frames, s.ConstantReuses / frames, s.ConstantBytes / 1024.0 / frames,
+		s.FrameMemoryBytes / 1024.0 / frames, s.BufferFullCopies / frames, s.BufferFullCopyBytes / 1024.0 / frames,
+		s.BufferLockCopies / frames, s.BufferLockCopyBytes / 1024.0 / frames,
+		s.TextureUploads / frames, s.TextureUploadBytes / 1024.0 / frames, s.SRVWrites / frames, s.SamplerCreates / frames,
+		s.RootParameterSets / frames, s.Barriers / frames);
+
+	static const char * const site_names[DX12_WAIT_SITE_COUNT] = { "slot", "upload", "flush", "other" };
+	for (int site = 0; site < DX12_WAIT_SITE_COUNT && length > 0 && length < (int)sizeof(line); ++site)
+	{
+		length += snprintf(line + length, sizeof(line) - length, " wait_%s=%.2f wait_%s_ms=%.3f wait_%s_ms_max=%.3f",
+			site_names[site], s.FenceWaits[site] / frames,
+			site_names[site], s.FenceWaitTicks[site] * ms_per_tick / frames,
+			site_names[site], period.MaxFenceWaitTicks[site] * ms_per_tick);
+	}
+	if (length > 0 && length < (int)sizeof(line))
+	{
+		snprintf(line + length, sizeof(line) - length, " present_ms=%.3f present_ms_max=%.3f",
+			s.PresentTicks * ms_per_tick / frames, period.MaxPresentTicks * ms_per_tick);
+	}
+	Debug_Log("%s", line);
+}
 
 // Gamma pass ---------------------------------------------------------------------------------------
 
@@ -2383,10 +2506,12 @@ void Apply_Gamma_Pass()
 	barriers[0] = Make_Transition(back_buffer, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
 	barriers[1] = Make_Transition(GammaScratch.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
 	CommandList->ResourceBarrier(2, barriers);
+	DX12Device_Counters.Barriers += 2;
 	CommandList->CopyResource(GammaScratch.Get(), back_buffer);
 	barriers[0] = Make_Transition(back_buffer, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
 	barriers[1] = Make_Transition(GammaScratch.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 	CommandList->ResourceBarrier(2, barriers);
+	DX12Device_Counters.Barriers += 2;
 
 	D3D12_CPU_DESCRIPTOR_HANDLE rtv = RTV_Handle(BackBufferIndex);
 	CommandList->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
@@ -3038,6 +3163,10 @@ void DX12Device::Shutdown()
 	Execute_Uploads_Now();
 	Wait_For_Fence(Signal_Queue());
 
+	// The counters of the frames since the last heartbeat, and of the frame that was not presented.
+	Fold_Frame_Counters();
+	Write_Counters("shutdown at frame", FrameNumber);
+
 	// Resources released from here on are released immediately.
 	Device = nullptr;
 	Release_All();
@@ -3295,7 +3424,9 @@ void DX12Device::Submit_Frame(bool present)
 	{
 		// Report each new Present error once instead of every frame.
 		static HRESULT last_present_error = S_OK;
+		const UINT64 present_start = Query_Ticks();
 		hr = SwapChain->Present(0, 0);
+		DX12Device_Counters.PresentTicks += Query_Ticks() - present_start;
 		if (FAILED(hr) && hr != last_present_error)
 		{
 			Log_Failure("Present", hr);
@@ -3313,8 +3444,14 @@ void DX12Device::Submit_Frame(bool present)
 	FrameSlotPrepared = false;
 
 	Process_Deferred();
+	if (present)
+	{
+		Fold_Frame_Counters();
+	}
 	if (present && (FrameNumber % 300) == 0)
 	{
+		Write_Counters("frame", FrameNumber);
+
 		// Heartbeat, so the log shows whether frames keep coming.
 		Debug_Log("frame %llu: presented (render target selections %u, target copies %u)", FrameNumber,
 			DebugTargetSelects, DebugTargetCopies);
@@ -3434,6 +3571,7 @@ void DX12Device::Draw(const DX12DrawDesc & desc)
 	{
 		return;
 	}
+	++DX12Device_Counters.DrawCalls;
 	if (desc.VertexAddress == 0 || desc.VertexStride == 0 || desc.VertexBufferSize == 0)
 	{
 		return;
@@ -3723,6 +3861,7 @@ void DX12Device::Draw(const DX12DrawDesc & desc)
 	if (barrier_count > 0)
 	{
 		CommandList->ResourceBarrier(barrier_count, barriers);
+		DX12Device_Counters.Barriers += barrier_count;
 	}
 
 	DX12FFPViewport viewport;
@@ -3790,6 +3929,7 @@ void DX12Device::Draw(const DX12DrawDesc & desc)
 	{
 		CommandList->SetPipelineState(pso);
 		BoundPipelineState = pso;
+		++DX12Device_Counters.PipelineBinds;
 	}
 	if (topology != BoundTopology)
 	{
@@ -3831,6 +3971,8 @@ void DX12Device::Draw(const DX12DrawDesc & desc)
 		CommandList->SetGraphicsRootDescriptorTable(ROOT_SAMPLERS + stage, samplers[stage]);
 	}
 
+	++DX12Device_Counters.DrawsRecorded;
+	DX12Device_Counters.RootParameterSets += 4 + 2 * DX12_MAX_STAGES;
 	if (indexed)
 	{
 		CommandList->DrawIndexedInstanced(desc.IndexCount, 1, desc.StartIndex, desc.BaseVertex, 0);
@@ -4080,6 +4222,7 @@ bool DX12Device::Copy_Target_To_Texture(DX12TextureClass * dest, const tagRECT *
 		dest->Set_State(D3D12_RESOURCE_STATE_COPY_DEST);
 	}
 	CommandList->ResourceBarrier(barrier_count, barriers);
+	DX12Device_Counters.Barriers += barrier_count;
 
 	D3D12_TEXTURE_COPY_LOCATION dst;
 	memset(&dst, 0, sizeof(dst));
@@ -4252,7 +4395,7 @@ DX12TextureClass * DX12Device::Read_Back_Buffer()
 		}
 		ID3D12CommandList * lists[] = { UploadList.Get() };
 		Queue->ExecuteCommandLists(1, lists);
-		Wait_For_Fence(Signal_Queue());
+		Wait_For_Fence(Signal_Queue(), DX12_WAIT_FLUSH);
 	}
 
 	const unsigned width = (unsigned)desc.Width;
@@ -4334,6 +4477,8 @@ void DX12Device::Queue_Texture_Upload(DX12TextureClass * texture, unsigned level
 		PendingUploadBytes += bytes;
 		HasPendingUploads = true;
 		too_many = PendingUploadBytes > MAX_PENDING_UPLOAD_BYTES;
+		++DX12Device_Counters.TextureUploads;
+		DX12Device_Counters.TextureUploadBytes += bytes;
 	}
 
 	// Loading screens create many textures between frames; do not let the staging memory pile up.
@@ -4384,6 +4529,7 @@ bool DX12Device::Allocate_Frame_Memory(unsigned size, void ** cpu, unsigned long
 	*cpu = page->CPU + page->Offset;
 	*gpu = page->GPU + page->Offset;
 	page->Offset += aligned;
+	DX12Device_Counters.FrameMemoryBytes += aligned;
 	return true;
 }
 
