@@ -73,6 +73,7 @@ void DX12Device_Write_SRV(unsigned slot, ID3D12Resource * resource, unsigned dxg
 
 DX12FrameCounters DX12Device_Counters;
 bool DX12Device_DebugLayer = false;
+bool DX12Device_NoShaderCache = false;
 
 bool DX12Device::Requested = false;
 ID3D12Device * DX12Device::Device = nullptr;
@@ -502,6 +503,63 @@ PFN_D3D12_SERIALIZE_ROOT_SIGNATURE D3D12SerializeRootSignatureFunc = nullptr;
 PFN_D3D12_GET_DEBUG_INTERFACE D3D12GetDebugInterfaceFunc = nullptr;
 CreateDXGIFactory2Func CreateDXGIFactory2Func_ = nullptr;
 pD3DCompile D3DCompileFunc = nullptr;
+typedef HRESULT (WINAPI * D3DCreateBlobFuncType)(SIZE_T size, ID3DBlob ** blob);
+D3DCreateBlobFuncType D3DCreateBlobFunc = nullptr;
+// Identifies the loaded d3dcompiler_47.dll for the shader cache key: its file version when it can be
+// read, and the PE header's time stamp, image size and checksum.
+std::string CompilerIdentity;
+
+void Read_Compiler_Identity(HMODULE compiler)
+{
+	char identity[256];
+	identity[0] = '\0';
+
+	const unsigned char * base = (const unsigned char *)compiler;
+	const IMAGE_DOS_HEADER * dos = (const IMAGE_DOS_HEADER *)base;
+	if (dos->e_magic == IMAGE_DOS_SIGNATURE)
+	{
+		const IMAGE_NT_HEADERS * nt = (const IMAGE_NT_HEADERS *)(base + dos->e_lfanew);
+		if (nt->Signature == IMAGE_NT_SIGNATURE)
+		{
+			snprintf(identity, sizeof(identity), "pe=%08lx,%08lx,%08lx", (unsigned long)nt->FileHeader.TimeDateStamp,
+				(unsigned long)nt->OptionalHeader.SizeOfImage, (unsigned long)nt->OptionalHeader.CheckSum);
+		}
+	}
+	CompilerIdentity = identity;
+
+	// The file version, through version.dll loaded at run time (version.lib is not linked).
+	char path[MAX_PATH];
+	HMODULE version = LoadLibraryA("version.dll");
+	if (version && GetModuleFileNameA(compiler, path, sizeof(path)) != 0)
+	{
+		typedef DWORD (WINAPI * SizeFunc)(LPCSTR, LPDWORD);
+		typedef BOOL (WINAPI * InfoFunc)(LPCSTR, DWORD, DWORD, LPVOID);
+		typedef BOOL (WINAPI * QueryFunc)(LPCVOID, LPCSTR, LPVOID *, PUINT);
+		SizeFunc get_size = (SizeFunc)GetProcAddress(version, "GetFileVersionInfoSizeA");
+		InfoFunc get_info = (InfoFunc)GetProcAddress(version, "GetFileVersionInfoA");
+		QueryFunc query = (QueryFunc)GetProcAddress(version, "VerQueryValueA");
+		DWORD handle = 0;
+		const DWORD size = get_size ? get_size(path, &handle) : 0;
+		if (size != 0 && get_info && query)
+		{
+			std::vector<unsigned char> data(size);
+			VS_FIXEDFILEINFO * info = nullptr;
+			UINT info_size = 0;
+			if (get_info(path, 0, size, data.data()) && query(data.data(), "\\", (LPVOID *)&info, &info_size) && info && info_size >= sizeof(VS_FIXEDFILEINFO))
+			{
+				char text[64];
+				snprintf(text, sizeof(text), ",file=%lu.%lu.%lu.%lu",
+					(unsigned long)HIWORD(info->dwFileVersionMS), (unsigned long)LOWORD(info->dwFileVersionMS),
+					(unsigned long)HIWORD(info->dwFileVersionLS), (unsigned long)LOWORD(info->dwFileVersionLS));
+				CompilerIdentity += text;
+			}
+		}
+	}
+	if (version)
+	{
+		FreeLibrary(version);
+	}
+}
 
 bool Load_Libraries()
 {
@@ -519,6 +577,8 @@ bool Load_Libraries()
 	D3D12GetDebugInterfaceFunc = (PFN_D3D12_GET_DEBUG_INTERFACE)GetProcAddress(d3d12, "D3D12GetDebugInterface");
 	CreateDXGIFactory2Func_ = (CreateDXGIFactory2Func)GetProcAddress(dxgi, "CreateDXGIFactory2");
 	D3DCompileFunc = (pD3DCompile)GetProcAddress(compiler, "D3DCompile");
+	D3DCreateBlobFunc = (D3DCreateBlobFuncType)GetProcAddress(compiler, "D3DCreateBlob");
+	Read_Compiler_Identity(compiler);
 	if (D3D12CreateDeviceFunc == nullptr || D3D12SerializeRootSignatureFunc == nullptr
 		|| CreateDXGIFactory2Func_ == nullptr || D3DCompileFunc == nullptr)
 	{
@@ -1340,6 +1400,212 @@ void Debug_Log_Source(const std::string & source)
 	}
 }
 
+
+// Shader cache ---------------------------------------------------------------------------------------
+//
+// One file per compiled shader in <user data>\ShaderCache\, named by the 128-bit key in hex. The key
+// covers everything that reaches D3DCompile: the source text, source name, entry point, target, flags
+// (no defines or include handler are used) and the compiler DLL identity, plus the cache format
+// version. A file is only used when every header field and the bytecode checksum match; otherwise the
+// shader is compiled and the file overwritten. Files are written to a unique temporary name and then
+// renamed over the final name, so concurrent writers (other threads or processes) never expose a
+// partial file. I/O errors are ignored: the compiled shader is used either way. Failed compiles are not
+// stored.
+
+const unsigned SHADER_CACHE_FORMAT_VERSION = 1;
+const char SHADER_CACHE_MAGIC[8] = { 'D', 'X', '1', '2', 'S', 'H', 'C', '\0' };
+const unsigned SHADER_CACHE_MAX_BYTECODE = 16 * 1024 * 1024;
+
+struct ShaderCacheHeader
+{
+	char Magic[8];
+	UINT32 FormatVersion;
+	UINT32 HeaderSize;
+	UINT64 Key[2];
+	UINT32 SourceLength;
+	UINT32 BytecodeSize;
+	UINT64 BytecodeChecksum;
+};
+
+struct ShaderCacheKey
+{
+	UINT64 Lane[2];
+};
+
+char UserDataDirectory[MAX_PATH] = "";
+std::mutex ShaderCacheMutex;			// guards the totals and the temporary file counter
+unsigned ShaderCacheTempCounter = 0;
+UINT64 ShaderCacheHitsTotal = 0;
+UINT64 ShaderCacheStoresTotal = 0;
+UINT64 ShaderCacheMissesTotal = 0;
+UINT64 ShaderCacheBytesRead = 0;
+UINT64 ShaderCacheBytesWritten = 0;
+
+// Two independent 64-bit lanes: FNV-1a, and a multiply-xorshift mix with other constants.
+void Hash_Bytes(ShaderCacheKey & key, const void * data, size_t size)
+{
+	const unsigned char * bytes = (const unsigned char *)data;
+	UINT64 a = key.Lane[0];
+	UINT64 b = key.Lane[1];
+	for (size_t i = 0; i < size; ++i)
+	{
+		a = (a ^ bytes[i]) * 0x100000001b3ull;
+		b = (b ^ bytes[i]) * 0x9e3779b97f4a7c15ull;
+		b ^= b >> 29;
+	}
+	key.Lane[0] = a;
+	key.Lane[1] = b;
+}
+
+// Each field is hashed with its length first, so field boundaries cannot shift.
+void Hash_Field(ShaderCacheKey & key, const void * data, size_t size)
+{
+	const UINT64 length = size;
+	Hash_Bytes(key, &length, sizeof(length));
+	Hash_Bytes(key, data, size);
+}
+
+ShaderCacheKey Compute_Shader_Cache_Key(const std::string & source, const char * name, const char * entry, const char * target, UINT flags)
+{
+	ShaderCacheKey key;
+	key.Lane[0] = 0xcbf29ce484222325ull;
+	key.Lane[1] = 0x6a09e667f3bcc909ull;
+	const UINT32 version = SHADER_CACHE_FORMAT_VERSION;
+	Hash_Field(key, &version, sizeof(version));
+	Hash_Field(key, source.data(), source.size());
+	Hash_Field(key, name ? name : "", name ? strlen(name) : 0);
+	Hash_Field(key, entry, strlen(entry));
+	Hash_Field(key, target, strlen(target));
+	Hash_Field(key, &flags, sizeof(flags));
+	Hash_Field(key, CompilerIdentity.data(), CompilerIdentity.size());
+	return key;
+}
+
+UINT64 Bytecode_Checksum(const void * data, size_t size)
+{
+	ShaderCacheKey sum;
+	sum.Lane[0] = 0xcbf29ce484222325ull;
+	sum.Lane[1] = 0;
+	Hash_Bytes(sum, data, size);
+	return sum.Lane[0];
+}
+
+bool Shader_Cache_Enabled()
+{
+	return !DX12Device_NoShaderCache && UserDataDirectory[0] != '\0' && D3DCreateBlobFunc != nullptr;
+}
+
+void Shader_Cache_Path(char * path, size_t size, const ShaderCacheKey & key, const char * suffix)
+{
+	snprintf(path, size, "%sShaderCache\\%016llx%016llx%s", UserDataDirectory,
+		(unsigned long long)key.Lane[0], (unsigned long long)key.Lane[1], suffix);
+}
+
+ComPtr<ID3DBlob> Load_Cached_Shader(const ShaderCacheKey & key, size_t source_length)
+{
+	char path[MAX_PATH];
+	Shader_Cache_Path(path, sizeof(path), key, ".dxbc");
+	HANDLE file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (file == INVALID_HANDLE_VALUE)
+	{
+		return nullptr;
+	}
+
+	ComPtr<ID3DBlob> blob;
+	ShaderCacheHeader header;
+	DWORD read = 0;
+	LARGE_INTEGER file_size;
+	if (GetFileSizeEx(file, &file_size)
+		&& ReadFile(file, &header, sizeof(header), &read, nullptr) && read == sizeof(header)
+		&& memcmp(header.Magic, SHADER_CACHE_MAGIC, sizeof(header.Magic)) == 0
+		&& header.FormatVersion == SHADER_CACHE_FORMAT_VERSION
+		&& header.HeaderSize == sizeof(header)
+		&& header.Key[0] == key.Lane[0] && header.Key[1] == key.Lane[1]
+		&& header.SourceLength == (UINT32)source_length
+		&& header.BytecodeSize != 0 && header.BytecodeSize <= SHADER_CACHE_MAX_BYTECODE
+		&& (UINT64)file_size.QuadPart == (UINT64)sizeof(header) + header.BytecodeSize
+		&& SUCCEEDED(D3DCreateBlobFunc(header.BytecodeSize, &blob)))
+	{
+		if (!ReadFile(file, blob->GetBufferPointer(), header.BytecodeSize, &read, nullptr) || read != header.BytecodeSize
+			|| Bytecode_Checksum(blob->GetBufferPointer(), header.BytecodeSize) != header.BytecodeChecksum)
+		{
+			blob.Reset();
+		}
+	}
+	else
+	{
+		blob.Reset();
+	}
+	CloseHandle(file);
+
+	if (blob)
+	{
+		std::lock_guard<std::mutex> lock(ShaderCacheMutex);
+		++ShaderCacheHitsTotal;
+		ShaderCacheBytesRead += sizeof(header) + header.BytecodeSize;
+	}
+	return blob;
+}
+
+void Store_Cached_Shader(const ShaderCacheKey & key, size_t source_length, ID3DBlob * code)
+{
+	const SIZE_T size = code->GetBufferSize();
+	if (size == 0 || size > SHADER_CACHE_MAX_BYTECODE)
+	{
+		return;
+	}
+
+	ShaderCacheHeader header;
+	memset(&header, 0, sizeof(header));
+	memcpy(header.Magic, SHADER_CACHE_MAGIC, sizeof(header.Magic));
+	header.FormatVersion = SHADER_CACHE_FORMAT_VERSION;
+	header.HeaderSize = sizeof(header);
+	header.Key[0] = key.Lane[0];
+	header.Key[1] = key.Lane[1];
+	header.SourceLength = (UINT32)source_length;
+	header.BytecodeSize = (UINT32)size;
+	header.BytecodeChecksum = Bytecode_Checksum(code->GetBufferPointer(), size);
+
+	char directory[MAX_PATH];
+	snprintf(directory, sizeof(directory), "%sShaderCache", UserDataDirectory);
+	CreateDirectoryA(directory, nullptr);
+
+	unsigned counter;
+	{
+		std::lock_guard<std::mutex> lock(ShaderCacheMutex);
+		counter = ++ShaderCacheTempCounter;
+	}
+	char suffix[64];
+	snprintf(suffix, sizeof(suffix), ".%lu.%lu.%u.tmp", (unsigned long)GetCurrentProcessId(), (unsigned long)GetCurrentThreadId(), counter);
+	char temp_path[MAX_PATH];
+	char final_path[MAX_PATH];
+	Shader_Cache_Path(temp_path, sizeof(temp_path), key, suffix);
+	Shader_Cache_Path(final_path, sizeof(final_path), key, ".dxbc");
+
+	HANDLE file = CreateFileA(temp_path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (file == INVALID_HANDLE_VALUE)
+	{
+		return;
+	}
+	DWORD written = 0;
+	DWORD written_code = 0;
+	const bool ok = WriteFile(file, &header, sizeof(header), &written, nullptr) && written == sizeof(header)
+		&& WriteFile(file, code->GetBufferPointer(), (DWORD)size, &written_code, nullptr) && written_code == size;
+	CloseHandle(file);
+
+	if (ok && MoveFileExA(temp_path, final_path, MOVEFILE_REPLACE_EXISTING))
+	{
+		std::lock_guard<std::mutex> lock(ShaderCacheMutex);
+		++ShaderCacheStoresTotal;
+		ShaderCacheBytesWritten += sizeof(header) + size;
+		++DX12Device_Counters.ShaderCacheStores;
+	}
+	else
+	{
+		DeleteFileA(temp_path);
+	}
+}
+
 ComPtr<ID3DBlob> Compile_Shader(const std::string & source, const char * name, const char * entry, const char * target)
 {
 	UINT flags = D3DCOMPILE_ENABLE_STRICTNESS;
@@ -1348,6 +1614,23 @@ ComPtr<ID3DBlob> Compile_Shader(const std::string & source, const char * name, c
 #else
 	flags |= D3DCOMPILE_OPTIMIZATION_LEVEL3;
 #endif
+
+	// A cached copy of exactly this compile, if there is one (see the shader cache above).
+	const bool use_cache = Shader_Cache_Enabled();
+	ShaderCacheKey cache_key;
+	memset(&cache_key, 0, sizeof(cache_key));
+	if (use_cache)
+	{
+		cache_key = Compute_Shader_Cache_Key(source, name, entry, target, flags);
+		ComPtr<ID3DBlob> cached = Load_Cached_Shader(cache_key, source.size());
+		if (cached)
+		{
+			++DX12Device_Counters.ShaderCacheHits;
+			return cached;
+		}
+		std::lock_guard<std::mutex> lock(ShaderCacheMutex);
+		++ShaderCacheMissesTotal;
+	}
 
 	ComPtr<ID3DBlob> code;
 	ComPtr<ID3DBlob> errors;
@@ -1363,6 +1646,10 @@ ComPtr<ID3DBlob> Compile_Shader(const std::string & source, const char * name, c
 		Debug_Log_Source(source);
 		Flush_Debug_Log_Now();
 		return nullptr;
+	}
+	if (use_cache && code)
+	{
+		Store_Cached_Shader(cache_key, source.size(), code.Get());
 	}
 	return code;
 }
@@ -2227,13 +2514,14 @@ void Write_Counters(const char * label, unsigned long long frame_number)
 	char line[2048];
 	int length = snprintf(line, sizeof(line),
 		"%s %llu: counters frames=%u draws=%.1f skipped=%.1f pso_binds=%.1f pso_creates=%.2f pso_ms=%.3f pso_ms_max=%.3f"
-		" compiles=%.2f compile_ms=%.3f compile_ms_max=%.3f const_uploads=%.1f const_reuses=%.1f const_kb=%.1f"
+		" compiles=%.2f compile_ms=%.3f compile_ms_max=%.3f shader_cache_hits=%.2f shader_cache_stores=%.2f const_uploads=%.1f const_reuses=%.1f const_kb=%.1f"
 		" frame_mem_kb=%.1f buf_full_copies=%.1f buf_full_kb=%.1f buf_lock_copies=%.1f buf_lock_kb=%.1f"
 		" tex_uploads=%.2f tex_upload_kb=%.1f srv_writes=%.2f samplers=%.2f root_sets=%.1f root_sets_skipped=%.1f barriers=%.1f",
 		label, frame_number, period.Frames,
 		s.DrawCalls / frames, (s.DrawCalls - s.DrawsRecorded) / frames, s.PipelineBinds / frames,
 		s.PipelineCreates / frames, s.PipelineCreateTicks * ms_per_tick / frames, period.MaxPipelineCreateTicks * ms_per_tick,
 		s.ShaderCompiles / frames, s.ShaderCompileTicks * ms_per_tick / frames, period.MaxShaderCompileTicks * ms_per_tick,
+		s.ShaderCacheHits / frames, s.ShaderCacheStores / frames,
 		s.ConstantUploads / frames, s.ConstantReuses / frames, s.ConstantBytes / 1024.0 / frames,
 		s.FrameMemoryBytes / 1024.0 / frames, s.BufferFullCopies / frames, s.BufferFullCopyBytes / 1024.0 / frames,
 		s.BufferLockCopies / frames, s.BufferLockCopyBytes / 1024.0 / frames,
@@ -2972,6 +3260,23 @@ bool Has_Render_Target()
 
 } // namespace
 
+void DX12Device_Set_User_Data_Directory(const char * directory)
+{
+	UserDataDirectory[0] = '\0';
+	if (directory == nullptr || directory[0] == '\0')
+	{
+		return;
+	}
+	snprintf(UserDataDirectory, sizeof(UserDataDirectory), "%s", directory);
+	const size_t length = strlen(UserDataDirectory);
+	const char last = UserDataDirectory[length - 1];
+	if (last != '\\' && last != '/' && length + 1 < sizeof(UserDataDirectory))
+	{
+		UserDataDirectory[length] = '\\';
+		UserDataDirectory[length + 1] = '\0';
+	}
+}
+
 void DX12Device_Set_Debug_Log_Directory(const char * directory)
 {
 	std::lock_guard<std::mutex> lock(DebugLogMutex);
@@ -3237,6 +3542,12 @@ void DX12Device::Shutdown()
 	// The counters of the frames since the last heartbeat, and of the frame that was not presented.
 	Fold_Frame_Counters();
 	Write_Counters("shutdown at frame", FrameNumber);
+	{
+		std::lock_guard<std::mutex> lock(ShaderCacheMutex);
+		Debug_Log("shader cache %s: hits=%llu misses=%llu stores=%llu bytes_read=%llu bytes_written=%llu (%s)",
+			Shader_Cache_Enabled() ? "on" : "off", ShaderCacheHitsTotal, ShaderCacheMissesTotal, ShaderCacheStoresTotal,
+			ShaderCacheBytesRead, ShaderCacheBytesWritten, CompilerIdentity.c_str());
+	}
 
 	// Resources released from here on are released immediately.
 	Device = nullptr;

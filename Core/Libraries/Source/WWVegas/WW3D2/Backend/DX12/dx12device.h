@@ -39,6 +39,13 @@ class DX12TextureClass;
 
 extern bool DX12Device_DebugLayer;
 
+// TheSuperHackers @feature Compiled HLSL bytecode is cached in <user data>\ShaderCache\ so that later
+// runs skip D3DCompile. -noShaderCache sets DX12Device_NoShaderCache, which disables lookups and stores.
+extern bool DX12Device_NoShaderCache;
+// The user data directory (with or without a trailing backslash); set before the device initializes.
+// Without one the shader cache is off.
+void DX12Device_Set_User_Data_Directory(const char * directory);
+
 // TheSuperHackers @info Per-frame performance counters, always counted (plain increments). With
 // -dx12debug, dx12device.cpp writes their per-frame averages to dx12debug.log at every 300-frame
 // heartbeat and at shutdown. Times are QueryPerformanceCounter ticks. Main thread only, except the
@@ -61,6 +68,8 @@ struct DX12FrameCounters
 	unsigned long long PipelineCreateTicks;
 	unsigned long long ShaderCompiles;
 	unsigned long long ShaderCompileTicks;
+	unsigned long long ShaderCacheHits;		// shaders loaded from the shader cache instead of compiled
+	unsigned long long ShaderCacheStores;	// compiled shaders written to the shader cache
 	unsigned long long ConstantUploads;
 	unsigned long long ConstantBytes;
 	unsigned long long ConstantReuses;

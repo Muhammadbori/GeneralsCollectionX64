@@ -44,6 +44,7 @@ Bool TheDebugIgnoreSyncErrors = FALSE;
 extern Int DX8Wrapper_PreserveFPU;
 extern bool DX8Wrapper_UseDX12;
 extern bool DX12Device_DebugLayer;
+extern bool DX12Device_NoShaderCache;
 extern void DX12Device_Set_Debug_Log_Directory(const char * directory);
 
 #ifdef DEBUG_CRC
@@ -191,6 +192,14 @@ Int parseUserDataDir(char *args[], int num)
 		}
 		return 2;
 	}
+	return 1;
+}
+
+// TheSuperHackers @feature Compile every Direct3D 12 shader instead of using the shader cache.
+Int parseNoShaderCache(char *args[], int)
+{
+	DX12Device_NoShaderCache = true;
+
 	return 1;
 }
 
@@ -1284,6 +1293,9 @@ static CommandLineParam paramsForStartup[] =
 
 	// TheSuperHackers @feature 2026 Use another user data folder (settings, replays, saves, logs).
 	{ "-userDataDir", parseUserDataDir },
+
+	// TheSuperHackers @feature 2026 Do not read or write the Direct3D 12 shader cache.
+	{ "-noShaderCache", parseNoShaderCache },
 
 	// TheSuperHackers @feature helmutbuhler 11/04/2025
 	// This runs the game without a window, graphics, input and audio. You can combine this with -replay

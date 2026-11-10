@@ -847,6 +847,8 @@ void W3DDisplay::init()
 		// -dx12debug log directory again before the DX12 device opens the log.
 		if (DX12Device_DebugLayer)
 			DX12Device_Set_Debug_Log_Directory(TheGlobalData->getPath_UserData().str());
+		// TheSuperHackers @feature The shader cache lives in the user data folder (-userDataDir included).
+		DX12Device_Set_User_Data_Directory(TheGlobalData->getPath_UserData().str());
 		if (WW3D::Init( ApplicationHWnd ) != WW3D_ERROR_OK)
 			throw ERROR_INVALID_D3D;	//failed to initialize.  User probably doesn't have DX 8.1
 
