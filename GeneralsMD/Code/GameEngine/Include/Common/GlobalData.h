@@ -578,6 +578,8 @@ public:
 
 	// the trailing '\' is included!
   const AsciiString &getPath_UserData() const { return m_userDataDir; }
+	// TheSuperHackers @feature Only for -userDataDir (CommandLine.cpp); the path must end with a backslash.
+	void setPath_UserData(const AsciiString &path) { m_userDataDir = path; }
 
 private:
 

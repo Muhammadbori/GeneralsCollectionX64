@@ -137,6 +137,63 @@ Int parseDX12(char *args[], int)
 
 //=============================================================================
 //=============================================================================
+// TheSuperHackers @feature -userDataDir <path>: use <path> as the user data folder (Options.ini, Replays,
+// Save, Maps, MapCache, CrashDumps, Screenshots, FrameShots, dx12debug.log) instead of
+// Documents\<UserDataLeafName>, for tests that must not touch the real settings. A relative path is
+// resolved against the current directory at startup. The folder is created if missing.
+static char s_userDataDirOverride[_MAX_PATH] = "";
+
+const char * CommandLine::getUserDataDirOverride()
+{
+	return s_userDataDirOverride[0] != '\0' ? s_userDataDirOverride : nullptr;
+}
+
+static void createDirectoryPath(const char *path)
+{
+	char buffer[_MAX_PATH];
+	strlcpy(buffer, path, ARRAY_SIZE(buffer));
+	for (char *p = buffer; *p != '\0'; ++p)
+	{
+		if ((*p == '\\' || *p == '/') && p != buffer && *(p - 1) != ':' && *(p - 1) != '\\')
+		{
+			const char c = *p;
+			*p = '\0';
+			CreateDirectory(buffer, nullptr);
+			*p = c;
+		}
+	}
+	CreateDirectory(buffer, nullptr);
+}
+
+Int parseUserDataDir(char *args[], int num)
+{
+	if (num > 1)
+	{
+		char full[_MAX_PATH];
+		const DWORD length = GetFullPathName(args[1], ARRAY_SIZE(full), full, nullptr);
+		if (length == 0 || length >= ARRAY_SIZE(full) - 1)
+		{
+			return 2;
+		}
+		if (full[length - 1] != '\\' && full[length - 1] != '/')
+		{
+			strlcat(full, "\\", ARRAY_SIZE(full));
+		}
+		createDirectoryPath(full);
+		strlcpy(s_userDataDirOverride, full, ARRAY_SIZE(s_userDataDirOverride));
+
+		// GlobalData was already created with the default folder.
+		TheWritableGlobalData->setPath_UserData(s_userDataDirOverride);
+		// -dx12debug may have been parsed before this option.
+		if (DX12Device_DebugLayer)
+		{
+			DX12Device_Set_Debug_Log_Directory(s_userDataDirOverride);
+		}
+		return 2;
+	}
+	return 1;
+}
+
 Int parseDX12Debug(char *args[], int)
 {
 	DX12Device_DebugLayer = true;
@@ -1224,6 +1281,9 @@ static CommandLineParam paramsForStartup[] =
 
 	// TheSuperHackers @feature 2026 Enable the Direct3D 12 debug layer and log its messages to dx12debug.log.
 	{ "-dx12debug", parseDX12Debug },
+
+	// TheSuperHackers @feature 2026 Use another user data folder (settings, replays, saves, logs).
+	{ "-userDataDir", parseUserDataDir },
 
 	// TheSuperHackers @feature helmutbuhler 11/04/2025
 	// This runs the game without a window, graphics, input and audio. You can combine this with -replay

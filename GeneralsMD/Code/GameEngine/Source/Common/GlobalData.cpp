@@ -36,6 +36,7 @@
 #include "WW3D2/texturefilter.h"
 
 #include "Common/GlobalData.h"
+#include "Common/CommandLine.h"
 
 #define DEFINE_TERRAIN_LOD_NAMES
 #define DEFINE_TIME_OF_DAY_NAMES
@@ -1339,6 +1340,12 @@ UnsignedInt GlobalData::generateExeCRC()
 
 AsciiString GlobalData::BuildUserDataPathFromRegistry()
 {
+	// TheSuperHackers @feature -userDataDir replaces the user data folder.
+	if (const char *userDataDirOverride = CommandLine::getUserDataDirOverride())
+	{
+		return AsciiString(userDataDirOverride);
+	}
+
 #if defined(_MSC_VER) && (_MSC_VER < 1300)
 	// VC6 lacks FOLDERID_Documents and KF_FLAG_DEFAULT
 	const GUID FOLDERID_Documents = { 0xFDD39AD0, 0x238F, 0x46AF, 0xAD, 0xB4, 0x6C, 0x85, 0x48, 0x03, 0x69, 0xC7 };

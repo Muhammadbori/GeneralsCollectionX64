@@ -39,4 +39,8 @@ public:
 	// Returns true if command-line parsing consumed the zero-based argument index.
 	// The index excludes the executable name.
 	static bool wasCommandLineArgumentParsed(int argIndex);
+
+	// TheSuperHackers @feature The folder given with -userDataDir, absolute and ending with a backslash,
+	// or null when the option was not given. GlobalData uses it instead of Documents\<UserDataLeafName>.
+	static const char * getUserDataDirOverride();
 };
