@@ -31,6 +31,7 @@
 #include "PreRTS.h"
 #include "Common/file.h"
 #include "Common/FileSystem.h"
+#include "Common/FramePacer.h"
 #include "Common/GameEngine.h"
 #include "Common/GameState.h"
 #include "Common/GameStateMap.h"
@@ -667,6 +668,11 @@ SaveCode GameState::loadGame( AvailableGameInfo gameInfo )
 
 	// clear out the game engine
 	TheGameEngine->reset();
+
+	// TheSuperHackers @fix A normal save game load does not go through GameLogic::onNewGame, so reset the
+	// game speed here. A script may have changed it, as retail reset the render FPS limit in ScriptEngine::reset.
+	TheFramePacer->setLogicTimeScaleFps(LOGICFRAMES_PER_SECOND);
+	TheFramePacer->enableLogicTimeScale(TRUE);
 
 	// lock creation of new ghost objects
 	TheGhostObjectManager->saveLockGhostObjects( TRUE );

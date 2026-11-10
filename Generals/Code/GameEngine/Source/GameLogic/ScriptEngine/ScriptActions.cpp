@@ -6588,6 +6588,17 @@ void ScriptActions::executeAction( ScriptAction *pAction )
 			}
 			// Setting the fps limit doesn't do much good if we don't use it.  jba.
 			TheWritableGlobalData->m_useFpsLimit = true;
+			// TheSuperHackers @fix In retail the logic ran once per render frame, so this action also set the
+			// game speed. Campaign cinematics use it to run at film rate. Set the logic time scale to match.
+			if (!pAction->getParameter(0)->getInt())
+			{
+				TheFramePacer->setLogicTimeScaleFps(LOGICFRAMES_PER_SECOND);
+			}
+			else
+			{
+				TheFramePacer->setLogicTimeScaleFps(pAction->getParameter(0)->getInt());
+			}
+			TheFramePacer->enableLogicTimeScale(TRUE);
 			return;
 
 		case ScriptAction::DISABLE_SPECIAL_POWER_DISPLAY:

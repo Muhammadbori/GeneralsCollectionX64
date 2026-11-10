@@ -112,13 +112,13 @@ UnsignedInt RenderFpsPreset::changeFpsValue(UnsignedInt value, FpsValueChange ch
 
 UnsignedInt LogicTimeScaleFpsPreset::getNextFpsValue(UnsignedInt value)
 {
-	if (value + StepFpsValue > MaxSteppedFpsValue)
+	if (value >= MaxSteppedFpsValue)
 	{
 		return RenderFpsPreset::UncappedFpsValue;
 	}
 	else
 	{
-		return value + StepFpsValue;
+		return std::min<UnsignedInt>(value + StepFpsValue, MaxSteppedFpsValue);
 	}
 }
 
