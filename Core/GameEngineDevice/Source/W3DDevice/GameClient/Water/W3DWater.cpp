@@ -350,8 +350,6 @@ WaterRenderObjClass::WaterRenderObjClass()
 	m_tod=TIME_OF_DAY_AFTERNOON;
 	m_pReflectionTexture=nullptr;
 	m_skyBox=nullptr;
-	m_vertexBufferD3D=nullptr;
-	m_indexBufferD3D=nullptr;
 	m_gridVertexBufferDX12=nullptr;
 	m_gridIndexBufferDX12=nullptr;
 	m_seaVertexBufferDX12=nullptr;
@@ -673,122 +671,52 @@ HRESULT WaterRenderObjClass::generateVertexBuffer( Int sizeX, Int sizeY, Int ver
 
 	Setting *setting=&m_settings[m_tod];
 
-	HRESULT hr;
-
-	//default setting for a dynamic vertex buffer
-	D3DPOOL pool = D3DPOOL_DEFAULT;
-	DWORD usage = D3DUSAGE_WRITEONLY | D3DUSAGE_DYNAMIC;
-	DWORD fvf = WATER_MESH_FVF;
+	//Engine buffers: the dynamic grid mesh buffer, or the static sea patch of the pixel/vertex shader water.
+	if (m_numVertices > 0xffff)
+		return E_FAIL;
 
 	if (doStatic)
 	{
-		//change settings for a static vertex buffer
-		pool = D3DPOOL_MANAGED;
-		usage = D3DUSAGE_WRITEONLY;
-		fvf=0;// DX8 Docs confusing on this. Say no FVF for vertex shaders. Else DX8_FVF_XYZDUV1;
-		m_numVertices=sizeX*sizeY;
-	}
+		//SEA_PATCH_VERTEX is the XYZ|DIFFUSE|TEX1 vertex; wave_vs reads it through its declaration.
+		//The buffer is made again instead of locked again (setTimeOfDay), since the GPU may still
+		//read a static buffer drawn earlier.
+		REF_PTR_RELEASE(m_seaVertexBufferDX12);
+		m_seaVertexBufferDX12=NEW_REF(DX8VertexBufferClass,(DX8_FVF_XYZDUV1,m_numVertices,DX8VertexBufferClass::USAGE_DEFAULT));
+		DEBUG_ASSERTCRASH(m_seaVertexBufferDX12->FVF_Info().Get_FVF_Size() == sizeof(SEA_PATCH_VERTEX), ("Sea patch vertex size does not match DX8_FVF_XYZDUV1"));
 
-	if (DX12Device::Is_Active())
-	{
-		//Direct3D 12 mode: no raw Direct3D 8 buffers, engine buffers instead: the dynamic grid mesh
-		//buffer, or the static sea patch of the pixel/vertex shader water.
-		if (m_numVertices > 0xffff)
-			return E_FAIL;
-
-		if (doStatic)
 		{
-			//SEA_PATCH_VERTEX is the XYZ|DIFFUSE|TEX1 vertex; wave_vs reads it through its declaration.
-			//The buffer is made again instead of locked again (setTimeOfDay), since the GPU may still
-			//read a static buffer drawn earlier.
-			REF_PTR_RELEASE(m_seaVertexBufferDX12);
-			m_seaVertexBufferDX12=NEW_REF(DX8VertexBufferClass,(DX8_FVF_XYZDUV1,m_numVertices,DX8VertexBufferClass::USAGE_DEFAULT));
-			DEBUG_ASSERTCRASH(m_seaVertexBufferDX12->FVF_Info().Get_FVF_Size() == sizeof(SEA_PATCH_VERTEX), ("Sea patch vertex size does not match DX8_FVF_XYZDUV1"));
+			DX8VertexBufferClass::WriteLockClass lockVtxBuffer(m_seaVertexBufferDX12);
+			pVertices=(SEA_PATCH_VERTEX*)lockVtxBuffer.Get_Vertex_Array();
 
+			Int x,z;
+			for (z=0; z<sizeY; z++)
 			{
-				DX8VertexBufferClass::WriteLockClass lockVtxBuffer(m_seaVertexBufferDX12);
-				pVertices=(SEA_PATCH_VERTEX*)lockVtxBuffer.Get_Vertex_Array();
-
-				Int x,z;
-				for (z=0; z<sizeY; z++)
+				for (x=0; x<sizeX; x++)
 				{
-					for (x=0; x<sizeX; x++)
-					{
-						pVertices->x=(float)x;
-						pVertices->y=m_level;
-						pVertices->z=(float)z;
+					pVertices->x=(float)x;
+					pVertices->y=m_level;
+					pVertices->z=(float)z;
 
-						pVertices->tu=(float)x*PATCH_UV_SCALE;
-						pVertices->tv=(float)z*PATCH_UV_SCALE;
-						pVertices->c=setting->transparentWaterDiffuse;	//vertex alpha/color
-						pVertices++;
-					}
+					pVertices->tu=(float)x*PATCH_UV_SCALE;
+					pVertices->tv=(float)z*PATCH_UV_SCALE;
+					pVertices->c=setting->transparentWaterDiffuse;	//vertex alpha/color
+					pVertices++;
 				}
 			}
-
-			m_vertexBufferD3DOffset=0;
-			return S_OK;
-		}
-
-		if (m_gridVertexBufferDX12 == nullptr)
-		{
-			m_gridVertexBufferDX12=NEW_REF(DX8VertexBufferClass,(WATER_MESH_FVF,m_numVertices,DX8VertexBufferClass::USAGE_DYNAMIC));
-			DEBUG_ASSERTCRASH(m_gridVertexBufferDX12->FVF_Info().Get_FVF_Size() == (unsigned)vertexSize, ("Water grid vertex size does not match WATER_MESH_FVF"));
 		}
 
 		m_vertexBufferD3DOffset=0;
-		return S_OK;	//only create the buffer, renderWaterMesh will fill it.
+		return S_OK;
 	}
 
-	if (m_vertexBufferD3D == nullptr)
+	if (m_gridVertexBufferDX12 == nullptr)
 	{
-		// Create vertex buffer
-
-		if (FAILED(hr=DX8Wrapper::Create_Vertex_Buffer_Raw
-		(
-			m_numVertices*vertexSize,
-			usage,
-			fvf,
-			pool,
-			&m_vertexBufferD3D
-		)))
-			return hr;
+		m_gridVertexBufferDX12=NEW_REF(DX8VertexBufferClass,(WATER_MESH_FVF,m_numVertices,DX8VertexBufferClass::USAGE_DYNAMIC));
+		DEBUG_ASSERTCRASH(m_gridVertexBufferDX12->FVF_Info().Get_FVF_Size() == (unsigned)vertexSize, ("Water grid vertex size does not match WATER_MESH_FVF"));
 	}
 
 	m_vertexBufferD3DOffset=0;
-
-	if (!doStatic)
-		return S_OK;	//only create the buffer, other code will fill it.
-
-	// load results into buffer
-	if (FAILED(hr=m_vertexBufferD3D->Lock
-	(
-		0,
-		m_numVertices*sizeof(SEA_PATCH_VERTEX),
-		(BYTE**)&pVertices,
-		0//D3DLOCK_DISCARD
-	)))
-		return hr;
-
-	Int x,z;
-	for (z=0; z<sizeY; z++)
-	{
-		for (x=0; x<sizeX; x++)
-		{
-			pVertices->x=(float)x;
-			pVertices->y=m_level;
-			pVertices->z=(float)z;
-
-			pVertices->tu=(float)x*PATCH_UV_SCALE;
-			pVertices->tv=(float)z*PATCH_UV_SCALE;
-			pVertices->c=setting->transparentWaterDiffuse;	//vertex alpha/color
-			pVertices++;
-		}
-	}
-
-	if (FAILED(hr=m_vertexBufferD3D->Unlock())) return hr;
-
-	return S_OK;
+	return S_OK;	//only create the buffer, renderWaterMesh will fill it.
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -796,73 +724,21 @@ HRESULT WaterRenderObjClass::generateVertexBuffer( Int sizeX, Int sizeY, Int ver
 //-------------------------------------------------------------------------------------------------
 HRESULT WaterRenderObjClass::generateIndexBuffer(Int sizeX, Int sizeY)
 {
-	HRESULT hr;
-
 	//Will need SizeY-1 strips, each of length SizeX*2 (2 indices per strip segment).
 	//Will also need 2 extra indices to connect each strip to next one (except last strip)
 	//Total index buffer size = (SizeY-1)*(SizeX*2+2) - 2 (drop the extra 2 indices from last strip)
 
 	m_numIndices=(sizeY-1)*(sizeX*2+2) - 2;
 
-	if (DX12Device::Is_Active())
-	{
-		//Direct3D 12 mode: no raw Direct3D 8 buffers, use a static engine index buffer with the same strips.
-		if ((m_numIndices+2) > 0xffff || sizeX*sizeY > 0xffff)
-			return E_FAIL;
+	//A static engine index buffer with the strips.
+	if ((m_numIndices+2) > 0xffff || sizeX*sizeY > 0xffff)
+		return E_FAIL;
 
-		REF_PTR_RELEASE(m_gridIndexBufferDX12);
-		m_gridIndexBufferDX12=NEW_REF(DX8IndexBufferClass,(m_numIndices+2));
+	REF_PTR_RELEASE(m_gridIndexBufferDX12);
+	m_gridIndexBufferDX12=NEW_REF(DX8IndexBufferClass,(m_numIndices+2));
 
-		DX8IndexBufferClass::WriteLockClass lockIdxBuffer(m_gridIndexBufferDX12);
-		UnsignedShort *pIndices=lockIdxBuffer.Get_Index_Array();
-
-		Int i,j,k;
-
-		for (i=0,j=0,k=0; i<m_numIndices; j++)
-		{
-			for (;k<(sizeX*(j+1)); k++,i+=2)
-			{
-				pIndices[i]=(UnsignedShort) k+sizeX;
-				pIndices[i+1]=(UnsignedShort) k;
-			}
-			//Degenerate triangles connecting the current strip to the next one (see below).
-			if (i<m_numIndices) //check if there is at least 1 more strip to go
-			{
-				pIndices[i]=k-1;
-				pIndices[i+1]=k+sizeX;
-				i+=2;
-			}
-		}
-		//The 2 spare indices are never drawn.
-		pIndices[m_numIndices]=0;
-		pIndices[m_numIndices+1]=0;
-
-		return S_OK;
-	}
-
-	//old way
-
-	// Create index buffer
-	WORD* pIndices;
-
-	if (FAILED(hr=DX8Wrapper::Create_Index_Buffer_Raw
-	(
-		(m_numIndices+2)*sizeof(WORD),
-		D3DUSAGE_WRITEONLY,
-		D3DFMT_INDEX16,
-		D3DPOOL_MANAGED,
-		&m_indexBufferD3D
-	)))
-		return hr;
-
-	if (FAILED(hr=m_indexBufferD3D->Lock
-	(
-		0,
-		m_numIndices*sizeof(WORD),
-		(BYTE**)&pIndices,
-		0
-	)))
-		return hr;
+	DX8IndexBufferClass::WriteLockClass lockIdxBuffer(m_gridIndexBufferDX12);
+	UnsignedShort *pIndices=lockIdxBuffer.Get_Index_Array();
 
 	Int i,j,k;
 
@@ -873,9 +749,7 @@ HRESULT WaterRenderObjClass::generateIndexBuffer(Int sizeX, Int sizeY)
 			pIndices[i]=(UnsignedShort) k+sizeX;
 			pIndices[i+1]=(UnsignedShort) k;
 		}
-		//Generate 4 degenerate triangle to connect current strip to next strip/row of map
-		//To do this, we just repeat the last index of first strip and first index of new strip.
-		//Any triangles with repeated vertices will be skipped during rendering.
+		//Degenerate triangles connecting the current strip to the next one (see below).
 		if (i<m_numIndices) //check if there is at least 1 more strip to go
 		{
 			pIndices[i]=k-1;
@@ -883,48 +757,9 @@ HRESULT WaterRenderObjClass::generateIndexBuffer(Int sizeX, Int sizeY)
 			i+=2;
 		}
 	}
-
-	/*Old way
-	Int step=1;
-	Int psize=(size-1)/step;
-
-	m_numIndices=psize*((psize+1)*2)+(psize*2)-2;
-
-
-	Int x,z,s_toggle=1;
-	for (z=step; z<size; z+=step)
-	{
-		if (s_toggle)
-		{
-			for (x=0; x<(size-step); x+=step)
-			{
-				*pIndices++=(WORD)((z-0)*size+(x));
-				*pIndices++=(WORD)((z-step)*size+(x));
-			}
-				*pIndices++=(WORD)((z-0)*size+(size-1));
-			*pIndices++=(WORD)((z-step)*size+(size-1));
-			// insert additional degenerate to start next row
-			*pIndices++=pIndices[-2];
-			*pIndices++=pIndices[-1];
-		}
-		else
-		{
-			*pIndices++=(WORD)((z-step)*size+(size-1));
-			*pIndices++=(WORD)((z-0)*size+(size-1));
-			for (x=size-1; x>0; x-=step)
-			{
-				*pIndices++=(WORD)((z-step)*size+(x-step));
-				*pIndices++=(WORD)((z-0)*size+(x-step));
-			}
-			// insert additional degenerate to start next row
-			*pIndices++=pIndices[-1];
-			*pIndices++=pIndices[-1];
-		}
-
-		s_toggle=!s_toggle;
-	}
-*/
-	if (FAILED(hr=m_indexBufferD3D->Unlock())) return hr;
+	//The 2 spare indices are never drawn.
+	pIndices[m_numIndices]=0;
+	pIndices[m_numIndices+1]=0;
 
 	return S_OK;
 }
@@ -938,8 +773,6 @@ void WaterRenderObjClass::ReleaseResources()
 	REF_PTR_RELEASE(m_indexBuffer);
 
 	REF_PTR_RELEASE(m_pReflectionTexture);
-	SAFE_RELEASE(m_vertexBufferD3D);
-	SAFE_RELEASE(m_indexBufferD3D);
 	REF_PTR_RELEASE(m_gridVertexBufferDX12);
 	REF_PTR_RELEASE(m_gridIndexBufferDX12);
 	REF_PTR_RELEASE(m_seaVertexBufferDX12);
@@ -975,8 +808,6 @@ void WaterRenderObjClass::ReleaseResources()
 //-------------------------------------------------------------------------------------------------
 void WaterRenderObjClass::ReAcquireResources()
 {
-	HRESULT hr;
-
 	m_indexBuffer=NEW_REF(DX8IndexBufferClass,(6));
 	// Fill up the IB
 	{
@@ -998,65 +829,9 @@ void WaterRenderObjClass::ReAcquireResources()
 
 	//We're using the same grid for either 3D Water Mesh or Pixel/Vertex shader.  Just
 	//allocate the right size depending on usage
-	if (DX12Device::Is_Active())
-	{
-		//Direct3D 12 mode: the grid mesh and the sea patch use engine buffers (generateIndexBuffer/
-		//generateVertexBuffer create them in this mode), the wave shaders are the HLSL ports
-		//"wave_vs"/"wave_ps" (dx12shaders_water.cpp) and the bump map is a TextureClass.
-		if (m_meshData)
-		{
-			//Create new grid data
-			if (FAILED(generateIndexBuffer(m_gridCellsX+1,m_gridCellsY+1)))
-				return;
-			if (FAILED(generateVertexBuffer(m_gridCellsX+1,m_gridCellsY+1,sizeof(MaterMeshVertexFormat),false)))
-				return;
-		}
-		else
-		if (m_waterType == WATER_TYPE_2_PVSHADER)
-		{
-			//pixel/vertex shader based water assets.
-			DWORD Declaration[]=
-			{
-				(D3DVSD_STREAM(0)),
-				(D3DVSD_REG(0, D3DVSDT_FLOAT3)), // Position
-				(D3DVSD_REG(1, D3DVSDT_D3DCOLOR)), // Diffuse
-				(D3DVSD_REG(2, D3DVSDT_FLOAT2)), // Bump map texture
-				(D3DVSD_END())
-			};
-
-			Bool seaReady = SUCCEEDED(generateIndexBuffer(PATCH_SIZE,PATCH_SIZE))
-				&& SUCCEEDED(generateVertexBuffer(PATCH_SIZE,PATCH_SIZE,sizeof(SEA_PATCH_VERTEX),true))
-				&& SUCCEEDED(W3DShaderManager::LoadAndCreateD3DShader("shaders\\wave.pso", &Declaration[0], 0, false, &m_dwWavePixelShader))
-				&& SUCCEEDED(W3DShaderManager::LoadAndCreateD3DShader("shaders\\wave.vso", &Declaration[0], 0, true, &m_dwWaveVertexShader));
-
-			if (seaReady)
-			{
-				// Create reflection texture
-				m_pReflectionTexture = DX8Wrapper::Create_Render_Target (SEA_REFLECTION_SIZE, SEA_REFLECTION_SIZE);
-				initBumpMapDX12();
-				seaReady = m_pReflectionTexture != nullptr && m_pBumpTextureDX12 != nullptr;
-			}
-
-			if (!seaReady)
-			{
-				//Without the shaders (or the reflection texture) this mode cannot draw the shader water,
-				//so use the translucent water like hardware without pixel/vertex shaders, instead of
-				//drawing nothing.
-				if (m_dwWavePixelShader)
-					DX8Wrapper::Delete_Pixel_Shader(m_dwWavePixelShader);
-				if (m_dwWaveVertexShader)
-					DX8Wrapper::Delete_Vertex_Shader(m_dwWaveVertexShader);
-				m_dwWavePixelShader=0;
-				m_dwWaveVertexShader=0;
-				REF_PTR_RELEASE(m_pReflectionTexture);
-				REF_PTR_RELEASE(m_pBumpTextureDX12);
-				REF_PTR_RELEASE(m_seaVertexBufferDX12);
-				REF_PTR_RELEASE(m_gridIndexBufferDX12);
-				m_waterType = WATER_TYPE_0_TRANSLUCENT;
-			}
-		}
-	}
-	else
+	//Direct3D 12 mode: the grid mesh and the sea patch use engine buffers (generateIndexBuffer/
+	//generateVertexBuffer create them in this mode), the wave shaders are the HLSL ports
+	//"wave_vs"/"wave_ps" (dx12shaders_water.cpp) and the bump map is a TextureClass.
 	if (m_meshData)
 	{
 		//Create new grid data
@@ -1069,13 +844,6 @@ void WaterRenderObjClass::ReAcquireResources()
 	if (m_waterType == WATER_TYPE_2_PVSHADER)
 	{
 		//pixel/vertex shader based water assets.
-		if (FAILED(hr=generateIndexBuffer(PATCH_SIZE,PATCH_SIZE)))
-			return;
-
-		if (FAILED(hr=generateVertexBuffer(PATCH_SIZE,PATCH_SIZE,sizeof(SEA_PATCH_VERTEX),true)))
-			return;
-
-		//shader decleration
 		DWORD Declaration[]=
 		{
 			(D3DVSD_STREAM(0)),
@@ -1085,83 +853,49 @@ void WaterRenderObjClass::ReAcquireResources()
 			(D3DVSD_END())
 		};
 
-		hr = W3DShaderManager::LoadAndCreateD3DShader("shaders\\wave.pso", &Declaration[0], 0, false, &m_dwWavePixelShader);
-		if (FAILED(hr))
-			return;
+		Bool seaReady = SUCCEEDED(generateIndexBuffer(PATCH_SIZE,PATCH_SIZE))
+			&& SUCCEEDED(generateVertexBuffer(PATCH_SIZE,PATCH_SIZE,sizeof(SEA_PATCH_VERTEX),true))
+			&& SUCCEEDED(W3DShaderManager::LoadAndCreateD3DShader("shaders\\wave.pso", &Declaration[0], 0, false, &m_dwWavePixelShader))
+			&& SUCCEEDED(W3DShaderManager::LoadAndCreateD3DShader("shaders\\wave.vso", &Declaration[0], 0, true, &m_dwWaveVertexShader));
 
-		hr = W3DShaderManager::LoadAndCreateD3DShader("shaders\\wave.vso", &Declaration[0], 0, true, &m_dwWaveVertexShader);
-		if (FAILED(hr))
-			return;
+		if (seaReady)
+		{
+			// Create reflection texture
+			m_pReflectionTexture = DX8Wrapper::Create_Render_Target (SEA_REFLECTION_SIZE, SEA_REFLECTION_SIZE);
+			initBumpMapDX12();
+			seaReady = m_pReflectionTexture != nullptr && m_pBumpTextureDX12 != nullptr;
+		}
 
-		// Create reflection texture
-		m_pReflectionTexture = DX8Wrapper::Create_Render_Target (SEA_REFLECTION_SIZE, SEA_REFLECTION_SIZE);
+		if (!seaReady)
+		{
+			//Without the shaders (or the reflection texture) this mode cannot draw the shader water,
+			//so use the translucent water like hardware without pixel/vertex shaders, instead of
+			//drawing nothing.
+			if (m_dwWavePixelShader)
+				DX8Wrapper::Delete_Pixel_Shader(m_dwWavePixelShader);
+			if (m_dwWaveVertexShader)
+				DX8Wrapper::Delete_Vertex_Shader(m_dwWaveVertexShader);
+			m_dwWavePixelShader=0;
+			m_dwWaveVertexShader=0;
+			REF_PTR_RELEASE(m_pReflectionTexture);
+			REF_PTR_RELEASE(m_pBumpTextureDX12);
+			REF_PTR_RELEASE(m_seaVertexBufferDX12);
+			REF_PTR_RELEASE(m_gridIndexBufferDX12);
+			m_waterType = WATER_TYPE_0_TRANSLUCENT;
+		}
 	}
 
 	if (m_waterTrackSystem)
 		m_waterTrackSystem->ReAcquireResources();
 
-	if (DX12Device::Is_Active())
-	{
-		//Direct3D 12 mode cannot run Direct3D 8 shader bytecode: the three shaders below are HLSL ports
-		//(dx12shaders_water.cpp) created by name. A shader without a port leaves its handle 0, as
-		//on hardware without pixel shaders.
-		if (W3DShaderManager::getChipset() >= DC_GENERIC_PIXEL_SHADER_1_1)
-		{
-			DX8Wrapper::Create_DX12_Shader("water_river_ps", false, nullptr, &m_riverWaterPixelShader);
-			DX8Wrapper::Create_DX12_Shader("water_bump_ps", false, nullptr, &m_waterPixelShader);
-			DX8Wrapper::Create_DX12_Shader("water_trapezoid_ps", false, nullptr, &m_trapezoidWaterPixelShader);
-		}
-	}
-	else
+	//Direct3D 12 mode cannot run Direct3D 8 shader bytecode: the three shaders below are HLSL ports
+	//(dx12shaders_water.cpp) created by name. A shader without a port leaves its handle 0, as
+	//on hardware without pixel shaders.
 	if (W3DShaderManager::getChipset() >= DC_GENERIC_PIXEL_SHADER_1_1)
 	{
-		ID3DXBuffer *compiledShader;
-		const char *shader =
-			"ps.1.1\n \
-			tex t0 \n\
-			tex t1	\n\
-			tex t2	\n\
-			tex t3\n\
-			mul r0.rgb, v0, t0 ; blend vertex color into t0. \n\
-			mov r0.a, t0 ; keep vertex alpha from fading the base water. \n\
-			mul r1, t1, t2 ; mul\n\
-			add r1.rgb, r1, t3\n\
-			mul r1.rgb, r1, v0.a\n\
-			+mul r0.a, r0, t3\n\
-			add r0.rgb, r0, r1\n";
-		hr = D3DXAssembleShader( shader, strlen(shader), 0, nullptr, &compiledShader, nullptr);
-		if (hr==0) {
-			hr = 	DX8Wrapper::Create_Pixel_Shader((DWORD*)compiledShader->GetBufferPointer(), &m_riverWaterPixelShader);
-			compiledShader->Release();
-		}
-		shader =
-			"ps.1.1\n \
-			tex t0 \n\
-			tex t1	\n\
-			texbem t2, t1 ; use t1 as env map adjustment on t2.\n\
-			mul r0,v0,t0 ; blend vertex color into t0. \n\
-			mul r1.rgb,t2,c0 ; reduce t2 (environment mapped reflection) by constant\n\
-			add r0.rgb, r0, r1";
-		hr = D3DXAssembleShader( shader, strlen(shader), 0, nullptr, &compiledShader, nullptr);
-		if (hr==0) {
-			hr = 	DX8Wrapper::Create_Pixel_Shader((DWORD*)compiledShader->GetBufferPointer(), &m_waterPixelShader);
-			compiledShader->Release();
-		}
-		shader =
-			"ps.1.1\n \
-			tex t0 ;get water texture\n\
-			tex t1 ;get white highlights on black background\n\
-			tex t2 ;get white highlights with more tiling\n\
-			tex t3	; get black shroud \n\
-			mul r0,v0,t0 ; blend vertex color and alpha into base texture. \n\
-			mad r0.rgb, t1, t2, r0	; blend sparkles and noise \n\
-			mul r0.rgb, r0, t3 ; blend in black shroud \n\
-			;\n";
-		hr = D3DXAssembleShader( shader, strlen(shader), 0, nullptr, &compiledShader, nullptr);
-		if (hr==0) {
-			hr = 	DX8Wrapper::Create_Pixel_Shader((DWORD*)compiledShader->GetBufferPointer(), &m_trapezoidWaterPixelShader);
-			compiledShader->Release();
-		}
+		DX8Wrapper::Create_DX12_Shader("water_river_ps", false, nullptr, &m_riverWaterPixelShader);
+		DX8Wrapper::Create_DX12_Shader("water_bump_ps", false, nullptr, &m_waterPixelShader);
+		DX8Wrapper::Create_DX12_Shader("water_trapezoid_ps", false, nullptr, &m_trapezoidWaterPixelShader);
 	}
 
 	//W3D Invalidate textures after losing the device and since we peek at the textures directly, it won't
@@ -1414,8 +1148,6 @@ void WaterRenderObjClass::enableWaterGrid(Bool state)
 		reset();
 
 		//Release existing grid data
-		SAFE_RELEASE(m_vertexBufferD3D);
-		SAFE_RELEASE(m_indexBufferD3D);
 		REF_PTR_RELEASE(m_gridVertexBufferDX12);
 		REF_PTR_RELEASE(m_gridIndexBufferDX12);
 
@@ -1653,8 +1385,8 @@ void WaterRenderObjClass::loadSetting( Setting *setting, TimeOfDay timeOfDay )
 //-------------------------------------------------------------------------------------------------
 void WaterRenderObjClass::updateRenderTargetTextures(CameraClass *cam)
 {
-	if (DX12Device::Is_Active() && m_pReflectionTexture == nullptr)
-		return;	//no reflection texture: Direct3D 12 mode then draws translucent water instead (see ReAcquireResources).
+	if (m_pReflectionTexture == nullptr)
+		return;	//no reflection texture: the translucent water is drawn instead (see ReAcquireResources).
 
 	if (m_waterType == WATER_TYPE_2_PVSHADER && getClippedWaterPlane(cam, nullptr) &&
 		TheTerrainRenderObject && TheTerrainRenderObject->getMap())
@@ -2061,10 +1793,7 @@ void WaterRenderObjClass::drawSea(RenderInfoClass & rinfo)
 	DX8Wrapper::Set_DX8_Texture_Stage_State_Raw(1, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP);
 	DX8Wrapper::Set_DX8_Texture_Stage_State_Raw(1, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP);
 
-	if (DX12Device::Is_Active())
-		DX8Wrapper::Set_DX8_Texture_Raw( 0, m_pBumpTextureDX12);	//wave_ps decodes its biased du/dv (see initBumpMapDX12)
-	else
-	DX8Wrapper::Set_DX8_Texture_Raw( 0, m_pBumpTexture[(Int)m_fBumpFrame]);
+	DX8Wrapper::Set_DX8_Texture_Raw( 0, m_pBumpTextureDX12);	//wave_ps decodes its biased du/dv (see initBumpMapDX12)
 #ifdef MIPMAP_BUMP_TEXTURE
 	DX8Wrapper::Set_DX8_Texture_Stage_State_Raw( 0, D3DTSS_MIPFILTER, D3DTEXF_POINT );
 	DX8Wrapper::Set_DX8_Texture_Stage_State_Raw( 0, D3DTSS_MINFILTER, D3DTEXF_LINEAR );
@@ -2120,16 +1849,8 @@ void WaterRenderObjClass::drawSea(RenderInfoClass & rinfo)
 	patchMatrix._33=PATCH_SCALE;
 	patchMatrix._44=1.0f;
 
-	if (DX12Device::Is_Active())
-	{
-		DX8Wrapper::Set_Stream_Source_Raw(0,m_seaVertexBufferDX12,sizeof(WaterRenderObjClass::SEA_PATCH_VERTEX));
-		DX8Wrapper::Set_Indices_Raw(m_gridIndexBufferDX12,0);
-	}
-	else
-	{
-	DX8Wrapper::Set_Stream_Source_Raw(0,m_vertexBufferD3D,sizeof(WaterRenderObjClass::SEA_PATCH_VERTEX));
-	DX8Wrapper::Set_Indices_Raw(m_indexBufferD3D,0);
-	}
+	DX8Wrapper::Set_Stream_Source_Raw(0,m_seaVertexBufferDX12,sizeof(WaterRenderObjClass::SEA_PATCH_VERTEX));
+	DX8Wrapper::Set_Indices_Raw(m_gridIndexBufferDX12,0);
 
 	for (startY=patchY=(seaBox.Center.Y-seaBox.Extent.Y)/(PATCH_WIDTH*PATCH_SCALE); (patchY*PATCH_WIDTH*PATCH_SCALE)<(seaBox.Center.Y+seaBox.Extent.Y); patchY++)
 	{
@@ -2188,16 +1909,8 @@ void WaterRenderObjClass::drawSea(RenderInfoClass & rinfo)
 		//do second pass to apply the shroud on water plane
 		W3DShaderManager::setTexture(0,TheTerrainRenderObject->getShroud()->getShroudTexture());
 		W3DShaderManager::setShader(W3DShaderManager::ST_SHROUD_TEXTURE, 0);
-		if (DX12Device::Is_Active())
-		{
-			DX8Wrapper::Set_Stream_Source_Raw(0,m_seaVertexBufferDX12,sizeof(WaterRenderObjClass::SEA_PATCH_VERTEX));
-			DX8Wrapper::Set_Indices_Raw(m_gridIndexBufferDX12,0);
-		}
-		else
-		{
-		DX8Wrapper::Set_Stream_Source_Raw(0,m_vertexBufferD3D,sizeof(WaterRenderObjClass::SEA_PATCH_VERTEX));
-		DX8Wrapper::Set_Indices_Raw(m_indexBufferD3D,0);
-		}
+		DX8Wrapper::Set_Stream_Source_Raw(0,m_seaVertexBufferDX12,sizeof(WaterRenderObjClass::SEA_PATCH_VERTEX));
+		DX8Wrapper::Set_Indices_Raw(m_gridIndexBufferDX12,0);
 		for (startY=patchY=(seaBox.Center.Y-seaBox.Extent.Y)/(PATCH_WIDTH*PATCH_SCALE); (patchY*PATCH_WIDTH*PATCH_SCALE)<(seaBox.Center.Y+seaBox.Extent.Y); patchY++)
 		{
 			for (startX=patchX=(seaBox.Center.X-seaBox.Extent.X)/(PATCH_WIDTH*PATCH_SCALE); (patchX*PATCH_WIDTH*PATCH_SCALE)<(seaBox.Center.X+seaBox.Extent.X); patchX++)
@@ -2471,15 +2184,10 @@ void WaterRenderObjClass::renderWaterMesh()
 	if (!m_doWaterGrid)
 		return;	//the water grid is disabled.
 
-	if (DX12Device::Is_Active())
-	{
-		//Direct3D 12 mode keeps the grid in engine buffers instead of raw Direct3D 8 ones.
-		if (m_gridVertexBufferDX12 == nullptr || m_gridIndexBufferDX12 == nullptr)
-			return;	//no grid buffers.
-	}
-	else
-	if (m_vertexBufferD3D == nullptr || m_indexBufferD3D == nullptr)
+	//Direct3D 12 mode keeps the grid in engine buffers instead of raw Direct3D 8 ones.
+	if (m_gridVertexBufferDX12 == nullptr || m_gridIndexBufferDX12 == nullptr)
 		return;	//no grid buffers.
+	//no grid buffers.
 
 	//According to Nvidia there's a D3D bug that happens if you don't start with a
 	//new dynamic VB each frame - so we force a DISCARD by overflowing the counter.
@@ -2534,32 +2242,15 @@ void WaterRenderObjClass::renderWaterMesh()
 
 	MaterMeshVertexFormat *vb;
 	DX12BufferClass *dx12Buffer = nullptr;
-	if (DX12Device::Is_Active())
-	{
-		//The offset was forced past the end above, so this is always the discard lock at the start
-		//of the buffer (a discard lock moves the DX12 buffer to fresh frame memory).
-		dx12Buffer = m_gridVertexBufferDX12->Get_DX12_Buffer();
-		if (dx12Buffer == nullptr)
-			return;
-		vb = (MaterMeshVertexFormat *)dx12Buffer->Lock(0,mx*my*sizeof(MaterMeshVertexFormat),true);
-		if (vb == nullptr)
-			return;
-		m_vertexBufferD3DOffset=0;	//reset start of page to first vertex
-	}
-	else
-	if (m_vertexBufferD3DOffset < m_numVertices)
-	{
-		//we have room in current VB, append new verts
-		if(m_vertexBufferD3D->Lock(m_vertexBufferD3DOffset*sizeof(MaterMeshVertexFormat),mx*my*sizeof(MaterMeshVertexFormat),(unsigned char**)&vb,D3DLOCK_NOOVERWRITE) != D3D_OK)
-			return;
-	}
-	else
-	{
-		//ran out of room in last VB, request a substitute VB.
-		if(m_vertexBufferD3D->Lock(0,mx*my*sizeof(MaterMeshVertexFormat),(unsigned char**)&vb,D3DLOCK_DISCARD) != D3D_OK)
-			return;
-		m_vertexBufferD3DOffset=0;	//reset start of page to first vertex
-	}
+	//The offset was forced past the end above, so this is always the discard lock at the start
+	//of the buffer (a discard lock moves the DX12 buffer to fresh frame memory).
+	dx12Buffer = m_gridVertexBufferDX12->Get_DX12_Buffer();
+	if (dx12Buffer == nullptr)
+		return;
+	vb = (MaterMeshVertexFormat *)dx12Buffer->Lock(0,mx*my*sizeof(MaterMeshVertexFormat),true);
+	if (vb == nullptr)
+		return;
+	m_vertexBufferD3DOffset=0;	//reset start of page to first vertex
 	Int diffuse;
 	diffuse = setting->waterDiffuse&0x00ffffff;
 	Int alpha = (setting->waterDiffuse & 0xff000000)>>24;
@@ -2624,10 +2315,7 @@ void WaterRenderObjClass::renderWaterMesh()
 		}
 	}
 
-	if (dx12Buffer)
-		dx12Buffer->Unlock();
-	else
-		m_vertexBufferD3D->Unlock();
+	dx12Buffer->Unlock();
 
 	DX8Wrapper::Set_Transform(D3DTS_WORLD,Transform);	//position the water surface
 	DX8Wrapper::Set_Material(m_meshVertexMaterialClass);
@@ -2663,16 +2351,8 @@ void WaterRenderObjClass::renderWaterMesh()
 
 //	DX8Wrapper::Set_DX8_Render_State_Raw(D3DRS_ZFUNC,D3DCMP_ALWAYS);	//used to display grid under map.
 
-	if (DX12Device::Is_Active())
-	{
-		DX8Wrapper::Set_Indices_Raw(m_gridIndexBufferDX12,m_vertexBufferD3DOffset);
-		DX8Wrapper::Set_Stream_Source_Raw(0,m_gridVertexBufferDX12,sizeof(MaterMeshVertexFormat));
-	}
-	else
-	{
-		DX8Wrapper::Set_Indices_Raw(m_indexBufferD3D,m_vertexBufferD3DOffset);
-		DX8Wrapper::Set_Stream_Source_Raw(0,m_vertexBufferD3D,sizeof(MaterMeshVertexFormat));
-	}
+	DX8Wrapper::Set_Indices_Raw(m_gridIndexBufferDX12,m_vertexBufferD3DOffset);
+	DX8Wrapper::Set_Stream_Source_Raw(0,m_gridVertexBufferDX12,sizeof(MaterMeshVertexFormat));
 	DX8Wrapper::Set_Vertex_Shader(WATER_MESH_FVF);
 
 

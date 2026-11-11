@@ -312,40 +312,23 @@ Int WaterTracksObj::render(DX8VertexBufferClass	*vertexBuffer, Int batchStart)
 	Real	widthFrac;
 	Real	heightFrac;
 
-	// Direct3D 12 mode: the vertex buffer has no Direct3D 8 buffer, lock its DX12 buffer instead
-	// (a non-discard lock appends like D3DLOCK_NOOVERWRITE, a discard lock moves it to fresh memory).
+	// Lock the vertex buffer's DX12 buffer (a non-discard lock appends like D3DLOCK_NOOVERWRITE, a discard lock moves it
+	// to fresh memory).
 	DX12BufferClass *dx12Buffer = nullptr;
-	if (DX12Device::Is_Active())
-	{
-		dx12Buffer = vertexBuffer ? vertexBuffer->Get_DX12_Buffer() : nullptr;
-		if (dx12Buffer == nullptr)
-			return batchStart;
-		const unsigned int fvfSize = vertexBuffer->FVF_Info().Get_FVF_Size();
-		if (batchStart < (WATER_VB_PAGES*WATER_STRIP_X*WATER_STRIP_Y-m_x*m_y))
-		{
-			vb = (VertexFormatXYZDUV1 *)dx12Buffer->Lock(batchStart*fvfSize, m_x*m_y*fvfSize, false);
-			if (vb == nullptr)
-				return batchStart;
-		}
-		else
-		{
-			vb = (VertexFormatXYZDUV1 *)dx12Buffer->Lock(0, m_x*m_y*fvfSize, true);
-			if (vb == nullptr)
-				return batchStart;
-			batchStart=0;	//reset start of page to first vertex
-		}
-	}
-	else
+	dx12Buffer = vertexBuffer ? vertexBuffer->Get_DX12_Buffer() : nullptr;
+	if (dx12Buffer == nullptr)
+		return batchStart;
+	const unsigned int fvfSize = vertexBuffer->FVF_Info().Get_FVF_Size();
 	if (batchStart < (WATER_VB_PAGES*WATER_STRIP_X*WATER_STRIP_Y-m_x*m_y))
 	{
-		//we have room in current VB, append new verts
-		if(vertexBuffer->Get_DX8_Vertex_Buffer()->Lock(batchStart*vertexBuffer->FVF_Info().Get_FVF_Size(),m_x*m_y*vertexBuffer->FVF_Info().Get_FVF_Size(),(unsigned char**)&vb,D3DLOCK_NOOVERWRITE) != D3D_OK)
+		vb = (VertexFormatXYZDUV1 *)dx12Buffer->Lock(batchStart*fvfSize, m_x*m_y*fvfSize, false);
+		if (vb == nullptr)
 			return batchStart;
 	}
 	else
 	{
-		//ran out of room in last VB, request a substitute VB.
-		if(vertexBuffer->Get_DX8_Vertex_Buffer()->Lock(0,m_x*m_y*vertexBuffer->FVF_Info().Get_FVF_Size(),(unsigned char**)&vb,D3DLOCK_DISCARD) != D3D_OK)
+		vb = (VertexFormatXYZDUV1 *)dx12Buffer->Lock(0, m_x*m_y*fvfSize, true);
+		if (vb == nullptr)
 			return batchStart;
 		batchStart=0;	//reset start of page to first vertex
 	}
@@ -506,10 +489,7 @@ Int WaterTracksObj::render(DX8VertexBufferClass	*vertexBuffer, Int batchStart)
 	vb->v1=1.0f;
 	vb++;
 
-	if (dx12Buffer)
-		dx12Buffer->Unlock();
-	else
-	vertexBuffer->Get_DX8_Vertex_Buffer()->Unlock();
+	dx12Buffer->Unlock();
 
 	Int idxCount=(m_y-1)*(m_x*2+2) - 2;	//index count
 
