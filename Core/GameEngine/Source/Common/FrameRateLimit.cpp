@@ -112,8 +112,10 @@ UnsignedInt RenderFpsPreset::changeFpsValue(UnsignedInt value, FpsValueChange ch
 
 Int RenderFpsPreset::parseUserLimit(const char *text)
 {
-	// Below 15 the game feels broken; above 1000 there is nothing to gain over 0 (no limit).
-	const Int minLimit = 15;
+	// Not below 30, the lowest render preset: in network games the logic rate follows the lowest average render fps of
+	// all players (FrameMetrics), so a user limit below the nominal 30 could slow down a LAN game for everyone if a script
+	// switches the limit on. Above 1000 there is nothing to gain over 0 (no limit).
+	const Int minLimit = 30;
 	const Int maxLimit = 1000;
 
 	char *endPtr = nullptr;

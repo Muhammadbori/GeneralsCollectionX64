@@ -876,7 +876,7 @@ Int parseLoadSave(char *args[], int num)
 }
 
 // TheSuperHackers @feature Available in Release too. Sets the render FPS limit only (0 is no limit, otherwise
-// 15..1000, same as Options.ini RenderFpsLimit, which it overrides). It must not write m_framesPerSecondLimit:
+// 30..1000, same as Options.ini RenderFpsLimit, which it overrides). It must not write m_framesPerSecondLimit:
 // that is the GameData.ini nominal game rate, and network games use it as the upper clamp of the logic frame rate
 // (ConnectionManager::updateRunAhead), so changing it per client would break equal timing in LAN games.
 // Network games disable the render limit themselves.

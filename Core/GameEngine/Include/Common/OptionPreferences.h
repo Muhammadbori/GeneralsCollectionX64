@@ -119,7 +119,7 @@ public:
 	Bool getUseHeatEffects();
 	Bool getDynamicLODEnabled();
 	Bool getFPSLimitEnabled();
-	/// TheSuperHackers @feature Optional key RenderFpsLimit: -1 if absent or not a number, 0 for no limit, else the limit clamped to 15..1000.
+	/// TheSuperHackers @feature Optional key RenderFpsLimit: -1 if absent or not a number, 0 for no limit, else the limit clamped to 30..1000.
 	Int getRenderFpsLimit();
 	Bool getBuildingOcclusionEnabled();
 	Int getParticleCap();
