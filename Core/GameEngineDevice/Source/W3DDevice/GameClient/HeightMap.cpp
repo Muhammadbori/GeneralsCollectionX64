@@ -1329,22 +1329,14 @@ Int HeightMapRenderObjClass::initHeightData(Int x, Int y, WorldHeightMap *pMap, 
 		m_vertexBufferBackup = NEW VERTEX_FORMAT [m_numVertexBufferTiles * HEIGHTMAP_VERTEX_NUM];
 
 		for (i=0; i<m_numVertexBufferTiles; i++) {
-			if (DX12Device::Is_Active()) {
-				// Direct3D 12 mode: tiles are rewritten without a discard lock whenever the camera window
-				// moves or dynamic lights change. A static Direct3D 12 buffer is written in place while
-				// frames in flight may still read it, so use dynamic buffers, which move to fresh frame
-				// memory each frame and keep their contents in a CPU shadow copy.
+			// Tiles are rewritten without a discard lock whenever the camera window moves or dynamic lights change.
+			// A static Direct3D 12 buffer would be written in place while frames in flight may still read it, so the
+			// tiles are dynamic buffers, which move to fresh frame memory each frame and keep their contents in a CPU
+			// shadow copy.
 #ifdef USE_NORMALS
-				m_vertexBufferTiles[i] = NEW_REF(DX8VertexBufferClass,(DX8_FVF_XYZNUV2,HEIGHTMAP_VERTEX_NUM,DX8VertexBufferClass::USAGE_DYNAMIC));
+			m_vertexBufferTiles[i] = NEW_REF(DX8VertexBufferClass,(DX8_FVF_XYZNUV2,HEIGHTMAP_VERTEX_NUM,DX8VertexBufferClass::USAGE_DYNAMIC));
 #else
-				m_vertexBufferTiles[i] = NEW_REF(DX8VertexBufferClass,(DX8_VERTEX_FORMAT,HEIGHTMAP_VERTEX_NUM,DX8VertexBufferClass::USAGE_DYNAMIC));
-#endif
-				continue;
-			}
-#ifdef USE_NORMALS
-			m_vertexBufferTiles[i] = NEW_REF(DX8VertexBufferClass,(DX8_FVF_XYZNUV2,HEIGHTMAP_VERTEX_NUM,DX8VertexBufferClass::USAGE_DEFAULT));
-#else
-			m_vertexBufferTiles[i] = NEW_REF(DX8VertexBufferClass,(DX8_VERTEX_FORMAT,HEIGHTMAP_VERTEX_NUM,DX8VertexBufferClass::USAGE_DEFAULT));
+			m_vertexBufferTiles[i] = NEW_REF(DX8VertexBufferClass,(DX8_VERTEX_FORMAT,HEIGHTMAP_VERTEX_NUM,DX8VertexBufferClass::USAGE_DYNAMIC));
 #endif
 		}
 

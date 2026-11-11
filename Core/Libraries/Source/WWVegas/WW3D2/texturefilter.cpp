@@ -39,7 +39,6 @@
 
 #include "texturefilter.h"
 #include "dx8wrapper.h"
-#include "Backend/DX12/dx12device.h"
 
 const char* const TextureFilterClass::TextureFilterModeString[] = {
 	"None",
@@ -122,11 +121,10 @@ void TextureFilterClass::Apply(unsigned int stage)
 */
 void TextureFilterClass::_Init_Filters(TextureFilterMode texture_filter, AnisotropicFilterMode anisotropy_level)
 {
-	// Direct3D 12 supports every filter type the game uses.
-	const DWORD texture_filter_caps=DX12Device::Is_Active()
-		? (D3DPTFILTERCAPS_MINFLINEAR | D3DPTFILTERCAPS_MAGFLINEAR | D3DPTFILTERCAPS_MIPFLINEAR |
-			D3DPTFILTERCAPS_MINFANISOTROPIC | D3DPTFILTERCAPS_MAGFANISOTROPIC)
-		: DX8Wrapper::Get_Current_Caps()->Get_DX8_Caps().TextureFilterCaps;
+	// The renderer supports every filter type the game uses.
+	const DWORD texture_filter_caps =
+		D3DPTFILTERCAPS_MINFLINEAR | D3DPTFILTERCAPS_MAGFLINEAR | D3DPTFILTERCAPS_MIPFLINEAR |
+		D3DPTFILTERCAPS_MINFANISOTROPIC | D3DPTFILTERCAPS_MAGFANISOTROPIC;
 
 	// TheSuperHackers @info Init zero stage filter defaults, point filtering is the lowest type for non mip filtering
 	_MinTextureFilters[0][FILTER_TYPE_NONE]=D3DTEXF_POINT;
