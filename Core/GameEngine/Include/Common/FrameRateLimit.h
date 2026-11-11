@@ -56,6 +56,11 @@ public:
 
 private:
 	static const UnsignedInt s_fpsValues[];
+
+public:
+	/// Parses a render fps limit given by the user (Options.ini RenderFpsLimit, -fps): -1 if it is not a non-negative
+	/// number, 0 for no limit, else the number clamped to 15..1000.
+	static Int parseUserLimit(const char *text);
 };
 
 

@@ -110,6 +110,22 @@ UnsignedInt RenderFpsPreset::changeFpsValue(UnsignedInt value, FpsValueChange ch
 }
 
 
+Int RenderFpsPreset::parseUserLimit(const char *text)
+{
+	// Below 15 the game feels broken; above 1000 there is nothing to gain over 0 (no limit).
+	const Int minLimit = 15;
+	const Int maxLimit = 1000;
+
+	char *endPtr = nullptr;
+	const long value = strtol(text, &endPtr, 10);
+	if (endPtr == text || value < 0)
+		return -1;
+	if (value == 0)
+		return 0;
+	return std::max<Int>(minLimit, std::min<Int>(maxLimit, (Int)std::min<long>(value, 100000L)));
+}
+
+
 UnsignedInt LogicTimeScaleFpsPreset::getNextFpsValue(UnsignedInt value)
 {
 	if (value >= MaxSteppedFpsValue)

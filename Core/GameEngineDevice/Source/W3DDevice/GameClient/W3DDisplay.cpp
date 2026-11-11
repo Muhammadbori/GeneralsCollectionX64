@@ -1275,7 +1275,7 @@ void W3DDisplay::gatherDebugStats()
 		unibuffer.format( L"FPS: %.2f, %.2fms draws: %.2f skins: %.2f sort %.2f", fps, ms, drawsPerFrame,skinDrawsPerFrame,sortPolysPerFrame);
 		if (TheGlobalData->m_useFpsLimit)
 		{
-			unibuffer2.format(L", FPSLock %d",TheGlobalData->m_framesPerSecondLimit);
+			unibuffer2.format(L", FPSLock %d",TheFramePacer->getFramesPerSecondLimit());
 			unibuffer.concat(unibuffer2);
 		}
 #endif
@@ -3436,7 +3436,7 @@ static void drawFramerateBar()
 {
 	static DWORD prevTime = timeGetTime();
 	DWORD now = timeGetTime();
-	Real percTime = (1000.0f / (now - prevTime) ) / (1000.0f / TheGlobalData->m_framesPerSecondLimit);
+	Real percTime = (1000.0f / (now - prevTime) ) / (1000.0f / TheFramePacer->getFramesPerSecondLimit());
 
 	if (percTime > 1.0f)
 		percTime = 1.0f;

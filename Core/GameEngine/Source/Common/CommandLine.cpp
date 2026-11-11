@@ -28,6 +28,7 @@
 #include "Common/ArchiveFileSystem.h"
 #include "Common/CommandLine.h"
 #include "Common/CRCDebug.h"
+#include "Common/FrameRateLimit.h"
 #include "Common/FrameShots.h"
 #include "Common/LocalFileSystem.h"
 #include "Common/version.h"
@@ -874,15 +875,20 @@ Int parseLoadSave(char *args[], int num)
 	return 1;
 }
 
-// TheSuperHackers @feature Available in Release too. Sets the render FPS limit only. Outside network games the
-// game speed no longer follows the render frame rate, and network games disable the limit, so this gives no
-// multiplayer advantage.
+// TheSuperHackers @feature Available in Release too. Sets the render FPS limit only (0 is no limit, otherwise
+// 15..1000, same as Options.ini RenderFpsLimit, which it overrides). It must not write m_framesPerSecondLimit:
+// that is the GameData.ini nominal game rate, and network games use it as the upper clamp of the logic frame rate
+// (ConnectionManager::updateRunAhead), so changing it per client would break equal timing in LAN games.
+// Network games disable the render limit themselves.
 Int parseFPSLimit(char *args[], int num)
 {
 	if (num > 1)
 	{
-		TheWritableGlobalData->m_framesPerSecondLimit = atoi(args[1]);
-		TheWritableGlobalData->m_renderFpsLimit = -1; // -fps wins over Options.ini RenderFpsLimit
+		const Int limit = RenderFpsPreset::parseUserLimit(args[1]);
+		if (limit >= 0)
+		{
+			TheWritableGlobalData->m_renderFpsLimit = limit;
+		}
 	}
 	return 2;
 }
