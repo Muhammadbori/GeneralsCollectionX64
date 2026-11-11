@@ -69,6 +69,7 @@ namespace
 		Int dirX, dirY; ///< -1, 0, 1 for KIND_EDGE; the drag vector in pixels for KIND_RMB
 		UnsignedInt from, to;
 		Bool active;
+		Bool pendingRelease; ///< KIND_EDGE: the forced screen edge mode is released one update after the pointer left the edge
 	};
 	std::vector<TestInputSpec> s_testInputs;
 
@@ -239,8 +240,20 @@ void FrameShots::injectTestInput()
 
 		case TestInputSpec::KIND_EDGE:
 			{
-				if (wantActive != in.active && TheLookAtTranslator != nullptr)
-					TheLookAtTranslator->setTestForceScreenEdge(wantActive);
+				// The messages are translated after this call, so the pointer's move away from the edge must still be
+				// handled with the mode forced. It is released on the next update.
+				if (TheLookAtTranslator != nullptr)
+				{
+					if (wantActive && !in.active)
+						TheLookAtTranslator->setTestForceScreenEdge(true);
+					else if (!wantActive && in.active)
+						in.pendingRelease = TRUE;
+					else if (!wantActive && in.pendingRelease)
+					{
+						TheLookAtTranslator->setTestForceScreenEdge(false);
+						in.pendingRelease = FALSE;
+					}
+				}
 				ICoord2D pos = center;
 				if (wantActive)
 				{
