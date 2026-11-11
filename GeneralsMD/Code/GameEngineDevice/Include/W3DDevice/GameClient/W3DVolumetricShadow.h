@@ -129,7 +129,6 @@ class W3DVolumetricShadow	: public Shadow
 		void RenderMeshVolume(Int meshIndex, Int lightIndex, const Matrix3D *meshXform);
 		///render single mesh which could belong to a larger hierarchy (optimized for animated meshes).
 		void RenderDynamicMeshVolume(Int meshIndex, Int lightIndex, const Matrix3D *meshXform);
-		void RenderMeshVolumeBounds(Int meshIndex, Int lightIndex, const Matrix3D *meshXform);	///<render bounding volume around shadow volume - for debug use.
 
 		void setLightPosHistory(Int lightIndex, Int meshIndex, Vector3 &pos) {m_lightPosHistory[lightIndex][meshIndex]=pos;}	///<updates the last position of light
 		W3DVolumetricShadow *m_next;	/// for the shadow manager list

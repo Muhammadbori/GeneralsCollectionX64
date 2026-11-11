@@ -110,8 +110,6 @@ struct SHADOW_STATIC_VOLUME_VERTEX	//vertex structure passed to D3D
 	#define SHADOW_DYNAMIC_VOLUME_FVF	D3DFVF_XYZ
 #endif
 
-LPDIRECT3DVERTEXBUFFER8 shadowVertexBufferD3D=nullptr;		///<D3D vertex buffer
-LPDIRECT3DINDEXBUFFER8	shadowIndexBufferD3D=nullptr;	///<D3D index buffer
 DX8VertexBufferClass	*shadowVertexBufferDX12=nullptr;	///<dynamic engine vertex buffer replacing shadowVertexBufferD3D in Direct3D 12 mode
 DX8IndexBufferClass		*shadowIndexBufferDX12=nullptr;	///<dynamic engine index buffer replacing shadowIndexBufferD3D in Direct3D 12 mode
 int nShadowVertsInBuf=0;	//model vetices in vertex buffer
@@ -1329,9 +1327,6 @@ void W3DVolumetricShadow::RenderVolume(Int meshIndex, Int lightIndex)
 
 	if (mesh)
 	{
-#ifdef SV_DEBUG_BOUNDS
-			RenderMeshVolumeBounds(meshIndex,lightIndex, &mesh->Get_Transform());
-#endif
 			if (m_shadowVolume[0][ meshIndex ]->GetFlags() & SHADOW_DYNAMIC)
 				RenderDynamicMeshVolume(meshIndex,lightIndex,&mesh->Get_Transform());
 			else
@@ -1345,9 +1340,6 @@ void W3DVolumetricShadow::RenderMeshVolume(Int meshIndex, Int lightIndex, const 
 	Int numVerts, numPolys, numIndex;
 
 	//Direct3D 12 mode has no Direct3D 8 device; the wrapper calls below draw through DX12Device.
-	if (!DX12Device::Is_Active())
-	if (!DX8Wrapper::Has_D3D_Device())
-		return;
 
 	geometry = m_shadowVolume[lightIndex][ meshIndex ];
 
@@ -1372,18 +1364,9 @@ void W3DVolumetricShadow::RenderMeshVolume(Int meshIndex, Int lightIndex, const 
 	W3DBufferManager::W3DVertexBufferSlot *vbSlot=m_shadowVolumeVB[lightIndex][ meshIndex ];
 	if (!vbSlot)
 		return;
-	if (DX12Device::Is_Active())
-	{
-		//Direct3D 12 mode: Get_DX8_Vertex_Buffer() is null for every buffer, so compare the engine buffers.
-		if (vbSlot->m_VB->m_DX8VertexBuffer != lastActiveVertexBufferDX12)
-		{	lastActiveVertexBufferDX12=vbSlot->m_VB->m_DX8VertexBuffer;
-			DX8Wrapper::Set_Stream_Source_Raw(0,vbSlot->m_VB->m_DX8VertexBuffer,
-				vbSlot->m_VB->m_DX8VertexBuffer->FVF_Info().Get_FVF_Size());	//12 bytes per vertex.
-		}
-	}
-	else
-	if (vbSlot->m_VB->m_DX8VertexBuffer->Get_DX8_Vertex_Buffer() != lastActiveVertexBuffer)
-	{	lastActiveVertexBuffer=vbSlot->m_VB->m_DX8VertexBuffer->Get_DX8_Vertex_Buffer();
+	//Direct3D 12 mode: Get_DX8_Vertex_Buffer() is null for every buffer, so compare the engine buffers.
+	if (vbSlot->m_VB->m_DX8VertexBuffer != lastActiveVertexBufferDX12)
+	{	lastActiveVertexBufferDX12=vbSlot->m_VB->m_DX8VertexBuffer;
 		DX8Wrapper::Set_Stream_Source_Raw(0,vbSlot->m_VB->m_DX8VertexBuffer,
 			vbSlot->m_VB->m_DX8VertexBuffer->FVF_Info().Get_FVF_Size());	//12 bytes per vertex.
 	}
@@ -1414,9 +1397,6 @@ void W3DVolumetricShadow::RenderDynamicMeshVolume(Int meshIndex, Int lightIndex,
 	UnsignedShort *pvIndices;
 
 	//Direct3D 12 mode has no Direct3D 8 device; the wrapper calls below draw through DX12Device.
-	if (!DX12Device::Is_Active())
-	if (!DX8Wrapper::Has_D3D_Device())
-		return;
 
 
 	geometry = m_shadowVolume[lightIndex][ meshIndex ];
@@ -1439,42 +1419,26 @@ void W3DVolumetricShadow::RenderDynamicMeshVolume(Int meshIndex, Int lightIndex,
 
 	DX12BufferClass *dx12VertexBuffer=nullptr;
 	DX12BufferClass *dx12IndexBuffer=nullptr;
-	if (DX12Device::Is_Active())
-	{
-		//Direct3D 12 mode: the raw buffers do not exist, so batch into the dynamic engine buffers that
-		//replace them. A discard lock moves a DX12 buffer to fresh frame memory and a plain lock writes
-		//into the current one past the ranges earlier draws read, as D3DLOCK_DISCARD/NOOVERWRITE do.
-		if (shadowVertexBufferDX12 == nullptr || shadowIndexBufferDX12 == nullptr)
-			return;
-		dx12VertexBuffer=shadowVertexBufferDX12->Get_DX12_Buffer();
-		dx12IndexBuffer=shadowIndexBufferDX12->Get_DX12_Buffer();
-		if (dx12VertexBuffer == nullptr || dx12IndexBuffer == nullptr)
-			return;
-		if (numVerts > SHADOW_VERTEX_SIZE || numIndex > SHADOW_INDEX_SIZE)
-			return;	//more than the whole buffer, a Direct3D 8 lock fails here too.
+	//Direct3D 12 mode: the raw buffers do not exist, so batch into the dynamic engine buffers that
+	//replace them. A discard lock moves a DX12 buffer to fresh frame memory and a plain lock writes
+	//into the current one past the ranges earlier draws read, as D3DLOCK_DISCARD/NOOVERWRITE do.
+	if (shadowVertexBufferDX12 == nullptr || shadowIndexBufferDX12 == nullptr)
+		return;
+	dx12VertexBuffer=shadowVertexBufferDX12->Get_DX12_Buffer();
+	dx12IndexBuffer=shadowIndexBufferDX12->Get_DX12_Buffer();
+	if (dx12VertexBuffer == nullptr || dx12IndexBuffer == nullptr)
+		return;
+	if (numVerts > SHADOW_VERTEX_SIZE || numIndex > SHADOW_INDEX_SIZE)
+		return;	//more than the whole buffer, a Direct3D 8 lock fails here too.
 
-		if (nShadowVertsInBuf > (SHADOW_VERTEX_SIZE-numVerts))	//check if room for model verts
-		{
-			pvVertices=(SHADOW_DYNAMIC_VOLUME_VERTEX*)dx12VertexBuffer->Lock(0,numVerts*sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX),true);
-			nShadowVertsInBuf=0;
-			nShadowStartBatchVertex=0;
-		}
-		else
-			pvVertices=(SHADOW_DYNAMIC_VOLUME_VERTEX*)dx12VertexBuffer->Lock(nShadowVertsInBuf*sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX),numVerts*sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX),false);
-	}
-	else
 	if (nShadowVertsInBuf > (SHADOW_VERTEX_SIZE-numVerts))	//check if room for model verts
 	{
-		//flush the buffer by drawing the contents and re-locking again
-		if (shadowVertexBufferD3D->Lock(0,numVerts*sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX),(unsigned char**)&pvVertices,D3DLOCK_DISCARD) != D3D_OK)
-			return;
+		pvVertices=(SHADOW_DYNAMIC_VOLUME_VERTEX*)dx12VertexBuffer->Lock(0,numVerts*sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX),true);
 		nShadowVertsInBuf=0;
 		nShadowStartBatchVertex=0;
 	}
 	else
-	{	if (shadowVertexBufferD3D->Lock(nShadowVertsInBuf*sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX),numVerts*sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX), (unsigned char**)&pvVertices,D3DLOCK_NOOVERWRITE) != D3D_OK)
-			return;
-	}
+		pvVertices=(SHADOW_DYNAMIC_VOLUME_VERTEX*)dx12VertexBuffer->Lock(nShadowVertsInBuf*sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX),numVerts*sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX),false);
 #ifdef SV_DEBUG
 	srand(0x1345465);
 #endif
@@ -1492,35 +1456,16 @@ void W3DVolumetricShadow::RenderDynamicMeshVolume(Int meshIndex, Int lightIndex,
 #endif
 	}
 
-	if (dx12VertexBuffer)
-		dx12VertexBuffer->Unlock();
-	else
-		shadowVertexBufferD3D->Unlock();
+	dx12VertexBuffer->Unlock();
 
-	if (dx12IndexBuffer)
-	{
-		if (nShadowIndicesInBuf > (SHADOW_INDEX_SIZE-numIndex))	//check if room for model verts
-		{
-			pvIndices=(UnsignedShort*)dx12IndexBuffer->Lock(0,numIndex*sizeof(short),true);
-			nShadowIndicesInBuf=0;
-			nShadowStartBatchIndex=0;
-		}
-		else
-			pvIndices=(UnsignedShort*)dx12IndexBuffer->Lock(nShadowIndicesInBuf*sizeof(short),numIndex*sizeof(short),false);
-	}
-	else
 	if (nShadowIndicesInBuf > (SHADOW_INDEX_SIZE-numIndex))	//check if room for model verts
 	{
-		//flush the buffer by drawing the contents and re-locking again
-		if (shadowIndexBufferD3D->Lock(0,numIndex*sizeof(short),(unsigned char**)&pvIndices,D3DLOCK_DISCARD) != D3D_OK)
-			return;
+		pvIndices=(UnsignedShort*)dx12IndexBuffer->Lock(0,numIndex*sizeof(short),true);
 		nShadowIndicesInBuf=0;
 		nShadowStartBatchIndex=0;
 	}
 	else
-	{	if (shadowIndexBufferD3D->Lock(nShadowIndicesInBuf*sizeof(short),numIndex*sizeof(short), (unsigned char**)&pvIndices,D3DLOCK_NOOVERWRITE) != D3D_OK)
-			return;
-	}
+		pvIndices=(UnsignedShort*)dx12IndexBuffer->Lock(nShadowIndicesInBuf*sizeof(short),numIndex*sizeof(short),false);
 
 
 	if(pvIndices)
@@ -1528,31 +1473,17 @@ void W3DVolumetricShadow::RenderDynamicMeshVolume(Int meshIndex, Int lightIndex,
 		memcpy(pvIndices,geometry->GetPolygonIndex(0,(short *)pvIndices),numPolys*3*sizeof(short));
 	}
 
-	if (dx12IndexBuffer)
-		dx12IndexBuffer->Unlock();
-	else
-		shadowIndexBufferD3D->Unlock();
+	dx12IndexBuffer->Unlock();
 
-	if (DX12Device::Is_Active())
-		DX8Wrapper::Set_Indices_Raw(shadowIndexBufferDX12,nShadowStartBatchVertex);
-	else
-		DX8Wrapper::Set_Indices_Raw(shadowIndexBufferD3D,nShadowStartBatchVertex);
+	DX8Wrapper::Set_Indices_Raw(shadowIndexBufferDX12,nShadowStartBatchVertex);
 
 	D3DMATRIX dxmWorld = To_D3DMATRIX(*meshXform);
 	DX8Wrapper::_Set_DX8_Transform(D3DTS_WORLD,dxmWorld);
 
-	if (DX12Device::Is_Active())
-	{
-		//Both Direct3D 8 pointers are null in Direct3D 12 mode, so compare the engine buffers.
-		if (shadowVertexBufferDX12 != lastActiveVertexBufferDX12)
-		{	DX8Wrapper::Set_Stream_Source_Raw(0,shadowVertexBufferDX12,sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX));
-			lastActiveVertexBufferDX12 = shadowVertexBufferDX12;
-		}
-	}
-	else
-	if (shadowVertexBufferD3D != lastActiveVertexBuffer)
-	{	DX8Wrapper::Set_Stream_Source_Raw(0,shadowVertexBufferD3D,sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX));
-		lastActiveVertexBuffer = shadowVertexBufferD3D;
+	//Both Direct3D 8 pointers are null in Direct3D 12 mode, so compare the engine buffers.
+	if (shadowVertexBufferDX12 != lastActiveVertexBufferDX12)
+	{	DX8Wrapper::Set_Stream_Source_Raw(0,shadowVertexBufferDX12,sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX));
+		lastActiveVertexBufferDX12 = shadowVertexBufferDX12;
 	}
 
 	if (DX8Wrapper::_Is_Triangle_Draw_Enabled())
@@ -1560,154 +1491,6 @@ void W3DVolumetricShadow::RenderDynamicMeshVolume(Int meshIndex, Int lightIndex,
 		Debug_Statistics::Record_DX8_Polys_And_Vertices(numPolys,numVerts,ShaderClass::_PresetOpaqueShader);
 		DX8Wrapper::Draw_Indexed_Primitive_Raw(D3DPT_TRIANGLELIST,0,numVerts,nShadowStartBatchIndex,numPolys);
 	}
-
-	nShadowVertsInBuf += numVerts;
-	nShadowStartBatchVertex=nShadowVertsInBuf;
-
-	nShadowIndicesInBuf += numIndex;
-	nShadowStartBatchIndex=nShadowIndicesInBuf;
-}
-
-/** Debug function to draw bounding boxes around shadow volumes */
-void W3DVolumetricShadow::RenderMeshVolumeBounds(Int meshIndex, Int lightIndex, const Matrix3D *meshXform)
-{
-	Geometry *geometry;
-	Int numVerts, numPolys, numIndex;
-	SHADOW_DYNAMIC_VOLUME_VERTEX* pvVertices;
-	UnsignedShort *pvIndices;
-	// Vertex Positions as a function of the box extents
-	static Vector3						_BoxVerts[8] =
-	{
-		Vector3(  1.0f, 1.0f, 1.0f ),		// +z ring of 4 verts
-		Vector3( -1.0f, 1.0f, 1.0f ),
-		Vector3( -1.0f,-1.0f, 1.0f ),
-		Vector3(  1.0f,-1.0f, 1.0f ),
-
-		Vector3(  1.0f, 1.0f,-1.0f ),		// -z ring of 4 verts;
-		Vector3( -1.0f, 1.0f,-1.0f ),
-		Vector3( -1.0f,-1.0f,-1.0f ),
-		Vector3(  1.0f,-1.0f,-1.0f ),
-	};
-	// Face Connectivity
-	static Vector3i					_BoxFaces[12] =
-	{
-		Vector3i( 0,1,2 ),		// +z faces
-		Vector3i( 0,2,3 ),
-		Vector3i( 4,7,6 ),		// -z faces
-		Vector3i( 4,6,5 ),
-		Vector3i( 0,3,7 ),		// +x faces
-		Vector3i( 0,7,4 ),
-		Vector3i( 1,5,6 ),		// -x faces
-		Vector3i( 1,6,2 ),
-		Vector3i( 4,5,1 ),		// +y faces
-		Vector3i( 4,1,0 ),
-		Vector3i( 3,2,6 ),		// -y faces
-		Vector3i( 3,6,7 )
-	};
-
-	static Vector3 verts[8];
-
-	if (!DX8Wrapper::Has_D3D_Device())
-		return;
-
-	Vector3 meshPosition;
-	meshXform->Get_Translation(&meshPosition);	//current mesh position
-
-	geometry = m_shadowVolume[lightIndex][ meshIndex ];
-	AABoxClass &aab=geometry->getBoundingBox();
-
-	// compute the vertex positions
-	meshPosition += aab.Center;	//get world space position of bounding box
-
-	for (int ivert=0; ivert<8; ivert++)
-	{
-		verts[ivert].X = meshPosition.X + _BoxVerts[ivert][0] * aab.Extent.X;
-		verts[ivert].Y = meshPosition.Y + _BoxVerts[ivert][1] * aab.Extent.Y;
-		verts[ivert].Z = meshPosition.Z + _BoxVerts[ivert][2] * aab.Extent.Z;
-	}
-
-	//
-	// if our count is out of sync with our geometry data something
-	// is wrong here
-	//
-	assert( geometry );
-
-	// get geometry requirements
-	numVerts = 8;
-	numPolys = 12;
-	numIndex = numPolys * 3;
-
-	// reject shadows with no data
-	if( numVerts == 0 || numPolys == 0 )
-		return;
-
-
-	if (nShadowVertsInBuf > (SHADOW_VERTEX_SIZE-numVerts))	//check if room for model verts
-	{
-		//flush the buffer by drawing the contents and re-locking again
-		if (shadowVertexBufferD3D->Lock(0,numVerts*sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX),(unsigned char**)&pvVertices,D3DLOCK_DISCARD) != D3D_OK)
-			return;
-		nShadowVertsInBuf=0;
-		nShadowStartBatchVertex=0;
-	}
-	else
-	{	if (shadowVertexBufferD3D->Lock(nShadowVertsInBuf*sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX),numVerts*sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX), (unsigned char**)&pvVertices,D3DLOCK_NOOVERWRITE) != D3D_OK)
-			return;
-	}
-	srand(0x1345465);
-	if(pvVertices)
-	{	for (Int i=0; i<8; i++)
-		{
-			pvVertices->x=verts[i][0];
-			pvVertices->y=verts[i][1];
-			pvVertices->z=verts[i][2];
-#ifdef SV_DEBUG
-			pvVertices->diffuse=(rand()%255) | ((rand()%255)<<8) | ((rand()%255)<<16);
-#endif
-			pvVertices++;
-		}
-	}
-
-	shadowVertexBufferD3D->Unlock();
-
-	if (nShadowIndicesInBuf > (SHADOW_INDEX_SIZE-numIndex))	//check if room for model verts
-	{
-		//flush the buffer by drawing the contents and re-locking again
-		if (shadowIndexBufferD3D->Lock(0,numIndex*sizeof(short),(unsigned char**)&pvIndices,D3DLOCK_DISCARD) != D3D_OK)
-			return;
-		nShadowIndicesInBuf=0;
-		nShadowStartBatchIndex=0;
-	}
-	else
-	{	if (shadowIndexBufferD3D->Lock(nShadowIndicesInBuf*sizeof(short),numIndex*sizeof(short), (unsigned char**)&pvIndices,D3DLOCK_NOOVERWRITE) != D3D_OK)
-			return;
-	}
-
-
-	if(pvIndices)
-	{
-		for (Int i=0; i<numPolys; i++,pvIndices+=3)
-		{
-			pvIndices[0] = _BoxFaces[i][0];
-			pvIndices[1] = _BoxFaces[i][1];
-			pvIndices[2] = _BoxFaces[i][2];
-		}
-	}
-
-	shadowIndexBufferD3D->Unlock();
-
-	DX8Wrapper::Set_Indices_Raw(shadowIndexBufferD3D,nShadowStartBatchVertex);
-
-
-	//todo: replace this with mesh transform
-	Matrix4x4 mWorld(1);	//identity since boxes are pre-transformed to world space.
-	D3DMATRIX dxmWorld = To_D3DMATRIX(mWorld);
-	DX8Wrapper::_Set_DX8_Transform(D3DTS_WORLD,dxmWorld);
-
-	DX8Wrapper::Set_Stream_Source_Raw(0,shadowVertexBufferD3D,sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX));
-	DX8Wrapper::Set_Vertex_Shader(SHADOW_DYNAMIC_VOLUME_FVF);
-
-	DX8Wrapper::Draw_Indexed_Primitive_Raw(D3DPT_TRIANGLELIST,0,numVerts,nShadowStartBatchIndex,numPolys);
 
 	nShadowVertsInBuf += numVerts;
 	nShadowStartBatchVertex=nShadowVertsInBuf;
@@ -3456,9 +3239,6 @@ void W3DVolumetricShadow::resetSilhouette( Int meshIndex )
 void W3DVolumetricShadowManager::renderStencilShadows()
 {
 	//Direct3D 12 mode has no Direct3D 8 device; the wrapper calls below draw through DX12Device.
-	if (!DX12Device::Is_Active())
-	if (!DX8Wrapper::Has_D3D_Device())
-		return;	//need device to render anything.
 
 	struct _TRANSLITVERTEX {
 	    D3DXVECTOR4 p;
@@ -3543,9 +3323,6 @@ void W3DVolumetricShadowManager::renderShadows( Bool forceStencilFill )
 	{
 
 		//Direct3D 12 mode has no Direct3D 8 device; the wrapper calls below draw through DX12Device.
-		if (!DX12Device::Is_Active())
-		if (!DX8Wrapper::Has_D3D_Device())
-			return;	//need device to render anything.
 
  		//According to Nvidia there's a D3D bug that happens if you don't start with a
  		//new dynamic VB each frame - so we force a DISCARD by overflowing the counter.
@@ -3848,12 +3625,6 @@ W3DVolumetricShadowManager::~W3DVolumetricShadowManager()
 /** Releases all W3D/D3D assets before a reset.. */
 void W3DVolumetricShadowManager::ReleaseResources()
 {
-	if (shadowIndexBufferD3D)
-		shadowIndexBufferD3D->Release();
-	if (shadowVertexBufferD3D)
-		shadowVertexBufferD3D->Release();
-	shadowIndexBufferD3D=nullptr;
-	shadowVertexBufferD3D=nullptr;
 	REF_PTR_RELEASE(shadowIndexBufferDX12);
 	REF_PTR_RELEASE(shadowVertexBufferDX12);
 	lastActiveVertexBufferDX12=nullptr;
@@ -3868,47 +3639,12 @@ Bool W3DVolumetricShadowManager::ReAcquireResources()
 {
 	ReleaseResources();
 
-	DEBUG_ASSERTCRASH(DX8Wrapper::Has_D3D_Device() || DX12Device::Is_Active(), ("Trying to ReAcquireResources on W3DVolumetricShadowManager without device"));
+	DEBUG_ASSERTCRASH(DX12Device::Is_Active(), ("Trying to ReAcquireResources on W3DVolumetricShadowManager without device"));
 
-	if (DX12Device::Is_Active())
-	{
-		//Direct3D 12 mode: raw Direct3D 8 buffers do not exist, so use dynamic engine buffers of the
-		//same size. RenderDynamicMeshVolume fills them like the raw ones.
-		shadowIndexBufferDX12=NEW_REF(DX8IndexBufferClass,((unsigned short)SHADOW_INDEX_SIZE,DX8IndexBufferClass::USAGE_DYNAMIC));
-		shadowVertexBufferDX12=NEW_REF(DX8VertexBufferClass,(SHADOW_DYNAMIC_VOLUME_FVF,(unsigned short)SHADOW_VERTEX_SIZE,DX8VertexBufferClass::USAGE_DYNAMIC));
-		DEBUG_ASSERTCRASH(shadowVertexBufferDX12->FVF_Info().Get_FVF_Size() == sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX), ("Shadow volume vertex size does not match SHADOW_DYNAMIC_VOLUME_FVF"));
-
-		if (TheW3DBufferManager)
-			if (!TheW3DBufferManager->ReAcquireResources())
-				return FALSE;
-
-		return TRUE;
-	}
-
-	if (FAILED(DX8Wrapper::Create_Index_Buffer_Raw
-	(
-		SHADOW_INDEX_SIZE*sizeof(WORD),
-		D3DUSAGE_WRITEONLY|D3DUSAGE_DYNAMIC,
-		D3DFMT_INDEX16,
-		D3DPOOL_DEFAULT,
-		&shadowIndexBufferD3D
-	)))
-		return FALSE;
-
-	if (shadowVertexBufferD3D == nullptr)
-	{
-		// Create vertex buffer
-
-		if (FAILED(DX8Wrapper::Create_Vertex_Buffer_Raw
-		(
-			SHADOW_VERTEX_SIZE*sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX),
-			D3DUSAGE_WRITEONLY|D3DUSAGE_DYNAMIC,
-			0,
-			D3DPOOL_DEFAULT,
-			&shadowVertexBufferD3D
-		)))
-			return FALSE;
-	}
+	//Dynamic engine buffers; RenderDynamicMeshVolume fills them.
+	shadowIndexBufferDX12=NEW_REF(DX8IndexBufferClass,((unsigned short)SHADOW_INDEX_SIZE,DX8IndexBufferClass::USAGE_DYNAMIC));
+	shadowVertexBufferDX12=NEW_REF(DX8VertexBufferClass,(SHADOW_DYNAMIC_VOLUME_FVF,(unsigned short)SHADOW_VERTEX_SIZE,DX8VertexBufferClass::USAGE_DYNAMIC));
+	DEBUG_ASSERTCRASH(shadowVertexBufferDX12->FVF_Info().Get_FVF_Size() == sizeof(SHADOW_DYNAMIC_VOLUME_VERTEX), ("Shadow volume vertex size does not match SHADOW_DYNAMIC_VOLUME_FVF"));
 
 	if (TheW3DBufferManager)
 		if (!TheW3DBufferManager->ReAcquireResources())
