@@ -149,7 +149,7 @@ private:
 
 	Bool m_isFinished;
 
-	Int m_framesSinceStarted;
+	Real m_framesSinceStarted; ///< in base frames (1/30 s), advanced by the update fps ratio
 	Int m_normalFontHeight;
 };
 

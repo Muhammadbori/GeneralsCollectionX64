@@ -273,6 +273,11 @@ Real FramePacer::getLogicTimeStepMilliseconds(LogicTimeQueryFlags flags) const
 	return MSEC_PER_LOGICFRAME_REAL * getActualLogicTimeScaleOverFpsRatio(flags);
 }
 
+Real FramePacer::getLogicFramesPerRenderUpdate() const
+{
+	return getActualLogicTimeScaleOverFpsRatio(IgnoreFrozenTime | IgnoreHaltedGame);
+}
+
 Real FramePacer::getLogicFramePhase() const
 {
 	return m_logicFramePhase;

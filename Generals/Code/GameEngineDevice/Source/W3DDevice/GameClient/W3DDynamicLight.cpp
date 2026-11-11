@@ -27,6 +27,7 @@
 // Author: John Ahlquist, April 2001
 #include <stdlib.h>
 
+#include "Common/FramePacer.h"
 #include "W3DDevice/GameClient/W3DDynamicLight.h"
 
 W3DDynamicLight::W3DDynamicLight():
@@ -50,14 +51,15 @@ void W3DDynamicLight::On_Frame_Update()
 	Real factor = 1.0f;
 	if (m_curIncreaseFrameCount>0 && m_increaseFrameCount>0) {
 		// increasing
-		m_curIncreaseFrameCount--;
+		// TheSuperHackers @bugfix The light fades over the same game time at any frame rate.
+		m_curIncreaseFrameCount = std::max(0.0f, m_curIncreaseFrameCount - TheFramePacer->getLogicFramesPerRenderUpdate());
 		factor = (m_increaseFrameCount-m_curIncreaseFrameCount)/(Real)m_increaseFrameCount;
 
 	}	else if (m_decayFrameCount==0) {
 		factor = 1.0;  // never decays,
 	}	else {
-		m_curDecayFrameCount--;
-		if (m_curDecayFrameCount == 0) {
+		m_curDecayFrameCount -= TheFramePacer->getLogicFramesPerRenderUpdate();
+		if (m_curDecayFrameCount <= 0) {
 			m_enabled = false;
 			return;
 		}

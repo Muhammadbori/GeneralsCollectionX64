@@ -51,6 +51,7 @@
 // USER INCLUDES //////////////////////////////////////////////////////////////
 //-----------------------------------------------------------------------------
 #include "Common/INI.h"
+#include "Common/FramePacer.h"
 #include "GameClient/Credits.h"
 #include "GameClient/DisplayStringManager.h"
 #include "GameClient/Display.h"
@@ -182,10 +183,12 @@ void CreditsManager::update()
 {
 	if(m_isFinished)
 		return;
-	m_framesSinceStarted++;
+	// TheSuperHackers @bugfix The credits scroll at the same speed at any frame rate. They used to scroll once per m_scrollRatePerFrames updates.
+	m_framesSinceStarted += TheFramePacer->getBaseOverUpdateFpsRatio();
 
-	if(m_framesSinceStarted%m_scrollRatePerFrames != 0)
+	if(m_framesSinceStarted < (Real)m_scrollRatePerFrames)
 		return;
+	m_framesSinceStarted -= (Real)m_scrollRatePerFrames;
 
 
 	Int y = 0;

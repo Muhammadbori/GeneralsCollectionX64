@@ -70,6 +70,8 @@ public:
 	Real getLogicTimeStepSeconds(LogicTimeQueryFlags flags = 0) const; ///< Get the logic time step in seconds
 	Real getLogicTimeStepMilliseconds(LogicTimeQueryFlags flags = 0) const; ///< Get the logic time step in milliseconds
 
+	Real getLogicFramesPerRenderUpdate() const; ///< How many logic frames one render update covers, in (0,1]. For client animations that count render updates: add this per update instead of 1, so they take the same game time at any render fps. Keeps running while time is frozen or the game is halted, as a per update counter does.
+
 	Real getLogicFramePhase() const; ///< Get how far the current render step reaches into the current logic frame, in [0,1]. Used to interpolate render updates between logic updates.
 
 protected:

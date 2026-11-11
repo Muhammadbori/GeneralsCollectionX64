@@ -1620,7 +1620,10 @@ void W3DView::update()
 			m_heightAboveGround = m_currentHeightAboveGround;
 		}
 
-		const Real scrollLenSqr = m_scrollAmount.lengthSqr();
+		// TheSuperHackers @bugfix The scroll amount is scaled by the update fps ratio, so it is divided by it again here.
+		// The cutoff is the scroll amount of one update at the base frame rate, whatever the real frame rate is.
+		const Real scrollFpsRatio = TheFramePacer->getBaseOverUpdateFpsRatio();
+		const Real scrollLenSqr = m_scrollAmount.lengthSqr() / sqr(scrollFpsRatio);
 		const Bool isScrolling = scrollLenSqr > FLT_EPSILON;
 		const Bool isScrollingTooFast = scrollLenSqr >= m_scrollAmountCutoffSqr;
 		const Bool isWithinHeightConstraints = isWithinCameraHeightConstraints();

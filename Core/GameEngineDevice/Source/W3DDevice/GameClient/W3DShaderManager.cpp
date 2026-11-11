@@ -53,6 +53,7 @@
 //
 //-----------------------------------------------------------------------------
 
+#include "Common/FramePacer.h"
 #include "WW3D2/dx8wrapper.h"
 #include "WW3D2/Renderer.h"
 #include "WW3D2/assetmgr.h"
@@ -257,7 +258,7 @@ void ScreenDefaultFilter::reset()
 ///converts viewport to black & white.
 
 Int ScreenBWFilter::m_fadeFrames;
-Int ScreenBWFilter::m_curFadeFrame;
+Real ScreenBWFilter::m_curFadeFrame;
 Real ScreenBWFilter::m_curFadeValue;
 Int ScreenBWFilter::m_fadeDirection;
 
@@ -380,8 +381,8 @@ Int ScreenBWFilter::set(FilterModes mode)
 		if (m_fadeDirection > 0)
 		{
 			//turning effect on
-			m_curFadeFrame++;
-			Int fade = m_curFadeFrame;
+			m_curFadeFrame += TheFramePacer->getLogicFramesPerRenderUpdate();
+			Real fade = m_curFadeFrame;
 
 			if (fade<m_fadeFrames)
 			{
@@ -398,8 +399,8 @@ Int ScreenBWFilter::set(FilterModes mode)
 		if (m_fadeDirection < 0)
 		{
 			//turning effect off
-			m_curFadeFrame++;
-			Int fade = m_curFadeFrame;
+			m_curFadeFrame += TheFramePacer->getLogicFramesPerRenderUpdate();
+			Real fade = m_curFadeFrame;
 			if (fade<m_fadeFrames)
 			{
 				m_curFadeValue = 1.0f - (Real)fade/(Real)m_fadeFrames;
@@ -617,8 +618,8 @@ Int ScreenBWFilterDOT3::set(FilterModes mode)
 		if (m_fadeDirection > 0)
 		{
 			//turning effect on
-			m_curFadeFrame++;
-			Int fade = m_curFadeFrame;
+			m_curFadeFrame += TheFramePacer->getLogicFramesPerRenderUpdate();
+			Real fade = m_curFadeFrame;
 
 			if (fade<m_fadeFrames)
 			{
@@ -635,8 +636,8 @@ Int ScreenBWFilterDOT3::set(FilterModes mode)
 		if (m_fadeDirection < 0)
 		{
 			//turning effect off
-			m_curFadeFrame++;
-			Int fade = m_curFadeFrame;
+			m_curFadeFrame += TheFramePacer->getLogicFramesPerRenderUpdate();
+			Real fade = m_curFadeFrame;
 			if (fade<m_fadeFrames)
 			{
 				m_curFadeValue = 1.0f - (Real)fade/(Real)m_fadeFrames;
@@ -681,7 +682,7 @@ Int ScreenBWFilterDOT3::shutdown()
 ///Fades screen between 2 different views of the scene with both being visible at once.
 
 Int ScreenCrossFadeFilter::m_fadeFrames;
-Int ScreenCrossFadeFilter::m_curFadeFrame;
+Real ScreenCrossFadeFilter::m_curFadeFrame;
 Real ScreenCrossFadeFilter::m_curFadeValue;
 Int ScreenCrossFadeFilter::m_fadeDirection;
 TextureClass *ScreenCrossFadeFilter::m_fadePatternTexture=nullptr;
@@ -726,8 +727,8 @@ Bool ScreenCrossFadeFilter::updateFadeLevel()
 	if (m_fadeDirection > 0)
 	{
 		//turning effect on
-		m_curFadeFrame++;
-		Int fade = m_curFadeFrame;
+		m_curFadeFrame += TheFramePacer->getLogicFramesPerRenderUpdate();
+		Real fade = m_curFadeFrame;
 
 		if (fade<m_fadeFrames)
 		{
@@ -745,11 +746,11 @@ Bool ScreenCrossFadeFilter::updateFadeLevel()
 	if (m_fadeDirection < 0)
 	{
 		//turning effect off
-		Int fade = m_curFadeFrame;
+		Real fade = m_curFadeFrame;
 		if (fade<m_fadeFrames)
 		{
 			m_curFadeValue = 1.0f - (Real)fade/(Real)m_fadeFrames;
-			m_curFadeFrame++;
+			m_curFadeFrame += TheFramePacer->getLogicFramesPerRenderUpdate();
 		}
 		else
 		{	m_curFadeValue = 0.0f;

@@ -1039,7 +1039,7 @@ private:
 	ICoord2D m_controlBarBackgroundMarkerPos;
 
 	Bool m_radarAttackGlowOn;
-	Int m_remainingRadarAttackGlowFrames;
+	Real m_remainingRadarAttackGlowFrames; ///< in base frames (1/30 s), counted down by the update fps ratio
 	GameWindow *m_radarAttackGlowWindow;
 
 #if defined(RTS_DEBUG)

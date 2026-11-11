@@ -2177,7 +2177,7 @@ AGAIN:
 				renderLetterBox(now);
 
 				// display cinematicText over the black
-				if( m_cinematicText != AsciiString::TheEmptyString && m_cinematicTextFrames != 0)
+				if( m_cinematicText != AsciiString::TheEmptyString && m_cinematicTextFrames != 0.0f)
 				{
 					if( m_cinematicDisplayString == nullptr )
 						m_cinematicDisplayString = TheDisplayStringManager->newDisplayString();
@@ -2203,7 +2203,9 @@ AGAIN:
 						width = ( TheDisplay->getWidth() - m_cinematicDisplayString->getWidth() ) / 2;
 					m_cinematicDisplayString->draw( width, height, color, backColor );
 
-					m_cinematicTextFrames--;
+					// TheSuperHackers @bugfix The text stays for the same game time at any frame rate. The frames are logic frames.
+					if (m_cinematicTextFrames > 0.0f)
+						m_cinematicTextFrames = std::max(0.0f, m_cinematicTextFrames - TheFramePacer->getLogicFramesPerRenderUpdate());
 				}
 
 				if ( m_debugDisplayCallback )

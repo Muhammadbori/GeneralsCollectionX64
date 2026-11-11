@@ -215,7 +215,7 @@ protected:
 	// Cinematic text data
 	AsciiString m_cinematicText;        ///< string of the cinematic text that should be displayed
 	GameFont *m_cinematicFont;           ///< font for cinematic text
-	Int m_cinematicTextFrames;          ///< count of how long the cinematic text should be displayed
+	Real m_cinematicTextFrames;          ///< count of how long the cinematic text should be displayed
 
 	// Video playback data
 	VideoBuffer						*m_videoBuffer;						///< Video playback buffer

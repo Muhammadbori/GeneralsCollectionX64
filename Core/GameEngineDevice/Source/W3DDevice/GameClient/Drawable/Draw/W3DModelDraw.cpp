@@ -36,6 +36,7 @@
 
 #include <windows.h>
 
+#include "Common/FramePacer.h"
 #include "Common/crc.h"
 #include "Common/CRCDebug.h"
 #include "Common/GameState.h"
@@ -2503,6 +2504,10 @@ void W3DModelDraw::handleClientRecoil()
 
 	const W3DModelDrawModuleData* d = getW3DModelDrawModuleData();
 
+	// TheSuperHackers @bugfix The recoil takes the same game time at any frame rate. It used to move once per draw.
+	const Real step = TheFramePacer->getLogicFramesPerRenderUpdate();
+	const Real damping = (step == 1.0f) ? d->m_recoilDamping : powf(d->m_recoilDamping, step);
+
 	// do recoil, if any
 	for (int wslot = 0; wslot < WEAPONSLOT_COUNT; ++wslot)
 	{
@@ -2534,8 +2539,8 @@ void W3DModelDraw::handleClientRecoil()
 
 					case WeaponRecoilInfo::RECOIL_START:
 					case WeaponRecoilInfo::RECOIL:
-						recoils[i].m_shift += recoils[i].m_recoilRate;
-						recoils[i].m_recoilRate *= d->m_recoilDamping;			// recoil decelerates
+						recoils[i].m_shift += recoils[i].m_recoilRate * step;
+						recoils[i].m_recoilRate *= damping;			// recoil decelerates
 						if (recoils[i].m_shift >= d->m_maxRecoil)
 						{
 							recoils[i].m_shift = d->m_maxRecoil;
@@ -2548,7 +2553,7 @@ void W3DModelDraw::handleClientRecoil()
 						break;
 
 					case WeaponRecoilInfo::SETTLE:
-						recoils[i].m_shift -= d->m_recoilSettle;
+						recoils[i].m_shift -= d->m_recoilSettle * step;
 						if (recoils[i].m_shift <= 0.0f)
 						{
 							recoils[i].m_shift = 0.0f;

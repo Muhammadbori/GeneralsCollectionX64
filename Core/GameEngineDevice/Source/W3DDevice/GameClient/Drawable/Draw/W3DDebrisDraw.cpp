@@ -30,6 +30,7 @@
 // INCLUDES ///////////////////////////////////////////////////////////////////////////////////////
 
 #include "Common/FileSystem.h"	// this is only here to pull in LOAD_TEST_ASSETS
+#include "Common/FramePacer.h"
 #include "Common/GlobalData.h"
 #include "Common/ThingTemplate.h"
 #include "Common/Xfer.h"
@@ -57,7 +58,7 @@ W3DDebrisDraw::W3DDebrisDraw(Thing *thing, const ModuleData* moduleData) : DrawM
 		m_anims[i] = nullptr;
 	m_fxFinal = nullptr;
 	m_state = INITIAL;
-	m_frames = 0;
+	m_frames = 0.0f;
 	m_shadow = nullptr;
 	m_finalStop = false;
 }
@@ -170,7 +171,7 @@ void W3DDebrisDraw::setAnimNames(AsciiString initial, AsciiString flying, AsciiS
 	}
 	m_anims[FINAL] = finalAnim.isEmpty() ? nullptr : W3DDisplay::m_assetManager->Get_HAnim(finalAnim.str());
 	m_state = 0;
-	m_frames = 0;
+	m_frames = 0.0f;
 	m_fxFinal = finalFX;
 
 	m_animInitial = initial;
@@ -236,7 +237,7 @@ void W3DDebrisDraw::doDrawModule(const Matrix3D* transformMtx)
 
 		Int oldState = m_state;
 		Object* obj = getDrawable()->getObject();
-		const Int MIN_FINAL_FRAMES = 3;
+		const Real MIN_FINAL_FRAMES = 3.0f;
 		if (m_state != FINAL && obj != nullptr && !obj->isAboveTerrain() && m_frames > MIN_FINAL_FRAMES)
 		{
 			m_state = FINAL;
@@ -257,7 +258,8 @@ void W3DDebrisDraw::doDrawModule(const Matrix3D* transformMtx)
 			}
 			m_renderObject->Set_Animation(hanim, 0, m);
 		}
-		++m_frames;
+		// TheSuperHackers @bugfix Counts logic frames, not draws.
+		m_frames += TheFramePacer->getLogicFramesPerRenderUpdate();
 	}
 }
 
@@ -315,7 +317,10 @@ void W3DDebrisDraw::xfer( Xfer *xfer )
 	xfer->xferInt( &m_state );
 
 	// frames
-	xfer->xferInt( &m_frames );
+	// The saved format stays an Int count.
+	Int framesToSave = (Int)m_frames;
+	xfer->xferInt( &framesToSave );
+	m_frames = (Real)framesToSave;
 
 	// final stop
 	xfer->xferBool( &m_finalStop );

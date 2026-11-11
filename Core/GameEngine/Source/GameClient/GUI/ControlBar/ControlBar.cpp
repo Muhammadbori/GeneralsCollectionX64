@@ -3231,7 +3231,9 @@ void ControlBar::updateRadarAttackGlow ()
 {
 	if(!m_radarAttackGlowOn || !m_radarAttackGlowWindow)
 		return;
-	m_remainingRadarAttackGlowFrames--;
+	// TheSuperHackers @bugfix The glow lasts the same time at any frame rate. It used to count down once per update.
+	const Real previousFrames = m_remainingRadarAttackGlowFrames;
+	m_remainingRadarAttackGlowFrames -= TheFramePacer->getBaseOverUpdateFpsRatio();
 	if(m_remainingRadarAttackGlowFrames <= 0)
 	{
 		m_radarAttackGlowOn = FALSE;
@@ -3239,7 +3241,9 @@ void ControlBar::updateRadarAttackGlow ()
 		return;
 	}
 
-	if(m_remainingRadarAttackGlowFrames % RADAR_ATTACK_GLOW_NUM_TIMES == 0)
+	// Flashes whenever the count passes a multiple of RADAR_ATTACK_GLOW_NUM_TIMES.
+	const Real flashFrames = (Real)RADAR_ATTACK_GLOW_NUM_TIMES;
+	if(ceilf(m_remainingRadarAttackGlowFrames / flashFrames) < ceilf(previousFrames / flashFrames))
 	{
 		m_radarAttackGlowWindow->winEnable(!BitIsSet(m_radarAttackGlowWindow->winGetStatus(),WIN_STATUS_ENABLED));
 	}

@@ -90,7 +90,7 @@ private:
 	HAnimClass*								m_anims[STATECOUNT];
 	const FXList*							m_fxFinal;
 	Int												m_state;
-	Int												m_frames;
+	Real											m_frames;
 	Bool											m_finalStop;
 	Shadow*										m_shadow;													///< Updates/Renders shadows of this object
 

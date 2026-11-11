@@ -50,8 +50,8 @@ protected:
 
 	Bool		m_decayRange;
 	Bool		m_decayColor;
-	UnsignedInt m_curDecayFrameCount;
-	UnsignedInt m_curIncreaseFrameCount;
+	Real m_curDecayFrameCount; ///< logic frames, counted down by FramePacer::getLogicFramesPerRenderUpdate per update
+	Real m_curIncreaseFrameCount;
 	UnsignedInt m_decayFrameCount;
 	UnsignedInt m_increaseFrameCount;
 	Real		m_targetRange;

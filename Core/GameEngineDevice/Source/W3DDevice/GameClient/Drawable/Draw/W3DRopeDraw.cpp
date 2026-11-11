@@ -30,6 +30,7 @@
 // INCLUDES ///////////////////////////////////////////////////////////////////////////////////////
 #include <stdlib.h>
 #include <windows.h>
+#include "Common/FramePacer.h"
 #include "Common/Thing.h"
 #include "Common/ThingTemplate.h"
 #include "Common/Xfer.h"
@@ -201,12 +202,15 @@ void W3DRopeDraw::doDrawModule(const Matrix3D* transformMtx)
 		}
 	}
 
-	m_curWobblePhase += m_wobbleRate;
+	// TheSuperHackers @bugfix The rope moves the same distance per game time at any frame rate. It used to move once per draw.
+	const Real step = TheFramePacer->getLogicFramesPerRenderUpdate();
+
+	m_curWobblePhase += m_wobbleRate * step;
 	if (m_curWobblePhase > 2*PI)
 		m_curWobblePhase -= 2*PI;
 
-	m_curZOffset += m_curSpeed;
-	m_curSpeed += m_accel;
+	m_curZOffset += m_curSpeed * step;
+	m_curSpeed += m_accel * step;
 	if (m_curSpeed > m_maxSpeed)
 		m_curSpeed = m_maxSpeed;
 	else if (m_curSpeed < -m_maxSpeed)

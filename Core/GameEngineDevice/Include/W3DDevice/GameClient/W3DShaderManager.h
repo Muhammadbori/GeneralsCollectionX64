@@ -210,7 +210,7 @@ protected:
 	virtual void reset() override;		///<do any custom resetting necessary to bring W3D in sync.
 	static Int m_fadeFrames;
 	static Int m_fadeDirection;
-	static Int m_curFadeFrame;
+	static Real m_curFadeFrame; ///< logic frames, advanced by FramePacer::getLogicFramesPerRenderUpdate per update
 	static Real m_curFadeValue;
 };
 
@@ -251,7 +251,7 @@ protected:
 	Bool updateFadeLevel();		///<updated current state of fade and return true if not finished.
 	static Int m_fadeFrames;
 	static Int m_fadeDirection;
-	static Int m_curFadeFrame;
+	static Real m_curFadeFrame; ///< logic frames, advanced by FramePacer::getLogicFramesPerRenderUpdate per update
 	static Real m_curFadeValue;
 	static Bool m_skipRender;
 	static TextureClass *m_fadePatternTexture;	///<shape/pattern of the fade
