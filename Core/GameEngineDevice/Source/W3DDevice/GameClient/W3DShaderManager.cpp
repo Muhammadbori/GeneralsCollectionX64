@@ -324,7 +324,7 @@ Bool ScreenBWFilter::preRender(Bool &skipRender, CustomScenePassModes &scenePass
 Bool ScreenBWFilter::postRender(FilterModes mode, Coord2D &scrollDelta,Bool &doExtraRender)
 {
 	IDirect3DTexture8 * tex =	W3DShaderManager::endRenderToTexture();
-	TextureClass *targetTex = DX12Device::Is_Active() ? W3DShaderManager::getRenderTargetTexture() : nullptr;	//Direct3D 12 mode renders into this instead.
+	TextureClass *targetTex = W3DShaderManager::getRenderTargetTexture();	//the filtered view is rendered into this
 	DEBUG_ASSERTCRASH(tex || targetTex, ("Require rendered texture."));
 	if (!tex && !targetTex) return false;
 	if (!set(mode)) return false;
@@ -490,8 +490,6 @@ Int ScreenBWFilter::shutdown()
 /**Alternate version of the above filter which does not require pixel shaders - good for older cards*/
 Int ScreenBWFilterDOT3::init()
 {
-	Int res;
-
 	m_curFadeFrame = 0;
 
 	if (!W3DShaderManager::canRenderToTexture()) {
@@ -499,19 +497,10 @@ Int ScreenBWFilterDOT3::init()
 		return false;
 	}
 
-	if (DX12Device::Is_Active())
-	{	//Direct3D 12 mode: used when the monochrome pixel shader port is unavailable (no chipset with -noshaders or
-		//DX12_GAME_SHADERS_ENABLED 0); its fixed-function shaders do the DOT3 and multiply-add blends.
-		W3DFilters[FT_VIEW_BW_FILTER]=&screenBWFilterDOT3;
-		return TRUE;
-	}
-
-	if ((res=W3DShaderManager::getChipset()) != 0)
-	{
-			W3DFilters[FT_VIEW_BW_FILTER]=&screenBWFilterDOT3;
-			return TRUE;
-	}
-	return FALSE;
+	//Used when the monochrome pixel shader port is unavailable (no chipset with -noshaders or
+	//DX12_GAME_SHADERS_ENABLED 0); its fixed-function shaders do the DOT3 and multiply-add blends.
+	W3DFilters[FT_VIEW_BW_FILTER]=&screenBWFilterDOT3;
+	return TRUE;
 }
 
 Bool ScreenBWFilterDOT3::preRender(Bool &skipRender, CustomScenePassModes &scenePassMode)
@@ -1333,13 +1322,11 @@ Int FlatShroudTextureShader::set(Int stage)
 	//force WW3D2 system to set it's states so it won't later overwrite our custom settings.
 	if (stage < 2)
 		DX8Wrapper::Set_Texture(stage, W3DShaderManager::getShaderTexture(stage));
-	else if (DX12Device::Is_Active())
-	{	//Direct3D 12 mode has no Direct3D 8 textures, so bind the engine texture's Direct3D 12 texture.
+	else
+	{	//stages larger than 1 are not supported by W3D, so bind the engine texture's DX12 texture directly.
 		TextureClass *shroudTexture=W3DShaderManager::getShaderTexture(stage);
 		DX8Wrapper::Set_DX12_Texture(stage, shroudTexture ? shroudTexture->Peek_DX12_Texture() : nullptr);
 	}
-	else	//stages larger than 1 are not supported by W3D so set them directly
-		DX8Wrapper::Set_DX8_Texture(stage, W3DShaderManager::getShaderTexture(stage)->Peek_D3D_Texture());
 
 	DX8Wrapper::Set_DX8_Texture_Stage_State( stage, D3DTSS_COLORARG1, D3DTA_TEXTURE );
 	DX8Wrapper::Set_DX8_Texture_Stage_State( stage, D3DTSS_COLORARG2, D3DTA_CURRENT );
@@ -2643,68 +2630,10 @@ void W3DShaderManager::init()
 {
 	int i,j;
 
-	D3DSURFACE_DESC desc;
-	// For now, check & see if we are gf3 or higher on the food chain.
+	//Our effects that need an offscreen render target get a render target texture of the back buffer size.
+	updateRenderTargetTexture();
 
-	if (DX12Device::Is_Active())
-	{
-		//Direct3D 12 mode has no Direct3D 8 surfaces, so the block below is skipped.
-		//Our effects that need an offscreen render target get a render target texture of the back buffer size
-		//instead, made here like the Direct3D 8 one.
-		updateRenderTargetTexture();
-	}
-
-	ChipsetType res=DC_UNKNOWN;
-	if (DX12Device::Is_Active())
-	{
-		m_currentChipset = W3DShaderManager::getChipset();	//cache the current chipset.
-	}
-	else
-	if ((res=W3DShaderManager::getChipset()) != 0)
-	{
-		m_currentChipset = res;	//cache the current chipset.
-
-		//Some of our effects require an offscreen render target, so try creating it here.
-		HRESULT hr=DX8Wrapper::Get_Render_Target_Surface(&m_oldRenderSurface);
-
-		if (hr != S_OK || !m_oldRenderSurface)
-			return;
-
-		m_oldRenderSurface->GetDesc(&desc);
-		
-		// TheSuperHackers @bugfix Redirecting rendering to a non-multisampled texture
-		// while using a multisampled depth buffer is an API violation in DX8.
-		if (desc.MultiSampleType == D3DMULTISAMPLE_NONE)
-		{
-			hr=DX8Wrapper::Create_Texture_Raw(desc.Width,desc.Height,1,D3DUSAGE_RENDERTARGET,desc.Format,D3DPOOL_DEFAULT,&m_renderTexture);
-		}
-		else
-		{
-			// Force failure path to avoid MSAA mismatch
-			hr = E_FAIL;
-		}
-
-		if (hr != S_OK)
-		{
-			SAFE_RELEASE(m_oldRenderSurface);
-			m_renderTexture = nullptr;
-		} else {
-			hr = m_renderTexture->GetSurfaceLevel(0, &m_newRenderSurface);
-			if (hr != S_OK)
-			{
-				SAFE_RELEASE(m_renderTexture);
-				m_newRenderSurface = nullptr;
-			}	else {
-				hr = DX8Wrapper::Get_Depth_Stencil_Surface(&m_oldDepthSurface);
-				if (hr != S_OK)
-				{
-					SAFE_RELEASE(m_newRenderSurface);
-					SAFE_RELEASE(m_renderTexture);
-					m_oldDepthSurface = nullptr;
-				}
-			}
-		}
-	}
+	m_currentChipset = W3DShaderManager::getChipset();	//cache the current chipset.
 
 	W3DShaderInterface **shaders;
 
@@ -2896,38 +2825,17 @@ void W3DShaderManager::startRenderToTexture()
 {
 	DEBUG_ASSERTCRASH(!m_renderingToTexture, ("Already rendering to texture - cannot nest calls."));
 
-	if (DX12Device::Is_Active())
-	{
-		//Direct3D 12 mode has no Direct3D 8 surfaces, so select the render target texture with the default
-		//depth buffer.  The texture follows the back buffer size, which changes without a device reset there.
-		//Like Set_Render_Target_Raw below, this leaves DX8Wrapper::Is_Render_To_Texture() unchanged so that
-		//dazzles still draw into the filtered view.
-		if (m_renderingToTexture || m_renderTargetTexture==nullptr || !updateRenderTargetTexture()) return;
+	//Direct3D 12 mode has no Direct3D 8 surfaces, so select the render target texture with the default
+	//depth buffer.  The texture follows the back buffer size, which changes without a device reset there.
+	//Like Set_Render_Target_Raw below, this leaves DX8Wrapper::Is_Render_To_Texture() unchanged so that
+	//dazzles still draw into the filtered view.
+	if (m_renderingToTexture || m_renderTargetTexture==nullptr || !updateRenderTargetTexture()) return;
 
-		//If the target could not be selected, permanently disable RTT like the Direct3D 8 path below.
-		if (!DX8Wrapper::Set_DX12_Render_Target_Raw(m_renderTargetTexture))
-		{
-			REF_PTR_RELEASE(m_renderTargetTexture);
-			return;
-		}
-	}
-	else
+	//If the target could not be selected, permanently disable RTT like the Direct3D 8 path below.
+	if (!DX8Wrapper::Set_DX12_Render_Target_Raw(m_renderTargetTexture))
 	{
-		if (m_renderingToTexture || m_newRenderSurface==nullptr || m_oldDepthSurface==nullptr) return;
-		HRESULT hr = DX8Wrapper::Set_Render_Target_Raw(m_newRenderSurface,m_oldDepthSurface);
-
-		// TheSuperHackers @bugfix If SetRenderTarget fails (e.g. due to MSAA forced by driver
-		// profile causing a depth buffer mismatch that D3DSURFACE_DESC doesn't report), permanently
-		// disable RTT to prevent repeated failures and accidental backbuffer clears.
-		if (hr != S_OK)
-		{
-			// Permanently disable RTT
-			SAFE_RELEASE(m_newRenderSurface);
-			SAFE_RELEASE(m_renderTexture);
-			SAFE_RELEASE(m_oldRenderSurface);
-			SAFE_RELEASE(m_oldDepthSurface);
-			return;
-		}
+		REF_PTR_RELEASE(m_renderTargetTexture);
+		return;
 	}
 
 	m_renderingToTexture = true;
@@ -2964,39 +2872,20 @@ IDirect3DTexture8 *W3DShaderManager::endRenderToTexture()
 {
 	DEBUG_ASSERTCRASH(m_renderingToTexture, ("Not rendering to texture."));
 	if (!m_renderingToTexture) return nullptr;
-	if (DX12Device::Is_Active())
-	{
-		//Direct3D 12 mode: restore the back buffer and default depth buffer.  There are no Direct3D 8 textures to
-		//return; the rendered image is in getRenderTargetTexture().
-		DX8Wrapper::Set_DX12_Render_Target_Raw(nullptr);
+	//Direct3D 12 mode: restore the back buffer and default depth buffer.  There are no Direct3D 8 textures to
+	//return; the rendered image is in getRenderTargetTexture().
+	DX8Wrapper::Set_DX12_Render_Target_Raw(nullptr);
 
-		//assume render target texture will be in stage 0, with the same states as below.
-		DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP);
-		DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP);
-		DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_ADDRESSW, D3DTADDRESS_CLAMP);
-		DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
-		DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_MINFILTER, D3DTEXF_LINEAR);
-		DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_MIPFILTER, D3DTEXF_NONE);
+	//assume render target texture will be in stage 0, with the same states as below.
+	DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP);
+	DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP);
+	DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_ADDRESSW, D3DTADDRESS_CLAMP);
+	DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
+	DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_MINFILTER, D3DTEXF_LINEAR);
+	DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_MIPFILTER, D3DTEXF_NONE);
 
-		m_renderingToTexture = false;
-		return nullptr;
-	}
-	HRESULT hr = DX8Wrapper::Set_Render_Target_Raw(m_oldRenderSurface,m_oldDepthSurface);	//restore original render target
-	DEBUG_ASSERTCRASH(hr==S_OK, ("Set target failed unexpectedly."));
-	if (hr == S_OK)
-	{
-		//assume render target texture will be in stage 0.  Most hardware has "conditional" support for
-		//non-power-of-2 textures so we must force some required states:
-		DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP);
-		DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP);
-		DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_ADDRESSW, D3DTADDRESS_CLAMP);
-		DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_MAGFILTER, D3DTEXF_LINEAR);
-		DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_MINFILTER, D3DTEXF_LINEAR);
-		DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_MIPFILTER, D3DTEXF_NONE);
-
-		m_renderingToTexture = false;
-	}
-	return m_renderTexture;
+	m_renderingToTexture = false;
+	return nullptr;
 }
 
 /**Returns texture containing the image that was last rendered using any of the effects requiring render target
@@ -3053,100 +2942,12 @@ ChipsetType W3DShaderManager::getChipset()
 	//A chipset override (-noshaders, INI ChipsetType) of a pixel shader card is used as is; any older one gives
 	//no chipset, which keeps every effect on its fixed-function path (the 8-stage terrain of the TNT and
 	//GeForce2 class relies on that hardware and is never selected).
-	if (DX12Device::Is_Active())
-	{
 #if !DX12_GAME_SHADERS_ENABLED
-		return DC_UNKNOWN;
+	return DC_UNKNOWN;
 #endif
-		if (TheGlobalData && TheGlobalData->m_chipSetType != DC_UNKNOWN)
-			return TheGlobalData->m_chipSetType >= DC_GENERIC_PIXEL_SHADER_1_1 ? (ChipsetType)TheGlobalData->m_chipSetType : DC_UNKNOWN;
-		return DC_GENERIC_PIXEL_SHADER_1_1;
-	}
-
-	//check if globaldata has an override for current chipset
 	if (TheGlobalData && TheGlobalData->m_chipSetType != DC_UNKNOWN)
-		return (ChipsetType)TheGlobalData->m_chipSetType;
-
-	ChipsetType chip=DC_UNKNOWN;
-	IDirect3D8* d3d8Interface=DX8Wrapper::_Get_D3D8();
-
-	if (d3d8Interface && DX8Wrapper::Has_D3D_Device())
-	{
-
-		D3DADAPTER_IDENTIFIER8 did;
-		::ZeroMemory(&did, sizeof(D3DADAPTER_IDENTIFIER8));
-	/*	HRESULT res = */ d3d8Interface->GetAdapterIdentifier(0,D3DENUM_NO_WHQL_LEVEL,&did);
-		*((LARGE_INTEGER*)&m_driverVersion) = did.DriverVersion;
-
-		if(did.VendorId == DC_NVIDIA_VENDOR_ID)
-		{
-			m_currentVendor = DC_NVIDIA_VENDOR_ID;
-
-			if (did.DeviceId == 0x20)
-				return DC_TNT;
-
-			if (did.DeviceId >= 0x28 && did.DeviceId < 0x100)
-				return DC_TNT2;
-
-			if ( (did.DeviceId >= 0x100 && did.DeviceId <= 0x103) ||	//GeForce
-				 (did.DeviceId >= 0x110 && did.DeviceId <= 0x113) ||	//GeForce2 MX
-						 (did.DeviceId >= 0x150 && did.DeviceId <= 0x153) )	//GeForce2
-           		return DC_GEFORCE2;
-
-			if (did.DeviceId >= 0x200 && did.DeviceId < 0x250)
-				return DC_GEFORCE3;
-
-			if (did.DeviceId >= 0x250)
-				return DC_GEFORCE4;
-		}
-		else
-		if(did.VendorId == DC_3DFX_VENDOR_ID)
-		{
-			m_currentVendor = DC_3DFX_VENDOR_ID;
-
-			if (did.DeviceId == 0x0002)
-				return DC_VOODOO2;
-			if (did.DeviceId == 0x0005)
-				return DC_VOODOO3;
-			if (did.DeviceId == 0x0008)	///@todo: Just guessing on this one - find actual Voodoo4 deviceID.
-				return DC_VOODOO4;
-			if (did.DeviceId == 0x0009)
-				return DC_VOODOO5;
-		}
-		else
-		if(did.VendorId == DC_ATI_VENDOR_ID)
-		{
-			m_currentVendor = DC_ATI_VENDOR_ID;
-
-			if (did.DeviceId == 0x5144)
-				return DC_RADEON;
-			if (did.DeviceId == 0x514C)
-				return DC_RADEON_8500;
-			if (did.DeviceId == 0x4e44)
-				return DC_RADEON_9700;
-		}
-
-		//None of the vendor specific ID's matched so use generic means to classify the card
-		Int maxTextures=DX8Wrapper::Get_Current_Caps()->Get_Max_Simultaneous_Textures();
-		Real pixelShaderVersion;
-
-		char buf[256];
-
-		//Convert version to Real
-		sprintf(buf,"%d.%d",DX8Wrapper::Get_Current_Caps()->Get_Pixel_Shader_Major_Version(),DX8Wrapper::Get_Current_Caps()->Get_Pixel_Shader_Minor_Version());
-		sscanf(buf,"%f",&pixelShaderVersion);
-
-		if (maxTextures >= 4)
-		{	if (pixelShaderVersion >= 1.1f)
-				chip=DC_GENERIC_PIXEL_SHADER_1_1;
-			if (pixelShaderVersion >= 1.4f)
-				chip=DC_GENERIC_PIXEL_SHADER_1_4;
-			if (maxTextures >= 8 && pixelShaderVersion >= 2.0f)
-				chip=DC_GENERIC_PIXEL_SHADER_2_0;
-		}
-	}
-
-	return chip;
+		return TheGlobalData->m_chipSetType >= DC_GENERIC_PIXEL_SHADER_1_1 ? (ChipsetType)TheGlobalData->m_chipSetType : DC_UNKNOWN;
+	return DC_GENERIC_PIXEL_SHADER_1_1;
 }
 
 //=============================================================================
@@ -3159,88 +2960,32 @@ HRESULT W3DShaderManager::LoadAndCreateD3DShader(const char* strFilePath, const 
 	if (getChipset() < DC_GENERIC_PIXEL_SHADER_1_1)
 		return E_FAIL;	//don't allow loading any shaders if hardware can't handle it.
 
-	if (DX12Device::Is_Active())
+	//Direct3D 12 mode cannot run Direct3D 8 shader bytecode. The shader is an HLSL port registered under the
+	//file name without directory and extension plus its stage: "shaders\\terrain.pso" is "terrain_ps" and
+	//"shaders\\Trees.vso" is "Trees_vs". Without a port this fails and the caller falls back.
+	//The shader file must still exist in the game data, exactly as the Direct3D 8 path requires, so a game
+	//that does not ship a shader (e.g. Generals has no Trees.vso or fterrain*.pso) takes the same fallback.
+	File *shaderFile = TheFileSystem->openFile(strFilePath, File::READ | File::BINARY);
+	if (shaderFile == nullptr)
 	{
-		//Direct3D 12 mode cannot run Direct3D 8 shader bytecode. The shader is an HLSL port registered under the
-		//file name without directory and extension plus its stage: "shaders\\terrain.pso" is "terrain_ps" and
-		//"shaders\\Trees.vso" is "Trees_vs". Without a port this fails and the caller falls back.
-		//The shader file must still exist in the game data, exactly as the Direct3D 8 path requires, so a game
-		//that does not ship a shader (e.g. Generals has no Trees.vso or fterrain*.pso) takes the same fallback.
-		File *shaderFile = TheFileSystem->openFile(strFilePath, File::READ | File::BINARY);
-		if (shaderFile == nullptr)
-		{
-			OutputDebugString("Could not find file \n" );
-			return E_FAIL;
-		}
-		shaderFile->close();
-		shaderFile = nullptr;
-
-		const char *fileName = strFilePath;
-		for (const char *c = strFilePath; *c; ++c)
-		{
-			if (*c == '\\' || *c == '/' || *c == ':')
-				fileName = c + 1;
-		}
-		AsciiString shaderName(fileName);
-		const char *extension = strrchr(fileName, '.');
-		if (extension)
-			shaderName.truncateBy((Int)strlen(extension));
-		shaderName.concat(ShaderType ? "_vs" : "_ps");
-		return DX8Wrapper::Create_DX12_Shader(shaderName.str(), ShaderType != 0, pDeclaration, pHandle);
-	}
-
-	try
-	{
-		File *file = nullptr;
-		HRESULT hr;
-
-		file = TheFileSystem->openFile(strFilePath, File::READ | File::BINARY);
-		if (file == nullptr)
-		{
-			OutputDebugString("Could not find file \n" );
-			return E_FAIL;
-		}
-
-		FileInfo fileInfo;
-		TheFileSystem->getFileInfo(AsciiString(strFilePath), &fileInfo);
-		DWORD dwFileSize = fileInfo.sizeLow;
-
-		const DWORD* pShader = (DWORD*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, dwFileSize);
-		if (!pShader)
-		{
-			OutputDebugString( "Failed to allocate memory to load shader\n " );
-			return E_FAIL;
-		}
-
-		file->read((void *)pShader, dwFileSize);
-
-		file->close();
-		file = nullptr;
-
-		if (ShaderType) // SHADERTYPE_VERTEX
-		{
-			hr = DX8Wrapper::Create_Vertex_Shader(pDeclaration, pShader, pHandle, Usage);
-		}
-		else // SHADERTYPE_PIXEL
-		{
-			hr = DX8Wrapper::Create_Pixel_Shader(pShader, pHandle);
-		}
-
-		HeapFree(GetProcessHeap(), 0, (void*)pShader);
-
-		if (FAILED(hr))
-		{
-			OutputDebugString( "Failed to create shader\n ");
-			return E_FAIL;
-		}
-	}
-	catch(...)
-	{
-		OutputDebugString( "Error opening file \n" );
+		OutputDebugString("Could not find file \n" );
 		return E_FAIL;
 	}
+	shaderFile->close();
+	shaderFile = nullptr;
 
-	return S_OK;
+	const char *fileName = strFilePath;
+	for (const char *c = strFilePath; *c; ++c)
+	{
+		if (*c == '\\' || *c == '/' || *c == ':')
+			fileName = c + 1;
+	}
+	AsciiString shaderName(fileName);
+	const char *extension = strrchr(fileName, '.');
+	if (extension)
+		shaderName.truncateBy((Int)strlen(extension));
+	shaderName.concat(ShaderType ? "_vs" : "_ps");
+	return DX8Wrapper::Create_DX12_Shader(shaderName.str(), ShaderType != 0, pDeclaration, pHandle);
 }
 
 //For the MP test, we're enforcing high min-spec requirements that need to be verified.
@@ -3256,14 +3001,9 @@ HRESULT W3DShaderManager::LoadAndCreateD3DShader(const char* strFilePath, const 
 	that runs Direct3D 12 is at least a pixel shader 2.0 class card, so report that (or the chipset override) instead.*/
 static ChipsetType getHardwareChipset()
 {
-	if (DX12Device::Is_Active())
-	{
-		if (TheGlobalData && TheGlobalData->m_chipSetType != DC_UNKNOWN)
-			return (ChipsetType)TheGlobalData->m_chipSetType;
-		return DC_GENERIC_PIXEL_SHADER_2_0;
-	}
-
-	return W3DShaderManager::getChipset();
+	if (TheGlobalData && TheGlobalData->m_chipSetType != DC_UNKNOWN)
+		return (ChipsetType)TheGlobalData->m_chipSetType;
+	return DC_GENERIC_PIXEL_SHADER_2_0;
 }
 
 /**Hack to give gameengine access to this function*/
