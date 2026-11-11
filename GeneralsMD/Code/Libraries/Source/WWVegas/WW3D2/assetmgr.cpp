@@ -371,50 +371,8 @@ static void Log_Textures(bool inited,unsigned& total_count, unsigned& total_mem)
 
 void WW3DAssetManager::Log_Texture_Statistics()
 {
-	unsigned total_initialized_tex_mem=0;
-	unsigned total_uninitialized_tex_mem=0;
-	unsigned total_initialized_count=0;
-	unsigned total_uninitialized_count=0;
-	StringClass number;
-
-	// TheSuperHackers @info The list reads Direct3D 8 texture descriptions, which Direct3D 12 mode does not have.
-	if (DX12Device::Is_Active()) {
-		WWDEBUG_SAY(("Log_Texture_Statistics: not available in Direct3D 12 mode"));
-		return;
-	}
-
-	WWDEBUG_SAY(("\nInitialized textures ------------------------------------------\n"));
-	Log_Textures(true,total_initialized_count,total_initialized_tex_mem);
-
-	Create_Number_String(number,total_initialized_tex_mem);
-	WWDEBUG_SAY(("\n%d initialized textures, totalling %14s bytes\n",
-		total_initialized_count,
-		number.str()));
-
-	WWDEBUG_SAY(("\nUn-initialized textures ---------------------------------------\n"));
-	Log_Textures(false,total_uninitialized_count,total_uninitialized_tex_mem);
-
-	Create_Number_String(number,total_uninitialized_tex_mem);
-	WWDEBUG_SAY(("\n%d un-initialized textures, totalling, totalling %14s bytes\n",
-		total_uninitialized_count,
-		number.str()));
-/*
-	RenderObjIterator * rite=WW3DAssetManager::Get_Instance()->Create_Render_Obj_Iterator();
-	if (rite) {
-		for (rite->First(); !rite->Is_Done(); rite->Next()) {
-//			RenderObjClass * robj=Create_Render_Obj(rite->Current_Item_Name());
-//			if (robj) {
-//
-//				robj->Release_Ref();
-//			}
-			if (rite->Current_Item_Class_ID()==RenderObjClass::CLASSID_HMODEL) {
-				WWDEBUG_SAY(("robj: %s",rite->Current_Item_Name()));
-			}
-		}
-
-		WW3DAssetManager::Get_Instance()->Release_Render_Obj_Iterator(rite);
-	}
-*/
+	// TheSuperHackers @info The list read Direct3D 8 texture descriptions, which the renderer does not have.
+	WWDEBUG_SAY(("Log_Texture_Statistics: not available"));
 }
 
 /***********************************************************************************************

@@ -708,14 +708,9 @@ TextureClass * W3DAssetManager::Recolor_Texture_One_Time(TextureClass *texture, 
 	psize=Get_Bytes_Per_Pixel(desc.Format);
 	DEBUG_ASSERTCRASH( psize == 2 || psize == 4, ("Can't Recolor Texture %s", name) );
 
-	if (DX12Device::Is_Active())
-	{
-		oldsurf=loadDX12RecolorSource(texture, desc);
-		if (oldsurf == nullptr)
-			return nullptr;
-	}
-	else
-	oldsurf=texture->Get_Surface_Level();
+	oldsurf=loadDX12RecolorSource(texture, desc);
+	if (oldsurf == nullptr)
+		return nullptr;
 
 	newsurf=NEW_REF(SurfaceClass,(desc.Width,desc.Height,desc.Format));
 	newsurf->Copy(0,0,0,0,desc.Width,desc.Height,oldsurf);
