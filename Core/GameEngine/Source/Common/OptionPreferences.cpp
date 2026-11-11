@@ -684,6 +684,19 @@ Int OptionPreferences::getRenderFpsLimit()
 	return RenderFpsPreset::parseUserLimit(it->second.str());
 }
 
+SnowStyle OptionPreferences::getSnowStyle() const
+{
+	OptionPreferences::const_iterator it = find("SnowStyle");
+	if (it == end())
+		return SNOW_STYLE_DEFAULT;
+
+	if (stricmp(it->second.str(), "Classic") == 0)
+		return SNOW_STYLE_CLASSIC;
+	if (stricmp(it->second.str(), "Large") == 0)
+		return SNOW_STYLE_LARGE;
+	return SNOW_STYLE_DEFAULT;
+}
+
 Bool OptionPreferences::get3DShadowsEnabled()
 {
 	OptionPreferences::const_iterator it = find("UseShadowVolumes");

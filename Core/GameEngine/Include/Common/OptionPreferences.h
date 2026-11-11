@@ -33,6 +33,7 @@
 #include "WW3D2/ww3d.h"
 #include "WW3D2/texturefilter.h"
 
+#include "Common/GameType.h"
 #include "Common/UserPreferences.h"
 
 typedef UnsignedInt CursorCaptureMode;
@@ -121,6 +122,8 @@ public:
 	Bool getFPSLimitEnabled();
 	/// TheSuperHackers @feature Optional key RenderFpsLimit: -1 if absent or not a number, 0 for no limit, else the limit clamped to 30..1000.
 	Int getRenderFpsLimit();
+	/// TheSuperHackers @feature Optional key SnowStyle: Classic or Large, SNOW_STYLE_DEFAULT if absent or unknown.
+	SnowStyle getSnowStyle() const;
 	Bool getBuildingOcclusionEnabled();
 	Int getParticleCap();
 

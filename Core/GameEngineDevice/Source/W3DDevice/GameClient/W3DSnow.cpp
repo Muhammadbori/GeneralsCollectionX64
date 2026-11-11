@@ -20,11 +20,13 @@
 
 #include "W3DDevice/GameClient/W3DSnow.h"
 #include "W3DDevice/GameClient/HeightMap.h"
+#include "Common/GlobalData.h"
 #include "GameClient/View.h"
 #include "WW3D2/dx8wrapper.h"
 #include "WW3D2/rinfo.h"
 #include "WW3D2/camera.h"
 #include "WW3D2/assetmgr.h"
+#include "WW3D2/ww3d.h"
 
 
 
@@ -36,6 +38,25 @@ struct POINTVERTEX
 {
     Vector3 v;	//center of particle.
 };
+
+// TheSuperHackers @feature The snow style: Classic draws flakes with the size law of hardware point sprites, the look the
+// weather INI values were made for; Large draws the point sprite emulation, flakes of SnowQuadSize world units.
+static Bool isClassicSnowStyle()
+{
+	switch (TheGlobalData->m_snowStyle)
+	{
+		case SNOW_STYLE_CLASSIC: return TRUE;
+		case SNOW_STYLE_LARGE: return FALSE;
+		default: return TheWeatherSetting->m_usePointSprites;
+	}
+}
+
+// Hardware point sprites draw the Classic style on Direct3D 8 when the device has them. DX12 has no point sprites and no
+// raw Direct3D 8 vertex buffers, so it draws both styles with quads.
+static Bool useHardwarePointSprites()
+{
+	return isClassicSnowStyle() && DX8Wrapper::Get_Current_Caps()->Support_PointSprites() && !DX12Device::Is_Active();
+}
 
 W3DSnowManager::W3DSnowManager()
 {
@@ -76,8 +97,7 @@ Bool W3DSnowManager::ReAcquireResources()
 	if (!TheWeatherSetting->m_snowEnabled)
 		return TRUE;	//no need for resources if snow is disabled.
 
-	// DX12 has no point sprites and no raw D3D8 vertex buffers: always use the quad path there.
-	if (TheWeatherSetting->m_usePointSprites && DX8Wrapper::Get_Current_Caps()->Support_PointSprites() && !DX12Device::Is_Active())
+	if (useHardwarePointSprites())
 	{
 		DEBUG_ASSERTCRASH(DX8Wrapper::Has_D3D_Device() || DX12Device::Is_Active(), ("Trying to ReAcquireResources on W3DSnowManager without device"));
 
@@ -326,7 +346,8 @@ void W3DSnowManager::render(RenderInfoClass &rinfo)
 	if (!TheWeatherSetting->m_snowEnabled || !m_isVisible)
 		return;
 
-	Int usePointSprites = DX8Wrapper::Get_Current_Caps()->Support_PointSprites() && TheWeatherSetting->m_usePointSprites && !DX12Device::Is_Active();
+	const Bool classic = isClassicSnowStyle();
+	const Bool usePointSprites = useHardwarePointSprites();
 
 	//make sure the noise table is powers of 2 in dimensions.
 	WWASSERT(ISPOW2(SNOW_NOISE_X) && ISPOW2(SNOW_NOISE_Y));
@@ -412,7 +433,7 @@ void W3DSnowManager::render(RenderInfoClass &rinfo)
 
 	if (!usePointSprites)
 	{
-		renderAsQuads(rinfo,cubeOriginX,cubeOriginY,cubeDimX,cubeDimY);
+		renderAsQuads(rinfo,cubeOriginX,cubeOriginY,cubeDimX,cubeDimY,classic);
 		return;
 	}
 
@@ -448,8 +469,9 @@ void W3DSnowManager::render(RenderInfoClass &rinfo)
 
 }
 
-/**For hardware that doesn't support point sprites*/
-void W3DSnowManager::renderAsQuads(RenderInfoClass &rinfo, Int cubeOriginX, Int cubeOriginY, Int cubeDimX, Int cubeDimY)
+/**For hardware that doesn't support point sprites.  With classic set, each flake gets the screen size a hardware point
+sprite would have, otherwise all flakes are SnowQuadSize world units wide.*/
+void W3DSnowManager::renderAsQuads(RenderInfoClass &rinfo, Int cubeOriginX, Int cubeOriginY, Int cubeDimX, Int cubeDimY, Bool classic)
 {
 
 	Matrix4x4 proj;
@@ -477,10 +499,34 @@ void W3DSnowManager::renderAsQuads(RenderInfoClass &rinfo, Int cubeOriginX, Int 
 	};
 
 
-	//pre-multiple the offsets by particle size
-	for (Int i=0; i<4; i++)
+	// TheSuperHackers @feature The Classic style uses the size law of the point sprite path: Direct3D point scaling with
+	// A=0, B=0, C=1 gives viewport height * SnowPointSize / eye distance pixels, clamped to SnowMinPointSize..SnowMaxPointSize.
+	// A view space square of side s at depth z covers s * viewport height / (2 * tanHalfV * z) pixels, so a flake of p
+	// pixels gets the side p * 2 * tanHalfV * z / viewport height.
+	Real viewportHeight = 1.0f;
+	Real pixelsToViewSpace = 0.0f;
+	if (classic)
 	{
-		vertex_offsets[i] *= m_quadSize;
+		Vector2 viewportMin, viewportMax;
+		camera.Get_Viewport(viewportMin, viewportMax);
+		int width, height, bits;
+		bool windowed;
+		WW3D::Get_Render_Target_Resolution(width, height, bits, windowed);
+		viewportHeight = (Real)(unsigned int)((viewportMax.Y - viewportMin.Y) * (float)height);	// as CameraClass::Apply sets the viewport
+		if (viewportHeight < 1.0f)
+			viewportHeight = 1.0f;
+
+		Vector2 viewPlaneMin, viewPlaneMax;
+		camera.Get_View_Plane(viewPlaneMin, viewPlaneMax);
+		pixelsToViewSpace = (viewPlaneMax.Y - viewPlaneMin.Y) / viewportHeight;	// 2 * tanHalfV / viewport height
+	}
+	else
+	{
+		//pre-multiple the offsets by particle size
+		for (Int i=0; i<4; i++)
+		{
+			vertex_offsets[i] *= m_quadSize;
+		}
 	}
 
 	Matrix4x4 identity(true);
@@ -531,16 +577,40 @@ void W3DSnowManager::renderAsQuads(RenderInfoClass &rinfo, Int cubeOriginX, Int 
 					//find world-space position of snow flake
 					snowCenter.Set(x*m_emitterSpacing,y*m_emitterSpacing,h0);
 
-					//Get view-space position
-					Matrix3D::Transform_Vector(view,snowCenter,&snowCenterVS);
+					Real flakeSide = 1.0f;
+					if (classic)
+					{
+						// The sway is added in world space, as on the point sprite path.
+						snowCenter.X += m_amplitude * WWMath::Fast_Sin( h0 * m_frequencyScaleX + (Real)x);
+						snowCenter.Y += m_amplitude * WWMath::Fast_Sin( h0 * m_frequencyScaleY + (Real)y);
 
-					//Adjust position so snow flakes don't fall straight down.
-					snowCenterVS.X += m_amplitude * WWMath::Fast_Sin( h0 * m_frequencyScaleX + (Real)x);
-					snowCenterVS.Y += m_amplitude * WWMath::Fast_Sin( h0 * m_frequencyScaleY + (Real)y);
+						Matrix3D::Transform_Vector(view,snowCenter,&snowCenterVS);
+
+						const Real eyeDistance = snowCenterVS.Length();
+						Real pixels = (eyeDistance > 0.001f) ? viewportHeight * m_pointSize / eyeDistance : m_maxPointSize;
+						if (pixels > m_maxPointSize)
+							pixels = m_maxPointSize;
+						if (pixels < m_minPointSize)
+							pixels = m_minPointSize;
+						const Real depth = -snowCenterVS.Z;	// the camera looks along -Z in view space
+						flakeSide = pixels * pixelsToViewSpace * (depth > 0.0f ? depth : 0.0f);
+					}
+					else
+					{
+						//Get view-space position
+						Matrix3D::Transform_Vector(view,snowCenter,&snowCenterVS);
+
+						//Adjust position so snow flakes don't fall straight down.
+						snowCenterVS.X += m_amplitude * WWMath::Fast_Sin( h0 * m_frequencyScaleX + (Real)x);
+						snowCenterVS.Y += m_amplitude * WWMath::Fast_Sin( h0 * m_frequencyScaleY + (Real)y);
+					}
 
 					for (Int i=0; i<4; i++)
 					{
-						*(Vector3 *)verts=snowCenterVS + vertex_offsets[i];
+						if (classic)
+							*(Vector3 *)verts=snowCenterVS + vertex_offsets[i] * flakeSide;
+						else
+							*(Vector3 *)verts=snowCenterVS + vertex_offsets[i];
 						verts->nx=0;	//keep AGP write-combining active
 						verts->ny=0;
 						verts->nz=0;

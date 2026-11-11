@@ -87,6 +87,16 @@ enum Weather CPP_11(: Int)
 
 extern const char *const WeatherNames[];
 
+// TheSuperHackers @feature How falling snow is drawn, from the Options.ini key SnowStyle.
+enum SnowStyle CPP_11(: Int)
+{
+	SNOW_STYLE_DEFAULT = 0,	///< no SnowStyle key: the weather INI key SnowPointSprites decides (yes is Classic, no is Large)
+	SNOW_STYLE_CLASSIC,		///< the point sprite look the weather INI values were made for: pixel size from SnowPointSize, clamped to SnowMinPointSize..SnowMaxPointSize
+	SNOW_STYLE_LARGE,		///< the point sprite emulation: flakes of SnowQuadSize world units
+
+	SNOW_STYLE_COUNT
+};
+
 enum Scorches CPP_11(: Int)
 {
 	SCORCH_1 = 0,

@@ -153,6 +153,7 @@ public:
 	Bool m_doubleClickAttackMove;
 	Bool m_rightMouseAlwaysScrolls;
 	Int m_jpegQuality; // TheSuperHackers @feature Quality for JPEG screenshots.
+	SnowStyle m_snowStyle; // TheSuperHackers @feature How falling snow is drawn, from Options.ini SnowStyle.
 	Bool m_useWaterPlane;
 	Bool m_useCloudPlane;
 	Bool m_useShadowVolumes;

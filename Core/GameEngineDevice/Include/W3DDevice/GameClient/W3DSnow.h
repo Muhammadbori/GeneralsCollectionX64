@@ -40,7 +40,7 @@ class W3DSnowManager : public SnowManager
 	virtual void updateIniSettings() override;
 
 	void	render(RenderInfoClass &rinfo);
-	void	renderAsQuads(RenderInfoClass &rinfo, Int cubeOriginX, Int cubeOriginY, Int cubeDimX, Int cubeDimY);
+	void	renderAsQuads(RenderInfoClass &rinfo, Int cubeOriginX, Int cubeOriginY, Int cubeDimX, Int cubeDimY, Bool classic);
 	void	renderSubBox(RenderInfoClass &rinfo, Int originX, Int originY, Int cubeDimX, Int cubeDimY );
 	void	ReleaseResources();
 	Bool	ReAcquireResources();
