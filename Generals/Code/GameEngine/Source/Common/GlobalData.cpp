@@ -1241,6 +1241,9 @@ void GlobalData::parseGameDataDefinition( INI* ini )
 	if (val > 50)
 		TheWritableGlobalData->m_displayGamma=1.0f+(1.0f) * (Real)(val-50)/50.0f;
 
+	// TheSuperHackers @feature Optional MaxCameraHeight, CameraPitch and DrawEntireTerrain keys of Options.ini.
+	optionPref.applyCameraOverrides();
+
 	Int xres,yres;
 	optionPref.getResolution(&xres, &yres);
 

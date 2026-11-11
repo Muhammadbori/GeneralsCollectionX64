@@ -745,6 +745,67 @@ Real OptionPreferences::getGammaValue()
 	return gamma;
 }
 
+// Limits of the optional camera keys.
+//  - Pitch: View::setPitch accepts 0.1 to 89.9 degrees. Below about 25 degrees the top of the view reaches the horizon,
+//    which no terrain draw window covers, so 25 is the lowest pitch that stays inside the terrain. 89 avoids the tan() of 90.
+//  - Max height: never below the GameData MinCameraHeight (and 50). The normal terrain draw window (129 cells) covers
+//    the view up to about 350 units at the default pitch; above that the far terrain would be cut off, so without
+//    DrawEntireTerrain the limit is 350. With DrawEntireTerrain it is 1000: higher gives a view of tiny units,
+//    and the far plane (100000) and the whole map draw get expensive.
+static const Real MIN_OPTION_CAMERA_PITCH = 25.0f;
+static const Real MAX_OPTION_CAMERA_PITCH = 89.0f;
+static const Real MIN_OPTION_CAMERA_HEIGHT = 50.0f;
+static const Real MAX_OPTION_CAMERA_HEIGHT_PARTIAL_TERRAIN = 350.0f;
+static const Real MAX_OPTION_CAMERA_HEIGHT_ENTIRE_TERRAIN = 1000.0f;
+
+static Bool parseOptionReal(const AsciiString &text, Real *value)
+{
+	char *end = nullptr;
+	const double v = strtod(text.str(), &end);
+	if (end == text.str() || v != v || v > 1.0e9 || v < -1.0e9)
+	{
+		return FALSE;
+	}
+	*value = (Real)v;
+	return TRUE;
+}
+
+void OptionPreferences::applyCameraOverrides()
+{
+	OptionPreferences::const_iterator it = find("DrawEntireTerrain");
+	if (it != end())
+	{
+		TheWritableGlobalData->m_drawEntireTerrain = (stricmp(it->second.str(), "yes") == 0);
+	}
+
+	Real value = 0.0f;
+
+	it = find("CameraPitch");
+	if (it != end() && parseOptionReal(it->second, &value))
+	{
+		const Real pitch = clamp(MIN_OPTION_CAMERA_PITCH, value, MAX_OPTION_CAMERA_PITCH);
+		if (pitch != value)
+		{
+			DEBUG_LOG(("Options.ini CameraPitch %f is outside %f..%f, using %f", value, MIN_OPTION_CAMERA_PITCH, MAX_OPTION_CAMERA_PITCH, pitch));
+		}
+		TheWritableGlobalData->m_cameraPitch = pitch;
+	}
+
+	it = find("MaxCameraHeight");
+	if (it != end() && parseOptionReal(it->second, &value))
+	{
+		const Real lowest = max(MIN_OPTION_CAMERA_HEIGHT, TheGlobalData->m_minCameraHeight);
+		const Real highest = TheGlobalData->m_drawEntireTerrain
+			? MAX_OPTION_CAMERA_HEIGHT_ENTIRE_TERRAIN : MAX_OPTION_CAMERA_HEIGHT_PARTIAL_TERRAIN;
+		const Real height = clamp(lowest, value, max(lowest, highest));
+		if (height != value)
+		{
+			DEBUG_LOG(("Options.ini MaxCameraHeight %f is outside %f..%f, using %f", value, lowest, highest, height));
+		}
+		TheWritableGlobalData->m_maxCameraHeight = height;
+	}
+}
+
 void OptionPreferences::getResolution(Int *xres, Int *yres)
 {
 	*xres = TheGlobalData->m_xResolution;
