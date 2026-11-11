@@ -659,6 +659,7 @@ GlobalData::GlobalData()
 	m_jpegQuality = DEFAULT_JPEG_QUALITY;
 	m_snowStyle = SNOW_STYLE_DEFAULT;
 	m_initialFileIsSkirmish = FALSE;
+	m_skirmishSpeed = LOGICFRAMES_PER_SECOND;
 	m_skirmishAICount = 2;
 	m_skirmishAILevel = 2;
 	m_useWaterPlane = FALSE;

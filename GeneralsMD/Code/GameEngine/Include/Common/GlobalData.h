@@ -157,6 +157,7 @@ public:
 	SnowStyle m_snowStyle; // TheSuperHackers @feature How falling snow is drawn, from Options.ini SnowStyle.
 	// TheSuperHackers @feature -skirmish: m_initialFile is started as a skirmish of computer players watched by an observer.
 	Bool m_initialFileIsSkirmish;
+	Int m_skirmishSpeed;	///< -skirmishSpeed, game speed argument of the -skirmish MSG_NEW_GAME
 	Int m_skirmishAICount;	///< -skirmishAI, number of computer players
 	Int m_skirmishAILevel;	///< -skirmishLevel, 0 easy, 1 medium, 2 hard
 	Bool m_useWaterPlane;

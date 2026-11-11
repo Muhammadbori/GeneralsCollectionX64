@@ -114,6 +114,9 @@ void LookAtTranslator::stopScrolling()
 //-----------------------------------------------------------------------------
 Bool LookAtTranslator::canScrollAtScreenEdge() const
 {
+	if (m_testForceScreenEdge)
+		return true;
+
 	if (!TheMouse->isCursorCaptured())
 		return false;
 
@@ -141,6 +144,7 @@ LookAtTranslator::LookAtTranslator() :
 	m_middleButtonDownTimeMsec(0),
 	m_lastPlaneID(INVALID_DRAWABLE_ID),
 	m_lastMouseMoveTimeMsec(0),
+	m_testForceScreenEdge(false),
 	m_scrollType(SCROLL_NONE)
 {
 	m_anchor.x = m_anchor.y = 0;

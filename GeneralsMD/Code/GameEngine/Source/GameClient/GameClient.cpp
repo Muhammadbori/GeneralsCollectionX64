@@ -29,6 +29,7 @@
 
 // SYSTEM INCLUDES ////////////////////////////////////////////////////////////
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
+#include "Common/FrameShots.h"
 #include "GameClient/GameClient.h"
 
 // USER INCLUDES //////////////////////////////////////////////////////////////
@@ -563,6 +564,9 @@ void GameClient::update()
 		TheMouse->createStreamMessages();
 
 	}
+
+	// TheSuperHackers @feature Raw input of -testInput goes after the real device messages, so it has the last word.
+	FrameShots::injectTestInput();
 
 
   if (TheInGameUI->isCameraTrackingDrawable())

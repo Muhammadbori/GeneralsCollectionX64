@@ -28,6 +28,13 @@ public:
 	static void setDirectory(const char *path); ///< Output folder, created if missing. Default: user data folder + "FrameShots".
 	static void setExitWhenDone(Bool exitWhenDone); ///< Quit through the normal quit path after the last listed frame was written.
 
+	static void setNoImage(Bool noImage); ///< Write the frames.csv rows but no image files (-shotNoImage). Cheap for long timing runs.
+
+	/// Test input: -testInput "<kind>:<arg>@<from>-<to>[;...]" injects the raw messages a device would create while the logic frame
+	/// is in [from,to). Kinds: key:left|right|up|down, rmb:<dx>,<dy> (right button drag from the screen center), edge:left|right|up|down.
+	static void setTestInput(const char *specs);
+	static void injectTestInput(); ///< Call once per client update after the device messages were appended to the stream.
+
 	static Bool isEnabled() { return s_enabled; }
 
 	/// Ends a command line started game that cannot run (for example the -file map does not exist): logs the

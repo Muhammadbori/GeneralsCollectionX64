@@ -958,6 +958,36 @@ Int parseShotFrames(char *args[], int num)
 	return 1;
 }
 
+Int parseShotNoImage(char *args[], int num)
+{
+	FrameShots::setNoImage(TRUE);
+	return 1;
+}
+
+// TheSuperHackers @feature Inject raw input while the logic frame is in a range, to measure camera speed without a person,
+// for example -testInput "key:right@300-600;rmb:200,0@700-900". See FrameShots::setTestInput.
+Int parseTestInput(char *args[], int num)
+{
+	if (num > 1)
+	{
+		FrameShots::setTestInput(args[1]);
+		return 2;
+	}
+	return 1;
+}
+
+// TheSuperHackers @feature Game speed in logic frames per second that -skirmish starts with (default 30). 1000 is the value of
+// the top game speed slider position: normal speed, render fps limit off for the match.
+Int parseSkirmishSpeed(char *args[], int num)
+{
+	if (num > 1)
+	{
+		TheWritableGlobalData->m_skirmishSpeed = atoi(args[1]);
+		return 2;
+	}
+	return 1;
+}
+
 Int parseShotDir(char *args[], int num)
 {
 	if (num > 1)
@@ -1466,6 +1496,9 @@ static CommandLineParam paramsForEngineInit[] =
 	{ "-skirmish", parseSkirmish },
 	{ "-skirmishAI", parseSkirmishAI },
 	{ "-skirmishLevel", parseSkirmishLevel },
+	{ "-skirmishSpeed", parseSkirmishSpeed },
+	{ "-shotNoImage", parseShotNoImage },
+	{ "-testInput", parseTestInput },
 
 	// TheSuperHackers @feature xezon 03/08/2025 Force full viewport for 'Control Bar Pro' Addons like GenTool did it.
 	{ "-forcefullviewport", parseFullViewport },

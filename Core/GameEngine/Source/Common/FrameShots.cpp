@@ -26,6 +26,11 @@
 #include "Common/Recorder.h"
 
 #include "GameClient/Display.h"
+#include "GameClient/KeyDefs.h"
+#include "GameClient/LookAtXlat.h"
+#include "GameClient/View.h"
+
+#include "Common/MessageStream.h"
 
 #include "GameLogic/GameLogic.h"
 
@@ -54,6 +59,18 @@ namespace
 	Int64 s_gameStartTicks = 0;
 	UnsignedInt s_engineUpdatesSinceGameStart = 0;
 	Bool s_exitRequested = FALSE;
+	Bool s_noImage = FALSE;
+
+	struct TestInputSpec
+	{
+		enum Kind { KIND_KEY, KIND_RMB, KIND_EDGE };
+		Kind kind;
+		Int key; ///< KEY_* for KIND_KEY
+		Int dirX, dirY; ///< -1, 0, 1 for KIND_EDGE; the drag vector in pixels for KIND_RMB
+		UnsignedInt from, to;
+		Bool active;
+	};
+	std::vector<TestInputSpec> s_testInputs;
 
 	Int64 queryTicks()
 	{
@@ -108,6 +125,139 @@ void FrameShots::setFrames(const char *commaSeparatedFrames)
 	s_frames.erase(std::unique(s_frames.begin(), s_frames.end()), s_frames.end());
 	s_nextFrameIndex = 0;
 	s_enabled = !s_frames.empty();
+}
+
+void FrameShots::setNoImage(Bool noImage)
+{
+	s_noImage = noImage;
+}
+
+void FrameShots::setTestInput(const char *specs)
+{
+	s_testInputs.clear();
+	const char *p = specs;
+	while (p != nullptr && *p != '\0')
+	{
+		const char *end = strchr(p, ';');
+		const size_t len = (end != nullptr) ? (size_t)(end - p) : strlen(p);
+		char spec[128];
+		const size_t copyLen = std::min(len, sizeof(spec) - 1);
+		memcpy(spec, p, copyLen);
+		spec[copyLen] = '\0';
+		p = (end != nullptr) ? end + 1 : p + len;
+
+		TestInputSpec in = {};
+		char kind[16] = {};
+		char arg[48] = {};
+		unsigned from = 0, to = 0;
+		if (sscanf(spec, "%15[^:]:%47[^@]@%u-%u", kind, arg, &from, &to) != 4)
+			continue;
+		in.from = from;
+		in.to = to;
+		if (stricmp(kind, "rmb") == 0)
+		{
+			in.kind = TestInputSpec::KIND_RMB;
+			int dx = 0, dy = 0;
+			if (sscanf(arg, "%d,%d", &dx, &dy) != 2)
+				continue;
+			in.dirX = dx;
+			in.dirY = dy;
+		}
+		else
+		{
+			Int dirX = 0, dirY = 0, key = KEY_NONE;
+			if (stricmp(arg, "left") == 0) { dirX = -1; key = KEY_LEFT; }
+			else if (stricmp(arg, "right") == 0) { dirX = 1; key = KEY_RIGHT; }
+			else if (stricmp(arg, "up") == 0) { dirY = -1; key = KEY_UP; }
+			else if (stricmp(arg, "down") == 0) { dirY = 1; key = KEY_DOWN; }
+			else continue;
+			if (stricmp(kind, "key") == 0)
+				in.kind = TestInputSpec::KIND_KEY;
+			else if (stricmp(kind, "edge") == 0)
+				in.kind = TestInputSpec::KIND_EDGE;
+			else
+				continue;
+			in.key = key;
+			in.dirX = dirX;
+			in.dirY = dirY;
+		}
+		s_testInputs.push_back(in);
+	}
+}
+
+void FrameShots::injectTestInput()
+{
+	if (s_testInputs.empty() || TheGameLogic == nullptr || !TheGameLogic->isInGame() || TheMessageStream == nullptr)
+		return;
+
+	const UnsignedInt frame = TheGameLogic->getFrame();
+	const Int width = TheDisplay->getWidth();
+	const Int height = TheDisplay->getHeight();
+	ICoord2D center;
+	center.x = width / 2;
+	center.y = height / 2;
+
+	for (size_t i = 0; i < s_testInputs.size(); ++i)
+	{
+		TestInputSpec &in = s_testInputs[i];
+		const Bool wantActive = (frame >= in.from && frame < in.to);
+
+		switch (in.kind)
+		{
+		case TestInputSpec::KIND_KEY:
+			if (wantActive != in.active)
+			{
+				GameMessage *msg = TheMessageStream->appendMessage(wantActive ? GameMessage::MSG_RAW_KEY_DOWN : GameMessage::MSG_RAW_KEY_UP);
+				msg->appendIntegerArgument(in.key);
+				msg->appendIntegerArgument(wantActive ? KEY_STATE_DOWN : KEY_STATE_UP);
+			}
+			break;
+
+		case TestInputSpec::KIND_RMB:
+			{
+				if (wantActive != in.active)
+				{
+					GameMessage *msg = TheMessageStream->appendMessage(wantActive ? GameMessage::MSG_RAW_MOUSE_RIGHT_BUTTON_DOWN : GameMessage::MSG_RAW_MOUSE_RIGHT_BUTTON_UP);
+					msg->appendPixelArgument(center);
+					msg->appendIntegerArgument(0);
+					msg->appendIntegerArgument((Int)timeGetTime());
+				}
+				ICoord2D pos = center;
+				if (wantActive)
+				{
+					pos.x += in.dirX;
+					pos.y += in.dirY;
+				}
+				if (wantActive || in.active)
+				{
+					GameMessage *msg = TheMessageStream->appendMessage(GameMessage::MSG_RAW_MOUSE_POSITION);
+					msg->appendPixelArgument(pos);
+					msg->appendIntegerArgument(0);
+				}
+			}
+			break;
+
+		case TestInputSpec::KIND_EDGE:
+			{
+				if (wantActive != in.active && TheLookAtTranslator != nullptr)
+					TheLookAtTranslator->setTestForceScreenEdge(wantActive);
+				ICoord2D pos = center;
+				if (wantActive)
+				{
+					pos.x = (in.dirX < 0) ? 0 : (in.dirX > 0) ? width - 1 : center.x;
+					pos.y = (in.dirY < 0) ? 0 : (in.dirY > 0) ? height - 1 : center.y;
+				}
+				if (wantActive || in.active)
+				{
+					GameMessage *msg = TheMessageStream->appendMessage(GameMessage::MSG_RAW_MOUSE_POSITION);
+					msg->appendPixelArgument(pos);
+					msg->appendIntegerArgument(0);
+				}
+			}
+			break;
+		}
+		in.active = wantActive;
+	}
 }
 
 void FrameShots::setDirectory(const char *path)
@@ -232,7 +382,8 @@ Bool FrameShots::prepareOutput()
 		return FALSE;
 	}
 	fprintf(s_csv, "logic_frame,ms_since_game_start,engine_updates_since_game_start,render_fps_limit,"
-		"actual_update_fps_limit,logic_time_scale_fps,actual_logic_time_scale_fps,current_logic_frame,logic_frame_phase\n");
+		"actual_update_fps_limit,logic_time_scale_fps,actual_logic_time_scale_fps,current_logic_frame,logic_frame_phase,"
+		"camera_x,camera_y,camera_z,camera_zoom,camera_angle,camera_pitch,update_time_ms,base_ratio,render_frames\n");
 	fflush(s_csv);
 
 	s_outputReady = TRUE;
@@ -244,12 +395,24 @@ void FrameShots::capture(UnsignedInt listedFrame)
 	if (!prepareOutput())
 		return;
 
-	AsciiString filePath;
-	filePath.format("%s\\frame_%08u.png", s_directory.str(), listedFrame);
-	TheDisplay->takeScreenShotToFile(SCREENSHOT_PNG, filePath.str());
+	if (!s_noImage)
+	{
+		AsciiString filePath;
+		filePath.format("%s\\frame_%08u.png", s_directory.str(), listedFrame);
+		TheDisplay->takeScreenShotToFile(SCREENSHOT_PNG, filePath.str());
+	}
 
 	const double ms = ticksToMilliseconds(queryTicks() - s_gameStartTicks);
-	fprintf(s_csv, "%u,%.3f,%u,%d,%d,%d,%d,%u,%.3f\n",
+	Coord3D cam = {};
+	Real camZoom = 0.0f, camAngle = 0.0f, camPitch = 0.0f;
+	if (TheTacticalView != nullptr)
+	{
+		cam = TheTacticalView->getPosition();
+		camZoom = TheTacticalView->getZoom();
+		camAngle = TheTacticalView->getAngle();
+		camPitch = TheTacticalView->getPitch();
+	}
+	fprintf(s_csv, "%u,%.3f,%u,%d,%d,%d,%d,%u,%.3f,%.4f,%.4f,%.4f,%.5f,%.5f,%.5f,%.4f,%.5f,%u\n",
 		listedFrame,
 		ms,
 		s_engineUpdatesSinceGameStart,
@@ -258,7 +421,11 @@ void FrameShots::capture(UnsignedInt listedFrame)
 		TheFramePacer->getLogicTimeScaleFps(),
 		TheFramePacer->getActualLogicTimeScaleFps(),
 		TheGameLogic->getFrame(),
-		(double)TheFramePacer->getLogicFramePhase());
+		(double)TheFramePacer->getLogicFramePhase(),
+		(double)cam.x, (double)cam.y, (double)cam.z, (double)camZoom, (double)camAngle, (double)camPitch,
+		(double)TheFramePacer->getUpdateTime() * 1000.0,
+		(double)TheFramePacer->getBaseOverUpdateFpsRatio(),
+		(unsigned)TheDisplay->getRenderedFrameCount());
 	fflush(s_csv);
 }
 

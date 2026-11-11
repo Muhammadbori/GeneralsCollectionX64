@@ -530,7 +530,7 @@ void StartCommandLineSkirmish()
 	msg->appendIntegerArgument(GAME_SKIRMISH);
 	msg->appendIntegerArgument(DIFFICULTY_NORMAL);	// not really used; just specified so we can add the game speed last
 	msg->appendIntegerArgument(0);									// not really used; just specified so we can add the game speed last
-	msg->appendIntegerArgument(LOGICFRAMES_PER_SECOND);	// game speed
+	msg->appendIntegerArgument(TheGlobalData->m_skirmishSpeed);	// game speed
 }
 
 Bool sandboxOk = FALSE;
