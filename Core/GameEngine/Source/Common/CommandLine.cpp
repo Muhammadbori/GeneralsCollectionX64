@@ -148,9 +148,7 @@ Int parseWin(char *args[], int)
 
 //=============================================================================
 //=============================================================================
-// TheSuperHackers @feature The game renders with Direct3D 12 by default (WinMain sets DX8Wrapper_UseDX12
-// before parsing). -dx8 selects the Direct3D 8 renderer, -dx12 the default one. When both are given, the
-// last one on the command line wins.
+// TheSuperHackers @feature The game renders with Direct3D 12. -dx12 is accepted and changes nothing.
 Int parseDX12(char *args[], int)
 {
 	DX8Wrapper_UseDX12 = true;
@@ -158,10 +156,22 @@ Int parseDX12(char *args[], int)
 	return 1;
 }
 
+// TheSuperHackers @info The Direct3D 8 renderer is being removed: its terrain and tree textures are gone, so -dx8 would
+// start a broken renderer. It ends the game with a message (exit code 5) instead. Unattended runs (-shotFrames) get no
+// dialog, only the exit code and the debug output.
 Int parseDX8(char *args[], int)
 {
-	DX8Wrapper_UseDX12 = false;
-
+	const char *message = "The Direct3D 8 renderer has been removed from this build.\nStart the game without -dx8.";
+	OutputDebugStringA(message);
+	Bool unattended = FALSE;
+	for (int i = 1; i < __argc; ++i)
+	{
+		if (stricmp(__argv[i], "-shotFrames") == 0)
+			unattended = TRUE;
+	}
+	if (!unattended)
+		MessageBoxA(nullptr, message, "Command & Conquer", MB_OK | MB_ICONERROR);
+	::ExitProcess(5);
 	return 1;
 }
 
@@ -1436,8 +1446,8 @@ static CommandLineParam paramsForStartup[] =
 	{ "-win", parseWin },
 	{ "-fullscreen", parseNoWin },
 
-	// TheSuperHackers @feature 2026 Direct3D 12 is the default renderer. -dx8 selects the Direct3D 8 renderer,
-	// -dx12 the default; the last of the two wins.
+	// TheSuperHackers @feature 2026 Direct3D 12 is the renderer. -dx12 changes nothing; -dx8 ends with a message,
+	// because the Direct3D 8 renderer is being removed.
 	{ "-dx12", parseDX12 },
 	{ "-dx8", parseDX8 },
 

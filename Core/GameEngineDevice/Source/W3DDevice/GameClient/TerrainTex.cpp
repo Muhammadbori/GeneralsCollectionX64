@@ -348,115 +348,7 @@ TerrainTextureClass::TerrainTextureClass(int height, int width) :
 //=============================================================================
 int TerrainTextureClass::update(WorldHeightMap *htMap)
 {
-	if (DX12Device::Is_Active()) {
-		return updateTerrainTextureDX12(htMap);
-	}
-
-	// D3DTexture is our texture;
-
-	IDirect3DSurface8 *surface_level;
-	D3DSURFACE_DESC surface_desc;
-	D3DLOCKED_RECT locked_rect;
-	DX8_ErrorCode(Peek_D3D_Texture()->GetSurfaceLevel(0, &surface_level));
-	DX8_ErrorCode(surface_level->GetDesc(&surface_desc));
-	if (surface_desc.Width < TEXTURE_WIDTH) {
-		surface_level->Release();
-		return 0;
-	}
-
-	DX8_ErrorCode(surface_level->LockRect(&locked_rect, nullptr, 0));
-
-	Int tilePixelExtent = TILE_PIXEL_EXTENT;
-	Int tilesPerRow = surface_desc.Width/(2*TILE_PIXEL_EXTENT+TILE_OFFSET);
-	tilesPerRow *= 2;
-//	Int numRows = surface_desc.Height/(tilePixelExtent+TILE_OFFSET);
-#ifdef RTS_DEBUG
-	//DEBUG_ASSERTCRASH(tilesPerRow*numRows >= htMap->m_numBitmapTiles, ("Too many tiles."));
-	DEBUG_ASSERTCRASH((Int)surface_desc.Width >= tilePixelExtent*tilesPerRow, ("Bitmap too small."));
-#endif
-	if (surface_desc.Format == D3DFMT_A1R5G5B5) {
-#if 0
-		UnsignedInt cellX, cellY;
-		for (cellX = 0; cellX < surface_desc.Width; cellX++) {
-			for (cellY = 0; cellY < surface_desc.Height; cellY++) {
-				UnsignedByte *pBGR = ((UnsignedByte *)locked_rect.pBits)+(cellY*surface_desc.Width+cellX)*2;
-				*((Short*)pBGR) = (((255-2*cellY)>>3)<<10) + ((4*cellX)>>4);
-			}
-		}
-#endif
-		Int tileNdx;
-		Int pixelBytes = 2;
-		for (tileNdx=0; tileNdx < htMap->m_numBitmapTiles; tileNdx++) {
-			TileData *pTile = htMap->getSourceTile(tileNdx);
-			if (!pTile) continue;
-			ICoord2D position = pTile->m_tileLocationInTexture;
-			if (position.x<=0) continue; // all real tile offsets start at 2.  jba.
-
-			Int i,j;
-			for (j=0; j<tilePixelExtent; j++) {
-				UnsignedByte *pBGR = pTile->getRGBDataForWidth(tilePixelExtent);
-				pBGR += (tilePixelExtent-1-j)*TILE_BYTES_PER_PIXEL*tilePixelExtent; // invert to match.
-				Int row = position.y+j;
-				UnsignedByte *pBGRX = ((UnsignedByte*)locked_rect.pBits) +
-							(row)*surface_desc.Width*pixelBytes;
-
-				Int column = position.x;
-				pBGRX += column*pixelBytes;
-				for (i=0; i<tilePixelExtent; i++) {
-					*((Short*)pBGRX) = 0x8000 + ((pBGR[2]>>3)<<10) + ((pBGR[1]>>3)<<5) + (pBGR[0]>>3);
-					pBGRX +=pixelBytes;
-					pBGR +=TILE_BYTES_PER_PIXEL;
-				}
-			}
-		}
-		// Now draw the 4 pixel border around each tile class.
-		Int texClass;
-		for (texClass=0; texClass<htMap->m_numTextureClasses; texClass++) {
-			Int width = htMap->m_textureClasses[texClass].width;
-			ICoord2D origin = htMap->m_textureClasses[texClass].positionInTexture;
-			if (origin.x<=0) continue;
-			width *= TILE_PIXEL_EXTENT;
-			// Duplicate 4 columns of pixels before and after.
-			Int j;
-			for (j=0; j<width; j++) {
-				Int row = origin.y+j;
-				UnsignedByte *pBGRX = ((UnsignedByte*)locked_rect.pBits) +
-							(row)*surface_desc.Width*pixelBytes;
-
-				Int column = origin.x;
-				pBGRX += column*pixelBytes;
-				// copy before
-				memcpy(pBGRX-(4)*pixelBytes, pBGRX+(width-4)*pixelBytes, 4*pixelBytes);
-				// copy after
-				memcpy(pBGRX+(width*pixelBytes), pBGRX, 4*pixelBytes);
-			}
-
-			// Duplicate 4 rows of pixels before and after.
-			for (j=0; j<4; j++) {
-				// copy before.
-				Int row = origin.y-j-1;
-				UnsignedByte *pBGRX = ((UnsignedByte*)locked_rect.pBits) +
-							(row)*surface_desc.Width*pixelBytes;
-				UnsignedByte *target = pBGRX+(origin.x-4)*pixelBytes;
-				memcpy(target, target+width*surface_desc.Width*pixelBytes, (width+8)*pixelBytes);
-				// copy after.
-				row = origin.y+j;
-				pBGRX = ((UnsignedByte*)locked_rect.pBits) +
-							(row)*surface_desc.Width*pixelBytes;
-				target = pBGRX+(origin.x-4)*pixelBytes;
-				memcpy(target+width*surface_desc.Width*pixelBytes, target, (width+8)*pixelBytes);
-			}
-
-		}
-
-	}
-	surface_level->UnlockRect();
-	surface_level->Release();
-	DX8_ErrorCode(D3DXFilterTexture(Peek_D3D_Texture(), nullptr, 0, D3DX_FILTER_BOX));
-	if (WW3D::Get_Texture_Reduction()) {
-		Peek_D3D_Texture()->SetLOD(WW3D::Get_Texture_Reduction());
-	}
-	return(surface_desc.Height);
+	return updateTerrainTextureDX12(htMap);
 }
 
 #if 0 // old version.
@@ -621,12 +513,8 @@ int TerrainTextureClass::update(WorldHeightMap *htMap)
 //=============================================================================
 void TerrainTextureClass::setLOD(Int LOD)
 {
-	if (DX12Device::Is_Active()) {
-		// Direct3D 12 has no SetLOD; the texture's minimum mip level is applied by the sampler.
-		if (Peek_DX12_Texture()) Peek_DX12_Texture()->Set_Min_LOD((unsigned)LOD);
-		return;
-	}
-	if (Peek_D3D_Texture()) Peek_D3D_Texture()->SetLOD(LOD);
+	// Direct3D 12 has no SetLOD; the texture's minimum mip level is applied by the sampler.
+	if (Peek_DX12_Texture()) Peek_DX12_Texture()->Set_Min_LOD((unsigned)LOD);
 }
 //=============================================================================
 // TerrainTextureClass::update
@@ -637,62 +525,7 @@ void TerrainTextureClass::setLOD(Int LOD)
 //=============================================================================
 Bool TerrainTextureClass::updateFlat(WorldHeightMap *htMap, Int xCell, Int yCell, Int cellWidth, Int pixelsPerCell)
 {
-	if (DX12Device::Is_Active()) {
-		return updateFlatTerrainTextureDX12(htMap, xCell, yCell, cellWidth, pixelsPerCell);
-	}
-
-	// D3DTexture is our texture;
-
-	IDirect3DSurface8 *surface_level;
-	D3DSURFACE_DESC surface_desc;
-	D3DLOCKED_RECT locked_rect;
-	DX8_ErrorCode(Peek_D3D_Texture()->GetSurfaceLevel(0, &surface_level));
-	DX8_ErrorCode(surface_level->GetDesc(&surface_desc));
-	DEBUG_ASSERTCRASH((Int)surface_desc.Width == cellWidth*pixelsPerCell, ("Bitmap too small."));
-	DEBUG_ASSERTCRASH((Int)surface_desc.Height == cellWidth*pixelsPerCell, ("Bitmap too small."));
-	if (surface_desc.Width != cellWidth*pixelsPerCell) {
-		return false;
-	}
-
-	DX8_ErrorCode(surface_level->LockRect(&locked_rect, nullptr, 0));
-
-
-	if (surface_desc.Format == D3DFMT_A1R5G5B5) {
-
-		Int pixelBytes = 2;
-		Int cellX, cellY;
-#if 0
-		UnsignedInt X, Y;
-		for (X = 0; X < surface_desc.Width; X++) {
-			for (Y = 0; Y < surface_desc.Height; Y++) {
-				UnsignedByte *pBGR = ((UnsignedByte *)locked_rect.pBits)+(Y*surface_desc.Width+X)*pixelBytes;
-				*((Short*)pBGR) = (((255-2*Y)>>3)<<10) + ((2*X)>>4);
-			}
-		}
-#endif
-		for (cellX = 0; cellX < cellWidth; cellX++) {
-			for (cellY = 0; cellY < cellWidth; cellY++) {
-				UnsignedByte *pBGRX_data = ((UnsignedByte*)locked_rect.pBits);
-				UnsignedByte *pBGR = htMap->getPointerToTileData(xCell+cellX, yCell+cellY, pixelsPerCell);
-				if (pBGR == nullptr) continue; // past end of defined terrain. [3/24/2003]
-				Int k, l;
-				for (k=pixelsPerCell-1; k>=0; k--) {
-					UnsignedByte *pBGRX = pBGRX_data + (pixelsPerCell*(cellWidth-cellY-1)+k)*surface_desc.Width*pixelBytes +
-						cellX*pixelsPerCell*pixelBytes;
-					for (l=0; l<pixelsPerCell; l++) {
-						*((Short*)pBGRX) = 0x8000 + ((pBGR[2]>>3)<<10) + ((pBGR[1]>>3)<<5) + (pBGR[0]>>3);
-						pBGRX +=pixelBytes;
-						pBGR +=TILE_BYTES_PER_PIXEL;
-					}
-				}
-			}
-		}
-	}
-
-	surface_level->UnlockRect();
-	surface_level->Release();
-	DX8_ErrorCode(D3DXFilterTexture(Peek_D3D_Texture(), nullptr, 0, D3DX_FILTER_BOX));
-	return(surface_desc.Height);
+	return updateFlatTerrainTextureDX12(htMap, xCell, yCell, cellWidth, pixelsPerCell);
 }
 
 //=============================================================================
@@ -755,15 +588,8 @@ AlphaTerrainTextureClass::AlphaTerrainTextureClass( TextureClass *pBaseTex ):
 	TextureClass(8, 8,
 		WW3D_FORMAT_A1R5G5B5, MIP_LEVELS_1 )
 {
-	if (DX12Device::Is_Active()) {
-		// Share the base texture's Direct3D 12 texture; this releases the throw away 8x8 one.
-		Set_DX12_Texture(pBaseTex->Peek_DX12_Texture());
-		return;
-	}
-
-	// Attach the base texture's d3d texture.
-	IDirect3DTexture8 * d3d_tex = pBaseTex->Peek_D3D_Texture();
-	Set_D3D_Base_Texture(d3d_tex);
+	// Share the base texture's Direct3D 12 texture; this releases the throw away 8x8 one.
+	Set_DX12_Texture(pBaseTex->Peek_DX12_Texture());
 }
 
 
@@ -1041,80 +867,7 @@ int AlphaEdgeTextureClass::update256(WorldHeightMap *htMap)
 
 int AlphaEdgeTextureClass::update(WorldHeightMap *htMap)
 {
-	if (DX12Device::Is_Active()) {
-		return updateAlphaEdgeTextureDX12(htMap);
-	}
-
-	// D3DTexture is our texture;
-
-	IDirect3DSurface8 *surface_level;
-	D3DSURFACE_DESC surface_desc;
-	D3DLOCKED_RECT locked_rect;
-	DX8_ErrorCode(Peek_D3D_Texture()->GetSurfaceLevel(0, &surface_level));
-	DX8_ErrorCode(surface_level->LockRect(&locked_rect, nullptr, 0));
-	DX8_ErrorCode(surface_level->GetDesc(&surface_desc));
-
-	Int tilePixelExtent = TILE_PIXEL_EXTENT; // blend tiles are 1/4 tiles.
-//	Int tilesPerRow = surface_desc.Width / (tilePixelExtent+8);
-
-//	Int numRows = surface_desc.Height/(tilePixelExtent+8);
-
-	if (surface_desc.Format == D3DFMT_A8R8G8B8) {
-#if 1
-#if 1
-		Int cellX, cellY;
-		for (cellX = 0; (UnsignedInt)cellX < surface_desc.Width; cellX++) {
-			for (cellY = 0; cellY < surface_desc.Height; cellY++) {
-				UnsignedByte *pBGR = ((UnsignedByte *)locked_rect.pBits)+(cellY*surface_desc.Width+cellX)*4;
-				pBGR[2] = 255-cellY/2;
-				pBGR[0] = cellX/2;
-				pBGR[3] = cellX/2;  // alpha.
-				pBGR[3] = 128;  // alpha.
-			}
-		}
-#endif
-#if 1
-		Int tileNdx;
-		Int pixelBytes = 4;
-		for (tileNdx=0; tileNdx < htMap->m_numEdgeTiles; tileNdx++) {
-			TileData *pTile = htMap->getEdgeTile(tileNdx);
-			if (!pTile) continue;
-			ICoord2D position = pTile->m_tileLocationInTexture;
-			if (position.x<=0) continue; // all real edge offsets start at 4.  jba.
-			Int i,j;
-			Int column = position.x;
-			for (j=0; j<tilePixelExtent; j++) {
-				Int row = position.y+j;
-				UnsignedByte *pBGR = htMap->getEdgeTile(tileNdx)->getRGBDataForWidth(tilePixelExtent);
-				pBGR += (tilePixelExtent-1-j)*TILE_BYTES_PER_PIXEL*tilePixelExtent; // invert to match.
-				UnsignedByte *pBGRX = ((UnsignedByte*)locked_rect.pBits) +
-							(row)*surface_desc.Width*pixelBytes;
-				pBGRX += column*pixelBytes;
-
-				for (i=0; i<tilePixelExtent; i++) {
-					pBGRX[0] = pBGR[0];  //r
-					pBGRX[1] = pBGR[1];	//g
-					pBGRX[2] = pBGR[2];	//b
-					if (pBGR[0]==0 && pBGR[1]==0 && pBGR[2]==0) {
-						pBGRX[3] = 0x80;
-					} else if (pBGR[0]==0xff && pBGR[1]==0xff && pBGR[2]==0xff) {
-						pBGRX[3] = 0x00;
-					}	else {
-						pBGRX[3] = 0xff;
-					}
-
-					pBGRX += pixelBytes;
-					pBGR += TILE_BYTES_PER_PIXEL;
-				}
-			}
-		}
-#endif
-#endif
-	}
-	surface_level->UnlockRect();
-	surface_level->Release();
-	DX8_ErrorCode(D3DXFilterTexture(Peek_D3D_Texture(), nullptr, 0, D3DX_FILTER_BOX));
-	return(surface_desc.Height);
+	return updateAlphaEdgeTextureDX12(htMap);
 }
 
 void AlphaEdgeTextureClass::Apply(unsigned int stage)

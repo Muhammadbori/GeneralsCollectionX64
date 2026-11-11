@@ -178,83 +178,22 @@ int W3DTreeBuffer::W3DTreeTextureClass::update(W3DTreeBuffer *buffer)
 	Get_Filter().Set_U_Addr_Mode(TextureFilterClass::TEXTURE_ADDRESS_CLAMP);
 	Get_Filter().Set_V_Addr_Mode(TextureFilterClass::TEXTURE_ADDRESS_CLAMP);
 
-	if (DX12Device::Is_Active()) {
-		// Direct3D 12 mode: same tile copy, written through the DX12 texture's Lock with its own
-		// row pitch, then a CPU box filter for the mip chain. Texture reduction (SetLOD in
-		// Direct3D 8) is the texture's minimum mip level here.
-		DX12TextureClass *tex = Peek_DX12_Texture();
-		if (tex == nullptr) {
-			return 0;
-		}
-		int pitch = 0;
-		UnsignedByte *bits = (UnsignedByte *)tex->Lock(0, &pitch);
-		if (bits == nullptr) {
-			return 0;
-		}
-		Int tilePixelExtent = TILE_PIXEL_EXTENT;
-		if (tex->Get_Format() == WW3D_FORMAT_A8R8G8B8) {
-			Int tileNdx;
-			Int pixelBytes = 4;
-			for (tileNdx=0; tileNdx < buffer->getNumTiles(); tileNdx++) {
-				TileData *pTile = buffer->getSourceTile(tileNdx);
-				if (!pTile) continue;
-				ICoord2D position = pTile->m_tileLocationInTexture;
-				if (position.x<0) {
-					continue;
-				}
-				Int i,j;
-				for (j=0; j<tilePixelExtent; j++) {
-					UnsignedByte *pBGR = pTile->getRGBDataForWidth(tilePixelExtent);
-					pBGR += (tilePixelExtent-(1+j))*TILE_BYTES_PER_PIXEL*tilePixelExtent; // invert to match.
-					Int row = position.y+j;
-					UnsignedByte *pBGRA = bits + row*pitch;
-
-					Int column = position.x;
-					pBGRA += column*pixelBytes;
-					for (i=0; i<tilePixelExtent; i++) {
-						*((Int *)pBGRA) = (pBGR[3]<<24) + (pBGR[2]<<16) + (pBGR[1]<<8) + (pBGR[0]);
-						pBGRA +=pixelBytes;
-						pBGR +=TILE_BYTES_PER_PIXEL;
-					}
-				}
-			}
-		}
-		tex->Unlock(0);
-		dx12FilterTreeTextureMips(tex);
-		if (WW3D::Get_Texture_Reduction()) {
-			tex->Set_Min_LOD((unsigned)WW3D::Get_Texture_Reduction()); // as SetLOD in Direct3D 8
-		}
-		return (Int)tex->Get_Height(0);
+	// Direct3D 12 mode: same tile copy, written through the DX12 texture's Lock with its own
+	// row pitch, then a CPU box filter for the mip chain. Texture reduction (SetLOD in
+	// Direct3D 8) is the texture's minimum mip level here.
+	DX12TextureClass *tex = Peek_DX12_Texture();
+	if (tex == nullptr) {
+		return 0;
 	}
-
-	IDirect3DSurface8 *surface_level;
-	D3DSURFACE_DESC surface_desc;
-	D3DLOCKED_RECT locked_rect;
-	DX8_ErrorCode(Peek_D3D_Texture()->GetSurfaceLevel(0, &surface_level));
-	DX8_ErrorCode(surface_level->GetDesc(&surface_desc));
-
-	DX8_ErrorCode(surface_level->LockRect(&locked_rect, nullptr, 0));
-
+	int pitch = 0;
+	UnsignedByte *bits = (UnsignedByte *)tex->Lock(0, &pitch);
+	if (bits == nullptr) {
+		return 0;
+	}
 	Int tilePixelExtent = TILE_PIXEL_EXTENT;
-//	Int numRows = surface_desc.Height/(tilePixelExtent+TILE_OFFSET);
-#ifdef RTS_DEBUG
-	//DASSERT_MSG(tilesPerRow*numRows >= htMap->m_numBitmapTiles,Debug::Format ("Too many tiles."));
-	//DEBUG_ASSERTCRASH((Int)surface_desc.Width >= tilePixelExtent*tilesPerRow, ("Bitmap too small."));
-#endif
-	if (surface_desc.Format == D3DFMT_A8R8G8B8) {
+	if (tex->Get_Format() == WW3D_FORMAT_A8R8G8B8) {
 		Int tileNdx;
 		Int pixelBytes = 4;
-#if 0 // Fill unused texture for debug display.
-		UnsignedInt cellX, cellY;
-		for (cellX = 0; cellX < surface_desc.Width; cellX++) {
-			for (cellY = 0; cellY < surface_desc.Height; cellY++) {
-				UnsignedByte *pBGR = ((UnsignedByte *)locked_rect.pBits)+(cellY*surface_desc.Width+cellX)*pixelBytes;
-				//*((Short*)pBGR) =  0x8000 + (((255-2*cellY)>>3)<<10) + ((4*cellX)>>4);
-				*((Int*)pBGR) =  0xFF000000 | ( (((255-cellY))<<16) + ((cellX)) );
-
-			}
-		}
-#endif
 		for (tileNdx=0; tileNdx < buffer->getNumTiles(); tileNdx++) {
 			TileData *pTile = buffer->getSourceTile(tileNdx);
 			if (!pTile) continue;
@@ -267,28 +206,24 @@ int W3DTreeBuffer::W3DTreeTextureClass::update(W3DTreeBuffer *buffer)
 				UnsignedByte *pBGR = pTile->getRGBDataForWidth(tilePixelExtent);
 				pBGR += (tilePixelExtent-(1+j))*TILE_BYTES_PER_PIXEL*tilePixelExtent; // invert to match.
 				Int row = position.y+j;
-				UnsignedByte *pBGRA = ((UnsignedByte*)locked_rect.pBits) +
-							(row)*surface_desc.Width*pixelBytes;
+				UnsignedByte *pBGRA = bits + row*pitch;
 
 				Int column = position.x;
 				pBGRA += column*pixelBytes;
 				for (i=0; i<tilePixelExtent; i++) {
-					// 15 bit color *((Short*)pBGRA) = 0x8000 + ((pBGR[2]>>3)<<10) + ((pBGR[1]>>3)<<5) + (pBGR[0]>>3);
 					*((Int *)pBGRA) = (pBGR[3]<<24) + (pBGR[2]<<16) + (pBGR[1]<<8) + (pBGR[0]);
 					pBGRA +=pixelBytes;
 					pBGR +=TILE_BYTES_PER_PIXEL;
 				}
 			}
 		}
-
 	}
-	DX8_ErrorCode(surface_level->UnlockRect());
-	surface_level->Release();
-	DX8_ErrorCode(D3DXFilterTexture(Peek_D3D_Texture(), nullptr, (UINT)0, D3DX_FILTER_BOX));
+	tex->Unlock(0);
+	dx12FilterTreeTextureMips(tex);
 	if (WW3D::Get_Texture_Reduction()) {
-		DX8_ErrorCode(Peek_D3D_Texture()->SetLOD((DWORD)WW3D::Get_Texture_Reduction()));
+		tex->Set_Min_LOD((unsigned)WW3D::Get_Texture_Reduction()); // as SetLOD in Direct3D 8
 	}
-	return(surface_desc.Height);
+	return (Int)tex->Get_Height(0);
 }
 
 
@@ -299,14 +234,8 @@ int W3DTreeBuffer::W3DTreeTextureClass::update(W3DTreeBuffer *buffer)
 //=============================================================================
 void W3DTreeBuffer::W3DTreeTextureClass::setLOD(Int LOD) const
 {
-	if (DX12Device::Is_Active()) {
-		if (Peek_DX12_Texture()) {
-			Peek_DX12_Texture()->Set_Min_LOD((unsigned)LOD);
-		}
-		return;
-	}
-	if (Peek_D3D_Texture()) {
-		DX8_ErrorCode(Peek_D3D_Texture()->SetLOD((DWORD)LOD));
+	if (Peek_DX12_Texture()) {
+		Peek_DX12_Texture()->Set_Min_LOD((unsigned)LOD);
 	}
 }
 //=============================================================================
