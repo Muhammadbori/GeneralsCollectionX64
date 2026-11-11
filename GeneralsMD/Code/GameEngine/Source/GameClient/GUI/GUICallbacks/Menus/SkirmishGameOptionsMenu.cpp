@@ -401,8 +401,8 @@ void setFPSTextBox( Int sliderPos )
 	staticTextGameSpeed->winEnable(TRUE);
 	if(sliderPos > GREATER_NO_FPS_LIMIT)
 	{
-		// set static text to --
-		text.set(L"--");
+		// TheSuperHackers @tweak The top position means as fast as possible, not a high frame rate.
+		text.set(L"MAX");
 		GadgetStaticTextSetText(staticTextGameSpeed, text);
 		return;
 	}
@@ -411,7 +411,8 @@ void setFPSTextBox( Int sliderPos )
 		// set different color
 		staticTextGameSpeed->winEnable(FALSE);
 	}
-	text.format(L"%2d", sliderPos);
+	// TheSuperHackers @tweak The slider is the game speed in logic frames per second. Show it relative to the normal speed.
+	text.format(L"%d%%", (sliderPos * 100 + LOGICFRAMES_PER_SECOND / 2) / LOGICFRAMES_PER_SECOND);
 	GadgetStaticTextSetText(staticTextGameSpeed, text);
 }
 
