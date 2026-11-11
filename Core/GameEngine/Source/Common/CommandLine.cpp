@@ -905,6 +905,48 @@ Int parseFile(char *args[], int num)
 	return 2;
 }
 
+// TheSuperHackers @feature Available in Release too. Starts a skirmish on the given map with no menus: computer players
+// fight, the local player watches as an observer, and the game quits when the match ends. The map takes the same short or
+// long form as -file. See StartCommandLineSkirmish.
+Int parseSkirmish(char *args[], int num)
+{
+	if (num > 1)
+	{
+		TheWritableGlobalData->m_initialFile = args[1];
+		ConvertShortMapPathToLongMapPath(TheWritableGlobalData->m_initialFile);
+		TheWritableGlobalData->m_initialFileIsSkirmish = TRUE;
+		return 2;
+	}
+	return 1;
+}
+
+// TheSuperHackers @feature Number of computer players for -skirmish, 1 to 7 (default 2), limited by the map's start positions.
+Int parseSkirmishAI(char *args[], int num)
+{
+	if (num > 1)
+	{
+		TheWritableGlobalData->m_skirmishAICount = clamp(1, atoi(args[1]), MAX_SLOTS - 1);
+		return 2;
+	}
+	return 1;
+}
+
+// TheSuperHackers @feature Computer player level for -skirmish: easy, medium or hard (default hard).
+Int parseSkirmishLevel(char *args[], int num)
+{
+	if (num > 1)
+	{
+		if (stricmp(args[1], "easy") == 0)
+			TheWritableGlobalData->m_skirmishAILevel = 0;
+		else if (stricmp(args[1], "medium") == 0)
+			TheWritableGlobalData->m_skirmishAILevel = 1;
+		else if (stricmp(args[1], "hard") == 0)
+			TheWritableGlobalData->m_skirmishAILevel = 2;
+		return 2;
+	}
+	return 1;
+}
+
 // TheSuperHackers @feature Save the rendered image at the given logic frames, see FrameShots.
 Int parseShotFrames(char *args[], int num)
 {
@@ -1421,6 +1463,9 @@ static CommandLineParam paramsForEngineInit[] =
 	{ "-shotExit", parseShotExit },
 	{ "-fps", parseFPSLimit },
 	{ "-file", parseFile },
+	{ "-skirmish", parseSkirmish },
+	{ "-skirmishAI", parseSkirmishAI },
+	{ "-skirmishLevel", parseSkirmishLevel },
 
 	// TheSuperHackers @feature xezon 03/08/2025 Force full viewport for 'Control Bar Pro' Addons like GenTool did it.
 	{ "-forcefullviewport", parseFullViewport },

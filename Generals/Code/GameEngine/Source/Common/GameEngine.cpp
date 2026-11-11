@@ -100,6 +100,7 @@
 #include "GameClient/Drawable.h"
 #include "GameClient/GUICallbacks.h"
 
+#include "GameNetwork/GameInfo.h"
 #include "GameNetwork/NetworkInterface.h"
 #include "GameNetwork/WOLBrowser/WebBrowser.h"
 #include "GameNetwork/LANAPI.h"
@@ -558,17 +559,26 @@ void GameEngine::init()
 			{
 				TheWritableGlobalData->m_shellMapOn = FALSE;
 				TheWritableGlobalData->m_playIntro = FALSE;
-				TheWritableGlobalData->m_pendingFile = TheGlobalData->m_initialFile;
 
-				// shutdown the top, but do not pop it off the stack
-	//			TheShell->hideShell();
+				if (TheGlobalData->m_initialFileIsSkirmish)
+				{
+					// TheSuperHackers @feature -skirmish starts a skirmish of computer players watched by an observer.
+					StartCommandLineSkirmish();
+				}
+				else
+				{
+					TheWritableGlobalData->m_pendingFile = TheGlobalData->m_initialFile;
 
-				// send a message to the logic for a new game
-				GameMessage *msg = TheMessageStream->appendMessage( GameMessage::MSG_NEW_GAME );
-				msg->appendIntegerArgument(GAME_SINGLE_PLAYER);
-				msg->appendIntegerArgument(DIFFICULTY_NORMAL);
-				msg->appendIntegerArgument(0);
-				InitRandom(0);
+					// shutdown the top, but do not pop it off the stack
+		//			TheShell->hideShell();
+
+					// send a message to the logic for a new game
+					GameMessage *msg = TheMessageStream->appendMessage( GameMessage::MSG_NEW_GAME );
+					msg->appendIntegerArgument(GAME_SINGLE_PLAYER);
+					msg->appendIntegerArgument(DIFFICULTY_NORMAL);
+					msg->appendIntegerArgument(0);
+					InitRandom(0);
+				}
 			}
 		}
 

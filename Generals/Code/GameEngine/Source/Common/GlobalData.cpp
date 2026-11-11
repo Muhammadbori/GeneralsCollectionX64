@@ -658,6 +658,9 @@ GlobalData::GlobalData()
 	m_rightMouseAlwaysScrolls = FALSE;
 	m_jpegQuality = DEFAULT_JPEG_QUALITY;
 	m_snowStyle = SNOW_STYLE_DEFAULT;
+	m_initialFileIsSkirmish = FALSE;
+	m_skirmishAICount = 2;
+	m_skirmishAILevel = 2;
 	m_useWaterPlane = FALSE;
 	m_useCloudPlane = FALSE;
 	m_downwindAngle = ( -0.785f );//Northeast!

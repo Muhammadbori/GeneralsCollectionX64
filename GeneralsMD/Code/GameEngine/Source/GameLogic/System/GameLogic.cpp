@@ -1319,6 +1319,12 @@ void GameLogic::tryStartNewGame( Bool loadingSaveGame )
 	// Start the LoadScreen Now!	//
 	//****************************//
 
+	// TheSuperHackers @bugfix The intro leaves m_breakTheMovie set, which stops all rendering. On the menu path MainMenuInit
+	// clears it, and with -file the shell game load screen does. -skirmish has no main menu and gets the multiplayer load
+	// screen, so it is cleared here, when the intro is over and the game loads.
+	if (TheGlobalData->m_initialFileIsSkirmish)
+		TheWritableGlobalData->m_breakTheMovie = FALSE;
+
 	// Get the m_loadScreen for this kind of game
 	if(!m_loadScreen && !(TheRecorder && TheRecorder->getMode() == RECORDERMODETYPE_SIMULATION_PLAYBACK))
 	{
@@ -1355,10 +1361,11 @@ void GameLogic::tryStartNewGame( Bool loadingSaveGame )
 	if( !TheTerrainLogic->loadMap( TheGlobalData->m_mapName, false ) && !loadingSaveGame
 		&& TheGlobalData->m_initialFile.isNotEmpty() && TheGlobalData->m_mapName.compareNoCase( TheGlobalData->m_initialFile ) == 0 )
 	{
-		// TheSuperHackers @bugfix A map given with -file that cannot be opened must not start an empty world.
+		// TheSuperHackers @bugfix A map given with -file or -skirmish that cannot be opened must not start an empty world.
+		const char *option = TheGlobalData->m_initialFileIsSkirmish ? "-skirmish" : "-file";
 		AsciiString message;
-		message.format( "The map given with -file could not be opened: %s\n"
-			"-file takes the short form, for example Maps\\Tournament Desert.map", TheGlobalData->m_initialFile.str() );
+		message.format( "The map given with %s could not be opened: %s\n"
+			"%s takes the short form, for example Maps\\Tournament Desert.map", option, TheGlobalData->m_initialFile.str(), option );
 		FrameShots::failStartup( message.str(), 3 );
 		throw QuitGameException();
 	}

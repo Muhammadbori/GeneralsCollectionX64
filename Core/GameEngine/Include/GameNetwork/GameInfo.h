@@ -306,4 +306,7 @@ public:
 };
 
 extern SkirmishGameInfo *TheSkirmishGameInfo;
+
+/// TheSuperHackers @feature Starts the -skirmish game: sets up TheSkirmishGameInfo and sends MSG_NEW_GAME (SkirmishGameOptionsMenu.cpp).
+void StartCommandLineSkirmish();
 extern SkirmishGameInfo *TheChallengeGameInfo;

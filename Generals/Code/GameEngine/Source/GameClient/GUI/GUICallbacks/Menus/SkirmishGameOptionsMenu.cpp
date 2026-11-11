@@ -452,6 +452,87 @@ void reallyDoStart()
 	}
 }
 
+// TheSuperHackers @feature -skirmish: starts a skirmish on TheGlobalData->m_initialFile with no menus, set up as
+// reallyDoStart and the slot setup of SkirmishGameOptionsMenuInit do it. The local player is an observer. The computer
+// players get fixed factions (America, China, GLA, repeated), colours (the colour list in order), start positions (in
+// order) and no teams, the game a fixed seed, the default starting money, no superweapon limit and game speed 30, so two
+// runs of the same command line play the same match frame for frame.
+static Int findPlayerTemplateIndex(const char *name)
+{
+	const PlayerTemplate *pt = ThePlayerTemplateStore->findPlayerTemplate( TheNameKeyGenerator->nameToKey(name) );
+	for (Int i = 0; pt && i < ThePlayerTemplateStore->getPlayerTemplateCount(); ++i)
+	{
+		if (ThePlayerTemplateStore->getNthPlayerTemplate(i) == pt)
+			return i;
+	}
+	return PLAYERTEMPLATE_RANDOM;
+}
+
+void StartCommandLineSkirmish()
+{
+	enum { COMMAND_LINE_SKIRMISH_SEED = 0x5EED };
+	static const char *const factions[] = { "FactionAmerica", "FactionChina", "FactionGLA" };
+	static const SlotState levels[] = { SLOT_EASY_AI, SLOT_MED_AI, SLOT_BRUTAL_AI };
+
+	if (!TheSkirmishGameInfo)
+		TheSkirmishGameInfo = NEW SkirmishGameInfo;
+	TheSkirmishGameInfo->init();
+	TheSkirmishGameInfo->clearSlotList();
+	TheSkirmishGameInfo->reset();
+	TheSkirmishGameInfo->setLocalIP(TheSkirmishGameInfo->getSlot(0)->getIP());
+	TheSkirmishGameInfo->enterGame();
+
+	// The map cache key is the lower case long path, which is how the skirmish menu stores the map.
+	AsciiString mapName = TheGlobalData->m_initialFile;
+	const MapMetaData *md = TheMapCache ? TheMapCache->findMap(mapName) : nullptr;
+	if (md)
+		mapName.toLower();
+
+	Int aiCount = TheGlobalData->m_skirmishAICount;
+	if (md && aiCount > md->m_numPlayers)
+		aiCount = md->m_numPlayers;	// the observer needs no start position
+	aiCount = clamp(1, aiCount, MAX_SLOTS - 1);
+	const Int level = clamp(0, TheGlobalData->m_skirmishAILevel, (Int)ARRAY_SIZE(levels) - 1);
+
+	GameSlot observer;
+	observer.setState(SLOT_PLAYER, UnicodeString(L"Observer"));
+	observer.setPlayerTemplate(PLAYERTEMPLATE_OBSERVER);
+	observer.setColor(-1);
+	observer.setStartPos(-1);
+	observer.setTeamNumber(-1);
+	TheSkirmishGameInfo->setSlot(0, observer);
+
+	for (Int i = 0; i < aiCount; ++i)
+	{
+		GameSlot ai;
+		ai.setState(levels[level]);
+		ai.setPlayerTemplate(findPlayerTemplateIndex(factions[i % ARRAY_SIZE(factions)]));
+		ai.setColor(i);
+		ai.setStartPos(i);
+		ai.setTeamNumber(-1);
+		TheSkirmishGameInfo->setSlot(i + 1, ai);
+	}
+
+	TheSkirmishGameInfo->setSeed(COMMAND_LINE_SKIRMISH_SEED);
+	TheSkirmishGameInfo->setStartingCash(TheMultiplayerSettings->getDefaultStartingMoney());
+	TheSkirmishGameInfo->setSuperweaponRestriction(0);
+	TheSkirmishGameInfo->setMap(mapName);
+	TheSkirmishGameInfo->setMapCRC(md ? md->m_CRC : 0);
+	TheSkirmishGameInfo->setMapSize(md ? md->m_filesize : 0);
+
+	// A map that is not in the map cache gets no CRC; loading it fails with the -file error in GameLogic::startNewGame.
+	TheWritableGlobalData->m_mapName = TheSkirmishGameInfo->getMap();
+	TheSkirmishGameInfo->startGame(0);
+
+	InitRandom(TheSkirmishGameInfo->getSeed());
+
+	GameMessage *msg = TheMessageStream->appendMessage( GameMessage::MSG_NEW_GAME );
+	msg->appendIntegerArgument(GAME_SKIRMISH);
+	msg->appendIntegerArgument(DIFFICULTY_NORMAL);	// not really used; just specified so we can add the game speed last
+	msg->appendIntegerArgument(0);									// not really used; just specified so we can add the game speed last
+	msg->appendIntegerArgument(LOGICFRAMES_PER_SECOND);	// game speed
+}
+
 Bool sandboxOk = FALSE;
 static void startPressed()
 {
