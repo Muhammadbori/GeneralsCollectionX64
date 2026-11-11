@@ -259,6 +259,9 @@ void GameLogic::clearGameData( Bool showScoreScreen )
 
 	setClearingGameData( TRUE );
 
+	// TheSuperHackers @tweak The match may have switched the render fps limit off. The user's limit applies again.
+	TheFramePacer->setMatchRenderLimitDisabled(FALSE);
+
 //	m_background = TheWindowManager->winCreateLayout("Menus/BlankWindow.wnd");
 //	DEBUG_ASSERTCRASH(m_background,("We Couldn't Load Menus/BlankWindow.wnd"));
 //	m_background->hide(FALSE);
@@ -885,15 +888,24 @@ bool GameLogic::onNewGame(MAYBE_UNUSED GameMessage *msg)
 	// TheSuperHackers @tweak The optional fourth argument is the game speed. It used to set the render FPS limit,
 	// which also set the game speed because the logic was updated once per render update. It now sets the logic
 	// time scale FPS instead and leaves the render FPS limit alone. Without the argument the game runs at the
-	// normal speed. The value 1000 and above, sent by the "--" game speed slider position, means as fast as possible.
+	// normal speed. The value 1000 up to UncappedFpsValue, sent by the top game speed slider position (and stored
+	// in old replays), means the normal speed with the render fps limit switched off for this match. The value
+	// UncappedFpsValue and above means as fast as possible, which a restart after fast forward sends.
+	TheFramePacer->setMatchRenderLimitDisabled(FALSE);
 	Int gameSpeedFps = LOGICFRAMES_PER_SECOND;
 	if ( msg->getArgumentCount() >= 4 )
 	{
 		gameSpeedFps = msg->getArgument( 3 )->integer;
 		if (gameSpeedFps < 1)
 			gameSpeedFps = LOGICFRAMES_PER_SECOND;
-		else if (gameSpeedFps >= 1000)
+		else if (gameSpeedFps >= RenderFpsPreset::UncappedFpsValue)
 			gameSpeedFps = RenderFpsPreset::UncappedFpsValue;
+		else if (gameSpeedFps >= 1000)
+		{
+			gameSpeedFps = LOGICFRAMES_PER_SECOND;
+			if (TheNetwork == nullptr)
+				TheFramePacer->setMatchRenderLimitDisabled(TRUE);
+		}
 	}
 	DEBUG_LOG(("Setting the logic time scale to %d FPS", gameSpeedFps));
 	TheFramePacer->setLogicTimeScaleFps(gameSpeedFps);

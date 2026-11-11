@@ -185,6 +185,7 @@ bool changeMaxRenderFps(FpsValueChange change)
 	UnsignedInt maxRenderFps = TheFramePacer->getFramesPerSecondLimit();
 	maxRenderFps = RenderFpsPreset::changeFpsValue(maxRenderFps, change);
 
+	TheFramePacer->setMatchRenderLimitDisabled(FALSE);
 	TheFramePacer->setFramesPerSecondLimit(maxRenderFps);
 	TheWritableGlobalData->m_useFpsLimit = (maxRenderFps != RenderFpsPreset::UncappedFpsValue);
 

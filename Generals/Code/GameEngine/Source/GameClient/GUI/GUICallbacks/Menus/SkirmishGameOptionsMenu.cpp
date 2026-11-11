@@ -390,8 +390,8 @@ void setFPSTextBox( Int sliderPos )
 	staticTextGameSpeed->winEnable(TRUE);
 	if(sliderPos > GREATER_NO_FPS_LIMIT)
 	{
-		// TheSuperHackers @tweak The top position means as fast as possible, not a high frame rate.
-		text.set(L"MAX");
+		// TheSuperHackers @tweak The top position is the normal speed with the render fps limit switched off.
+		text.set(L"UNCAP");
 		GadgetStaticTextSetText(staticTextGameSpeed, text);
 		return;
 	}

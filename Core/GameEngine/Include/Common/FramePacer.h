@@ -46,6 +46,8 @@ public:
 	void enableFramesPerSecondLimit( Bool enable ); ///< Enable or disable the update fps limit.
 	Bool isFramesPerSecondLimitEnabled() const; ///< Returns whether the fps limit is enabled here.
 	Bool isActualFramesPerSecondLimitEnabled() const; ///< Returns whether the fps limit is actually enabled when considering all game settings and setups.
+	void setMatchRenderLimitDisabled( Bool disabled ); ///< Switch the render fps limit off for the running match only. Does not change the user's limit settings.
+	Bool isMatchRenderLimitDisabled() const;
 	Bool isScriptFastForward() const; ///< Returns whether a script or the tactical view fast forwards the game time.
 	Int  getActualFramesPerSecondLimit() const; ///< Get the actual update fps limit. Outside of network games it is raised to the logic time scale fps.
 
@@ -81,6 +83,7 @@ protected:
 	Real m_logicFramePhase; ///< How far the current render step reaches into the current logic frame, ranging 0 to 1.
 
 	Bool m_enableFpsLimit;
+	Bool m_matchRenderLimitDisabled;
 	Bool m_enableLogicTimeScale;
 	Bool m_isTimeFrozen;
 	Bool m_isGameHalted;

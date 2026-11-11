@@ -40,6 +40,7 @@ FramePacer::FramePacer()
 	m_updateTime = 1.0f / (Real)BaseFps; // initialized to something to avoid division by zero on first use
 	m_logicFramePhase = 1.0f;
 	m_enableFpsLimit = FALSE;
+	m_matchRenderLimitDisabled = FALSE;
 	// TheSuperHackers @tweak The logic time scale is enabled by default so that the simulation runs at
 	// LOGICFRAMES_PER_SECOND outside of network games, independent of the render frame rate.
 	m_enableLogicTimeScale = TRUE;
@@ -105,9 +106,21 @@ Bool FramePacer::isFramesPerSecondLimitEnabled() const
 	return m_enableFpsLimit;
 }
 
+void FramePacer::setMatchRenderLimitDisabled( Bool disabled )
+{
+	m_matchRenderLimitDisabled = disabled;
+}
+
+Bool FramePacer::isMatchRenderLimitDisabled() const
+{
+	return m_matchRenderLimitDisabled;
+}
+
 Bool FramePacer::isActualFramesPerSecondLimitEnabled() const
 {
 	Bool allowFpsLimit = true;
+
+	allowFpsLimit &= !m_matchRenderLimitDisabled;
 
 	allowFpsLimit &= !isScriptFastForward();
 
