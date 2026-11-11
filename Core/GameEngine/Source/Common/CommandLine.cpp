@@ -858,6 +858,7 @@ Int parseFPSLimit(char *args[], int num)
 	if (num > 1)
 	{
 		TheWritableGlobalData->m_framesPerSecondLimit = atoi(args[1]);
+		TheWritableGlobalData->m_renderFpsLimit = -1; // -fps wins over Options.ini RenderFpsLimit
 	}
 	return 2;
 }
@@ -1203,6 +1204,7 @@ Int parseNoFPSLimit(char *args[], int num)
 {
 	TheWritableGlobalData->m_useFpsLimit = false;
 	TheWritableGlobalData->m_framesPerSecondLimit = 30000;
+	TheWritableGlobalData->m_renderFpsLimit = -1; // wins over Options.ini RenderFpsLimit
 
 	return 1;
 }

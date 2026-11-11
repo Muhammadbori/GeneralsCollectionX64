@@ -674,6 +674,26 @@ Bool OptionPreferences::getFPSLimitEnabled()
 	return FALSE;
 }
 
+// The render fps limit of Options.ini is 0 (no limit) or 15 to 1000. Below 15 the game feels broken and the logic time scale
+// would raise the update loop above the limit anyway; above 1000 the frame pacer gains nothing over 0.
+static const Int MIN_OPTION_RENDER_FPS_LIMIT = 15;
+static const Int MAX_OPTION_RENDER_FPS_LIMIT = 1000;
+
+Int OptionPreferences::getRenderFpsLimit()
+{
+	OptionPreferences::const_iterator it = find("RenderFpsLimit");
+	if (it == end())
+		return -1;
+
+	char *endPtr = nullptr;
+	const long value = strtol(it->second.str(), &endPtr, 10);
+	if (endPtr == it->second.str() || value < 0)
+		return -1;
+	if (value == 0)
+		return 0;
+	return clamp<Int>(MIN_OPTION_RENDER_FPS_LIMIT, (Int)min(value, 100000L), MAX_OPTION_RENDER_FPS_LIMIT);
+}
+
 Bool OptionPreferences::get3DShadowsEnabled()
 {
 	OptionPreferences::const_iterator it = find("UseShadowVolumes");

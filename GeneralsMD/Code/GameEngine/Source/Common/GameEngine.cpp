@@ -472,6 +472,9 @@ void GameEngine::init()
 		TheGameLODManager = MSGNEW("GameEngineSubsystem") GameLODManager;
 		TheGameLODManager->init();
 
+		// TheSuperHackers @feature Options.ini RenderFpsLimit decides the fps limit on/off state after the LOD preset did.
+		TheWritableGlobalData->applyRenderFpsLimitOption();
+
 		// after parsing the command line, we may want to perform dds stuff. Do that here.
 		if (TheGlobalData->m_shouldUpdateTGAToDDS) {
 			// update any out of date targas here.
@@ -650,7 +653,7 @@ void GameEngine::init()
 
 		TheSubsystemList->postProcessLoadAll();
 
-		TheFramePacer->setFramesPerSecondLimit(TheGlobalData->m_framesPerSecondLimit);
+		TheFramePacer->setFramesPerSecondLimit(TheGlobalData->getDefaultRenderFpsLimit());
 
 		TheAudio->setOn(TheGlobalData->m_audioOn && TheGlobalData->m_musicOn, AudioAffect_Music);
 		TheAudio->setOn(TheGlobalData->m_audioOn && TheGlobalData->m_soundsOn, AudioAffect_Sound);

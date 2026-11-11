@@ -50,6 +50,7 @@
 #include "Common/FileSystem.h"
 #include "Common/GameAudio.h"
 #include "Common/INI.h"
+#include "Common/FrameRateLimit.h"
 #include "Common/OptionPreferences.h"
 #include "Common/version.h"
 
@@ -634,6 +635,7 @@ GlobalData::GlobalData()
 	m_useFpsLimit = FALSE;
 	m_dumpAssetUsage = FALSE;
 	m_framesPerSecondLimit = 0;
+	m_renderFpsLimit = -1;
 	m_chipSetType = 0;
 	m_headless = FALSE;
 	m_windowed = 0;
@@ -1244,11 +1246,29 @@ void GlobalData::parseGameDataDefinition( INI* ini )
 	// TheSuperHackers @feature Optional MaxCameraHeight, CameraPitch and DrawEntireTerrain keys of Options.ini.
 	optionPref.applyCameraOverrides();
 
+	// TheSuperHackers @feature Optional RenderFpsLimit key of Options.ini. -fps on the command line clears it later.
+	TheWritableGlobalData->m_renderFpsLimit = optionPref.getRenderFpsLimit();
+
 	Int xres,yres;
 	optionPref.getResolution(&xres, &yres);
 
 	TheWritableGlobalData->m_xResolution = xres;
 	TheWritableGlobalData->m_yResolution = yres;
+}
+
+Int GlobalData::getDefaultRenderFpsLimit() const
+{
+	if (m_renderFpsLimit == 0)
+		return RenderFpsPreset::UncappedFpsValue; // Also stays uncapped if a script switches the limit back on.
+	if (m_renderFpsLimit > 0)
+		return m_renderFpsLimit;
+	return m_framesPerSecondLimit;
+}
+
+void GlobalData::applyRenderFpsLimitOption()
+{
+	if (m_renderFpsLimit >= 0)
+		m_useFpsLimit = (m_renderFpsLimit > 0);
 }
 
 void GlobalData::parseCustomDefinition()

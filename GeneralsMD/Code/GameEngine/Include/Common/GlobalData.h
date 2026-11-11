@@ -118,6 +118,11 @@ public:
 	Bool m_useFpsLimit;
 	Bool m_dumpAssetUsage;
 	Int m_framesPerSecondLimit;
+	// TheSuperHackers @feature Options.ini RenderFpsLimit. -1 is not set, 0 is uncapped, above 0 is the render fps limit.
+	// Cleared by -fps and -noFPSLimit. Separate from m_framesPerSecondLimit, which network games also use as the logic rate cap.
+	Int m_renderFpsLimit;
+	Int getDefaultRenderFpsLimit() const; ///< What the render fps limit is reset to: the Options.ini value if set, else m_framesPerSecondLimit.
+	void applyRenderFpsLimitOption(); ///< Applies the Options.ini RenderFpsLimit to m_useFpsLimit, when it is set.
 	Int	m_chipSetType;	///<See W3DShaderManager::ChipsetType for options
 
 	// TheSuperHackers @feature helmutbuhler 11/04/2025
