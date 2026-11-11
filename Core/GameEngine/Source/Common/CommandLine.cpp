@@ -958,6 +958,16 @@ Int parseShotFrames(char *args[], int num)
 	return 1;
 }
 
+Int parseTestLogicFps(char *args[], int num)
+{
+	if (num > 1)
+	{
+		FrameShots::setTestLogicFps(atoi(args[1]));
+		return 2;
+	}
+	return 1;
+}
+
 Int parseShotNoImage(char *args[], int num)
 {
 	FrameShots::setNoImage(TRUE);
@@ -1499,6 +1509,7 @@ static CommandLineParam paramsForEngineInit[] =
 	{ "-skirmishSpeed", parseSkirmishSpeed },
 	{ "-shotNoImage", parseShotNoImage },
 	{ "-testInput", parseTestInput },
+	{ "-testLogicFps", parseTestLogicFps },
 
 	// TheSuperHackers @feature xezon 03/08/2025 Force full viewport for 'Control Bar Pro' Addons like GenTool did it.
 	{ "-forcefullviewport", parseFullViewport },

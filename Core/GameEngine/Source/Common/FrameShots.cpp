@@ -72,6 +72,7 @@ namespace
 		Bool pendingRelease; ///< KIND_EDGE: the forced screen edge mode is released one update after the pointer left the edge
 	};
 	std::vector<TestInputSpec> s_testInputs;
+	Int s_testLogicFps = 0;
 
 	Int64 queryTicks()
 	{
@@ -186,8 +187,16 @@ void FrameShots::setTestInput(const char *specs)
 	}
 }
 
+void FrameShots::setTestLogicFps(Int fps)
+{
+	s_testLogicFps = fps;
+}
+
 void FrameShots::injectTestInput()
 {
+	if (s_testLogicFps > 0 && TheGameLogic != nullptr && TheGameLogic->isInGame() && TheFramePacer != nullptr)
+		TheFramePacer->setLogicTimeScaleFps(s_testLogicFps);
+
 	if (s_testInputs.empty() || TheGameLogic == nullptr || !TheGameLogic->isInGame() || TheMessageStream == nullptr)
 		return;
 

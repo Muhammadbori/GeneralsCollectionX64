@@ -33,6 +33,7 @@ public:
 	/// Test input: -testInput "<kind>:<arg>@<from>-<to>[;...]" injects the raw messages a device would create while the logic frame
 	/// is in [from,to). Kinds: key:left|right|up|down, rmb:<dx>,<dy> (right button drag from the screen center), edge:left|right|up|down.
 	static void setTestInput(const char *specs);
+	static void setTestLogicFps(Int fps); ///< -testLogicFps: forces the logic time scale fps while a game runs (1000000 = as fast as possible). Test only.
 	static void injectTestInput(); ///< Call once per client update after the device messages were appended to the stream.
 
 	static Bool isEnabled() { return s_enabled; }
