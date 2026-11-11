@@ -194,24 +194,48 @@ static void createDirectoryPath(const char *path)
 	CreateDirectory(buffer, nullptr);
 }
 
+static bool setUserDataDirOverride(const char *path)
+{
+	char full[_MAX_PATH];
+	const DWORD length = GetFullPathName(path, ARRAY_SIZE(full), full, nullptr);
+	if (length == 0 || length >= ARRAY_SIZE(full) - 1)
+	{
+		return false;
+	}
+	if (full[length - 1] != '\\' && full[length - 1] != '/')
+	{
+		strlcat(full, "\\", ARRAY_SIZE(full));
+	}
+	createDirectoryPath(full);
+	strlcpy(s_userDataDirOverride, full, ARRAY_SIZE(s_userDataDirOverride));
+	return true;
+}
+
+// TheSuperHackers @bugfix The GlobalData constructor creates the user data folder, so the override has to be known
+// before it runs, or a -userDataDir run would still create (and with Controlled Folder Access, touch) the default
+// Documents folder. This looks for the option in the raw command line, in the order it is parsed later.
+static void presetUserDataDirOverride()
+{
+	for (int arg = 1; arg + 1 < __argc; ++arg)
+	{
+		if (stricmp(__argv[arg], "-userDataDir") == 0)
+		{
+			setUserDataDirOverride(__argv[arg + 1]);
+			++arg;
+		}
+	}
+}
+
 Int parseUserDataDir(char *args[], int num)
 {
 	if (num > 1)
 	{
-		char full[_MAX_PATH];
-		const DWORD length = GetFullPathName(args[1], ARRAY_SIZE(full), full, nullptr);
-		if (length == 0 || length >= ARRAY_SIZE(full) - 1)
+		if (!setUserDataDirOverride(args[1]))
 		{
 			return 2;
 		}
-		if (full[length - 1] != '\\' && full[length - 1] != '/')
-		{
-			strlcat(full, "\\", ARRAY_SIZE(full));
-		}
-		createDirectoryPath(full);
-		strlcpy(s_userDataDirOverride, full, ARRAY_SIZE(s_userDataDirOverride));
 
-		// GlobalData was already created with the default folder.
+		// GlobalData was created before this, with the override already preset from the raw command line.
 		TheWritableGlobalData->setPath_UserData(s_userDataDirOverride);
 		// -dx12debug may have been parsed before this option.
 		if (DX12Device_DebugLayer)
@@ -1599,7 +1623,10 @@ bool CommandLine::wasCommandLineArgumentParsed(int argIndex)
 void createGlobalData()
 {
 	if (TheGlobalData == nullptr)
+	{
+		presetUserDataDirOverride();
 		TheWritableGlobalData = NEW GlobalData;
+	}
 }
 
 void CommandLine::parseCommandLineForStartup()
