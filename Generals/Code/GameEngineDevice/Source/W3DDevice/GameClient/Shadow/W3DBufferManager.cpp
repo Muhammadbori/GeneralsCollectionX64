@@ -190,10 +190,7 @@ Bool W3DBufferManager::ReAcquireResources()
 		W3DVertexBuffer *vb = m_W3DVertexBuffers[i];
 		while (vb)
 		{	DEBUG_ASSERTCRASH( vb->m_DX8VertexBuffer == nullptr, ("ReAcquire of existing vertex buffer"));
-			if (DX12Device::Is_Active())	//see allocateSlotStorage
-				vb->m_DX8VertexBuffer=NEW_REF(DX8VertexBufferClass,(FVFTypeIndexList[vb->m_format],vb->m_size,DX8VertexBufferClass::USAGE_DYNAMIC));
-			else
-				vb->m_DX8VertexBuffer=NEW_REF(DX8VertexBufferClass,(FVFTypeIndexList[vb->m_format],vb->m_size,DX8VertexBufferClass::USAGE_DEFAULT));
+			vb->m_DX8VertexBuffer=NEW_REF(DX8VertexBufferClass,(FVFTypeIndexList[vb->m_format],vb->m_size,DX8VertexBufferClass::USAGE_DYNAMIC));
 			DEBUG_ASSERTCRASH( vb->m_DX8VertexBuffer, ("Failed ReAcquire of vertex buffer"));
 			if (!vb->m_DX8VertexBuffer)
 				return FALSE;
@@ -204,10 +201,7 @@ Bool W3DBufferManager::ReAcquireResources()
 	W3DIndexBuffer *ib = m_W3DIndexBuffers;
 	while (ib)
 	{	DEBUG_ASSERTCRASH( ib->m_DX8IndexBuffer == nullptr, ("ReAcquire of existing index buffer"));
-		if (DX12Device::Is_Active())	//see allocateSlotStorage
-			ib->m_DX8IndexBuffer=NEW_REF(DX8IndexBufferClass,(ib->m_size,DX8IndexBufferClass::USAGE_DYNAMIC));
-		else
-			ib->m_DX8IndexBuffer=NEW_REF(DX8IndexBufferClass,(ib->m_size,DX8IndexBufferClass::USAGE_DEFAULT));
+		ib->m_DX8IndexBuffer=NEW_REF(DX8IndexBufferClass,(ib->m_size,DX8IndexBufferClass::USAGE_DYNAMIC));
 		DEBUG_ASSERTCRASH( ib->m_DX8IndexBuffer, ("Failed ReAcquire of index buffer"));
 		if (!ib->m_DX8IndexBuffer)
 			return FALSE;
@@ -325,10 +319,7 @@ W3DBufferManager::W3DVertexBufferSlot * W3DBufferManager::allocateSlotStorage(VB
 		//renaming, so refilling a released slot could change geometry the previous frame is still
 		//drawing. A dynamic one keeps a CPU copy and moves to fresh frame memory in every frame that
 		//uses it, which keeps the Direct3D 8 behaviour of a USAGE_DEFAULT buffer locked without flags.
-		if (DX12Device::Is_Active())
-			pVB->m_DX8VertexBuffer=NEW_REF(DX8VertexBufferClass,(FVFTypeIndexList[fvfType],vbSize,DX8VertexBufferClass::USAGE_DYNAMIC));
-		else
-			pVB->m_DX8VertexBuffer=NEW_REF(DX8VertexBufferClass,(FVFTypeIndexList[fvfType],vbSize,DX8VertexBufferClass::USAGE_DEFAULT));
+		pVB->m_DX8VertexBuffer=NEW_REF(DX8VertexBufferClass,(FVFTypeIndexList[fvfType],vbSize,DX8VertexBufferClass::USAGE_DYNAMIC));
 		pVB->m_format=fvfType;
 		pVB->m_startFreeIndex=size;
 		pVB->m_size=vbSize;
@@ -451,10 +442,7 @@ W3DBufferManager::W3DIndexBufferSlot * W3DBufferManager::allocateSlotStorage(Int
 
 		Int ibSize=__max(DEFAULT_INDEX_BUFFER_SIZE,size);
 
-		if (DX12Device::Is_Active())	//dynamic for the same reason as the vertex buffers above
-			pIB->m_DX8IndexBuffer=NEW_REF(DX8IndexBufferClass,(ibSize,DX8IndexBufferClass::USAGE_DYNAMIC));
-		else
-			pIB->m_DX8IndexBuffer=NEW_REF(DX8IndexBufferClass,(ibSize,DX8IndexBufferClass::USAGE_DEFAULT));
+		pIB->m_DX8IndexBuffer=NEW_REF(DX8IndexBufferClass,(ibSize,DX8IndexBufferClass::USAGE_DYNAMIC));
 		pIB->m_startFreeIndex=size;
 		pIB->m_size=ibSize;
 		ibSlot=&m_W3DIndexBufferEmptySlots[m_numEmptyIndexSlotsAllocated];
