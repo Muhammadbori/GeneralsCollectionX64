@@ -1528,6 +1528,28 @@ void WaterRenderObjClass::update()
 
 
 //-------------------------------------------------------------------------------------------------
+// TheSuperHackers @bugfix The skybox is drawn centered on the camera in x and y and at
+// TheGlobalData->m_skyBoxPositionZ (see render). Returns how far its farthest corner lies along the
+// view direction, so that the camera far clip plane can be placed behind the whole skybox.
+//-------------------------------------------------------------------------------------------------
+Real WaterRenderObjClass::getSkyBoxFarDepth(const Vector3 &camPos, const Vector3 &camDir) const
+{
+	if (!m_skyBox)
+		return 0.0f;
+
+	AABoxClass box;
+	m_skyBox->Get_Obj_Space_Bounding_Box(box);
+
+	Vector3 center = box.Center;
+	center.X += camPos.X;
+	center.Y += camPos.Y;
+	center.Z += TheGlobalData->m_skyBoxPositionZ;
+
+	return Vector3::Dot_Product(center - camPos, camDir)
+		+ fabs(box.Extent.X * camDir.X) + fabs(box.Extent.Y * camDir.Y) + fabs(box.Extent.Z * camDir.Z);
+}
+
+//-------------------------------------------------------------------------------------------------
 //-------------------------------------------------------------------------------------------------
 void WaterRenderObjClass::replaceSkyboxTexture(const AsciiString& oldTexName, const AsciiString& newTextName)
 {

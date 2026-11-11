@@ -84,6 +84,7 @@
 #include "W3DDevice/GameClient/W3DAssetManager.h"
 #include "W3DDevice/GameClient/W3DDisplay.h"
 #include "W3DDevice/GameClient/W3DScene.h"
+#include "W3DDevice/GameClient/W3DWater.h"
 #include "W3DDevice/GameClient/W3DView.h"
 #include "d3dx8math.h"
 #include "W3DDevice/GameClient/W3DShaderManager.h"
@@ -183,6 +184,7 @@ W3DView::W3DView()
 
 	m_cameraAreaConstraints.zero();
 	m_recalcCamera = false;
+	m_clipPlanesIncludeSkyBox = false;
 
 }
 
@@ -814,6 +816,18 @@ void W3DView::updateCameraClipPlanes(const Matrix3D &transform)
 			// Extend far clip plane so entire terrain can be visible
 			farZ *= 10.0f;
 		}
+	}
+
+	// TheSuperHackers @bugfix The skybox is larger than the terrain draw area. When it is drawn, the far
+	// clip plane must lie behind its farthest corner, or that corner is clipped away and the black
+	// background shows through as a triangle (MD_USA01 intro, camera looking up at the rocket).
+	m_clipPlanesIncludeSkyBox = TheGlobalData->m_drawSkyBox && TheWaterRenderObj != nullptr;
+	if (m_clipPlanesIncludeSkyBox)
+	{
+		const Vector3 camPos = transform.Get_Translation();
+		const Vector3 camDir = -transform.Get_Z_Vector();
+		const Real skyBoxFarZ = TheWaterRenderObj->getSkyBoxFarDepth(camPos, camDir) * 1.01f;
+		farZ = std::max(farZ, skyBoxFarZ);
 	}
 
 	m_3DCamera->Set_Clip_Planes(NearZ, farZ);
@@ -1668,6 +1682,13 @@ void W3DView::update()
 	if (!didScriptedMovement)
 	{
 		updateCameraAreaConstraints();
+	}
+
+	// TheSuperHackers @bugfix A script can switch the skybox on or off while the camera rests;
+	// the far clip plane depends on it.
+	if (m_clipPlanesIncludeSkyBox != (TheGlobalData->m_drawSkyBox && TheWaterRenderObj != nullptr))
+	{
+		m_recalcCamera = true;
 	}
 
 	// (gth) C&C3 if m_isCameraSlaved then force the camera to update each frame

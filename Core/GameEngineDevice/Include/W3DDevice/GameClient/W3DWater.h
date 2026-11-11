@@ -122,6 +122,7 @@ public:
 	inline Bool worldToGridSpace(Real worldX, Real worldY, Real &gridX, Real &gridY);	///<convert from world coordinates to grid's local coordinate system.
 
 	void replaceSkyboxTexture(const AsciiString& oldTexName, const AsciiString& newTextName);
+	Real getSkyBoxFarDepth(const Vector3 &camPos, const Vector3 &camDir) const; ///< depth along camDir of the farthest skybox corner; 0 without a skybox
 
 protected:
 	DX8IndexBufferClass			*m_indexBuffer;	///<indices defining quad
