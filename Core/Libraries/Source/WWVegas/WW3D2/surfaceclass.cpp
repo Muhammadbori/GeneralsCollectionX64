@@ -342,12 +342,7 @@ SurfaceClass::SurfaceClass(unsigned width, unsigned height, WW3DFormat format):
 {
 	WWASSERT(width);
 	WWASSERT(height);
-	if (DX12Device::Is_Active())
-	{
-		DX12Texture = DX12TextureClass::Create(width, height, format, 1, true, true);
-		return;
-	}
-	D3DSurface = DX8Wrapper::_Create_DX8_Surface(width, height, format);
+	DX12Texture = DX12TextureClass::Create(width, height, format, 1, true, true);
 }
 
 SurfaceClass::SurfaceClass(const char *filename):
@@ -355,15 +350,8 @@ SurfaceClass::SurfaceClass(const char *filename):
 	DX12Texture(nullptr),
 	DX12Level(0)
 {
-	if (DX12Device::Is_Active())
-	{
-		StringClass filename_string(filename,true);
-		DX12Texture = TextureLoader::Load_DX12_Surface_Immediate(filename_string, WW3D_FORMAT_UNKNOWN, true);
-	}
-	else
-	{
-		D3DSurface = DX8Wrapper::_Create_DX8_Surface(filename);
-	}
+	StringClass filename_string(filename,true);
+	DX12Texture = TextureLoader::Load_DX12_Surface_Immediate(filename_string, WW3D_FORMAT_UNKNOWN, true);
 	SurfaceDescription desc;
 	Get_Description(desc);
 	SurfaceFormat=desc.Format;
@@ -402,35 +390,20 @@ SurfaceClass::~SurfaceClass()
 
 void *SurfaceClass::Lock_Rect(int *pitch, const tagRECT *rect, bool read_only)
 {
-	if (DX12Device::Is_Active())
+	if (DX12Texture == nullptr)
 	{
-		if (DX12Texture == nullptr)
-		{
-			*pitch = 0;
-			return nullptr;
-		}
-		return DX12Texture->Lock(DX12Level, pitch, rect, read_only);
+		*pitch = 0;
+		return nullptr;
 	}
-
-	D3DLOCKED_RECT lock_rect;
-	::ZeroMemory(&lock_rect, sizeof(D3DLOCKED_RECT));
-	DX8_ErrorCode(D3DSurface->LockRect(&lock_rect, rect, read_only ? D3DLOCK_READONLY : 0));
-	*pitch = lock_rect.Pitch;
-	return lock_rect.pBits;
+	return DX12Texture->Lock(DX12Level, pitch, rect, read_only);
 }
 
 void SurfaceClass::Unlock_Rect()
 {
-	if (DX12Device::Is_Active())
+	if (DX12Texture != nullptr)
 	{
-		if (DX12Texture != nullptr)
-		{
-			DX12Texture->Unlock(DX12Level);
-		}
-		return;
+		DX12Texture->Unlock(DX12Level);
 	}
-
-	DX8_ErrorCode(D3DSurface->UnlockRect());
 }
 
 DX12TextureClass *SurfaceClass::Create_DX12_Texture(unsigned levels)
@@ -582,27 +555,16 @@ void SurfaceClass::Copy_DX12(const RECT &dest, const SurfaceClass *source, const
 
 void SurfaceClass::Get_Description(SurfaceDescription &surface_desc)
 {
-	if (DX12Device::Is_Active())
+	if (DX12Texture == nullptr)
 	{
-		if (DX12Texture == nullptr)
-		{
-			surface_desc.Format = WW3D_FORMAT_UNKNOWN;
-			surface_desc.Width = 0;
-			surface_desc.Height = 0;
-			return;
-		}
-		surface_desc.Format = DX12Texture->Get_Format();
-		surface_desc.Width = DX12Texture->Get_Width(DX12Level);
-		surface_desc.Height = DX12Texture->Get_Height(DX12Level);
+		surface_desc.Format = WW3D_FORMAT_UNKNOWN;
+		surface_desc.Width = 0;
+		surface_desc.Height = 0;
 		return;
 	}
-
-	D3DSURFACE_DESC d3d_desc;
-	::ZeroMemory(&d3d_desc, sizeof(D3DSURFACE_DESC));
-	DX8_ErrorCode(D3DSurface->GetDesc(&d3d_desc));
-	surface_desc.Format = D3DFormat_To_WW3DFormat(d3d_desc.Format);
-	surface_desc.Height = d3d_desc.Height;
-	surface_desc.Width = d3d_desc.Width;
+	surface_desc.Format = DX12Texture->Get_Format();
+	surface_desc.Width = DX12Texture->Get_Width(DX12Level);
+	surface_desc.Height = DX12Texture->Get_Height(DX12Level);
 }
 
 unsigned int SurfaceClass::Get_Bytes_Per_Pixel()
@@ -846,50 +808,25 @@ void SurfaceClass::Copy(
 	if (src.right>int(osd.Width)) src.right=int(osd.Width);
 	if (src.bottom>int(osd.Height)) src.bottom=int(osd.Height);
 
-	if (DX12Device::Is_Active())
-	{
-		RECT dest;
-		dest.left=dstx;
-		dest.right=dstx+width;
-		dest.top=dsty;
-		dest.bottom=dsty+height;
+	RECT dest;
+	dest.left=dstx;
+	dest.right=dstx+width;
+	dest.top=dsty;
+	dest.bottom=dsty+height;
 
-		if (dest.right>int(sd.Width)) dest.right=int(sd.Width);
-		if (dest.bottom>int(sd.Height)) dest.bottom=int(sd.Height);
+	if (dest.right>int(sd.Width)) dest.right=int(sd.Width);
+	if (dest.bottom>int(sd.Height)) dest.bottom=int(sd.Height);
 
-		// Same size and format copies the source rect as is (CopyRects), anything else fits it
-		// into the clipped destination rect (D3DXLoadSurfaceFromSurface).
-		if (sd.Format==osd.Format && sd.Width==osd.Width && sd.Height==osd.Height)
-		{
-			dest.right=MIN(dest.left+(src.right-src.left),int(sd.Width));
-			dest.bottom=MIN(dest.top+(src.bottom-src.top),int(sd.Height));
-			src.right=src.left+(dest.right-dest.left);
-			src.bottom=src.top+(dest.bottom-dest.top);
-		}
-		Copy_DX12(dest,other,src);
-		return;
-	}
-
+	// Same size and format copies the source rect as is (CopyRects), anything else fits it
+	// into the clipped destination rect (D3DXLoadSurfaceFromSurface).
 	if (sd.Format==osd.Format && sd.Width==osd.Width && sd.Height==osd.Height)
 	{
-		POINT dst;
-		dst.x=dstx;
-		dst.y=dsty;
-		DX8Wrapper::_Copy_DX8_Rects(other->D3DSurface,&src,1,D3DSurface,&dst);
+		dest.right=MIN(dest.left+(src.right-src.left),int(sd.Width));
+		dest.bottom=MIN(dest.top+(src.bottom-src.top),int(sd.Height));
+		src.right=src.left+(dest.right-dest.left);
+		src.bottom=src.top+(dest.bottom-dest.top);
 	}
-	else
-	{
-		RECT dest;
-		dest.left=dstx;
-		dest.right=dstx+width;
-		dest.top=dsty;
-		dest.bottom=dsty+height;
-
-		if (dest.right>int(sd.Width)) dest.right=int(sd.Width);
-		if (dest.bottom>int(sd.Height)) dest.bottom=int(sd.Height);
-
-		DX8_ErrorCode(D3DXLoadSurfaceFromSurface(D3DSurface,nullptr,&dest,other->D3DSurface,nullptr,&src,D3DX_FILTER_NONE,0));
-	}
+	Copy_DX12(dest,other,src);
 }
 
 /***********************************************************************************************
@@ -930,17 +867,11 @@ void SurfaceClass::Stretch_Copy(
 	dest.top=dsty;
 	dest.bottom=dsty+dstheight;
 
-	if (DX12Device::Is_Active())
-	{
-		if (src.right>int(osd.Width)) src.right=int(osd.Width);
-		if (src.bottom>int(osd.Height)) src.bottom=int(osd.Height);
-		if (dest.right>int(sd.Width)) dest.right=int(sd.Width);
-		if (dest.bottom>int(sd.Height)) dest.bottom=int(sd.Height);
-		Copy_DX12(dest,other,src);
-		return;
-	}
-
-	DX8_ErrorCode(D3DXLoadSurfaceFromSurface(D3DSurface,nullptr,&dest,other->D3DSurface,nullptr,&src,D3DX_FILTER_TRIANGLE ,0));
+	if (src.right>int(osd.Width)) src.right=int(osd.Width);
+	if (src.bottom>int(osd.Height)) src.bottom=int(osd.Height);
+	if (dest.right>int(sd.Width)) dest.right=int(sd.Width);
+	if (dest.bottom>int(sd.Height)) dest.bottom=int(sd.Height);
+	Copy_DX12(dest,other,src);
 }
 
 /***********************************************************************************************
