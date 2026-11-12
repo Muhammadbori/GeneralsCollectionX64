@@ -19,6 +19,9 @@
 // Used for dynamically linking to dbghelp.dll functions.
 
 // keep this always as first entry
+// Addresses are DWORD_PTR: DWORD on x86, DWORD64 on x64, where imagehlp.h maps the structure
+// types to their 64-bit forms and dbghelp.dll exports these names as aliases of the ...64 functions.
+
 DBGHELP(SymInitialize,
         BOOL,
         (HANDLE hProcess, PCSTR UserSearchPath, BOOL fInvadeProcess))
@@ -41,20 +44,20 @@ DBGHELP(StackWalk,
 
 DBGHELP(SymFunctionTableAccess,
         LPVOID,
-        (HANDLE hProcess, DWORD AddrBase))
+        (HANDLE hProcess, DWORD_PTR AddrBase))
 
 DBGHELP(SymGetModuleBase,
-        DWORD,
-        (HANDLE hProcess, DWORD dwAddr))
+        DWORD_PTR,
+        (HANDLE hProcess, DWORD_PTR dwAddr))
 
 DBGHELP(SymGetSymFromAddr,
         BOOL,
-        (HANDLE hProcess, DWORD Address, LPDWORD Displacement,
+        (HANDLE hProcess, DWORD_PTR Address, PDWORD_PTR Displacement,
         PIMAGEHLP_SYMBOL Symbol))
 
 DBGHELP(SymGetLineFromAddr,
         BOOL,
-        (HANDLE hProcess, DWORD dwAddr, PDWORD pdwDisplacement,
+        (HANDLE hProcess, DWORD_PTR dwAddr, PDWORD pdwDisplacement,
         PIMAGEHLP_LINE Line))
 
 // keep this always as last entry

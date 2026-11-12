@@ -30,6 +30,10 @@
 #include "internal_except.h"
 #include <windows.h>
 #include <commctrl.h>
+#ifdef _WIN64
+#include <math.h> // ldexp, NAN, INFINITY for X87ToDouble
+#include <stdio.h> // sprintf
+#endif
 
 DebugExceptionhandler::DebugExceptionhandler()
 {
@@ -44,12 +48,21 @@ const char *DebugExceptionhandler::GetExceptionType(struct _EXCEPTION_POINTERS *
   switch(exptr->ExceptionRecord->ExceptionCode)
   {
 		case EXCEPTION_ACCESS_VIOLATION:
+#ifdef _WIN64
+      sprintf(explanation,
+             "The thread tried to read from or write to a virtual\n"
+             "address for which it does not have the appropriate access.\n"
+             "Access address 0x%016llx was %s.",
+                (unsigned long long)exptr->ExceptionRecord->ExceptionInformation[1],
+                exptr->ExceptionRecord->ExceptionInformation[0]?"written to":"read from");
+#else
       wsprintf(explanation,
              "The thread tried to read from or write to a virtual\n"
              "address for which it does not have the appropriate access.\n"
              "Access address 0x%08x was %s.",
                 exptr->ExceptionRecord->ExceptionInformation[1],
                 exptr->ExceptionRecord->ExceptionInformation[0]?"written to":"read from");
+#endif
       return "EXCEPTION_ACCESS_VIOLATION";
 		EX(ARRAY_BOUNDS_EXCEEDED,"The thread tried to access an array element that\n"
                              "is out of bounds and the underlying hardware\n"
@@ -110,10 +123,47 @@ void DebugExceptionhandler::LogExceptionLocation(Debug &dbg, struct _EXCEPTION_P
   struct _CONTEXT &ctx=*exptr->ContextRecord;
 
   char buf[512];
+#ifdef _WIN64
+  DebugStackwalk::Signature::GetSymbol(ctx.Rip,buf,sizeof(buf));
+#else
   DebugStackwalk::Signature::GetSymbol(ctx.Eip,buf,sizeof(buf));
+#endif
   dbg << "Exception occured at\n" << buf << ".";
 }
 
+#ifdef _WIN64
+void DebugExceptionhandler::LogRegisters(Debug &dbg, struct _EXCEPTION_POINTERS *exptr)
+{
+  struct _CONTEXT &ctx=*exptr->ContextRecord;
+
+  dbg << Debug::FillChar('0')
+      << Debug::Hex()
+      <<  "RAX:" << Debug::Width(16) << ctx.Rax
+      << " RBX:" << Debug::Width(16) << ctx.Rbx
+      << " RCX:" << Debug::Width(16) << ctx.Rcx << "\n"
+      <<  "RDX:" << Debug::Width(16) << ctx.Rdx
+      << " RSI:" << Debug::Width(16) << ctx.Rsi
+      << " RDI:" << Debug::Width(16) << ctx.Rdi << "\n"
+      <<  "R8: " << Debug::Width(16) << ctx.R8
+      << " R9: " << Debug::Width(16) << ctx.R9
+      << " R10:" << Debug::Width(16) << ctx.R10 << "\n"
+      <<  "R11:" << Debug::Width(16) << ctx.R11
+      << " R12:" << Debug::Width(16) << ctx.R12
+      << " R13:" << Debug::Width(16) << ctx.R13 << "\n"
+      <<  "R14:" << Debug::Width(16) << ctx.R14
+      << " R15:" << Debug::Width(16) << ctx.R15 << "\n"
+      <<  "RIP:" << Debug::Width(16) << ctx.Rip
+      << " RSP:" << Debug::Width(16) << ctx.Rsp
+      << " RBP:" << Debug::Width(16) << ctx.Rbp << "\n"
+      <<  "Flags:" << Debug::Bin() << Debug::Width(32) << ctx.EFlags << Debug::Hex() << "\n"
+      <<  "CS:" << Debug::Width(4) << ctx.SegCs
+      << " DS:" << Debug::Width(4) << ctx.SegDs
+      << " SS:" << Debug::Width(4) << ctx.SegSs
+      << "\nES:" << Debug::Width(4) << ctx.SegEs
+      << " FS:" << Debug::Width(4) << ctx.SegFs
+      << " GS:" << Debug::Width(4) << ctx.SegGs << "\n" << Debug::FillChar() << Debug::Dec();
+}
+#else
 void DebugExceptionhandler::LogRegisters(Debug &dbg, struct _EXCEPTION_POINTERS *exptr)
 {
   struct _CONTEXT &ctx=*exptr->ContextRecord;
@@ -137,7 +187,73 @@ void DebugExceptionhandler::LogRegisters(Debug &dbg, struct _EXCEPTION_POINTERS 
       << " FS:" << Debug::Width(4) << ctx.SegFs
       << " GS:" << Debug::Width(4) << ctx.SegGs << "\n" << Debug::FillChar() << Debug::Dec();
 }
+#endif
 
+#ifdef _WIN64
+// Converts an x87 register (10 bytes: 64-bit mantissa with explicit integer bit, 15-bit exponent,
+// sign) to double; long double is 8 bytes in x64 builds, so the x86 cast does not apply.
+static double X87ToDouble(const BYTE *value)
+{
+  unsigned __int64 mantissa=0;
+  for (int b=7;b>=0;b--)
+    mantissa=(mantissa<<8)|value[b];
+  int exponent=(value[8]|(value[9]<<8))&0x7fff;
+  bool negative=(value[9]&0x80)!=0;
+  double result;
+  if (exponent==0x7fff)
+    result=(mantissa<<1)?NAN:INFINITY;
+  else
+    result=ldexp((double)mantissa,(exponent?exponent:1)-16383-63);
+  return negative?-result:result;
+}
+
+void DebugExceptionhandler::LogFPURegisters(Debug &dbg, struct _EXCEPTION_POINTERS *exptr)
+{
+  struct _CONTEXT &ctx=*exptr->ContextRecord;
+
+  if (!(ctx.ContextFlags&CONTEXT_FLOATING_POINT))
+  {
+    dbg << "FP registers not available\n";
+    return;
+  }
+
+  XMM_SAVE_AREA32 &flt=ctx.FltSave;
+  dbg << Debug::Bin() << Debug::FillChar('0')
+      << "CW:" << Debug::Width(16) << (flt.ControlWord&0xffff) << "\n"
+      << "SW:" << Debug::Width(16) << (flt.StatusWord&0xffff) << "\n"
+      << "TW:" << Debug::Width(16) << (flt.TagWord&0xff) << "\n"
+      << Debug::Hex()
+      << "ErrOfs:      " << Debug::Width(8) << flt.ErrorOffset
+      << " ErrSel:  "    << Debug::Width(8) << flt.ErrorSelector << "\n"
+      << "DataOfs:     " << Debug::Width(8) << flt.DataOffset
+      << " DataSel: "    << Debug::Width(8) << flt.DataSelector << "\n"
+      << "MxCsr:       " << Debug::Width(8) << ctx.MxCsr << "\n"
+  ;
+
+  for (unsigned k=0;k<8;++k)
+  {
+    dbg << Debug::Dec() << "ST(" << k << ") ";
+    dbg.SetPrefixAndRadix("",16);
+
+    const BYTE *value=(const BYTE *)&flt.FloatRegisters[k];
+    for (unsigned i=0;i<10;i++)
+      dbg << Debug::Width(2) << value[i];
+
+    dbg << " " << X87ToDouble(value);
+
+    dbg << "\n";
+  }
+
+  for (unsigned k=0;k<16;++k)
+  {
+    dbg << Debug::Dec() << "XMM" << k << " ";
+    dbg.SetPrefixAndRadix("",16);
+    dbg << Debug::Width(16) << (unsigned __int64)flt.XmmRegisters[k].High
+        << Debug::Width(16) << (unsigned __int64)flt.XmmRegisters[k].Low << "\n";
+  }
+  dbg << Debug::FillChar() << Debug::Dec();
+}
+#else
 void DebugExceptionhandler::LogFPURegisters(Debug &dbg, struct _EXCEPTION_POINTERS *exptr)
 {
   struct _CONTEXT &ctx=*exptr->ContextRecord;
@@ -182,6 +298,7 @@ void DebugExceptionhandler::LogFPURegisters(Debug &dbg, struct _EXCEPTION_POINTE
   }
   dbg << Debug::FillChar() << Debug::Dec();
 }
+#endif
 
 // include exception dialog box
 #include "rc_exception.inl"
@@ -195,7 +312,11 @@ static char regInfo[1024],verInfo[256];
 // and this saves us from doing a stack walk twice
 static DebugStackwalk::Signature sig;
 
+#ifdef _WIN64
+static INT_PTR CALLBACK ExceptionDlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+#else
 static BOOL CALLBACK ExceptionDlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+#endif
 {
   switch(uMsg)
   {
@@ -240,7 +361,11 @@ static BOOL CALLBACK ExceptionDlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARA
 
   // address
   struct _CONTEXT &ctx=*exPtrs->ContextRecord;
+#ifdef _WIN64
+  DebugStackwalk::Signature::GetSymbol(ctx.Rip,regInfo,sizeof(regInfo));
+#else
   DebugStackwalk::Signature::GetSymbol(ctx.Eip,regInfo,sizeof(regInfo));
+#endif
   SendDlgItemMessage(hWnd,102,WM_SETTEXT,0,(LPARAM)regInfo);
 
   // stack
@@ -396,7 +521,11 @@ LONG __stdcall DebugExceptionhandler::ExceptionFilter(struct _EXCEPTION_POINTERS
   dbg.m_stackWalk.StackWalk(sig,pExPtrs->ContextRecord);
   dbg << sig << "\n";
 
+#ifdef _WIN64
+  dbg << "Bytes around RIP:" << Debug::MemDump::Char(((char *)(pExPtrs->ContextRecord->Rip))-32,80);
+#else
   dbg << "Bytes around EIP:" << Debug::MemDump::Char(((char *)(pExPtrs->ContextRecord->Eip))-32,80);
+#endif
 
   dbg.FlushOutput();
 

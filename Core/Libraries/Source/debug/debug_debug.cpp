@@ -36,6 +36,9 @@
 #include <Utility/stdio_adapter.h>
 #include <Utility/stringex.h>
 #include <new>      // needed for placement new prototype
+#ifdef _WIN64
+#include <intrin.h> // _ReturnAddress
+#endif
 
 // a little dummy variable that makes the linker actually include
 // us...
@@ -307,7 +310,10 @@ bool Debug::SkipNext()
   // do not implement this function inline, we do need
   // a valid frame pointer here!
   unsigned help;
-#if defined(_MSC_VER)
+#if defined(_MSC_VER) && defined(_WIN64)
+  // x64 has no inline assembler; _ReturnAddress is the same return address.
+  help=(unsigned)(uintptr_t)_ReturnAddress();
+#elif defined(_MSC_VER)
   __asm
   {
     mov eax,[ebp+4]   // return address
@@ -435,7 +441,9 @@ bool Debug::AssertDone()
           }
           break;
         case IDRETRY:
-#if defined(_MSC_VER)
+#if defined(_MSC_VER) && defined(_WIN64)
+          __debugbreak();
+#elif defined(_MSC_VER)
           __asm
           {
             int 0x03
@@ -712,7 +720,9 @@ bool Debug::CrashDone(bool die)
             }
             break;
           case IDRETRY:
-#if defined(_MSC_VER)
+#if defined(_MSC_VER) && defined(_WIN64)
+            __debugbreak();
+#elif defined(_MSC_VER)
             __asm
             {
               int 0x03
