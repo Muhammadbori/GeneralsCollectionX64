@@ -358,26 +358,10 @@ void TextureBaseClass::Load_Locked_Surface()
 */
 bool TextureBaseClass::Is_Missing_Texture()
 {
-	if (DX12Device::Is_Active())
-	{
-		DX12TextureClass *missing_dx12_texture = MissingTexture::_Get_DX12_Missing_Texture();
-		bool is_missing = (missing_dx12_texture != nullptr && DX12Texture == missing_dx12_texture);
-		REF_PTR_RELEASE(missing_dx12_texture);
-		return is_missing;
-	}
-
-	bool flag = false;
-	IDirect3DBaseTexture8 *missing_texture = MissingTexture::_Get_Missing_Texture();
-
-	if (D3DTexture == missing_texture)
-		flag = true;
-
-	if (missing_texture)
-	{
-		missing_texture->Release();
-	}
-
-	return flag;
+	DX12TextureClass *missing_dx12_texture = MissingTexture::_Get_DX12_Missing_Texture();
+	bool is_missing = (missing_dx12_texture != nullptr && DX12Texture == missing_dx12_texture);
+	REF_PTR_RELEASE(missing_dx12_texture);
+	return is_missing;
 }
 
 
@@ -400,18 +384,7 @@ void TextureBaseClass::Set_Texture_Name(const char * name)
 unsigned int TextureBaseClass::Get_Priority()
 {
 	// Direct3D 12 has no managed pool, so texture priorities do not exist.
-	if (DX12Device::Is_Active())
-	{
-		return 0;
-	}
-
-	if (!D3DTexture)
-	{
-		WWASSERT_PRINT(0, "Get_Priority: D3DTexture is null!");
-		return 0;
-	}
-
-	return D3DTexture->GetPriority();
+	return 0;
 }
 
 
@@ -421,18 +394,7 @@ unsigned int TextureBaseClass::Get_Priority()
 */
 unsigned int TextureBaseClass::Set_Priority(unsigned int priority)
 {
-	if (DX12Device::Is_Active())
-	{
-		return 0;
-	}
-
-	if (!D3DTexture)
-	{
-		WWASSERT_PRINT(0, "Set_Priority: D3DTexture is null!");
-		return 0;
-	}
-
-	return D3DTexture->SetPriority(priority);
+	return 0;
 }
 
 
@@ -468,12 +430,7 @@ unsigned TextureBaseClass::Get_Reduction() const
 void TextureBaseClass::Apply_Null(unsigned int stage)
 {
 	// This function sets the render states for a "null" texture
-	if (DX12Device::Is_Active())
-	{
-		DX8Wrapper::Set_DX12_Texture(stage, nullptr);
-		return;
-	}
-	DX8Wrapper::Set_DX8_Texture(stage, nullptr);
+	DX8Wrapper::Set_DX12_Texture(stage, nullptr);
 }
 
 // ----------------------------------------------------------------------------
@@ -696,68 +653,26 @@ TextureClass::TextureClass
 	default : break;
 	}
 
-	if (DX12Device::Is_Active())
+	// Render targets have a single level, as Direct3D 8 render targets made by
+	// DX8Wrapper::Create_Render_Target do. Procedural textures keep a CPU copy so that partial
+	// updates (font pages, radar, shroud) see the rest of the texture.
+	if (rendertarget)
 	{
-		// Render targets have a single level, as Direct3D 8 render targets made by
-		// DX8Wrapper::Create_Render_Target do. Procedural textures keep a CPU copy so that partial
-		// updates (font pages, radar, shroud) see the rest of the texture.
-		if (rendertarget)
+		Poke_DX12_Texture(DX12TextureClass::Create_Render_Target(width, height, format));
+		if (Peek_DX12_Texture() == nullptr)
 		{
-			Poke_DX12_Texture(DX12TextureClass::Create_Render_Target(width, height, format));
-			if (Peek_DX12_Texture() == nullptr)
-			{
-				WWDEBUG_SAY(("TextureClass: could not create a %d x %d render target of format %d", width, height, (int)format));
-			}
+			WWDEBUG_SAY(("TextureClass: could not create a %d x %d render target of format %d", width, height, (int)format));
 		}
-		else
-		{
-			Poke_DX12_Texture(DX12TextureClass::Create(width, height, format, mip_level_count, true));
-		}
-
-		// Direct3D 12 textures are never lost, so default pool textures need no tracker.
-		if (pool==POOL_DEFAULT)
-		{
-			Set_Dirty();
-		}
-		LastAccessed=WW3D::Get_Sync_Time();
-		return;
+	}
+	else
+	{
+		Poke_DX12_Texture(DX12TextureClass::Create(width, height, format, mip_level_count, true));
 	}
 
-	D3DPOOL d3dpool=(D3DPOOL)0;
-	switch(pool)
-	{
-	case POOL_DEFAULT		: d3dpool=D3DPOOL_DEFAULT; break;
-	case POOL_MANAGED		: d3dpool=D3DPOOL_MANAGED; break;
-	case POOL_SYSTEMMEM	: d3dpool=D3DPOOL_SYSTEMMEM; break;
-	default: WWASSERT(0);
-	}
-
-	Poke_Texture
-	(
-		DX8Wrapper::_Create_DX8_Texture
-		(
-			width,
-			height,
-			format,
-			mip_level_count,
-			d3dpool,
-			rendertarget
-		)
-	);
-
+	// Direct3D 12 textures are never lost, so default pool textures need no tracker.
 	if (pool==POOL_DEFAULT)
 	{
 		Set_Dirty();
-		DX8TextureTrackerClass *track=new DX8TextureTrackerClass
-		(
-			width,
-			height,
-			format,
-			mip_level_count,
-			this,
-			rendertarget
-		);
-		DX8TextureManagerClass::Add(track);
 	}
 	LastAccessed=WW3D::Get_Sync_Time();
 }
@@ -892,21 +807,7 @@ TextureClass::TextureClass
 	default: break;
 	}
 
-	if (DX12Device::Is_Active())
-	{
-		Poke_DX12_Texture(surface->Create_DX12_Texture(mip_level_count));
-		LastAccessed=WW3D::Get_Sync_Time();
-		return;
-	}
-
-	Poke_Texture
-	(
-		DX8Wrapper::_Create_DX8_Texture
-		(
-			surface->Peek_D3D_Surface(),
-			mip_level_count
-		)
-	);
+	Poke_DX12_Texture(surface->Create_DX12_Texture(mip_level_count));
 	LastAccessed=WW3D::Get_Sync_Time();
 }
 
@@ -1094,18 +995,7 @@ void TextureClass::Apply(unsigned int stage)
 	DX8_RECORD_TEXTURE(this);
 
 	// Set texture itself
-	if (DX12Device::Is_Active())
-	{
-		DX8Wrapper::Set_DX12_Texture(stage, WW3D::Is_Texturing_Enabled() ? Peek_DX12_Texture() : nullptr);
-	}
-	else if (WW3D::Is_Texturing_Enabled())
-	{
-		DX8Wrapper::Set_DX8_Texture(stage, Peek_D3D_Base_Texture());
-	}
-	else
-	{
-		DX8Wrapper::Set_DX8_Texture(stage, nullptr);
-	}
+	DX8Wrapper::Set_DX12_Texture(stage, WW3D::Is_Texturing_Enabled() ? Peek_DX12_Texture() : nullptr);
 
 	Filter.Apply(stage);
 }
@@ -1116,29 +1006,13 @@ void TextureClass::Apply(unsigned int stage)
 */
 SurfaceClass *TextureClass::Get_Surface_Level(unsigned int level)
 {
-	if (DX12Device::Is_Active())
+	DX12TextureClass *dx12_texture = Peek_DX12_Texture();
+	if (dx12_texture == nullptr || level >= dx12_texture->Get_Level_Count())
 	{
-		DX12TextureClass *dx12_texture = Peek_DX12_Texture();
-		if (dx12_texture == nullptr || level >= dx12_texture->Get_Level_Count())
-		{
-			WWDEBUG_SAY(("Get_Surface_Level: no Direct3D 12 texture level %u for %s", level, Get_Texture_Name().str()));
-			return nullptr;
-		}
-		return new SurfaceClass(dx12_texture, level);
-	}
-
-	if (!Peek_D3D_Texture())
-	{
-		WWASSERT_PRINT(0, "Get_Surface_Level: D3DTexture is null!");
+		WWDEBUG_SAY(("Get_Surface_Level: no Direct3D 12 texture level %u for %s", level, Get_Texture_Name().str()));
 		return nullptr;
 	}
-
-	IDirect3DSurface8 *d3d_surface = nullptr;
-	DX8_ErrorCode(Peek_D3D_Texture()->GetSurfaceLevel(level, &d3d_surface));
-	SurfaceClass *surface = new SurfaceClass(d3d_surface);
-	d3d_surface->Release();
-
-	return surface;
+	return new SurfaceClass(dx12_texture, level);
 }
 
 //**********************************************************************************************
@@ -1147,23 +1021,13 @@ SurfaceClass *TextureClass::Get_Surface_Level(unsigned int level)
 */
 void TextureClass::Get_Level_Description( SurfaceClass::SurfaceDescription & desc, unsigned int level )
 {
-	if (DX12Device::Is_Active())
+	DX12TextureClass *dx12_texture = Peek_DX12_Texture();
+	if (dx12_texture != nullptr && level < dx12_texture->Get_Level_Count())
 	{
-		DX12TextureClass *dx12_texture = Peek_DX12_Texture();
-		if (dx12_texture != nullptr && level < dx12_texture->Get_Level_Count())
-		{
-			desc.Format = dx12_texture->Get_Format();
-			desc.Width = dx12_texture->Get_Width(level);
-			desc.Height = dx12_texture->Get_Height(level);
-		}
-		return;
+		desc.Format = dx12_texture->Get_Format();
+		desc.Width = dx12_texture->Get_Width(level);
+		desc.Height = dx12_texture->Get_Height(level);
 	}
-
-	SurfaceClass * surf = Get_Surface_Level(level);
-	if (surf != nullptr) {
-		surf->Get_Description(desc);
-	}
-	REF_PTR_RELEASE(surf);
 }
 
 //**********************************************************************************************
@@ -1172,20 +1036,7 @@ void TextureClass::Get_Level_Description( SurfaceClass::SurfaceDescription & des
 */
 IDirect3DSurface8 *TextureClass::Get_D3D_Surface_Level(unsigned int level)
 {
-	if (DX12Device::Is_Active())
-	{
-		return nullptr;
-	}
-
-	if (!Peek_D3D_Texture())
-	{
-		WWASSERT_PRINT(0, "Get_D3D_Surface_Level: D3DTexture is null!");
-		return nullptr;
-	}
-
-	IDirect3DSurface8 *d3d_surface = nullptr;
-	DX8_ErrorCode(Peek_D3D_Texture()->GetSurfaceLevel(level, &d3d_surface));
-	return d3d_surface;
+	return nullptr;
 }
 
 //**********************************************************************************************
@@ -1195,22 +1046,11 @@ IDirect3DSurface8 *TextureClass::Get_D3D_Surface_Level(unsigned int level)
 unsigned TextureClass::Get_Texture_Memory_Usage() const
 {
 	int size=0;
-	if (DX12Device::Is_Active())
+	DX12TextureClass *dx12_texture = Peek_DX12_Texture();
+	if (dx12_texture == nullptr) return 0;
+	for (unsigned i=0;i<dx12_texture->Get_Level_Count();++i)
 	{
-		DX12TextureClass *dx12_texture = Peek_DX12_Texture();
-		if (dx12_texture == nullptr) return 0;
-		for (unsigned i=0;i<dx12_texture->Get_Level_Count();++i)
-		{
-			size+=dx12_texture->Get_Level_Size(i);
-		}
-		return size;
-	}
-	if (!Peek_D3D_Texture()) return 0;
-	for (unsigned i=0;i<Peek_D3D_Texture()->GetLevelCount();++i)
-	{
-		D3DSURFACE_DESC desc;
-		DX8_ErrorCode(Peek_D3D_Texture()->GetLevelDesc(i,&desc));
-		size+=desc.Size;
+		size+=dx12_texture->Get_Level_Size(i);
 	}
 	return size;
 }
@@ -1387,58 +1227,14 @@ ZTextureClass::ZTextureClass
 	DepthStencilTextureFormat(zformat)
 {
 	// Direct3D 12 depth textures are always D24S8, whatever zformat asks for.
-	if (DX12Device::Is_Active())
+	Poke_DX12_Texture(DX12TextureClass::Create_Depth_Target(width, height));
+	if (Peek_DX12_Texture() == nullptr)
 	{
-		Poke_DX12_Texture(DX12TextureClass::Create_Depth_Target(width, height));
-		if (Peek_DX12_Texture() == nullptr)
-		{
-			WWDEBUG_SAY(("ZTextureClass: could not create a %d x %d depth texture", width, height));
-		}
-		Initialized=true;
-		IsProcedural=true;
-		IsReducible=false;
-		LastAccessed=WW3D::Get_Sync_Time();
-		return;
-	}
-
-	D3DPOOL d3dpool=(D3DPOOL)0;
-	switch (pool)
-	{
-	case POOL_DEFAULT: d3dpool=D3DPOOL_DEFAULT; break;
-	case POOL_MANAGED: d3dpool=D3DPOOL_MANAGED; break;
-	case POOL_SYSTEMMEM: d3dpool=D3DPOOL_SYSTEMMEM;	break;
-	default:	WWASSERT(0);
-	}
-
-	Poke_Texture
-	(
-		DX8Wrapper::_Create_DX8_ZTexture
-		(
-			width,
-			height,
-			zformat,
-			mip_level_count,
-			d3dpool
-		)
-	);
-
-	if (pool==POOL_DEFAULT)
-	{
-		Set_Dirty();
-		DX8ZTextureTrackerClass *track=new DX8ZTextureTrackerClass
-		(
-			width,
-			height,
-			zformat,
-			mip_level_count,
-			this
-		);
-		DX8TextureManagerClass::Add(track);
+		WWDEBUG_SAY(("ZTextureClass: could not create a %d x %d depth texture", width, height));
 	}
 	Initialized=true;
 	IsProcedural=true;
 	IsReducible=false;
-
 	LastAccessed=WW3D::Get_Sync_Time();
 }
 
@@ -1449,12 +1245,7 @@ ZTextureClass::ZTextureClass
 */
 void ZTextureClass::Apply(unsigned int stage)
 {
-	if (DX12Device::Is_Active())
-	{
-		DX8Wrapper::Set_DX12_Texture(stage, Peek_DX12_Texture());
-		return;
-	}
-	DX8Wrapper::Set_DX8_Texture(stage, Peek_D3D_Base_Texture());
+	DX8Wrapper::Set_DX12_Texture(stage, Peek_DX12_Texture());
 }
 
 //**********************************************************************************************
@@ -1499,20 +1290,7 @@ void ZTextureClass::Apply_New_Surface
 */
 IDirect3DSurface8* ZTextureClass::Get_D3D_Surface_Level(unsigned int level)
 {
-	if (DX12Device::Is_Active())
-	{
-		return nullptr;
-	}
-
-	if (!Peek_D3D_Texture())
-	{
-		WWASSERT_PRINT(0, "Get_D3D_Surface_Level: D3DTexture is null!");
-		return nullptr;
-	}
-
-	IDirect3DSurface8 *d3d_surface = nullptr;
-	DX8_ErrorCode(Peek_D3D_Texture()->GetSurfaceLevel(level, &d3d_surface));
-	return d3d_surface;
+	return nullptr;
 }
 
 //**********************************************************************************************
@@ -1521,21 +1299,9 @@ IDirect3DSurface8* ZTextureClass::Get_D3D_Surface_Level(unsigned int level)
 */
 unsigned ZTextureClass::Get_Texture_Memory_Usage() const
 {
-	int size=0;
-	if (DX12Device::Is_Active())
-	{
-		DX12TextureClass *dx12_texture = Peek_DX12_Texture();
-		if (dx12_texture == nullptr) return 0;
-		return dx12_texture->Get_Width()*dx12_texture->Get_Height()*4;
-	}
-	if (!Peek_D3D_Texture()) return 0;
-	for (unsigned i=0;i<Peek_D3D_Texture()->GetLevelCount();++i)
-	{
-		D3DSURFACE_DESC desc;
-		DX8_ErrorCode(Peek_D3D_Texture()->GetLevelDesc(i,&desc));
-		size+=desc.Size;
-	}
-	return size;
+	DX12TextureClass *dx12_texture = Peek_DX12_Texture();
+	if (dx12_texture == nullptr) return 0;
+	return dx12_texture->Get_Width()*dx12_texture->Get_Height()*4;
 }
 
 
@@ -1573,49 +1339,7 @@ CubeTextureClass::CubeTextureClass
 
 	// Cube textures are not supported by the Direct3D 12 renderer yet. Drop the 2D texture that the
 	// TextureClass constructor created; the texture stays empty.
-	if (DX12Device::Is_Active())
-	{
-		Poke_DX12_Texture(nullptr);
-		LastAccessed=WW3D::Get_Sync_Time();
-		return;
-	}
-
-	D3DPOOL d3dpool=(D3DPOOL)0;
-	switch(pool)
-	{
-	case POOL_DEFAULT		: d3dpool=D3DPOOL_DEFAULT; break;
-	case POOL_MANAGED		: d3dpool=D3DPOOL_MANAGED; break;
-	case POOL_SYSTEMMEM	: d3dpool=D3DPOOL_SYSTEMMEM; break;
-	default: WWASSERT(0);
-	}
-
-	Poke_Texture
-	(
-		DX8Wrapper::_Create_DX8_Cube_Texture
-		(
-			width,
-			height,
-			format,
-			mip_level_count,
-			d3dpool,
-			rendertarget
-		)
-	);
-
-	if (pool==POOL_DEFAULT)
-	{
-		Set_Dirty();
-		DX8TextureTrackerClass *track=new DX8TextureTrackerClass
-		(
-			width,
-			height,
-			format,
-			mip_level_count,
-			this,
-			rendertarget
-		);
-		DX8TextureManagerClass::Add(track);
-	}
+	Poke_DX12_Texture(nullptr);
 	LastAccessed=WW3D::Get_Sync_Time();
 }
 
@@ -1866,49 +1590,7 @@ VolumeTextureClass::VolumeTextureClass
 
 	// Volume textures are not supported by the Direct3D 12 renderer yet. Drop the 2D texture that the
 	// TextureClass constructor created; the texture stays empty.
-	if (DX12Device::Is_Active())
-	{
-		Poke_DX12_Texture(nullptr);
-		LastAccessed=WW3D::Get_Sync_Time();
-		return;
-	}
-
-	D3DPOOL d3dpool=(D3DPOOL)0;
-	switch(pool)
-	{
-	case POOL_DEFAULT		: d3dpool=D3DPOOL_DEFAULT; break;
-	case POOL_MANAGED		: d3dpool=D3DPOOL_MANAGED; break;
-	case POOL_SYSTEMMEM	: d3dpool=D3DPOOL_SYSTEMMEM; break;
-	default: WWASSERT(0);
-	}
-
-	Poke_Texture
-	(
-		DX8Wrapper::_Create_DX8_Volume_Texture
-		(
-			width,
-			height,
-			depth,
-			format,
-			mip_level_count,
-			d3dpool
-		)
-	);
-
-	if (pool==POOL_DEFAULT)
-	{
-		Set_Dirty();
-		DX8TextureTrackerClass *track=new DX8TextureTrackerClass
-		(
-			width,
-			height,
-			format,
-			mip_level_count,
-			this,
-			rendertarget
-		);
-		DX8TextureManagerClass::Add(track);
-	}
+	Poke_DX12_Texture(nullptr);
 	LastAccessed=WW3D::Get_Sync_Time();
 }
 
