@@ -244,51 +244,12 @@ public:
 } _TextureLoadThread;
 
 
-// TODO: Legacy - remove this call!
-IDirect3DTexture8* Load_Compressed_Texture(
-	const StringClass& filename,
-	unsigned reduction_factor,
-	MipCountType mip_level_count,
-	WW3DFormat dest_format)
-{
-	// If DDS file isn't available, use TGA file to convert to DDS.
-
-	DDSFileClass dds_file(filename,reduction_factor);
-	if (!dds_file.Is_Available()) return nullptr;
-	if (!dds_file.Load()) return nullptr;
-
-	unsigned width=dds_file.Get_Width(0);
-	unsigned height=dds_file.Get_Height(0);
-	unsigned mips=dds_file.Get_Mip_Level_Count();
-
-	// If format isn't defined get the nearest valid texture format to the compressed file format
-	// Note that the nearest valid format could be anything, even uncompressed.
-	if (dest_format==WW3D_FORMAT_UNKNOWN) dest_format=Get_Valid_Texture_Format(dds_file.Get_Format(),true);
-
-	IDirect3DTexture8* d3d_texture = DX8Wrapper::_Create_DX8_Texture
-	(
-		width,
-		height,
-		dest_format,
-		(MipCountType)mips
-	);
-
-	for (unsigned level=0;level<mips;++level) {
-		IDirect3DSurface8* d3d_surface=nullptr;
-		WWASSERT(d3d_texture);
-		DX8_ErrorCode(d3d_texture->GetSurfaceLevel(level/*-reduction_factor*/,&d3d_surface));
-		dds_file.Copy_Level_To_Surface(level,d3d_surface);
-		d3d_surface->Release();
-	}
-	return d3d_texture;
-}
-
 static bool Is_Format_Compressed(WW3DFormat texture_format,bool allow_compression)
 {
 	// Verify that the user isn't requesting compressed texture without hardware support
 
 	// Feature level 11_0 always supports BC1-3.
-	const bool support_dxtc=DX12Device::Is_Active() || DX8Wrapper::Get_Current_Caps()->Support_DXTC();
+	const bool support_dxtc=true;
 
 	bool compressed=false;
 	if (texture_format!=WW3D_FORMAT_UNKNOWN) {
@@ -370,22 +331,11 @@ void TextureLoader::Validate_Texture_Size
 	unsigned max_texture_height;
 	unsigned max_volume_extent;
 	unsigned max_texture_aspect_ratio;
-	if (DX12Device::Is_Active())
-	{
-		// Feature level 11_0 limits
-		max_texture_width = 16384;
-		max_texture_height = 16384;
-		max_volume_extent = 2048;
-		max_texture_aspect_ratio = 0;
-	}
-	else
-	{
-		const D3DCAPS8& dx8caps=DX8Wrapper::Get_Current_Caps()->Get_DX8_Caps();
-		max_texture_width = dx8caps.MaxTextureWidth;
-		max_texture_height = dx8caps.MaxTextureHeight;
-		max_volume_extent = dx8caps.MaxVolumeExtent;
-		max_texture_aspect_ratio = dx8caps.MaxTextureAspectRatio;
-	}
+	// Feature level 11_0 limits
+	max_texture_width = 16384;
+	max_texture_height = 16384;
+	max_volume_extent = 2048;
+	max_texture_aspect_ratio = 0;
 
 	unsigned poweroftwowidth = 1;
 	while (poweroftwowidth < width)
@@ -446,103 +396,7 @@ IDirect3DTexture8* TextureLoader::Load_Thumbnail(const StringClass& filename, co
 {
 	WWASSERT(Is_DX8_Thread());
 
-	if (DX12Device::Is_Active())
-	{
-		return nullptr;
-	}
-
-	ThumbnailClass* thumb=nullptr;
-	thumb=ThumbnailManagerClass::Peek_Thumbnail_Instance_From_Any_Manager(filename);
-
-	// If no thumb is found return a missing texture
-	if (!thumb) {
-		return MissingTexture::_Get_Missing_Texture();
-	}
-
-	WWASSERT(thumb->Get_Format()==WW3D_FORMAT_A4R4G4B4);
-	unsigned src_pitch=thumb->Get_Width()*2;	// Thumbs are always 16 bits
-	WW3DFormat dest_format;
-	WW3DFormat texture_format=WW3D_FORMAT_UNKNOWN;
-	if (texture_format==WW3D_FORMAT_UNKNOWN) {
-		dest_format=Get_Valid_Texture_Format(WW3D_FORMAT_A4R4G4B4,false); // no compressed formats please
-	}
-	else {
-		dest_format=Get_Valid_Texture_Format(texture_format,false);	// no compressed formats please
-		WWASSERT(dest_format==texture_format);
-	}
-
-	IDirect3DTexture8* sysmem_texture = DX8Wrapper::_Create_DX8_Texture(
-		thumb->Get_Width(),
-		thumb->Get_Height(),
-		dest_format,
-		MIP_LEVELS_ALL,
-#ifdef USE_MANAGED_TEXTURES
-		D3DPOOL_MANAGED);
-#else
-		D3DPOOL_SYSTEMMEM);
-#endif
-
-	unsigned level=0;
-	D3DLOCKED_RECT locked_rects[12]={0};
-	WWASSERT(sysmem_texture->GetLevelCount()<=12);
-
-	// Lock all surfaces
-	for (level=0;level<sysmem_texture->GetLevelCount();++level) {
-		DX8_ErrorCode(
-			sysmem_texture->LockRect(
-				level,
-				&locked_rects[level],
-				nullptr,
-				0));
-	}
-
-	unsigned char* src_surface=thumb->Peek_Bitmap();
-	WW3DFormat src_format=thumb->Get_Format();
-	unsigned width=thumb->Get_Width();
-	unsigned height=thumb->Get_Height();
-
-	Vector3 hsv=hsv_shift;
-	for (level=0;level<sysmem_texture->GetLevelCount()-1;++level) {
-		BitmapHandlerClass::Copy_Image_Generate_Mipmap(
-			width,
-			height,
-			(unsigned char*)locked_rects[level].pBits,
-			locked_rects[level].Pitch,
-			dest_format,
-			src_surface,
-			src_pitch,
-			src_format,
-			(unsigned char*)locked_rects[level+1].pBits,	// mipmap
-			locked_rects[level+1].Pitch,
-			hsv);
-		hsv=Vector3(0.0f,0.0f,0.0f);	// Only do the shift for the first level, as the mipmaps are based on it.
-
-		src_format=dest_format;
-		src_surface=(unsigned char*)locked_rects[level].pBits;
-		src_pitch=locked_rects[level].Pitch;
-		width>>=1;
-		height>>=1;
-	}
-
-	// Unlock all surfaces
-	for (level=0;level<sysmem_texture->GetLevelCount();++level) {
-		DX8_ErrorCode(sysmem_texture->UnlockRect(level));
-	}
-#ifdef USE_MANAGED_TEXTURES
-	return sysmem_texture;
-#else
-	IDirect3DTexture8* d3d_texture = DX8Wrapper::_Create_DX8_Texture(
-		thumb->Get_Width(),
-		thumb->Get_Height(),
-		dest_format,
-		TextureBaseClass::MIP_LEVELS_ALL,
-		D3DPOOL_DEFAULT);
-	DX8CALL(UpdateTexture(sysmem_texture,d3d_texture));
-	sysmem_texture->Release();
-
-	WWDEBUG_SAY(("Created non-managed texture (%s)",filename));
-	return d3d_texture;
-#endif
+	return nullptr;
 }
 
 
@@ -560,110 +414,7 @@ IDirect3DSurface8* TextureLoader::Load_Surface_Immediate(
 {
 	WWASSERT(Is_DX8_Thread());
 
-	if (DX12Device::Is_Active())
-	{
-		return nullptr;
-	}
-
-	bool compressed=Is_Format_Compressed(texture_format,allow_compression);
-
-	if (compressed) {
-		IDirect3DTexture8* comp_tex=Load_Compressed_Texture(filename,0,MIP_LEVELS_1,WW3D_FORMAT_UNKNOWN);
-		if (comp_tex) {
-			IDirect3DSurface8* d3d_surface=nullptr;
-			DX8_ErrorCode(comp_tex->GetSurfaceLevel(0,&d3d_surface));
-			comp_tex->Release();
-			return d3d_surface;
-		}
-	}
-
-	// Make sure the file can be opened. If not, return missing texture.
-	Targa targa;
-	if (TARGA_ERROR_HANDLER(targa.Open(filename, TGA_READMODE),filename)) return MissingTexture::_Create_Missing_Surface();
-
-	// DX8 uses image upside down compared to TGA
-	targa.Header.ImageDescriptor ^= TGAIDF_YORIGIN;
-
-	WW3DFormat src_format,dest_format;
-	unsigned src_bpp=0;
-	Get_WW3D_Format(dest_format,src_format,src_bpp,targa);
-
-	if (texture_format!=WW3D_FORMAT_UNKNOWN) {
-		dest_format=texture_format;
-	}
-
-	// Destination size will be the next power of two square from the larger width and height...
-	unsigned width, height;
-	width=targa.Header.Width;
-	height=targa.Header.Height;
-	unsigned src_width=targa.Header.Width;
-	unsigned src_height=targa.Header.Height;
-
-	// NOTE: We load the palette but we do not yet support paletted textures!
-	char palette[256*4];
-	targa.SetPalette(palette);
-	if (TARGA_ERROR_HANDLER(targa.Load(filename, TGAF_IMAGE, false),filename)) return MissingTexture::_Create_Missing_Surface();
-
-	unsigned char* src_surface=(unsigned char*)targa.GetImage();
-
-	// No paletted destination format allowed
-	unsigned char* converted_surface=nullptr;
-	if (src_format==WW3D_FORMAT_A1R5G5B5 || src_format==WW3D_FORMAT_R5G6B5 || src_format==WW3D_FORMAT_A4R4G4B4 ||
-		src_format==WW3D_FORMAT_P8 || src_format==WW3D_FORMAT_L8 || src_width!=width || src_height!=height) {
-		converted_surface=W3DNEWARRAY unsigned char[width*height*4];
-		dest_format=Get_Valid_Texture_Format(WW3D_FORMAT_A8R8G8B8,false);
-		BitmapHandlerClass::Copy_Image(
-			converted_surface,
-			width,
-			height,
-			width*4,
-			WW3D_FORMAT_A8R8G8B8,//dest_format,
-			src_surface,
-			src_width,
-			src_height,
-			src_width*src_bpp,
-			src_format,
-			(unsigned char*)targa.GetPalette(),
-			targa.Header.CMapDepth>>3,
-			false);
-		src_surface=converted_surface;
-		src_format=WW3D_FORMAT_A8R8G8B8;//dest_format;
-		src_width=width;
-		src_height=height;
-		src_bpp=Get_Bytes_Per_Pixel(src_format);
-	}
-
-	unsigned src_pitch=src_width*src_bpp;
-
-	IDirect3DSurface8* d3d_surface = DX8Wrapper::_Create_DX8_Surface(width,height,dest_format);
-	WWASSERT(d3d_surface);
-	D3DLOCKED_RECT locked_rect;
-	DX8_ErrorCode(
-		d3d_surface->LockRect(
-			&locked_rect,
-			nullptr,
-			0));
-
-	BitmapHandlerClass::Copy_Image(
-		(unsigned char*)locked_rect.pBits,
-		width,
-		height,
-		locked_rect.Pitch,
-		dest_format,
-		src_surface,
-		src_width,
-		src_height,
-		src_pitch,
-		src_format,
-		(unsigned char*)targa.GetPalette(),
-		targa.Header.CMapDepth>>3,
-		false);	// No mipmap
-
-	DX8_ErrorCode(d3d_surface->UnlockRect());
-
-	delete[] converted_surface;
-
-	return d3d_surface;
+	return nullptr;
 }
 
 
@@ -1194,31 +945,14 @@ void TextureLoader::Load_Thumbnail(TextureBaseClass *tc)
 	// All D3D operations must run from main thread
 	WWASSERT(Is_DX8_Thread());
 
-	if (DX12Device::Is_Active())
-	{
-		// Cube and volume textures are not supported in Direct3D 12 mode, so only regular
-		// textures get a thumbnail.
-		if (tc->Get_Asset_Type()==TextureBaseClass::TEX_REGULAR)
-		{
-			DX12TextureClass *dx12_texture = Load_DX12_Thumbnail(tc->Get_Full_Path(),tc->Get_HSV_Shift());
-			tc->Apply_New_DX12_Surface(dx12_texture, false);
-			REF_PTR_RELEASE(dx12_texture);
-		}
-		return;
-	}
-
-	// load thumbnail texture
-	IDirect3DTexture8 *d3d_texture = Load_Thumbnail(tc->Get_Full_Path(),tc->Get_HSV_Shift());
-
-	// apply thumbnail to texture
+	// Cube and volume textures are not supported in Direct3D 12 mode, so only regular
+	// textures get a thumbnail.
 	if (tc->Get_Asset_Type()==TextureBaseClass::TEX_REGULAR)
 	{
-		tc->Apply_New_Surface(d3d_texture, false);
+		DX12TextureClass *dx12_texture = Load_DX12_Thumbnail(tc->Get_Full_Path(),tc->Get_HSV_Shift());
+		tc->Apply_New_DX12_Surface(dx12_texture, false);
+		REF_PTR_RELEASE(dx12_texture);
 	}
-
-	// release our reference to thumbnail texture
-	d3d_texture->Release();
-	d3d_texture = nullptr;
 }
 
 
@@ -1535,48 +1269,25 @@ void TextureLoadTaskClass::Apply_Missing_Texture()
 	WWASSERT(TextureLoader::Is_DX8_Thread());
 	WWASSERT(!D3DTexture);
 
-	if (DX12Device::Is_Active())
+	WWASSERT(!DX12Texture);
+	// Cube and volume textures stay empty in Direct3D 12 mode.
+	if (Texture->Get_Asset_Type()==TextureBaseClass::TEX_REGULAR)
 	{
-		WWASSERT(!DX12Texture);
-		// Cube and volume textures stay empty in Direct3D 12 mode.
-		if (Texture->Get_Asset_Type()==TextureBaseClass::TEX_REGULAR)
-		{
-			DX12Texture = MissingTexture::_Get_DX12_Missing_Texture();
-		}
-		Apply(true);
-		return;
+		DX12Texture = MissingTexture::_Get_DX12_Missing_Texture();
 	}
-
-	D3DTexture = MissingTexture::_Get_Missing_Texture();
 	Apply(true);
 }
 
 
 void TextureLoadTaskClass::Apply(bool initialize)
 {
-	if (DX12Device::Is_Active())
-	{
-		// Verify that none of the mip levels are locked
-		for (unsigned i=0;i<MipLevelCount;++i) {
-			WWASSERT(LockedSurfacePtr[i]==nullptr);
-		}
-
-		Texture->Apply_New_DX12_Surface(DX12Texture, initialize);
-		REF_PTR_RELEASE(DX12Texture);
-		return;
-	}
-
-	WWASSERT(D3DTexture);
-
 	// Verify that none of the mip levels are locked
 	for (unsigned i=0;i<MipLevelCount;++i) {
 		WWASSERT(LockedSurfacePtr[i]==nullptr);
 	}
 
-	Texture->Apply_New_Surface(D3DTexture, initialize);
-
-	D3DTexture->Release();
-	D3DTexture = nullptr;
+	Texture->Apply_New_DX12_Surface(DX12Texture, initialize);
+	REF_PTR_RELEASE(DX12Texture);
 }
 
 
@@ -1729,33 +1440,6 @@ static void Apply_Dim_Reduction(unsigned& width, unsigned& height, unsigned& red
 	}
 }
 
-// If the size doesn't match, try and see if texture reduction would help...
-// (mainly for cases where loaded texture is larger than hardware limit)
-static void Apply_Dim_Reduction_With_Depth(unsigned& width, unsigned& height, unsigned& depth, unsigned& reduction, unsigned mip_count)
-{
-	for (unsigned r = reduction; r < mip_count; ++r)
-	{
-		unsigned w = max(width >> r, MinTextureDim);
-		unsigned h = max(height >> r, MinTextureDim);
-		unsigned d = max(depth >> r, MinTextureDepth);
-		unsigned tmp_w = w;
-		unsigned tmp_h = h;
-		unsigned tmp_d = d;
-
-		TextureLoader::Validate_Texture_Size(w, h, d);
-
-		if (w == tmp_w && h == tmp_h && d == tmp_d)
-		{
-			width = w;
-			height = h;
-			depth = d;
-			reduction = r;
-			break;
-		}
-	}
-}
-
-
 static void Apply_Mip_Reduction(unsigned& mip_level_count, unsigned reduction, unsigned width, unsigned height, unsigned mip_count)
 {
 	// If texture wants all mip levels, take as many as the file contains (not necessarily all)
@@ -1821,27 +1505,8 @@ bool TextureLoadTaskClass::Begin_Compressed_Load()
 
 	Apply_Mip_Reduction(MipLevelCount, Reduction, Width, Height, orig_mip_count);
 
-	if (DX12Device::Is_Active())
-	{
-		DX12Texture = DX12TextureClass::Create(Width, Height, Format, MipLevelCount, false);
-		return DX12Texture != nullptr;
-	}
-
-	D3DTexture	= DX8Wrapper::_Create_DX8_Texture
-	(
-		Width,
-		Height,
-		Format,
-		(MipCountType)MipLevelCount,
-#ifdef USE_MANAGED_TEXTURES
-		D3DPOOL_MANAGED
-#else
-		D3DPOOL_SYSTEMMEM
-#endif
-	);
-
-	// Texture creation can fail, e.g. when out of memory
-	return D3DTexture != nullptr;
+	DX12Texture = DX12TextureClass::Create(Width, Height, Format, MipLevelCount, false);
+	return DX12Texture != nullptr;
 }
 
 bool TextureLoadTaskClass::Begin_Uncompressed_Load()
@@ -1897,97 +1562,33 @@ bool TextureLoadTaskClass::Begin_Uncompressed_Load()
 		Format = Get_Valid_Texture_Format(Format, false);
 	}
 
-	if (DX12Device::Is_Active())
-	{
-		DX12Texture = DX12TextureClass::Create(Width, Height, Format, Texture->MipLevelCount, false);
-		return DX12Texture != nullptr;
-	}
-
-	D3DTexture = DX8Wrapper::_Create_DX8_Texture
-	(
-		Width,
-		Height,
-		Format,
-		Texture->MipLevelCount,
-#ifdef USE_MANAGED_TEXTURES
-		D3DPOOL_MANAGED
-#else
-		D3DPOOL_SYSTEMMEM
-#endif
-	);
-
-	return D3DTexture != nullptr;
+	DX12Texture = DX12TextureClass::Create(Width, Height, Format, Texture->MipLevelCount, false);
+	return DX12Texture != nullptr;
 }
 
 
 void TextureLoadTaskClass::Lock_Surfaces()
 {
-	if (DX12Device::Is_Active())
-	{
-		MipLevelCount = DX12Texture->Get_Level_Count();
-		for (unsigned int i = 0; i < MipLevelCount; ++i)
-		{
-			int pitch = 0;
-			LockedSurfacePtr[i]		= (unsigned char *)DX12Texture->Lock(i, &pitch);
-			LockedSurfacePitch[i]	= pitch;
-		}
-		return;
-	}
-
-	MipLevelCount = D3DTexture->GetLevelCount();
-
+	MipLevelCount = DX12Texture->Get_Level_Count();
 	for (unsigned int i = 0; i < MipLevelCount; ++i)
 	{
-		D3DLOCKED_RECT locked_rect;
-		DX8_ErrorCode
-		(
-			Peek_D3D_Texture()->LockRect
-			(
-				i,
-				&locked_rect,
-				nullptr,
-				0
-			)
-		);
-		LockedSurfacePtr[i]		= (unsigned char *)locked_rect.pBits;
-		LockedSurfacePitch[i]	= locked_rect.Pitch;
+		int pitch = 0;
+		LockedSurfacePtr[i]		= (unsigned char *)DX12Texture->Lock(i, &pitch);
+		LockedSurfacePitch[i]	= pitch;
 	}
 }
 
 
 void TextureLoadTaskClass::Unlock_Surfaces()
 {
-	if (DX12Device::Is_Active())
-	{
-		for (unsigned int i = 0; i < MipLevelCount; ++i)
-		{
-			if (LockedSurfacePtr[i])
-			{
-				DX12Texture->Unlock(i);
-			}
-			LockedSurfacePtr[i] = nullptr;
-		}
-		return;
-	}
-
 	for (unsigned int i = 0; i < MipLevelCount; ++i)
 	{
 		if (LockedSurfacePtr[i])
 		{
-			WWASSERT(ThreadClass::_Get_Current_Thread_ID() == DX8Wrapper::_Get_Main_Thread_ID());
-			DX8_ErrorCode(Peek_D3D_Texture()->UnlockRect(i));
+			DX12Texture->Unlock(i);
 		}
 		LockedSurfacePtr[i] = nullptr;
 	}
-
-#ifndef USE_MANAGED_TEXTURES
-	IDirect3DTexture8* tex = DX8Wrapper::_Create_DX8_Texture(Width, Height, Format, Texture->MipLevelCount,D3DPOOL_DEFAULT);
-	DX8CALL(UpdateTexture(Peek_D3D_Texture(),tex));
-	Peek_D3D_Texture()->Release();
-	D3DTexture=tex;
-	WWDEBUG_SAY(("Created non-managed texture (%s)",Texture->Get_Full_Path()));
-#endif
-
 }
 
 
@@ -2383,128 +1984,12 @@ void CubeTextureLoadTaskClass::Unlock_Surfaces()
 bool CubeTextureLoadTaskClass::Begin_Compressed_Load()
 {
 	// Cube textures are not supported in Direct3D 12 mode.
-	if (DX12Device::Is_Active())
-	{
-		return false;
-	}
-
-	unsigned orig_width,orig_height,orig_depth,orig_mip_count,orig_reduction;
-	WW3DFormat orig_format;
-	if (!Get_Texture_Information
-		  (
-				Texture->Get_Full_Path(),
-				orig_reduction,
-				orig_width,
-				orig_height,
-				orig_depth,
-				orig_format,
-				orig_mip_count,
-				true
-		  )
-		)
-	{
-		return false;
-	}
-
-	Format = Get_Valid_Texture_Format(orig_format, Texture->Is_Compression_Allowed());
-
-	Reduction = orig_reduction;
-	Validate_Reduction(Texture, Reduction, orig_mip_count);
-
-	Width = orig_width;
-	Height = orig_height;
-	Apply_Dim_Reduction(Width, Height, Reduction, orig_mip_count);
-
-	Apply_Mip_Reduction(MipLevelCount, Reduction, Width, Height, orig_mip_count);
-
-	D3DTexture	= DX8Wrapper::_Create_DX8_Cube_Texture
-	(
-		Width,
-		Height,
-		Format,
-		(MipCountType)MipLevelCount,
-#ifdef USE_MANAGED_TEXTURES
-		D3DPOOL_MANAGED
-#else
-		D3DPOOL_SYSTEMMEM
-#endif
-	);
-
-	return D3DTexture != nullptr;
+	return false;
 }
 
 bool CubeTextureLoadTaskClass::Begin_Uncompressed_Load()
 {
-	if (DX12Device::Is_Active())
-	{
-		return false;
-	}
-
-	unsigned orig_width,orig_height,orig_depth,orig_mip_count,orig_reduction;
-	WW3DFormat orig_format;
-	if (!Get_Texture_Information
-		  (
-				Texture->Get_Full_Path(),
-				orig_reduction,
-				orig_width,
-				orig_height,
-				orig_depth,
-				orig_format,
-				orig_mip_count,
-				false
-			)
-		)
-	{
-		return false;
-	}
-
-	WW3DFormat src_format=orig_format;
-	WW3DFormat dest_format=src_format;
-	dest_format=Get_Valid_Texture_Format(dest_format,false);	// No compressed destination format if reading from targa...
-
-   if (		src_format != WW3D_FORMAT_A8R8G8B8 &&
-   		src_format != WW3D_FORMAT_R8G8B8 &&
-  			src_format != WW3D_FORMAT_X8R8G8B8 )
-	{
-		WWDEBUG_SAY(("Invalid TGA format used in %s - only 24 and 32 bit formats should be used!", Texture->Get_Full_Path().str()));
-	}
-
-	// Destination size will be the next power of two square from the larger width and height...
-	unsigned ow = orig_width;
-	unsigned oh = orig_height;
-	TextureLoader::Validate_Texture_Size(orig_width, orig_height,orig_depth);
-	if (orig_width != ow || orig_height != oh)
-	{
-		WWDEBUG_SAY(("Invalid texture size, scaling required. Texture: %s, size: %d x %d -> %d x %d", Texture->Get_Full_Path().str(), ow, oh, orig_width, orig_height));
-	}
-
-	Width		= orig_width;
-	Height	= orig_height;
-	Reduction = 0;
-
-	if (Format == WW3D_FORMAT_UNKNOWN)
-	{
-		Format=dest_format;
-	}
-	else
-	{
-		Format = Get_Valid_Texture_Format(Format, false);
-	}
-
-	D3DTexture = DX8Wrapper::_Create_DX8_Cube_Texture
-	(
-		Width,
-		Height,
-		Format,
-		Texture->MipLevelCount,
-#ifdef USE_MANAGED_TEXTURES
-		D3DPOOL_MANAGED
-#else
-		D3DPOOL_SYSTEMMEM
-#endif
-	);
-
-	return D3DTexture != nullptr;
+	return false;
 }
 
 bool CubeTextureLoadTaskClass::Load_Compressed_Mipmap()
@@ -2700,133 +2185,12 @@ void VolumeTextureLoadTaskClass::Unlock_Surfaces()
 bool VolumeTextureLoadTaskClass::Begin_Compressed_Load()
 {
 	// Volume textures are not supported in Direct3D 12 mode.
-	if (DX12Device::Is_Active())
-	{
-		return false;
-	}
-
-	unsigned orig_width,orig_height,orig_depth,orig_mip_count,orig_reduction;
-	WW3DFormat orig_format;
-	if (!Get_Texture_Information
-		  (
-				Texture->Get_Full_Path(),
-				orig_reduction,
-				orig_width,
-				orig_height,
-				orig_depth,
-				orig_format,
-				orig_mip_count,
-				true
-		  )
-		)
-	{
-		return false;
-	}
-
-	Format = Get_Valid_Texture_Format(orig_format, Texture->Is_Compression_Allowed());
-
-	Reduction = orig_reduction;
-	Validate_Reduction(Texture, Reduction, orig_mip_count);
-
-	Width = orig_width;
-	Height = orig_height;
-	Depth = orig_depth;
-	Apply_Dim_Reduction_With_Depth(Width, Height, Depth, Reduction, orig_mip_count);
-
-	Apply_Mip_Reduction(MipLevelCount, Reduction, Width, Height, orig_mip_count);
-
-	D3DTexture	= DX8Wrapper::_Create_DX8_Volume_Texture
-	(
-		Width,
-		Height,
-		Depth,
-		Format,
-		(MipCountType)MipLevelCount,
-#ifdef USE_MANAGED_TEXTURES
-		D3DPOOL_MANAGED
-#else
-		D3DPOOL_SYSTEMMEM
-#endif
-	);
-
-	return D3DTexture != nullptr;
+	return false;
 }
 
 bool VolumeTextureLoadTaskClass::Begin_Uncompressed_Load()
 {
-	if (DX12Device::Is_Active())
-	{
-		return false;
-	}
-
-	unsigned orig_width,orig_height,orig_depth,orig_mip_count,orig_reduction;
-	WW3DFormat orig_format;
-	if (!Get_Texture_Information
-		  (
-				Texture->Get_Full_Path(),
-				orig_reduction,
-				orig_width,
-				orig_height,
-				orig_depth,
-				orig_format,
-				orig_mip_count,
-				false
-			)
-		)
-	{
-		return false;
-	}
-
-	WW3DFormat src_format=orig_format;
-	WW3DFormat dest_format=src_format;
-	dest_format=Get_Valid_Texture_Format(dest_format,false);	// No compressed destination format if reading from targa...
-
-   if (		src_format != WW3D_FORMAT_A8R8G8B8 &&
-   		src_format != WW3D_FORMAT_R8G8B8 &&
-  			src_format != WW3D_FORMAT_X8R8G8B8 )
-	{
-		WWDEBUG_SAY(("Invalid TGA format used in %s - only 24 and 32 bit formats should be used!", Texture->Get_Full_Path().str()));
-	}
-
-	// Destination size will be the next power of two square from the larger width and height...
-	unsigned ow = orig_width;
-	unsigned oh = orig_height;
-	unsigned od = orig_depth;
-	TextureLoader::Validate_Texture_Size(orig_width, orig_height, orig_depth);
-	if (orig_width != ow || orig_height != oh || orig_depth != od)
-	{
-		WWDEBUG_SAY(("Invalid texture size, scaling required. Texture: %s, size: %d x %d -> %d x %d", Texture->Get_Full_Path().str(), ow, oh, orig_width, orig_height));
-	}
-
-	Width		= orig_width;
-	Height	= orig_height;
-	Depth		= orig_depth;
-	Reduction = 0;
-
-	if (Format == WW3D_FORMAT_UNKNOWN)
-	{
-		Format=dest_format;
-	}
-	else
-	{
-		Format = Get_Valid_Texture_Format(Format, false);
-	}
-
-	D3DTexture = DX8Wrapper::_Create_DX8_Volume_Texture
-	(
-		Width,
-		Height,
-		Depth,
-		Format,
-		Texture->MipLevelCount,
-#ifdef USE_MANAGED_TEXTURES
-		D3DPOOL_MANAGED
-#else
-		D3DPOOL_SYSTEMMEM
-#endif
-	);
-
-	return D3DTexture != nullptr;
+	return false;
 }
 
 bool VolumeTextureLoadTaskClass::Load_Compressed_Mipmap()
