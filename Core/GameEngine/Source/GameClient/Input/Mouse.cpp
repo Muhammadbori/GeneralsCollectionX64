@@ -30,6 +30,7 @@
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
 
 #include "Common/Debug.h"
+#include "Common/FrameShots.h"
 #include "Common/MessageStream.h"
 #include "Common/GameEngine.h"
 #include "Common/GlobalData.h"
@@ -684,6 +685,11 @@ void Mouse::update()
 	// update the mouse data
 	updateMouseData();
 
+	// TheSuperHackers @feature While frame shots are on, the real mouse never reaches the game: the device queue is still
+	// drained, but its events are dropped, so the pointer state (hint, cursor, menu hover, edge scroll) stays untouched.
+	if( FrameShots::isEnabled() )
+		m_eventsThisFrame = 0;
+
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -698,6 +704,11 @@ void Mouse::createStreamMessages()
 	// sanity
 	if( TheMessageStream == nullptr )
 		return;  // no place to put messages
+
+	// TheSuperHackers @feature No raw mouse messages (not even the position) while frame shots are on, see update().
+	// The raw messages of -testInput are appended by FrameShots::injectTestInput().
+	if( FrameShots::isEnabled() )
+		return;
 
 	GameMessage *msg = nullptr;
 	UnsignedInt now = timeGetTime();

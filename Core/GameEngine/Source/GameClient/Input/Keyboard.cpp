@@ -30,6 +30,7 @@
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
 
 #include "Common/Language.h"
+#include "Common/FrameShots.h"
 #include "Common/GameEngine.h"
 #include "Common/MessageStream.h"
 #include "GameClient/Keyboard.h"
@@ -739,6 +740,20 @@ void Keyboard::reset()
 //-------------------------------------------------------------------------------------------------
 void Keyboard::update()
 {
+
+	// TheSuperHackers @feature While frame shots are on, the real keyboard never reaches the game: the device queue is
+	// drained and dropped, so no key message, key state, modifier or key repeat is created from it.
+	if( FrameShots::isEnabled() )
+	{
+		for( Int guard = 0; guard < 256; ++guard )
+		{
+			getKey( &m_keys[ 0 ] );
+			if( m_keys[ 0 ].key == KEY_NONE || m_keys[ 0 ].key == KEY_LOST )
+				break;
+		}
+		memset( &m_keys[ 0 ], 0, sizeof( m_keys[ 0 ] ) );
+		return;
+	}
 
 	// update the key data
 	updateKeys();
