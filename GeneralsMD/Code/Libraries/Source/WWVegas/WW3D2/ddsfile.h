@@ -136,7 +136,7 @@ struct LegacyDDSURFACEDESC2 {
 	};
 	unsigned AlphaBitDepth;
 	unsigned Reserved;
-	void* Surface;
+	unsigned Surface;	// a pointer in DX7, but 32 bits in the file: a void* would shift every later field on x64
 	union
 	{
 		LegacyDDCOLORKEY CKDestOverlay;
@@ -149,6 +149,9 @@ struct LegacyDDSURFACEDESC2 {
 	LegacyDDSCAPS2 Caps;
 	unsigned TextureStage;
 };
+
+// The header as stored in .dds files (without the magic number).
+static_assert(sizeof(LegacyDDSURFACEDESC2) == 124, "LegacyDDSURFACEDESC2 must match the 124-byte DDS file header");
 
 
 enum DDSType
