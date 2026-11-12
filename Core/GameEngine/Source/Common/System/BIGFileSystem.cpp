@@ -30,6 +30,8 @@
 
 #include "Common/BIGFileSystem.h"
 
+#include "Common/CommandLine.h"
+
 #include "Common/AudioAffect.h"
 #include "Common/ArchiveFile.h"
 #include "Common/file.h"
@@ -84,6 +86,18 @@ void BIGFileSystem::init() {
 	DEBUG_ASSERTCRASH(TheLocalFileSystem != nullptr, ("TheLocalFileSystem must be initialized before TheArchiveFileSystem."));
 	if (TheLocalFileSystem == nullptr) {
 		return;
+	}
+
+	// TheSuperHackers @feature A self-contained folder names its archives in an ordered list file next to the exe
+	// (Archives_Generals.txt or Archives_ZeroHour.txt). Without that file the folder and, for Zero Hour, the registry
+	// install path of Generals are searched as before.
+	if (const Char *listFile = CommandLine::getArchiveListFile())
+	{
+		if (loadArchiveFilesFromList(listFile))
+		{
+			return;
+		}
+		DEBUG_LOG(("BIGFileSystem::init - no archive could be loaded from %s, searching for archives instead.", listFile));
 	}
 
 	loadArchiveFilesFromDirectory("", "*.big");
@@ -227,6 +241,57 @@ void BIGFileSystem::closeAllArchiveFiles() {
 }
 
 void BIGFileSystem::closeAllFiles() {
+}
+
+Bool BIGFileSystem::loadArchiveFilesFromList(const Char *listFile) {
+
+	FILE *list = fopen(listFile, "r");
+	if (list == nullptr) {
+		DEBUG_LOG(("BIGFileSystem::loadArchiveFilesFromList - could not open %s", listFile));
+		return FALSE;
+	}
+
+	// Archive paths are relative to the folder of the list file.
+	AsciiString listDir = listFile;
+	const Char *lastSeparator = listDir.reverseFind('\\');
+	if (lastSeparator != nullptr) {
+		listDir.truncateTo(lastSeparator - listDir.str() + 1);
+	} else {
+		listDir.clear();
+	}
+
+	Bool actuallyAdded = FALSE;
+	Char line[_MAX_PATH];
+	while (fgets(line, sizeof(line), list) != nullptr) {
+		AsciiString entry = line;
+		entry.trim();
+		if (entry.isEmpty() || entry.getCharAt(0) == '#') {
+			continue;
+		}
+
+		AsciiString path;
+		const Bool absolute = entry.getLength() > 1 && (entry.getCharAt(1) == ':' || entry.getCharAt(0) == '\\');
+		if (!absolute) {
+			path = listDir;
+		}
+		path.concat(entry);
+
+		if (!TheLocalFileSystem->doesFileExist(path.str())) {
+			DEBUG_LOG(("BIGFileSystem::loadArchiveFilesFromList - listed archive %s does not exist.", path.str()));
+			continue;
+		}
+
+		ArchiveFile *archiveFile = openArchiveFile(path.str());
+		if (archiveFile != nullptr) {
+			DEBUG_LOG(("BIGFileSystem::loadArchiveFilesFromList - loading %s into the directory tree.", path.str()));
+			loadIntoDirectoryTree(archiveFile, FALSE);
+			m_archiveFileMap[path] = archiveFile;
+			actuallyAdded = TRUE;
+		}
+	}
+
+	fclose(list);
+	return actuallyAdded;
 }
 
 Bool BIGFileSystem::loadArchiveFilesFromDirectory(AsciiString dir, AsciiString fileMask, Bool overwrite) {

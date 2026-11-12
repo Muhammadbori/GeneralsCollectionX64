@@ -52,6 +52,10 @@ public:
 	virtual Bool loadArchiveFilesFromDirectory(AsciiString dir, AsciiString fileMask, Bool overwrite = FALSE) override;
 
 	virtual void loadMods() override;
+
 protected:
+	// TheSuperHackers @feature Loads the archives named in an archive list file, in file order (the first one wins).
+	// Returns TRUE when at least one archive was loaded.
+	Bool loadArchiveFilesFromList(const Char *listFile);
 
 };
