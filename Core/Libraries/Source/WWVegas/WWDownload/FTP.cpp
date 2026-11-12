@@ -40,6 +40,20 @@
 
 #include "DownloadDebug.h"
 
+#ifdef _WIN64
+// The game's registry keys are in the 32-bit view (WOW6432Node), where the installers and the 32-bit
+// executables keep them; a 64-bit process would read the native view by default.
+#define GAME_REGISTRY_VIEW KEY_WOW64_32KEY
+#else
+#define GAME_REGISTRY_VIEW 0
+#endif
+#ifdef _WIN64
+#define GAME_REG_CREATE_KEY(key, name, result) RegCreateKeyEx(key, name, 0, nullptr, 0, KEY_ALL_ACCESS | KEY_WOW64_32KEY, nullptr, result, nullptr)
+#else
+#define GAME_REG_CREATE_KEY(key, name, result) RegCreateKey(key, name, result)
+#endif
+
+
 // umm... what?? BGC 3/27/03
 //#ifndef RTS_DEBUG
 //#define RTS_DEBUG
@@ -126,7 +140,7 @@ static bool Use_Non_Blocking_Mode()
 
 
 	// Try and open the named key
-	regRetval=RegOpenKeyEx(HKEY_LOCAL_MACHINE,"SOFTWARE\\Westwood\\Earth And Beyond Beta 2",0,KEY_READ,&regKey);
+	regRetval=RegOpenKeyEx(HKEY_LOCAL_MACHINE,"SOFTWARE\\Westwood\\Earth And Beyond Beta 2",0,KEY_READ | GAME_REGISTRY_VIEW,&regKey);
 	if (regRetval!=ERROR_SUCCESS)
 		return(TRUE);		// default TRUE
 
@@ -1729,10 +1743,10 @@ HRESULT  Cftp::FileRecoveryPosition( LPCSTR szLocalFileName, LPCSTR szRegistryRo
 	}
 
 	if( RegOpenKeyEx( HKEY_LOCAL_MACHINE, (LPCTSTR)regkey,
-		0, KEY_ALL_ACCESS, &hkey ) != ERROR_SUCCESS )
+		0, KEY_ALL_ACCESS | GAME_REGISTRY_VIEW, &hkey ) != ERROR_SUCCESS )
 	{
 		// Key doesn't exist, create it
-		if( RegCreateKey( HKEY_LOCAL_MACHINE, (LPCTSTR)regkey,
+		if( GAME_REG_CREATE_KEY( HKEY_LOCAL_MACHINE, (LPCTSTR)regkey,
 			&hkey ) != ERROR_SUCCESS )
 		{
 			// Error, bail out

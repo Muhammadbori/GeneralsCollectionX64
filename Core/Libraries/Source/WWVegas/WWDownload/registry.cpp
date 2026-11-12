@@ -24,6 +24,15 @@
 #include <string>
 #include "WWLib/win.h"
 
+#ifdef _WIN64
+// The game's registry keys are in the 32-bit view (WOW6432Node), where the installers and the 32-bit
+// executables keep them; a 64-bit process would read the native view by default.
+#define GAME_REGISTRY_VIEW KEY_WOW64_32KEY
+#else
+#define GAME_REGISTRY_VIEW 0
+#endif
+
+
 bool  getStringFromRegistry(HKEY root, std::string path, std::string key, std::string& val)
 {
 	HKEY handle;
@@ -32,7 +41,7 @@ bool  getStringFromRegistry(HKEY root, std::string path, std::string key, std::s
 	unsigned long type;
 	int returnValue;
 
-	if ((returnValue = RegOpenKeyEx( root, path.c_str(), 0, KEY_READ, &handle )) == ERROR_SUCCESS)
+	if ((returnValue = RegOpenKeyEx( root, path.c_str(), 0, KEY_READ | GAME_REGISTRY_VIEW, &handle )) == ERROR_SUCCESS)
 	{
 		returnValue = RegQueryValueEx(handle, key.c_str(), nullptr, &type, (unsigned char *) &buffer, &size);
 		RegCloseKey( handle );
@@ -55,7 +64,7 @@ bool getUnsignedIntFromRegistry(HKEY root, std::string path, std::string key, un
 	unsigned long type;
 	int returnValue;
 
-	if ((returnValue = RegOpenKeyEx( root, path.c_str(), 0, KEY_READ, &handle )) == ERROR_SUCCESS)
+	if ((returnValue = RegOpenKeyEx( root, path.c_str(), 0, KEY_READ | GAME_REGISTRY_VIEW, &handle )) == ERROR_SUCCESS)
 	{
 		returnValue = RegQueryValueEx(handle, key.c_str(), nullptr, &type, (unsigned char *) &buffer, &size);
 		RegCloseKey( handle );
@@ -78,7 +87,7 @@ bool setStringInRegistry( HKEY root, std::string path, std::string key, std::str
 	int size;
 	char lpClass[] = "REG_NONE";
 
-	if ((returnValue = RegCreateKeyEx( root, path.c_str(), 0, lpClass, REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr, &handle, nullptr )) == ERROR_SUCCESS)
+	if ((returnValue = RegCreateKeyEx( root, path.c_str(), 0, lpClass, REG_OPTION_NON_VOLATILE, KEY_WRITE | GAME_REGISTRY_VIEW, nullptr, &handle, nullptr )) == ERROR_SUCCESS)
 	{
 		type = REG_SZ;
 		size = val.length()+1;
@@ -97,7 +106,7 @@ bool setUnsignedIntInRegistry( HKEY root, std::string path, std::string key, uns
 	int size;
 	char lpClass[] = "REG_NONE";
 
-	if ((returnValue = RegCreateKeyEx( root, path.c_str(), 0, lpClass, REG_OPTION_NON_VOLATILE, KEY_WRITE, nullptr, &handle, nullptr )) == ERROR_SUCCESS)
+	if ((returnValue = RegCreateKeyEx( root, path.c_str(), 0, lpClass, REG_OPTION_NON_VOLATILE, KEY_WRITE | GAME_REGISTRY_VIEW, nullptr, &handle, nullptr )) == ERROR_SUCCESS)
 	{
 		type = REG_DWORD;
 		size = 4;

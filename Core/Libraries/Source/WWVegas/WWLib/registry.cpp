@@ -40,6 +40,20 @@
 #include <assert.h>
 #include <windows.h>
 
+#ifdef _WIN64
+// The game's registry keys are in the 32-bit view (WOW6432Node), where the installers and the 32-bit
+// executables keep them; a 64-bit process would read the native view by default.
+#define GAME_REGISTRY_VIEW KEY_WOW64_32KEY
+#else
+#define GAME_REGISTRY_VIEW 0
+#endif
+#ifdef _WIN64
+#define GAME_REG_DELETE_KEY(key, name) RegDeleteKeyEx(key, name, KEY_WOW64_32KEY, 0)
+#else
+#define GAME_REG_DELETE_KEY(key, name) RegDeleteKey(key, name)
+#endif
+
+
 //#include "wwdebug.h"
 
 bool RegistryClass::IsLocked = false;
@@ -48,7 +62,7 @@ bool RegistryClass::IsLocked = false;
 bool RegistryClass::Exists(const char* sub_key)
 {
 	HKEY hKey;
-	LONG result = RegOpenKeyEx(HKEY_LOCAL_MACHINE, sub_key, 0, KEY_READ, &hKey);
+	LONG result = RegOpenKeyEx(HKEY_LOCAL_MACHINE, sub_key, 0, KEY_READ | GAME_REGISTRY_VIEW, &hKey);
 
 	if (ERROR_SUCCESS == result) {
 		RegCloseKey(hKey);
@@ -72,9 +86,9 @@ RegistryClass::RegistryClass( const char * sub_key, bool create ) :
 	if (create && !IsLocked) {
 		DWORD disposition;
 		result = RegCreateKeyEx(HKEY_LOCAL_MACHINE, sub_key, 0, nullptr, 0,
-			KEY_ALL_ACCESS, nullptr, &key, &disposition);
+			KEY_ALL_ACCESS | GAME_REGISTRY_VIEW, nullptr, &key, &disposition);
 	} else {
-		result = RegOpenKeyEx(HKEY_LOCAL_MACHINE, sub_key, 0, IsLocked ? KEY_READ : KEY_ALL_ACCESS, &key);
+		result = RegOpenKeyEx(HKEY_LOCAL_MACHINE, sub_key, 0, (IsLocked ? KEY_READ : KEY_ALL_ACCESS) | GAME_REGISTRY_VIEW, &key);
 	}
 
 	if (ERROR_SUCCESS == result) {
@@ -441,7 +455,7 @@ void RegistryClass::Save_Registry_Tree(char *path, INIClass *ini)
 	memset(&file_time, 0, sizeof(file_time));
 
 
-	long result = RegOpenKeyEx(HKEY_LOCAL_MACHINE, path, 0, KEY_ALL_ACCESS, &base_key);
+	long result = RegOpenKeyEx(HKEY_LOCAL_MACHINE, path, 0, KEY_ALL_ACCESS | GAME_REGISTRY_VIEW, &base_key);
 
 	WWASSERT(result == ERROR_SUCCESS);
 
@@ -466,7 +480,7 @@ void RegistryClass::Save_Registry_Tree(char *path, INIClass *ini)
 				unsigned long num_subs = 0;
 				unsigned long num_values = 0;
 
-				long new_result = RegOpenKeyEx(HKEY_LOCAL_MACHINE, new_key_path, 0, KEY_ALL_ACCESS, &sub_key);
+				long new_result = RegOpenKeyEx(HKEY_LOCAL_MACHINE, new_key_path, 0, KEY_ALL_ACCESS | GAME_REGISTRY_VIEW, &sub_key);
 				if (new_result == ERROR_SUCCESS) {
 					new_result = RegQueryInfoKey(sub_key, nullptr, nullptr, nullptr, &num_subs, nullptr, nullptr, &num_values, nullptr, nullptr, nullptr, nullptr);
 
@@ -666,7 +680,7 @@ void RegistryClass::Delete_Registry_Tree(char *path)
 		int max_times = 1000;
 
 
-		long result = RegOpenKeyEx(HKEY_LOCAL_MACHINE, path, 0, KEY_ALL_ACCESS, &base_key);
+		long result = RegOpenKeyEx(HKEY_LOCAL_MACHINE, path, 0, KEY_ALL_ACCESS | GAME_REGISTRY_VIEW, &base_key);
 
 		if (result == ERROR_SUCCESS) {
 			Delete_Registry_Values(base_key);
@@ -689,7 +703,7 @@ void RegistryClass::Delete_Registry_Tree(char *path)
 					unsigned long num_subs = 0;
 					unsigned long num_values = 0;
 
-					long new_result = RegOpenKeyEx(HKEY_LOCAL_MACHINE, new_key_path, 0, KEY_ALL_ACCESS, &sub_key);
+					long new_result = RegOpenKeyEx(HKEY_LOCAL_MACHINE, new_key_path, 0, KEY_ALL_ACCESS | GAME_REGISTRY_VIEW, &sub_key);
 					if (new_result == ERROR_SUCCESS) {
 						new_result = RegQueryInfoKey(sub_key, nullptr, nullptr, nullptr, &num_subs, nullptr, nullptr, &num_values, nullptr, nullptr, nullptr, nullptr);
 
@@ -706,7 +720,7 @@ void RegistryClass::Delete_Registry_Tree(char *path)
 
 						RegCloseKey(sub_key);
 
-						RegDeleteKey(base_key, name);
+						GAME_REG_DELETE_KEY(base_key, name);
 					}
 				}
 				max_times--;
@@ -716,7 +730,7 @@ void RegistryClass::Delete_Registry_Tree(char *path)
 			}
 			RegCloseKey(base_key);
 
-			RegDeleteKey(HKEY_LOCAL_MACHINE, path);
+			GAME_REG_DELETE_KEY(HKEY_LOCAL_MACHINE, path);
 		}
 	}
 }
