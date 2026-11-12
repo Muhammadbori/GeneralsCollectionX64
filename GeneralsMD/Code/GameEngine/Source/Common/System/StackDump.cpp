@@ -37,11 +37,7 @@
 //	Prototypes
 //*****************************************************************************
 BOOL InitSymbolInfo();
-#ifdef _WIN64
 static void MakeStackTrace(CONTEXT *context, int skipFrames, void (*callback)(const char*));
-#else
-void MakeStackTrace(DWORD myeip,DWORD myesp,DWORD myebp, int skipFrames, void (*callback)(const char*));
-#endif
 void GetFunctionDetails(void *pointer, char*name, char*filename, unsigned int* linenumber, unsigned int* address);
 void WriteStackLine(void*address, void (*callback)(const char*));
 
@@ -69,6 +65,23 @@ static DWORD64 WINAPI CurrentProcessModuleBase(HANDLE process, DWORD64 address)
 }
 #endif
 
+// The architecture-dependent parts of the stack walk.
+#ifdef _WIN64
+#define STACKDUMP_MACHINE IMAGE_FILE_MACHINE_AMD64
+#define STACKDUMP_PC(c) ((c)->Rip)
+#define STACKDUMP_SP(c) ((c)->Rsp)
+#define STACKDUMP_FP(c) ((c)->Rbp)
+#define STACKDUMP_FUNCTION_TABLE_ACCESS CurrentProcessFunctionTableAccess
+#define STACKDUMP_MODULE_BASE CurrentProcessModuleBase
+#else
+#define STACKDUMP_MACHINE IMAGE_FILE_MACHINE_I386
+#define STACKDUMP_PC(c) ((c)->Eip)
+#define STACKDUMP_SP(c) ((c)->Esp)
+#define STACKDUMP_FP(c) ((c)->Ebp)
+#define STACKDUMP_FUNCTION_TABLE_ACCESS DbgHelp::SymFunctionTableAccess
+#define STACKDUMP_MODULE_BASE DbgHelp::SymGetModuleBase
+#endif
+
 
 //*****************************************************************************
 //*****************************************************************************
@@ -90,15 +103,18 @@ void StackDump(void (*callback)(const char*))
 	if (!InitSymbolInfo())
 		return;
 
+	// The walk starts in this function (on x64 RtlCaptureContext returns the registers at its
+	// return address here).
 #ifdef _WIN64
-	// RtlCaptureContext returns the registers at its return address in this function, so the walk
-	// starts in this function, as the x86 code below does.
 	CONTEXT context;
 	RtlCaptureContext(&context);
-	MakeStackTrace(&context, 2, callback);
 #else
+	// x86 RtlCaptureContext takes the registers from the caller's EBP frame, which a function
+	// without frame pointer (Release) does not have, so the registers are captured here.
+	CONTEXT context;
+	memset(&context, 0, sizeof(context));
+	context.ContextFlags = CONTEXT_CONTROL;
 	DWORD myeip,myesp,myebp;
-
 #if defined(_MSC_VER)
 __asm
 {
@@ -124,16 +140,16 @@ MYEIP1:
 #else
 	#error "Unsupported compiler or architecture for register capture"
 #endif
-
-
-	MakeStackTrace(myeip,myesp,myebp, 2, callback);
+	context.Eip = myeip;
+	context.Esp = myesp;
+	context.Ebp = myebp;
 #endif
+	MakeStackTrace(&context, 2, callback);
 }
 
 
 //*****************************************************************************
 //*****************************************************************************
-#ifdef _WIN64
 void StackDumpFromContext(const CONTEXT *context, void (*callback)(const char*))
 {
 	if (callback == nullptr)
@@ -144,30 +160,15 @@ void StackDumpFromContext(const CONTEXT *context, void (*callback)(const char*))
 	if (!InitSymbolInfo())
 		return;
 
-	// StackWalk64 updates the context frame by frame, so it walks a copy.
+	// StackWalk updates the context frame by frame, so it walks a copy.
 	CONTEXT walkContext = *context;
 	MakeStackTrace(&walkContext, 0, callback);
 }
-#else
-void StackDumpFromContext(DWORD eip,DWORD esp,DWORD ebp, void (*callback)(const char*))
-{
-	if (callback == nullptr)
-	{
-		callback = StackDumpDefaultHandler;
-	}
-
-	if (!InitSymbolInfo())
-		return;
-
-	MakeStackTrace(eip,esp,ebp, 0,  callback);
-}
-#endif
 
 
 //*****************************************************************************
 //*****************************************************************************
-#ifdef _WIN64
-// x64 differs from the x86 code below in three points, each of which leaves every symbol unknown:
+// Three points here, each of which would leave every symbol unknown:
 // - The minidumper loads dbghelp.dll as well, so "dbghelp is loaded" does not mean that the symbols
 //   of the exe were initialized here; this keeps its own state instead.
 // - No SYMOPT_DEFERRED_LOADS: with it the dbghelp.dll of Windows never loads the PDB (every lookup
@@ -211,7 +212,7 @@ BOOL InitSymbolInfo()
 	{
 		// regenerate the name of the app
 		::GetModuleFileName(nullptr, pathname, _MAX_PATH);
-		if(DbgHelp::SymLoadModule(process, nullptr, pathname, nullptr, (DWORD64)::GetModuleHandle(nullptr), 0))
+		if(DbgHelp::SymLoadModule(process, nullptr, pathname, nullptr, (DWORD_PTR)::GetModuleHandle(nullptr), 0))
 		{
 				//Load any other relevant modules (ie dlls) here
 				atexit(DbgHelpLoader::unload);
@@ -224,66 +225,16 @@ BOOL InitSymbolInfo()
 	s_symbolState = -1;
 	return FALSE;
 }
-#else
-BOOL InitSymbolInfo()
-{
-	if (DbgHelpLoader::isLoaded())
-		return TRUE;
-
-	if (DbgHelpLoader::isFailed())
-		return FALSE;
-
-	if (!DbgHelpLoader::load())
-	{
-		atexit(DbgHelpLoader::unload);
-		return FALSE;
-	}
-
-	char pathname[_MAX_PATH+1];
-	char drive[10];
-	char directory[_MAX_PATH+1];
-	HANDLE process;
-
-	DbgHelp::SymSetOptions(SYMOPT_DEFERRED_LOADS | SYMOPT_UNDNAME | SYMOPT_LOAD_LINES | SYMOPT_OMAP_FIND_NEAREST);
-
-	process = GetCurrentProcess();
-
-	//Get the apps name
-	::GetModuleFileName(nullptr, pathname, _MAX_PATH);
-
-	// turn it into a search path
-	_splitpath(pathname, drive, directory, nullptr, nullptr);
-	sprintf(pathname, "%s:\\%s", drive, directory);
-
-	// append the current directory to build a search path for SymInit
-	::lstrcat(pathname, ";.;");
-
-	if(DbgHelp::SymInitialize(process, pathname, FALSE))
-	{
-		// regenerate the name of the app
-		::GetModuleFileName(nullptr, pathname, _MAX_PATH);
-		if(DbgHelp::SymLoadModule(process, nullptr, pathname, nullptr, 0, 0))
-		{
-				//Load any other relevant modules (ie dlls) here
-				atexit(DbgHelpLoader::unload);
-				return TRUE;
-		}
-	}
-
-	DbgHelpLoader::unload();
-	return FALSE;
-}
-#endif
 
 
 //*****************************************************************************
 //*****************************************************************************
-#ifdef _WIN64
-// On x64, StackWalk64 needs the register context for every frame: unwinding is table driven, not
-// by the frame pointer chain. It updates the context as it goes.
+// StackWalk gets the register context for every frame: on x64 unwinding is table driven, and on x86
+// the frames without a frame pointer (Release builds) are unwound from the PDB frame data, which
+// needs the registers too. It updates the context as it goes.
 static void MakeStackTrace(CONTEXT *context, int skipFrames, void (*callback)(const char*))
 {
-STACKFRAME64    stack_frame;
+STACKFRAME    stack_frame;
 BOOL            b_ret = TRUE;
 
 HANDLE thread = GetCurrentThread();
@@ -291,11 +242,11 @@ HANDLE process = GetCurrentProcess();
 
 memset(&stack_frame, 0, sizeof(stack_frame));
 stack_frame.AddrPC.Mode = AddrModeFlat;
-stack_frame.AddrPC.Offset = context->Rip;
+stack_frame.AddrPC.Offset = STACKDUMP_PC(context);
 stack_frame.AddrStack.Mode = AddrModeFlat;
-stack_frame.AddrStack.Offset = context->Rsp;
+stack_frame.AddrStack.Offset = STACKDUMP_SP(context);
 stack_frame.AddrFrame.Mode = AddrModeFlat;
-stack_frame.AddrFrame.Offset = context->Rbp;
+stack_frame.AddrFrame.Offset = STACKDUMP_FP(context);
 
 	callback("Call Stack\n**********\n");
 
@@ -303,94 +254,21 @@ stack_frame.AddrFrame.Offset = context->Rbp;
 	unsigned int skip = skipFrames;
 	while (b_ret&&skip)
 	{
-		b_ret = DbgHelp::StackWalk(IMAGE_FILE_MACHINE_AMD64, process, thread, &stack_frame, context,
-			nullptr, CurrentProcessFunctionTableAccess, CurrentProcessModuleBase, nullptr);
+		b_ret = DbgHelp::StackWalk(STACKDUMP_MACHINE, process, thread, &stack_frame, context,
+			nullptr, STACKDUMP_FUNCTION_TABLE_ACCESS, STACKDUMP_MODULE_BASE, nullptr);
 		skip--;
 	}
 
 	skip = 30;
 	while(b_ret&&skip)
 	{
-		b_ret = DbgHelp::StackWalk(IMAGE_FILE_MACHINE_AMD64, process, thread, &stack_frame, context,
-			nullptr, CurrentProcessFunctionTableAccess, CurrentProcessModuleBase, nullptr);
+		b_ret = DbgHelp::StackWalk(STACKDUMP_MACHINE, process, thread, &stack_frame, context,
+			nullptr, STACKDUMP_FUNCTION_TABLE_ACCESS, STACKDUMP_MODULE_BASE, nullptr);
 
 		if (b_ret) WriteStackLine((void *) stack_frame.AddrPC.Offset, callback);
 		skip--;
 	}
 }
-#else
-void MakeStackTrace(DWORD myeip,DWORD myesp,DWORD myebp, int skipFrames, void (*callback)(const char*))
-{
-STACKFRAME      stack_frame;
-BOOL            b_ret = TRUE;
-
-HANDLE thread = GetCurrentThread();
-HANDLE process = GetCurrentProcess();
-
-memset(&gsContext, 0, sizeof(CONTEXT));
-gsContext.ContextFlags = CONTEXT_FULL;
-
-memset(&stack_frame, 0, sizeof(STACKFRAME));
-stack_frame.AddrPC.Mode = AddrModeFlat;
-stack_frame.AddrPC.Offset = myeip;
-stack_frame.AddrStack.Mode = AddrModeFlat;
-stack_frame.AddrStack.Offset = myesp;
-stack_frame.AddrFrame.Mode = AddrModeFlat;
-stack_frame.AddrFrame.Offset = myebp;
-{
-/*
-    if(GetThreadContext(thread, &gsContext))
-    {
-        memset(&stack_frame, 0, sizeof(STACKFRAME));
-        stack_frame.AddrPC.Mode = AddrModeFlat;
-        stack_frame.AddrPC.Offset = gsContext.Eip;
-        stack_frame.AddrStack.Mode = AddrModeFlat;
-        stack_frame.AddrStack.Offset = gsContext.Esp;
-        stack_frame.AddrFrame.Mode = AddrModeFlat;
-        stack_frame.AddrFrame.Offset = gsContext.Ebp;
-*/
-
-		//{
-			callback("Call Stack\n**********\n");
-
-			// Skip some ?
-			unsigned int skip = skipFrames;
-			while (b_ret&&skip)
-			{
-					b_ret = DbgHelp::StackWalk(      IMAGE_FILE_MACHINE_I386,
-											process,
-											thread,
-											&stack_frame,
-											nullptr, //&gsContext,
-											nullptr,
-											DbgHelp::SymFunctionTableAccess,
-											DbgHelp::SymGetModuleBase,
-											nullptr);
-					skip--;
-			}
-
-			skip = 30;
-			while(b_ret&&skip)
-			{
-
-					b_ret = DbgHelp::StackWalk(      IMAGE_FILE_MACHINE_I386,
-											process,
-											thread,
-											&stack_frame,
-											nullptr, //&gsContext,
-											nullptr,
-											DbgHelp::SymFunctionTableAccess,
-											DbgHelp::SymGetModuleBase,
-											nullptr);
-
-
-
-					if (b_ret) WriteStackLine((void *) stack_frame.AddrPC.Offset, callback);
-					skip--;
-			}
-	}
-}
-#endif
 
 
 //*****************************************************************************
@@ -510,74 +388,22 @@ void GetFunctionDetails(void *pointer, char*name, char*filename, unsigned int* l
 //*****************************************************************************
 // Gets last x addresses from the stack
 //*****************************************************************************
-#ifdef _WIN64
 void FillStackAddresses(void**addresses, unsigned int count, unsigned int skip)
 {
 	if (!InitSymbolInfo())
 		return;
 
-	// RtlCaptureContext returns the registers at its return address in this function, so the first
-	// frame is this function, as with the x86 code below; skip counts the same frames.
+	// The first frame is this function (on x64 RtlCaptureContext returns the registers at its
+	// return address here).
+#ifdef _WIN64
 	CONTEXT context;
 	RtlCaptureContext(&context);
-
-	STACKFRAME64	stack_frame;
-	memset(&stack_frame, 0, sizeof(stack_frame));
-	stack_frame.AddrPC.Mode = AddrModeFlat;
-	stack_frame.AddrPC.Offset = context.Rip;
-	stack_frame.AddrStack.Mode = AddrModeFlat;
-	stack_frame.AddrStack.Offset = context.Rsp;
-	stack_frame.AddrFrame.Mode = AddrModeFlat;
-	stack_frame.AddrFrame.Offset = context.Rbp;
-
-	HANDLE thread = GetCurrentThread();
-	HANDLE process = GetCurrentProcess();
-
-	Bool stillgoing = TRUE;
-
-	// Skip some?
-	while (stillgoing&&skip)
-	{
-		stillgoing = DbgHelp::StackWalk(IMAGE_FILE_MACHINE_AMD64, process, thread, &stack_frame, &context,
-			nullptr, CurrentProcessFunctionTableAccess, CurrentProcessModuleBase, nullptr) != 0;
-		skip--;
-	}
-
-	while(stillgoing&&count)
-	{
-		stillgoing = DbgHelp::StackWalk(IMAGE_FILE_MACHINE_AMD64, process, thread, &stack_frame, &context,
-			nullptr, CurrentProcessFunctionTableAccess, CurrentProcessModuleBase, nullptr) != 0;
-		if (stillgoing)
-		{
-			*addresses  = (void*)stack_frame.AddrPC.Offset;
-			addresses++;
-			count--;
-		}
-	}
-
-	// Fill remainder
-	while (count)
-	{
-		*addresses = nullptr;
-		addresses++;
-		count--;
-	}
-}
 #else
-void FillStackAddresses(void**addresses, unsigned int count, unsigned int skip)
-{
-	if (!InitSymbolInfo())
-		return;
-
-	STACKFRAME	stack_frame;
-
-
-	HANDLE thread = GetCurrentThread();
-	HANDLE process = GetCurrentProcess();
-
-    memset(&gsContext, 0, sizeof(CONTEXT));
-    gsContext.ContextFlags = CONTEXT_FULL;
-
+	// x86 RtlCaptureContext takes the registers from the caller's EBP frame, which a function
+	// without frame pointer (Release) does not have, so the registers are captured here.
+	CONTEXT context;
+	memset(&context, 0, sizeof(context));
+	context.ContextFlags = CONTEXT_CONTROL;
 	DWORD myeip,myesp,myebp;
 #if defined(_MSC_VER)
 __asm
@@ -606,81 +432,53 @@ MYEIP2:
 #else
 	#error "Unsupported compiler or architecture for register capture"
 #endif
-memset(&stack_frame, 0, sizeof(STACKFRAME));
-stack_frame.AddrPC.Mode = AddrModeFlat;
-stack_frame.AddrPC.Offset = myeip;
-stack_frame.AddrStack.Mode = AddrModeFlat;
-stack_frame.AddrStack.Offset = myesp;
-stack_frame.AddrFrame.Mode = AddrModeFlat;
-stack_frame.AddrFrame.Offset = myebp;
+	context.Eip = myeip;
+	context.Esp = myesp;
+	context.Ebp = myebp;
+#endif
 
-{
-/*
-    if(GetThreadContext(thread, &gsContext))
-    {
-        memset(&stack_frame, 0, sizeof(STACKFRAME));
-        stack_frame.AddrPC.Mode = AddrModeFlat;
-        stack_frame.AddrPC.Offset = gsContext.Eip;
-        stack_frame.AddrStack.Mode = AddrModeFlat;
-        stack_frame.AddrStack.Offset = gsContext.Esp;
-        stack_frame.AddrFrame.Mode = AddrModeFlat;
-        stack_frame.AddrFrame.Offset = gsContext.Ebp;
-*/
+	STACKFRAME	stack_frame;
+	memset(&stack_frame, 0, sizeof(stack_frame));
+	stack_frame.AddrPC.Mode = AddrModeFlat;
+	stack_frame.AddrPC.Offset = STACKDUMP_PC(&context);
+	stack_frame.AddrStack.Mode = AddrModeFlat;
+	stack_frame.AddrStack.Offset = STACKDUMP_SP(&context);
+	stack_frame.AddrFrame.Mode = AddrModeFlat;
+	stack_frame.AddrFrame.Offset = STACKDUMP_FP(&context);
 
-		Bool stillgoing = TRUE;
-//	unsigned int cd = count;
+	HANDLE thread = GetCurrentThread();
+	HANDLE process = GetCurrentProcess();
 
-		// Skip some?
-		while (stillgoing&&skip)
+	Bool stillgoing = TRUE;
+
+	// Skip some?
+	while (stillgoing&&skip)
+	{
+		stillgoing = DbgHelp::StackWalk(STACKDUMP_MACHINE, process, thread, &stack_frame, &context,
+			nullptr, STACKDUMP_FUNCTION_TABLE_ACCESS, STACKDUMP_MODULE_BASE, nullptr) != 0;
+		skip--;
+	}
+
+	while(stillgoing&&count)
+	{
+		stillgoing = DbgHelp::StackWalk(STACKDUMP_MACHINE, process, thread, &stack_frame, &context,
+			nullptr, STACKDUMP_FUNCTION_TABLE_ACCESS, STACKDUMP_MODULE_BASE, nullptr) != 0;
+		if (stillgoing)
 		{
-			stillgoing = DbgHelp::StackWalk(IMAGE_FILE_MACHINE_I386,
-								process,
-								thread,
-								&stack_frame,
-								nullptr,	//&gsContext,
-								nullptr,
-								DbgHelp::SymFunctionTableAccess,
-								DbgHelp::SymGetModuleBase,
-								nullptr) != 0;
-			skip--;
-		}
-
-		while(stillgoing&&count)
-		{
-			stillgoing = DbgHelp::StackWalk(IMAGE_FILE_MACHINE_I386,
-								process,
-								thread,
-								&stack_frame,
-								nullptr, //&gsContext,
-								nullptr,
-								DbgHelp::SymFunctionTableAccess,
-								DbgHelp::SymGetModuleBase,
-								nullptr) != 0;
-			if (stillgoing)
-			{
-				*addresses  = (void*)stack_frame.AddrPC.Offset;
-				addresses++;
-				count--;
-			}
-		}
-
-		// Fill remainder
-		while (count)
-		{
-			*addresses = nullptr;
+			*addresses  = (void*)stack_frame.AddrPC.Offset;
 			addresses++;
 			count--;
 		}
+	}
 
-	}
-/*
-	else
+	// Fill remainder
+	while (count)
 	{
-		memset(addresses,nullptr,count*sizeof(void*));
+		*addresses = nullptr;
+		addresses++;
+		count--;
 	}
-*/
 }
-#endif
 
 
 
@@ -903,7 +701,7 @@ void DumpExceptionInfo( unsigned int u, EXCEPTION_POINTERS* e_info )
 	}
 #else
 	DOUBLE_DEBUG (("\nStack Dump:"));
-	StackDumpFromContext(context->Eip, context->Esp, context->Ebp, nullptr);
+	StackDumpFromContext(context, nullptr);
 
 	DOUBLE_DEBUG (("\nDetails:"));
 
