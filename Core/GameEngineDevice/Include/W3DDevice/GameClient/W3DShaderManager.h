@@ -106,7 +106,7 @@ public:
 	static Bool filterSetup(FilterTypes filter, FilterModes mode);
 
 	// Support routines for filter methods.
-	static Bool canRenderToTexture() { return (m_oldRenderSurface && m_newRenderSurface) || m_renderTargetTexture != nullptr;}
+	static Bool canRenderToTexture() { return m_renderTargetTexture != nullptr;}
 	static void startRenderToTexture(); ///< Sets render target to texture.
 	static IDirect3DTexture8 * endRenderToTexture(); ///< Ends render to texture, & returns texture.
 	static IDirect3DTexture8 * getRenderTexture();	///< returns last used render target texture
@@ -128,10 +128,7 @@ protected:
 	static FilterTypes m_currentFilter; ///< Last filter that was set.
 	// Info for a render to texture surface for special effects.
 	static Bool m_renderingToTexture;
-	static IDirect3DSurface8 *m_oldRenderSurface;	///<previous render target
 	static IDirect3DTexture8 *m_renderTexture;		///<texture into which rendering will be redirected.
-	static IDirect3DSurface8 *m_newRenderSurface;	///<new render target inside m_renderTexture
-	static IDirect3DSurface8 *m_oldDepthSurface;	///<previous depth buffer surface
 	static TextureClass *m_renderTargetTexture;	///<Direct3D 12 mode: texture into which rendering will be redirected.
 
 	static Bool updateRenderTargetTexture();	///<Direct3D 12 mode: (re)creates m_renderTargetTexture at the back buffer size.
