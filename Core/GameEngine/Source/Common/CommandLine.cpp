@@ -233,6 +233,63 @@ static void presetUserDataDirOverride()
 	}
 }
 
+// TheSuperHackers @feature Archive list and registry switch of the self-contained folder (Generals Collection).
+static char s_archiveListFile[_MAX_PATH] = "";
+static bool s_archiveListChecked = false;
+
+const char * CommandLine::getArchiveListFile()
+{
+	if (!s_archiveListChecked)
+	{
+		s_archiveListChecked = true;
+#if RTS_GENERALS
+		static const char listName[] = "Archives_Generals.txt";
+#else
+		static const char listName[] = "Archives_ZeroHour.txt";
+#endif
+		char exePath[_MAX_PATH];
+		const DWORD len = GetModuleFileName(nullptr, exePath, ARRAY_SIZE(exePath));
+		if (len > 0 && len < ARRAY_SIZE(exePath))
+		{
+			char *lastSeparator = strrchr(exePath, '\\');
+			if (lastSeparator != nullptr)
+			{
+				lastSeparator[1] = '\0';
+				strlcat(exePath, listName, ARRAY_SIZE(exePath));
+				if (GetFileAttributes(exePath) != INVALID_FILE_ATTRIBUTES)
+				{
+					strlcpy(s_archiveListFile, exePath, ARRAY_SIZE(s_archiveListFile));
+				}
+			}
+		}
+	}
+	return s_archiveListFile[0] != '\0' ? s_archiveListFile : nullptr;
+}
+
+bool CommandLine::isRegistryDisabled()
+{
+	static int s_state = -1;
+	if (s_state < 0)
+	{
+		s_state = (getArchiveListFile() != nullptr) ? 1 : 0;
+		for (int arg = 1; arg < __argc && s_state == 0; ++arg)
+		{
+			if (stricmp(__argv[arg], "-noRegistry") == 0)
+			{
+				s_state = 1;
+			}
+		}
+	}
+	return s_state == 1;
+}
+
+// TheSuperHackers @feature -noRegistry: no registry key of the game is read or written. The state is taken from the raw
+// command line by CommandLine::isRegistryDisabled(), so it already holds when GlobalData is created.
+Int parseNoRegistry(char *[], int)
+{
+	return 1;
+}
+
 Int parseUserDataDir(char *args[], int num)
 {
 	if (num > 1)
@@ -1452,6 +1509,9 @@ static CommandLineParam paramsForStartup[] =
 
 	// TheSuperHackers @feature 2026 Use another user data folder (settings, replays, saves, logs).
 	{ "-userDataDir", parseUserDataDir },
+
+	// TheSuperHackers @feature 2026 Do not read or write the registry keys of the game.
+	{ "-noRegistry", parseNoRegistry },
 
 	// TheSuperHackers @feature 2026 Do not read or write the Direct3D 12 shader cache.
 	{ "-noShaderCache", parseNoShaderCache },

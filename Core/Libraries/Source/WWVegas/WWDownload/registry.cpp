@@ -33,8 +33,55 @@
 #endif
 
 
+// TheSuperHackers @feature -noRegistry on the command line, or an archive list next to the exe (a self-contained
+// folder): the game's registry keys are neither read nor written. Same rule as CommandLine::isRegistryDisabled.
+static bool registryDisabled()
+{
+	static int state = -1;
+	if (state < 0)
+	{
+		state = 0;
+		for (int arg = 1; arg < __argc; ++arg)
+		{
+			if (_stricmp(__argv[arg], "-noRegistry") == 0)
+			{
+				state = 1;
+			}
+		}
+		if (state == 0)
+		{
+			char path[MAX_PATH];
+			const DWORD len = GetModuleFileNameA(nullptr, path, MAX_PATH);
+			char *separator = (len > 0 && len < MAX_PATH) ? strrchr(path, '\\') : nullptr;
+			if (separator != nullptr)
+			{
+				static const char *const names[] = { "Archives_Generals.txt", "Archives_ZeroHour.txt" };
+				for (int i = 0; i < 2; ++i)
+				{
+					separator[1] = '\0';
+					if (strlen(path) + strlen(names[i]) < MAX_PATH)
+					{
+						strcat(path, names[i]);
+						if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES)
+						{
+							state = 1;
+						}
+					}
+				}
+			}
+		}
+	}
+	return state == 1;
+}
+
+
 bool  getStringFromRegistry(HKEY root, std::string path, std::string key, std::string& val)
 {
+	if (registryDisabled())
+	{
+		return false;
+	}
+
 	HKEY handle;
 	unsigned char buffer[256];
 	unsigned long size = 256;
@@ -58,6 +105,11 @@ bool  getStringFromRegistry(HKEY root, std::string path, std::string key, std::s
 
 bool getUnsignedIntFromRegistry(HKEY root, std::string path, std::string key, unsigned int& val)
 {
+	if (registryDisabled())
+	{
+		return false;
+	}
+
 	HKEY handle;
 	unsigned long buffer;
 	unsigned long size = sizeof(buffer);
@@ -81,6 +133,11 @@ bool getUnsignedIntFromRegistry(HKEY root, std::string path, std::string key, un
 
 bool setStringInRegistry( HKEY root, std::string path, std::string key, std::string val)
 {
+	if (registryDisabled())
+	{
+		return false;
+	}
+
 	HKEY handle;
 	unsigned long type;
 	unsigned long returnValue;
@@ -100,6 +157,11 @@ bool setStringInRegistry( HKEY root, std::string path, std::string key, std::str
 
 bool setUnsignedIntInRegistry( HKEY root, std::string path, std::string key, unsigned int val)
 {
+	if (registryDisabled())
+	{
+		return false;
+	}
+
 	HKEY handle;
 	unsigned long type;
 	unsigned long returnValue;

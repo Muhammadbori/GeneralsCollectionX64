@@ -29,6 +29,7 @@
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
 
 #include "Common/Registry.h"
+#include "Common/CommandLine.h"
 
 #ifdef _WIN64
 // The game's registry keys are in the 32-bit view (WOW6432Node), where the installers and the 32-bit
@@ -42,6 +43,12 @@
 
 Bool  getStringFromRegistry(HKEY root, AsciiString path, AsciiString key, AsciiString& val)
 {
+	// TheSuperHackers @feature -noRegistry, and a self-contained folder: the registry is neither read nor written.
+	if (CommandLine::isRegistryDisabled())
+	{
+		return FALSE;
+	}
+
 	HKEY handle;
 	unsigned char buffer[256];
 	unsigned long size = 256;
@@ -65,6 +72,12 @@ Bool  getStringFromRegistry(HKEY root, AsciiString path, AsciiString key, AsciiS
 
 Bool getUnsignedIntFromRegistry(HKEY root, AsciiString path, AsciiString key, UnsignedInt& val)
 {
+	// TheSuperHackers @feature -noRegistry, and a self-contained folder: the registry is neither read nor written.
+	if (CommandLine::isRegistryDisabled())
+	{
+		return FALSE;
+	}
+
 	HKEY handle;
 	unsigned char buffer[4];
 	unsigned long size = 4;
@@ -88,6 +101,12 @@ Bool getUnsignedIntFromRegistry(HKEY root, AsciiString path, AsciiString key, Un
 
 Bool setStringInRegistry( HKEY root, AsciiString path, AsciiString key, AsciiString val)
 {
+	// TheSuperHackers @feature -noRegistry, and a self-contained folder: the registry is neither read nor written.
+	if (CommandLine::isRegistryDisabled())
+	{
+		return FALSE;
+	}
+
 	HKEY handle;
 	unsigned long type;
 	unsigned long returnValue;
@@ -107,6 +126,12 @@ Bool setStringInRegistry( HKEY root, AsciiString path, AsciiString key, AsciiStr
 
 Bool setUnsignedIntInRegistry( HKEY root, AsciiString path, AsciiString key, UnsignedInt val)
 {
+	// TheSuperHackers @feature -noRegistry, and a self-contained folder: the registry is neither read nor written.
+	if (CommandLine::isRegistryDisabled())
+	{
+		return FALSE;
+	}
+
 	HKEY handle;
 	unsigned long type;
 	unsigned long returnValue;

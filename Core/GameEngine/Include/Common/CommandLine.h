@@ -43,4 +43,13 @@ public:
 	// TheSuperHackers @feature The folder given with -userDataDir, absolute and ending with a backslash,
 	// or null when the option was not given. GlobalData uses it instead of Documents\<UserDataLeafName>.
 	static const char * getUserDataDirOverride();
+
+	// TheSuperHackers @feature The ordered archive list of this game, Archives_Generals.txt or Archives_ZeroHour.txt in the
+	// folder of the executable, as an absolute path; null when the file does not exist (the game then loads every *.big
+	// of its folder, and Zero Hour the archives of the base game from the registry, as before).
+	static const char * getArchiveListFile();
+
+	// TheSuperHackers @feature True with -noRegistry, and when the archive list exists (a self-contained folder): the
+	// game then neither reads nor writes its registry keys. Safe to call before the command line is parsed.
+	static bool isRegistryDisabled();
 };
