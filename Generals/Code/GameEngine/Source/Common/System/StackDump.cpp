@@ -166,6 +166,65 @@ void StackDumpFromContext(DWORD eip,DWORD esp,DWORD ebp, void (*callback)(const 
 
 //*****************************************************************************
 //*****************************************************************************
+#ifdef _WIN64
+// x64 differs from the x86 code below in three points, each of which leaves every symbol unknown:
+// - The minidumper loads dbghelp.dll as well, so "dbghelp is loaded" does not mean that the symbols
+//   of the exe were initialized here; this keeps its own state instead.
+// - No SYMOPT_DEFERRED_LOADS: with it the dbghelp.dll of Windows never loads the PDB (every lookup
+//   fails with ERROR_MOD_NOT_FOUND).
+// - The exe is relocated (ASLR), so SymLoadModule gets the real base; with 0 dbghelp takes the
+//   preferred base from the image file and no address matches.
+static int s_symbolState = 0; // 0 not tried yet, 1 ready, -1 failed
+
+BOOL InitSymbolInfo()
+{
+	if (s_symbolState != 0)
+		return s_symbolState > 0;
+
+	if (!DbgHelpLoader::load())
+	{
+		atexit(DbgHelpLoader::unload);
+		s_symbolState = -1;
+		return FALSE;
+	}
+
+	char pathname[_MAX_PATH+1];
+	char drive[10];
+	char directory[_MAX_PATH+1];
+	HANDLE process;
+
+	DbgHelp::SymSetOptions(SYMOPT_UNDNAME | SYMOPT_LOAD_LINES | SYMOPT_OMAP_FIND_NEAREST);
+
+	process = GetCurrentProcess();
+
+	//Get the apps name
+	::GetModuleFileName(nullptr, pathname, _MAX_PATH);
+
+	// turn it into a search path
+	_splitpath(pathname, drive, directory, nullptr, nullptr);
+	sprintf(pathname, "%s%s", drive, directory);
+
+	// append the current directory to build a search path for SymInit
+	::lstrcat(pathname, ";.;");
+
+	if(DbgHelp::SymInitialize(process, pathname, FALSE))
+	{
+		// regenerate the name of the app
+		::GetModuleFileName(nullptr, pathname, _MAX_PATH);
+		if(DbgHelp::SymLoadModule(process, nullptr, pathname, nullptr, (DWORD64)::GetModuleHandle(nullptr), 0))
+		{
+				//Load any other relevant modules (ie dlls) here
+				atexit(DbgHelpLoader::unload);
+				s_symbolState = 1;
+				return TRUE;
+		}
+	}
+
+	DbgHelpLoader::unload();
+	s_symbolState = -1;
+	return FALSE;
+}
+#else
 BOOL InitSymbolInfo()
 {
 	if (DbgHelpLoader::isLoaded())
@@ -214,6 +273,7 @@ BOOL InitSymbolInfo()
 	DbgHelpLoader::unload();
 	return FALSE;
 }
+#endif
 
 
 //*****************************************************************************

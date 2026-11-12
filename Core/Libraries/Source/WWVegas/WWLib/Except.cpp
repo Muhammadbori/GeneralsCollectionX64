@@ -439,8 +439,16 @@ void Dump_Exception_Info(EXCEPTION_POINTERS *e_info)
 	if (!symbols_available)	{
 		DebugString ("Exception Handler: SymInitialize failed with code %d - %s\n", GetLastError(), Last_Error_Text());
 	} else {
+#ifdef _WIN64
+		/*
+		** No SYMOPT_DEFERRED_LOADS: with it the dbghelp.dll of Windows never loads the PDB (every lookup fails with ERROR_MOD_NOT_FOUND).
+		*/
+		if (_SymSetOptions != nullptr) {
+			_SymSetOptions(SYMOPT_UNDNAME);
+#else
 		if (_SymSetOptions != nullptr) {
 			_SymSetOptions(SYMOPT_DEFERRED_LOADS | SYMOPT_UNDNAME);
+#endif
 		}
 
 		char module_name[_MAX_PATH];
@@ -448,7 +456,7 @@ void Dump_Exception_Info(EXCEPTION_POINTERS *e_info)
 
 		if (_SymLoadModule != nullptr) {
 #ifdef _WIN64
-			symload = _SymLoadModule(GetCurrentProcess(), nullptr, module_name, nullptr, 0, 0) != 0;
+			symload = _SymLoadModule(GetCurrentProcess(), nullptr, module_name, nullptr, (DWORD64)GetModuleHandle(nullptr), 0) != 0; // the real base: the exe is relocated (ASLR)
 #else
 			symload = _SymLoadModule(GetCurrentProcess(), nullptr, module_name, nullptr, 0, 0);
 #endif
@@ -1313,8 +1321,14 @@ void Load_Image_Helper()
 
 		if (_SymInitialize != nullptr && _SymInitialize(GetCurrentProcess(), nullptr, FALSE)) {
 
+#ifdef _WIN64
+			// No SYMOPT_DEFERRED_LOADS: with it the dbghelp.dll of Windows never loads the PDB (every lookup fails with ERROR_MOD_NOT_FOUND).
+			if (_SymSetOptions != nullptr) {
+				_SymSetOptions(SYMOPT_UNDNAME);
+#else
 			if (_SymSetOptions != nullptr) {
 				_SymSetOptions(SYMOPT_DEFERRED_LOADS | SYMOPT_UNDNAME);
+#endif
 			}
 
 			char exe_name[_MAX_PATH];
@@ -1322,7 +1336,7 @@ void Load_Image_Helper()
 
 			if (_SymLoadModule != nullptr) {
 #ifdef _WIN64
-				symload = _SymLoadModule(GetCurrentProcess(), nullptr, exe_name, nullptr, 0, 0) != 0;
+				symload = _SymLoadModule(GetCurrentProcess(), nullptr, exe_name, nullptr, (DWORD64)GetModuleHandle(nullptr), 0) != 0; // the real base: the exe is relocated (ASLR)
 #else
 				symload = _SymLoadModule(GetCurrentProcess(), nullptr, exe_name, nullptr, 0, 0);
 #endif
