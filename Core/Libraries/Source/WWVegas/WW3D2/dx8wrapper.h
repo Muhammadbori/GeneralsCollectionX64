@@ -152,17 +152,9 @@ WWINLINE void DX8_ErrorCode(unsigned res)
 // Converts a FLOAT to a DWORD for use in SetRenderState() calls
 inline DWORD F2DW(FLOAT f) { return std::bit_cast<DWORD>(f); }
 
-// The device calls are skipped when there is no Direct3D 8 device, which is always the case in
-// Direct3D 12 mode. The wrapper's caches are still updated by the callers.
 #ifdef WWDEBUG
-#define DX8CALL_HRES(x,res) do { if (DX8Wrapper::_Get_D3D_Device8()) { DX8_Assert(); res = DX8Wrapper::_Get_D3D_Device8()->x; DX8_ErrorCode(res); DX8Wrapper::Increment_DX8_CallCount(); } else { res = E_FAIL; } } while (0)
-#define DX8CALL(x) do { if (DX8Wrapper::_Get_D3D_Device8()) { DX8_Assert(); DX8_ErrorCode(DX8Wrapper::_Get_D3D_Device8()->x); DX8Wrapper::Increment_DX8_CallCount(); } } while (0)
-#define DX8CALL_D3D(x) do { if (DX8Wrapper::_Get_D3D8()) { DX8_Assert(); DX8_ErrorCode(DX8Wrapper::_Get_D3D8()->x); DX8Wrapper::Increment_DX8_CallCount(); } } while (0)
 #define DX8_THREAD_ASSERT() if (_DX8SingleThreaded) { WWASSERT_PRINT(DX8Wrapper::_Get_Main_Thread_ID()==ThreadClass::_Get_Current_Thread_ID(),"DX8Wrapper::DX8 calls must be called from the main thread!"); }
 #else
-#define DX8CALL_HRES(x,res) do { if (DX8Wrapper::_Get_D3D_Device8()) { res = DX8Wrapper::_Get_D3D_Device8()->x; DX8Wrapper::Increment_DX8_CallCount(); } else { res = E_FAIL; } } while (0)
-#define DX8CALL(x) do { if (DX8Wrapper::_Get_D3D_Device8()) { DX8Wrapper::_Get_D3D_Device8()->x; DX8Wrapper::Increment_DX8_CallCount(); } } while (0)
-#define DX8CALL_D3D(x) do { if (DX8Wrapper::_Get_D3D8()) { DX8Wrapper::_Get_D3D8()->x; DX8Wrapper::Increment_DX8_CallCount(); } } while (0)
 #define DX8_THREAD_ASSERT() ;
 #endif
 
@@ -572,8 +564,6 @@ public:
 
 
 
-	static IDirect3DDevice8* _Get_D3D_Device8() { return D3DDevice; }
-	static IDirect3D8* _Get_D3D8() { return D3DInterface; }
 	/// Returns the display format - added by TR for video playback - not part of W3D
 	static WW3DFormat	getBackBufferFormat();
 	static bool Reset_Device(bool reload_assets=true);
@@ -757,8 +747,6 @@ protected:
 
 	static D3DADAPTER_IDENTIFIER8		CurrentAdapterIdentifier;
 
-	static IDirect3D8 *					D3DInterface;			//d3d8;
-	static IDirect3DDevice8 *			D3DDevice;				//d3ddevice8;
 
 
 	static unsigned							DrawPolygonLowBoundLimit;
