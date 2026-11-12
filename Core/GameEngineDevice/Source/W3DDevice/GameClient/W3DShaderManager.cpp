@@ -112,7 +112,6 @@ GraphicsVenderID W3DShaderManager::m_currentVendor;
 __int64 W3DShaderManager::m_driverVersion;
 
 Bool W3DShaderManager::m_renderingToTexture = false;
-IDirect3DTexture8 *W3DShaderManager::m_renderTexture=nullptr;		///<texture into which rendering will be redirected.
 TextureClass *W3DShaderManager::m_renderTargetTexture=nullptr;	///<Direct3D 12 mode: texture into which rendering will be redirected.
 /*===========================================================================================*/
 /*=========      Screen Shaders	=============================================================*/
@@ -183,50 +182,10 @@ Bool ScreenDefaultFilter::preRender(Bool &skipRender, CustomScenePassModes &scen
 
 Bool ScreenDefaultFilter::postRender(FilterModes mode, Coord2D &scrollDelta,Bool &doExtraRender)
 {
-	IDirect3DTexture8 * tex =	W3DShaderManager::endRenderToTexture();
-	DEBUG_ASSERTCRASH(tex, ("Require rendered texture."));
-	if (!tex) return false;
-	if (!set(mode)) return false;
-
-	struct _TRANS_LIT_TEX_VERTEX {
-		D3DVector4 p;
-		DWORD color;   // diffuse color
-		float	u;
-		float	v;
-	} v[4];
-
-	Int xpos, ypos, width, height;
-
-	DX8Wrapper::Set_DX8_Texture_Raw(0,tex);	//previously rendered frame inside this texture
-	TheTacticalView->getOrigin(&xpos,&ypos);
-	width=TheTacticalView->getWidth();
-	height=TheTacticalView->getHeight();
-
-	//bottom right
-	v[0].p = D3DVector4( xpos+width-0.5f, ypos+height-0.5f, 0.0f, 1.0f );
-	v[0].u = (Real)(xpos+width)/(Real)TheDisplay->getWidth();	v[0].v = (Real)(ypos+height)/(Real)TheDisplay->getHeight();
-	//top right
-	v[1].p = D3DVector4( xpos+width-0.5f, ypos-0.5f, 0.0f, 1.0f );
-	v[1].u = (Real)(xpos+width)/(Real)TheDisplay->getWidth();	v[1].v = (Real)(ypos)/(Real)TheDisplay->getHeight();
-	//bottom left
-	v[2].p = D3DVector4(  xpos-0.5f, ypos+height-0.5f, 0.0f, 1.0f );
-	v[2].u = (Real)(xpos)/(Real)TheDisplay->getWidth();	v[2].v = (Real)(ypos+height)/(Real)TheDisplay->getHeight();
-	//top left
-	v[3].p = D3DVector4(  xpos-0.5f,  ypos-0.5f, 0.0f, 1.0f );
-	v[3].u = (Real)(xpos)/(Real)TheDisplay->getWidth();	v[3].v = (Real)(ypos)/(Real)TheDisplay->getHeight();
-	v[0].color = 0xffffffff;
-	v[1].color = 0xffffffff;
-	v[2].color = 0xffffffff;
-	v[3].color = 0xffffffff;
-
-	//draw polygons like this is very inefficient but for only 2 triangles, it's
-	//not worth bothering with index/vertex buffers.
-	DX8Wrapper::Set_Vertex_Shader(D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1);
-
-	DX8Wrapper::Draw_Primitive_UP(D3DPT_TRIANGLESTRIP, 2, v, sizeof(_TRANS_LIT_TEX_VERTEX));
-
-	reset();
-	return true;
+	// Direct3D 12 mode has no rendered Direct3D 8 texture to draw, so this filter always ended here.
+	W3DShaderManager::endRenderToTexture();
+	DEBUG_CRASH(("Require rendered texture."));
+	return false;
 }
 
 Int ScreenDefaultFilter::set(FilterModes mode)
@@ -320,10 +279,10 @@ Bool ScreenBWFilter::preRender(Bool &skipRender, CustomScenePassModes &scenePass
 
 Bool ScreenBWFilter::postRender(FilterModes mode, Coord2D &scrollDelta,Bool &doExtraRender)
 {
-	IDirect3DTexture8 * tex =	W3DShaderManager::endRenderToTexture();
+	W3DShaderManager::endRenderToTexture();
 	TextureClass *targetTex = W3DShaderManager::getRenderTargetTexture();	//the filtered view is rendered into this
-	DEBUG_ASSERTCRASH(tex || targetTex, ("Require rendered texture."));
-	if (!tex && !targetTex) return false;
+	DEBUG_ASSERTCRASH(targetTex, ("Require rendered texture."));
+	if (!targetTex) return false;
 	if (!set(mode)) return false;
 
 	struct _TRANS_LIT_TEX_VERTEX {
@@ -335,7 +294,7 @@ Bool ScreenBWFilter::postRender(FilterModes mode, Coord2D &scrollDelta,Bool &doE
 
 	Int xpos, ypos, width, height;
 
-	DX8Wrapper::Set_DX8_Texture_Raw(0,tex);	//previously rendered frame inside this texture
+	DX8Wrapper::Set_DX8_Texture_Raw(0,nullptr);	//previously rendered frame inside this texture (Direct3D 8)
 	if (targetTex)
 		DX8Wrapper::Set_DX8_Texture_Raw(0,targetTex);	//Direct3D 12 mode: previously rendered frame inside this texture
 	TheTacticalView->getOrigin(&xpos,&ypos);
@@ -509,10 +468,10 @@ Bool ScreenBWFilterDOT3::preRender(Bool &skipRender, CustomScenePassModes &scene
 
 Bool ScreenBWFilterDOT3::postRender(FilterModes mode, Coord2D &scrollDelta,Bool &doExtraRender)
 {
-	IDirect3DTexture8 * tex =	W3DShaderManager::endRenderToTexture();
+	W3DShaderManager::endRenderToTexture();
 	TextureClass *targetTex = W3DShaderManager::getRenderTargetTexture();	//Direct3D 12 mode renders into this instead.
-	DEBUG_ASSERTCRASH(tex || targetTex, ("Require rendered texture."));
-	if (!tex && !targetTex) return false;
+	DEBUG_ASSERTCRASH(targetTex, ("Require rendered texture."));
+	if (!targetTex) return false;
 	if (!set(mode)) return false;
 
 	struct _TRANS_LIT_TEX_VERTEX {
@@ -574,7 +533,7 @@ Bool ScreenBWFilterDOT3::postRender(FilterModes mode, Coord2D &scrollDelta,Bool 
 		DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_COLOROP, D3DTOP_MODULATE);
 	}
 
-	DX8Wrapper::Set_DX8_Texture_Raw(0,tex);	//previously rendered frame inside this texture
+	DX8Wrapper::Set_DX8_Texture_Raw(0,nullptr);	//previously rendered frame inside this texture (Direct3D 8)
 	if (targetTex)
 		DX8Wrapper::Set_DX8_Texture_Raw(0,targetTex);	//Direct3D 12 mode: previously rendered frame inside this texture
 
@@ -767,23 +726,20 @@ Bool ScreenCrossFadeFilter::preRender(Bool &skipRender, CustomScenePassModes &sc
 
 Bool ScreenCrossFadeFilter::postRender(FilterModes mode, Coord2D &scrollDelta,Bool &doExtraRender)
 {
-	IDirect3DTexture8 * tex;
-
 	if (m_skipRender)
 	{
 		//don't render anything to frame buffer because we still need to draw the new scene
 		//that we're fading into.  Okay to render on the next call.
 		m_skipRender = false;
 		doExtraRender = TRUE;
-		tex =	W3DShaderManager::endRenderToTexture();
+		W3DShaderManager::endRenderToTexture();
 		return true;
 	}
 
-	tex=W3DShaderManager::getRenderTexture();
 	TextureClass *targetTex = W3DShaderManager::getRenderTargetTexture();	//Direct3D 12 mode renders into this instead.
 
-	DEBUG_ASSERTCRASH(tex || targetTex, ("Require last rendered texture."));
-	if (!tex && !targetTex) return false;
+	DEBUG_ASSERTCRASH(targetTex, ("Require last rendered texture."));
+	if (!targetTex) return false;
 	if (!set(mode)) return false;
 
 	struct _TRANS_LIT_TEX_VERTEX {
@@ -798,7 +754,7 @@ Bool ScreenCrossFadeFilter::postRender(FilterModes mode, Coord2D &scrollDelta,Bo
 	Int xpos, ypos, width, height;
 	Real radius = 0.0f;
 
-	DX8Wrapper::Set_DX8_Texture_Raw(0,tex);	//previously rendered frame inside this texture
+	DX8Wrapper::Set_DX8_Texture_Raw(0,nullptr);	//previously rendered frame inside this texture (Direct3D 8)
 	if (targetTex)
 		DX8Wrapper::Set_DX8_Texture_Raw(0,targetTex);	//Direct3D 12 mode: previously rendered frame inside this texture
 	if (mode == FM_VIEW_CROSSFADE_CIRCLE)
@@ -952,10 +908,10 @@ Bool ScreenMotionBlurFilter::preRender(Bool &skipRender, CustomScenePassModes &s
 
 Bool ScreenMotionBlurFilter::postRender(FilterModes mode, Coord2D &scrollDelta,Bool &doExtraRender)
 {
-	IDirect3DTexture8 * tex =	W3DShaderManager::endRenderToTexture();
+	W3DShaderManager::endRenderToTexture();
 	TextureClass *targetTex = W3DShaderManager::getRenderTargetTexture();	//Direct3D 12 mode renders into this instead.
-	DEBUG_ASSERTCRASH(tex || targetTex, ("Require rendered texture."));
-	if (!tex && !targetTex) return false;
+	DEBUG_ASSERTCRASH(targetTex, ("Require rendered texture."));
+	if (!targetTex) return false;
 	if (!set(mode)) return false;
 
 	Bool continueEffect = true;
@@ -968,7 +924,7 @@ Bool ScreenMotionBlurFilter::postRender(FilterModes mode, Coord2D &scrollDelta,B
 
 	Int xpos, ypos, width, height;
 
-	DX8Wrapper::Set_DX8_Texture_Raw(0,tex);	//previously rendered frame inside this texture
+	DX8Wrapper::Set_DX8_Texture_Raw(0,nullptr);	//previously rendered frame inside this texture (Direct3D 8)
 	if (targetTex)
 		DX8Wrapper::Set_DX8_Texture_Raw(0,targetTex);	//Direct3D 12 mode: previously rendered frame inside this texture
 	TheTacticalView->getOrigin(&xpos,&ypos);
@@ -2600,7 +2556,6 @@ W3DShaderManager::W3DShaderManager()
 {
 	m_currentShader = ST_INVALID;
 	m_currentFilter = FT_NULL_FILTER;
-	m_renderTexture = nullptr;
 	m_renderingToTexture = false;
 	Int i;
 	for (i=0; i<W3DShaderManager::ST_MAX; i++)
@@ -2660,7 +2615,6 @@ void W3DShaderManager::init()
 //=============================================================================
 void W3DShaderManager::shutdown()
 {
-	SAFE_RELEASE(m_renderTexture);
 	REF_PTR_RELEASE(m_renderTargetTexture);
 	m_currentShader = ST_INVALID;
 	m_currentFilter = FT_NULL_FILTER;
@@ -2859,10 +2813,10 @@ void W3DShaderManager::startRenderToTexture()
 /** Ends rendering to a texture.
  */
 //=============================================================================
-IDirect3DTexture8 *W3DShaderManager::endRenderToTexture()
+void W3DShaderManager::endRenderToTexture()
 {
 	DEBUG_ASSERTCRASH(m_renderingToTexture, ("Not rendering to texture."));
-	if (!m_renderingToTexture) return nullptr;
+	if (!m_renderingToTexture) return;
 	//Direct3D 12 mode: restore the back buffer and default depth buffer.  There are no Direct3D 8 textures to
 	//return; the rendered image is in getRenderTargetTexture().
 	DX8Wrapper::Set_DX12_Render_Target_Raw(nullptr);
@@ -2876,15 +2830,6 @@ IDirect3DTexture8 *W3DShaderManager::endRenderToTexture()
 	DX8Wrapper::Set_DX8_Texture_Stage_State( 0, D3DTSS_MIPFILTER, D3DTEXF_NONE);
 
 	m_renderingToTexture = false;
-	return nullptr;
-}
-
-/**Returns texture containing the image that was last rendered using any of the effects requiring render target
-textures.  Used mostly for cross-fading effects that need an unmodified version of the view before the effect
-was applied.  NOTE: This texture does not survive device reset.. so quit effect on reset!*/
-IDirect3DTexture8 *W3DShaderManager::getRenderTexture()
-{
-	return m_renderTexture;
 }
 
 /**Direct3D 12 mode: makes sure m_renderTargetTexture is a render target texture of the back buffer size, as the

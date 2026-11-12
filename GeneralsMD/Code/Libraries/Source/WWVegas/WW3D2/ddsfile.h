@@ -25,8 +25,6 @@
 #include "WWLib/wwstring.h"
 #include "WWMath/vector3.h"
 
-struct IDirect3DSurface8;
-struct IDirect3DVolume8;
 
 // ----------------------------------------------------------------------------
 //

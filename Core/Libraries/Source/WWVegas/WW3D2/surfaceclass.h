@@ -41,7 +41,6 @@
 #include "WWLib/always.h"
 #include "ww3dformat.h"
 
-struct IDirect3DSurface8;
 struct tagRECT;
 class Vector2i;
 class Vector3;
@@ -50,7 +49,7 @@ class DX12TextureClass;
 /*************************************************************************
 **                             SurfaceClass
 **
-** This is our surface class, which wraps IDirect3DSurface8.
+** This is our surface class, which wraps one level of a Direct3D 12 texture.
 ** In Direct3D 12 mode it wraps one level of a DX12TextureClass instead
 ** (a CPU only texture for standalone surfaces).
 **

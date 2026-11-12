@@ -49,8 +49,6 @@
 #include "WWMath/vector3.h"
 #include "texturefilter.h"
 
-struct IDirect3DBaseTexture8;
-struct IDirect3DTexture8;
 
 class DX8Wrapper;
 class DX12TextureClass;

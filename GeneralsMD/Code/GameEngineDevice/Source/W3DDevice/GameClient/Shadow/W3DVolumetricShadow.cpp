@@ -128,7 +128,6 @@ static Real beX;
 static Real beY;
 static Real beZ;
 
-static LPDIRECT3DVERTEXBUFFER8 lastActiveVertexBuffer=nullptr;
 static VertexBufferClass *lastActiveVertexBufferDX12=nullptr;	///<Direct3D 12 mode: Direct3D 8 buffer pointers are all null there, so track the engine buffer.
 
 /** A simple structure to hold random geometry (vertices, polygons, etc.).  We'll use this
@@ -3408,7 +3407,6 @@ void W3DVolumetricShadowManager::renderShadows( Bool forceStencilFill )
 		//DX8Wrapper::Set_DX8_Render_State_Raw(D3DRS_FILLMODE,D3DFILL_WIREFRAME);
 
 
-		lastActiveVertexBuffer=nullptr;	//reset
 		lastActiveVertexBufferDX12=nullptr;	//reset
 
 		m_dynamicShadowVolumesToRender=nullptr;	//clear list of pending dynamic shadows

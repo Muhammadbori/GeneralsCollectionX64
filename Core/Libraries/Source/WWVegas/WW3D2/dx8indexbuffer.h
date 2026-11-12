@@ -44,7 +44,6 @@
 
 class DX8Wrapper;
 class SortingRendererClass;
-struct IDirect3DIndexBuffer8;
 class DX12BufferClass;
 class DX8IndexBufferClass;
 class SortingIndexBufferClass;

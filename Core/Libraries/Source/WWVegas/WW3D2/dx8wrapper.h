@@ -501,8 +501,8 @@ public:
 	/*
 	** Pass-through device access
 	**
-	** Each of these forwards 1:1 to the IDirect3DDevice8 method of the same name so that code
-	** outside WW3D2 never needs the raw device pointer.
+	** Each of these does what the Direct3D 8 device method of the same name did, on the Direct3D 12
+	** device state, so that code outside WW3D2 never needs a device.
 	**
 	** The *_Raw functions deliberately bypass the wrapper's shadow state (RenderStates[],
 	** TextureStageStates[][], Textures[], Pixel_Shader, the shader constant shadows and the
@@ -516,12 +516,9 @@ public:
 	static void Set_DX8_Render_State_Raw(D3DRENDERSTATETYPE state, unsigned value);
 	static HRESULT Get_DX8_Render_State_Raw(D3DRENDERSTATETYPE state, DWORD* value);
 	static void Set_DX8_Texture_Stage_State_Raw(unsigned stage, D3DTEXTURESTAGESTATETYPE state, unsigned value);
-	static void Set_DX8_Texture_Raw(unsigned int stage, IDirect3DBaseTexture8* texture);
 	static void Set_Pixel_Shader_Raw(DWORD pixel_shader);
 	static void Set_Vertex_Shader_Constant_Raw(int reg, const void* data, int count);
 	static void Set_Pixel_Shader_Constant_Raw(int reg, const void* data, int count);
-	static void Set_Stream_Source_Raw(unsigned stream, IDirect3DVertexBuffer8* vertex_buffer, unsigned stride);
-	static void Set_Indices_Raw(IDirect3DIndexBuffer8* index_buffer, unsigned base_vertex_index);
 
 	// Raw setters taking engine objects, for code that used to pass the engine object's Direct3D 8
 	// object; these also work in Direct3D 12 mode. The nullptr overloads keep literal nullptr calls
@@ -979,12 +976,6 @@ WWINLINE void DX8Wrapper::Set_DX8_Texture_Stage_State_Raw(unsigned stage, D3DTEX
 	Device_Set_Texture_Stage_State(stage,state,value);
 }
 
-WWINLINE void DX8Wrapper::Set_DX8_Texture_Raw(unsigned int stage, IDirect3DBaseTexture8* texture)
-{
-	// A Direct3D 8 texture cannot exist in Direct3D 12 mode, so only null reaches here.
-	if (texture==nullptr) Device_Set_DX12_Texture(stage,nullptr);
-}
-
 WWINLINE void DX8Wrapper::Set_DX8_Texture_Raw(unsigned int stage, TextureBaseClass* texture)
 {
 	Device_Set_DX12_Texture(stage,texture ? texture->Peek_DX12_Texture() : nullptr);
@@ -992,7 +983,7 @@ WWINLINE void DX8Wrapper::Set_DX8_Texture_Raw(unsigned int stage, TextureBaseCla
 
 WWINLINE void DX8Wrapper::Set_DX8_Texture_Raw(unsigned int stage, std::nullptr_t)
 {
-	Set_DX8_Texture_Raw(stage,(IDirect3DBaseTexture8*)nullptr);
+	Device_Set_DX12_Texture(stage,nullptr);
 }
 
 WWINLINE void DX8Wrapper::Set_Pixel_Shader_Raw(DWORD pixel_shader)
@@ -1010,12 +1001,6 @@ WWINLINE void DX8Wrapper::Set_Pixel_Shader_Constant_Raw(int reg, const void* dat
 	Device_Set_Pixel_Shader_Constant(reg,data,count);
 }
 
-WWINLINE void DX8Wrapper::Set_Stream_Source_Raw(unsigned stream, IDirect3DVertexBuffer8* vertex_buffer, unsigned stride)
-{
-	// A Direct3D 8 buffer cannot exist in Direct3D 12 mode, so only null reaches here.
-	if (stream==0 && vertex_buffer==nullptr) Device_Set_Stream(nullptr,stride);
-}
-
 WWINLINE void DX8Wrapper::Set_Stream_Source_Raw(unsigned stream, VertexBufferClass* vertex_buffer, unsigned stride)
 {
 	if (stream==0) Device_Set_Stream(vertex_buffer ? static_cast<DX8VertexBufferClass*>(vertex_buffer)->Get_DX12_Buffer() : nullptr,stride);
@@ -1023,12 +1008,7 @@ WWINLINE void DX8Wrapper::Set_Stream_Source_Raw(unsigned stream, VertexBufferCla
 
 WWINLINE void DX8Wrapper::Set_Stream_Source_Raw(unsigned stream, std::nullptr_t, unsigned stride)
 {
-	Set_Stream_Source_Raw(stream,(IDirect3DVertexBuffer8*)nullptr,stride);
-}
-
-WWINLINE void DX8Wrapper::Set_Indices_Raw(IDirect3DIndexBuffer8* index_buffer, unsigned base_vertex_index)
-{
-	if (index_buffer==nullptr) Device_Set_Indices(nullptr,base_vertex_index);
+	if (stream==0) Device_Set_Stream(nullptr,stride);
 }
 
 WWINLINE void DX8Wrapper::Set_Indices_Raw(IndexBufferClass* index_buffer, unsigned base_vertex_index)
@@ -1038,7 +1018,7 @@ WWINLINE void DX8Wrapper::Set_Indices_Raw(IndexBufferClass* index_buffer, unsign
 
 WWINLINE void DX8Wrapper::Set_Indices_Raw(std::nullptr_t, unsigned base_vertex_index)
 {
-	Set_Indices_Raw((IDirect3DIndexBuffer8*)nullptr,base_vertex_index);
+	Device_Set_Indices(nullptr,base_vertex_index);
 }
 
 WWINLINE void DX8Wrapper::Draw_Primitive_Raw(unsigned primitive_type, unsigned start_vertex, unsigned primitive_count)
