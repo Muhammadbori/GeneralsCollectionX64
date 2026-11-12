@@ -1210,7 +1210,8 @@ target_link_libraries(corei_gameengine_public INTERFACE
     core_browserdispatch
     core_minidumper
     #core_wwvegas
-    d3d8lib
+    dinput8
+    dxguid
     deps_dbghelp
     gamespy::gamespy
     stlport

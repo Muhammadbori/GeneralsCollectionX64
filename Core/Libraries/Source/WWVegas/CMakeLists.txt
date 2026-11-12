@@ -2,12 +2,20 @@
 add_library(core_wwcommon INTERFACE)
 
 target_link_libraries(core_wwcommon INTERFACE
-    d3d8lib
+    # TheSuperHackers @build DirectInput (the keyboard) from the Windows SDK, not from the Direct3D 8 SDK.
+    dinput8
+    dxguid
     deps_dbghelp
     deps_miles
     deps_usp10
     stlport
 )
+
+# TheSuperHackers @build The link settings the Direct3D 8 SDK target used to add for modern MSVC.
+if(MSVC AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER "12.0.8804")
+    target_link_options(core_wwcommon INTERFACE /NODEFAULTLIB:libci.lib /SAFESEH:NO)
+    target_link_libraries(core_wwcommon INTERFACE legacy_stdio_definitions)
+endif()
 
 target_include_directories(core_wwcommon INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}
