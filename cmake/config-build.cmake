@@ -1,6 +1,9 @@
 # Do we want to build extra SDK stuff or just the game binary?
 option(RTS_BUILD_CORE_TOOLS "Build core tools" ON)
 option(RTS_BUILD_CORE_EXTRAS "Build core extra tools/tests" OFF)
+# TheSuperHackers @build The Direct3D 8 renderer is gone. WorldBuilder, W3DView and GUIEdit still use the Direct3D 8
+# device (or WW3D rendering that has not been checked on Direct3D 12) and are not ported yet.
+option(RTS_BUILD_DX8_TOOLS "Build the tools that are not ported to Direct3D 12 yet (WorldBuilder, W3DView, GUIEdit)" OFF)
 option(RTS_BUILD_ZEROHOUR "Build Zero Hour code." ON)
 option(RTS_BUILD_GENERALS "Build Generals code." ON)
 option(RTS_BUILD_OPTION_PROFILE "Build code with the \"Profile\" configuration." OFF)
@@ -27,6 +30,10 @@ add_feature_info(Vc6FullDebug RTS_BUILD_OPTION_VC6_FULL_DEBUG "Building VC6 with
 add_feature_info(FFmpegSupport RTS_BUILD_OPTION_FFMPEG "Building with FFmpeg support")
 add_feature_info(Tests RTS_BUILD_OPTION_TESTS "Building the unit tests")
 add_feature_info(Benchmarks RTS_BUILD_OPTION_BENCHMARKS "Building the benchmarks")
+add_feature_info(Dx8Tools RTS_BUILD_DX8_TOOLS "Building WorldBuilder, W3DView and GUIEdit (not ported to Direct3D 12)")
+if(NOT RTS_BUILD_DX8_TOOLS)
+    message(STATUS "WorldBuilder, W3DView and GUIEdit are not built: they are not ported to Direct3D 12 yet (RTS_BUILD_DX8_TOOLS=OFF)")
+endif()
 
 set(RTS_BUILD_OUTPUT_SUFFIX "" CACHE STRING "Suffix appended to output names of installable targets")
 

@@ -26,7 +26,10 @@ endif()
 if(RTS_BUILD_GENERALS_TOOLS OR RTS_BUILD_ZEROHOUR_TOOLS)
     add_subdirectory(ImagePacker)
     add_subdirectory(MapCacheBuilder)
-    add_subdirectory(W3DView)
+    # The W3DView sources; the W3DView executables are not ported to Direct3D 12 yet.
+    if(RTS_BUILD_DX8_TOOLS)
+        add_subdirectory(W3DView)
+    endif()
 endif()
 
 # Add library interfaces here
