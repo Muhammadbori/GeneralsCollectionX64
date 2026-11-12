@@ -53,7 +53,6 @@
 #include "missingtexture.h"
 #include "WWLib/ffactory.h"
 #include "dx8caps.h"
-#include "dx8texman.h"
 #include "meshmatdesc.h"
 #include "texturethumbnail.h"
 #include "WWDebug/wwprofile.h"
@@ -128,8 +127,6 @@ TextureBaseClass::~TextureBaseClass()
 		D3DTexture = nullptr;
 	}
 	REF_PTR_RELEASE(DX12Texture);
-
-	DX8TextureManagerClass::Remove(this);
 }
 
 

@@ -81,7 +81,6 @@
 #include "WWLib/ffactory.h"
 #include "dx8caps.h"
 #include "formconv.h"
-#include "dx8texman.h"
 #include "WWLib/bound.h"
 #include "DbgHelpGuard.h"
 #include "WW3D2/Backend/DX12/dx12device.h"
@@ -833,7 +832,6 @@ bool DX8Wrapper::Reset_Device(bool reload_assets)
 		}
 		DynamicVBAccessClass::_Deinit();
 		DynamicIBAccessClass::_Deinit();
-		DX8TextureManagerClass::Release_Textures();
 		SHD_SHUTDOWN_SHADERS;
 
 		// Reset frame count to reflect the flipping chain being reset by Reset()
@@ -853,7 +851,6 @@ bool DX8Wrapper::Reset_Device(bool reload_assets)
 
 		if (reload_assets)
 		{
-			DX8TextureManagerClass::Recreate_Textures();
 			if (m_pCleanupHook) {
 				m_pCleanupHook->ReAcquireResources();
 			}

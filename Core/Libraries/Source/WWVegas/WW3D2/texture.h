@@ -67,8 +67,6 @@ class TextureBaseClass : public RefCountClass
 {
 	friend class TextureLoader;
 	friend class LoaderThreadClass;
-	friend class DX8TextureTrackerClass;  //(gth) so it can call Poke_Texture,
-	friend class DX8ZTextureTrackerClass;
 
 public:
 

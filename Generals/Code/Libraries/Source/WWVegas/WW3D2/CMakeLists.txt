@@ -54,8 +54,6 @@ set(WW3D2_SRC
     #dx8polygonrenderer.h
 #    dx8renderer.cpp
 #    dx8renderer.h
-    #dx8texman.cpp
-    #dx8texman.h
 #    dx8vertexbuffer.cpp
 #    dx8vertexbuffer.h
     #dx8webbrowser.cpp
