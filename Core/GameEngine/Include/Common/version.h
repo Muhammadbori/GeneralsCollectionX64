@@ -75,9 +75,6 @@ public:
 	AsciiString getAsciiGitVersion() const;            ///< Returns the git version
 	UnicodeString getUnicodeGitVersion() const;        ///< Returns the git version
 
-	AsciiString getAsciiBuildUserOrGitCommitAuthorName() const;
-	UnicodeString getUnicodeBuildUserOrGitCommitAuthorName() const; ///< Is decorated with localized string
-
 	UnicodeString getUnicodeProductTitle() const;
 	UnicodeString getUnicodeProductVersion() const;
 	UnicodeString getUnicodeProductAuthor() const; ///< Is decorated with localized string

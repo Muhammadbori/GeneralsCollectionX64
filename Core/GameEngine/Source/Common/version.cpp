@@ -89,13 +89,22 @@ AsciiString Version::getAsciiVersion() const
 		}
 		else
 		{
-			AsciiString user = getAsciiBuildUserOrGitCommitAuthorName();
-			// User name requires at least 2 characters
-			if (user.getLength() < 2)
-				user.concat("xx");
+			AsciiString user = getAsciiBuildUser();
 
-			version.format("%d.%d.%d.%d%c%c", m_major, m_minor, m_buildNum, m_localBuildNum,
-				user.getCharAt(0), user.getCharAt(1));
+			if (user.isEmpty())
+			{
+				// No build user configured: no user suffix.
+				version.format("%d.%d.%d.%d", m_major, m_minor, m_buildNum, m_localBuildNum);
+			}
+			else
+			{
+				// User name requires at least 2 characters
+				if (user.getLength() < 2)
+					user.concat("xx");
+
+				version.format("%d.%d.%d.%d%c%c", m_major, m_minor, m_buildNum, m_localBuildNum,
+					user.getCharAt(0), user.getCharAt(1));
+			}
 		}
 	}
 	else
@@ -122,13 +131,23 @@ UnicodeString Version::getUnicodeVersion() const
 		}
 		else
 		{
-			UnicodeString user = getUnicodeBuildUserOrGitCommitAuthorName();
-			// User name requires at least 2 characters
-			if (user.getLength() < 2)
-				user.concat(L"xx");
+			UnicodeString user;
+			user.translate(getAsciiBuildUser());
 
-			version.format(TheGameText->fetch("Version:Format4").str(), m_major, m_minor, m_buildNum, m_localBuildNum,
-				user.getCharAt(0), user.getCharAt(1));
+			if (user.isEmpty())
+			{
+				// No build user configured: no user suffix.
+				version.format(L"%d.%d.%d.%d", m_major, m_minor, m_buildNum, m_localBuildNum);
+			}
+			else
+			{
+				// User name requires at least 2 characters
+				if (user.getLength() < 2)
+					user.concat(L"xx");
+
+				version.format(TheGameText->fetch("Version:Format4").str(), m_major, m_minor, m_buildNum, m_localBuildNum,
+					user.getCharAt(0), user.getCharAt(1));
+			}
 		}
 	}
 	else
@@ -291,33 +310,6 @@ UnicodeString Version::getUnicodeGitVersion() const
 	return str;
 }
 
-AsciiString Version::getAsciiBuildUserOrGitCommitAuthorName() const
-{
-	AsciiString asciiUser = getAsciiBuildUser();
-
-	if (asciiUser.isEmpty())
-	{
-		asciiUser = getGitCommitAuthorName();
-	}
-
-	return asciiUser;
-}
-
-UnicodeString Version::getUnicodeBuildUserOrGitCommitAuthorName() const
-{
-	UnicodeString str;
-	AsciiString asciiUser = getAsciiBuildUserOrGitCommitAuthorName();
-
-	if (!asciiUser.isEmpty())
-	{
-		UnicodeString unicodeUser;
-		unicodeUser.translate(asciiUser);
-		str.format(TheGameText->fetch("Version:BuildUser").str(), unicodeUser.str());
-	}
-
-	return str;
-}
-
 UnicodeString Version::getUnicodeProductTitle() const
 {
 	// @todo Make configurable
@@ -331,7 +323,9 @@ UnicodeString Version::getUnicodeProductVersion() const
 
 UnicodeString Version::getUnicodeProductAuthor() const
 {
-	return getUnicodeBuildUserOrGitCommitAuthorName();
+	// Only an explicitly configured build user is shown. The git commit author
+	// name is never shown to the player.
+	return getUnicodeBuildUser();
 }
 
 UnicodeString Version::getUnicodeProductString() const

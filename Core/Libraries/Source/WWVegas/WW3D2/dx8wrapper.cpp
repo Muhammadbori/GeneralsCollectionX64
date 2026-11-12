@@ -1270,9 +1270,6 @@ bool DX8Wrapper::Registry_Load_Render_Device( const char * sub_key, char *device
 }
 
 
-;
-
-
 void DX8Wrapper::Reset_Statistics()
 {
 	FrameStatistics = DX8FrameStatistics();
