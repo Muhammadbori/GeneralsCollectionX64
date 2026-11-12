@@ -89,7 +89,7 @@ enum
 #include "WW3D2/meshmdl.h"
 #include "WW3D2/Backend/DX12/dx12device.h"
 #include "WW3D2/Backend/DX12/dx12resource.h"
-#include "d3dx8tex.h"
+#include "WWMath/d3dmatrixmath.h"
 
 
 // If TEST_AND_BLEND is defined, it will do an alpha test and blend.  Otherwise just alpha test. jba. [5/30/2003]
@@ -1681,14 +1681,14 @@ void W3DTreeBuffer::drawTrees(CameraClass * camera, RefRenderObjListIterator *pD
 	DX8Wrapper::Apply_Render_State_Changes();
 
 	if (m_dwTreeVertexShader) {
-		D3DXMATRIX matProj, matView, matWorld;
+		D3DMATRIX matProj, matView, matWorld;
 		DX8Wrapper::_Get_DX8_Transform(D3DTS_WORLD, matWorld);
 		DX8Wrapper::_Get_DX8_Transform(D3DTS_VIEW, matView);
 		DX8Wrapper::_Get_DX8_Transform(D3DTS_PROJECTION, matProj);
-		D3DXMATRIX mat;
-		D3DXMatrixMultiply( &mat, &matView, &matProj );
-		D3DXMatrixMultiply( &mat, &matWorld, &mat );
-		D3DXMatrixTranspose( &mat, &mat );
+		D3DMATRIX mat;
+		D3DMatrixMath::Multiply( &mat, &matView, &matProj );
+		D3DMatrixMath::Multiply( &mat, &matWorld, &mat );
+		D3DMatrixMath::Transpose( &mat, &mat );
 
 		// c4  - Composite World-View-Projection Matrix
 		DX8Wrapper::Set_Vertex_Shader_Constant_Raw(  4, &mat,  4 );
@@ -1731,7 +1731,8 @@ void W3DTreeBuffer::drawTrees(CameraClass * camera, RefRenderObjListIterator *pD
 		Real mulTwoX = 0.5f;
 		if(TheGlobalData && TheGlobalData->m_useOverbright)
 			mulTwoX = 1.0f;
-		DX8Wrapper::Set_Pixel_Shader_Constant_Raw(1, D3DXVECTOR4(mulTwoX, mulTwoX, mulTwoX, mulTwoX), 1);
+		const float mulTwoXConst[4] = { mulTwoX, mulTwoX, mulTwoX, mulTwoX };
+		DX8Wrapper::Set_Pixel_Shader_Constant_Raw(1, mulTwoXConst, 1);
 #endif
 
 	} else {
