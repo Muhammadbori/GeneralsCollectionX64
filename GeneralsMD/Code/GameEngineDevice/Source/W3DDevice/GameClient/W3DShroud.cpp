@@ -462,9 +462,6 @@ void W3DShroud::render(CameraClass *cam)
 	if (!m_shroudData)
 		return; //nothing to update from.  Must be in reset state.
 
-	if (DX8Wrapper::Has_D3D_Device() && (DX8Wrapper::Test_Cooperative_Level()) != D3D_OK)
-		return;	//device not ready to render anything
-
 #if defined(RTS_DEBUG)
 	if (TheGlobalData && TheGlobalData->m_fogOfWarOn != m_drawFogOfWar)
 	{

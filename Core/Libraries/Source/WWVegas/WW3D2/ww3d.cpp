@@ -803,27 +803,10 @@ WW3DErrorType WW3D::Begin_Render(bool clear,bool clearz,const Vector3 & color, f
 
 	WWPROFILE("WW3D::Begin_Render");
 	WWASSERT(IsInitted);
-	HRESULT hr;
 
 	SNAPSHOT_SAY(("=========================================="));
 	SNAPSHOT_SAY(("========== WW3D::Begin_Render ============"));
 	SNAPSHOT_SAY(("==========================================\n"));
-
-	if (DX8Wrapper::_Get_D3D_Device8() && (hr=DX8Wrapper::_Get_D3D_Device8()->TestCooperativeLevel()) != D3D_OK)
-	{
-        // If the device was lost, do not render until we get it back
-        if( D3DERR_DEVICELOST == hr )
-            return WW3D_ERROR_GENERIC;	//other app has the device
-
-        // Check if the device needs to be reset
-        if( D3DERR_DEVICENOTRESET == hr )
-        {
-            WWDEBUG_SAY(("WW3D::Begin_Render is resetting the device."));
-            DX8Wrapper::Reset_Device();
-        }
-
-		return WW3D_ERROR_GENERIC;
-	}
 
 	// Memory allocation statistics
 	LastFrameMemoryAllocations=WWMemoryLogClass::Get_Allocate_Count();
@@ -1317,186 +1300,9 @@ void WW3D::Make_Screen_Shot( const char * filename_base , const float gamma, con
 
 	WWASSERT(!IsRendering);
 
-	// TheSuperHackers @info This TGA/BMP path reads the Direct3D 8 back buffer. Direct3D 12 mode has none; its
-	// screenshots go through W3DScreenshot.
-	if (DX12Device::Is_Active()) {
-		WWDEBUG_SAY(( "Make_Screen_Shot: not available in Direct3D 12 mode" ));
-		return;
-	}
-
-	char filename[80];
-
-	char ext[4];
-	switch (format) {
-		case TGA:
-			sprintf(ext,"tga");
-			break;
-		case BMP:
-			sprintf(ext,"bmp");
-			break;
-		default:
-			WWASSERT(0);
-			return;
-			break;
-	}
-
-	static int frame_number = 1;
-
-	bool done = false;
-	while (!done) {
-		snprintf( filename, ARRAY_SIZE(filename), "%s%.2d.%s", filename_base, frame_number++, ext);
-		FileClass*file=_TheFileFactory->Get_File( filename );
-		if ( file ) {
-			file->Open();
-			done = !file->Is_Available();
-			_TheFileFactory->Return_File( file );
-		} else {
-			done = true;
-		}
-	}
-
-	WWDEBUG_SAY(( "Creating Screen Shot %s", filename ));
-
-	// make the gamma look up table
-	int i;
-	unsigned char gamma_lut[256];
-	float recip = 1.0f;
-	if (gamma > WWMATH_EPSILON) {
-		recip = 1.0f / gamma;
-	}
-	for (i = 0; i < 256; i++) {
-		gamma_lut[i] = (unsigned char) (256.0f * powf(i / 256.0f, recip));
-	}
-
-	// TheSuperHackers @bugfix xezon 21/05/2025 Get the back buffer and create a copy of the surface.
-	// Originally this code took the front buffer and tried to lock it. This does not work when the
-	// render view clips outside the desktop boundaries. It crashed the game.
-	SurfaceClass* surface = DX8Wrapper::_Get_DX8_Back_Buffer();
-	// There is no readable back buffer in Direct3D 12 mode yet.
-	if (surface == nullptr)
-		return;
-
-	SurfaceClass::SurfaceDescription surfaceDesc;
-	surface->Get_Description(surfaceDesc);
-
-	SurfaceClass* surfaceCopy = NEW_REF(SurfaceClass, (surfaceDesc.Width, surfaceDesc.Height, surfaceDesc.Format));
-	DX8Wrapper::_Copy_DX8_Rects(surface->Peek_D3D_Surface(), nullptr, 0, surfaceCopy->Peek_D3D_Surface(), nullptr);
-
-	surface->Release_Ref();
-	surface = nullptr;
-
-	struct Rect
-	{
-		int Pitch;
-		void* pBits;
-	} lrect;
-
-	lrect.pBits = surfaceCopy->Lock(&lrect.Pitch);
-	if (lrect.pBits == nullptr)
-	{
-		surfaceCopy->Release_Ref();
-		return;
-	}
-
-	unsigned int x,y,index,index2,width,height;
-
-	width = surfaceDesc.Width;
-	height = surfaceDesc.Height;
-
-	unsigned char *image=W3DNEWARRAY unsigned char[3*width*height];
-
-	for (y=0; y<height; y++)
-	{
-		for (x=0; x<width; x++)
-		{
-			// index for image
-			index=3*(x+y*width);
-			// index for fb
-			index2=y*lrect.Pitch+4*x;
-
-			image[index]   = gamma_lut[*((unsigned char *) lrect.pBits + index2+2)];
-			image[index+1] = gamma_lut[*((unsigned char *) lrect.pBits + index2+1)];
-			image[index+2] = gamma_lut[*((unsigned char *) lrect.pBits + index2+0)];
-		}
-	}
-
-	surfaceCopy->Unlock();
-	surfaceCopy->Release_Ref();
-	surfaceCopy = nullptr;
-
-	switch (format) {
-		case TGA:
-			{
-				Targa targ;
-				memset(&targ.Header,0,sizeof(targ.Header));
-				targ.Header.Width=width;
-				targ.Header.Height=height;
-				targ.Header.PixelDepth=24;
-				targ.Header.ImageType=TGA_TRUECOLOR;
-				targ.SetImage((char *) image);
-				targ.YFlip();
-
-				FileClass*file=_TheWritingFileFactory->Get_File( filename );
-				if ( file ) {
-					file->Create();
-					file->Close();
-					_TheWritingFileFactory->Return_File( file );
-				}
-
-				targ.Save(filename,TGAF_IMAGE,false);
-			}
-		break;
-		case BMP:
-			{
-				BITMAPFILEHEADER fileheader;
-				BITMAPINFOHEADER header;
-				memset(&header, 0, sizeof(BITMAPINFOHEADER));
-				header.biSize = sizeof(BITMAPINFOHEADER);
-				header.biWidth = width;
-				header.biHeight = height;
-				header.biPlanes = 1;
-				header.biBitCount = 24;
-				header.biCompression = BI_RGB;
-				header.biXPelsPerMeter = 0xB12;
-				header.biYPelsPerMeter = 0xB12;
-				int len = ((width * 24 +31) & ~31) /8;
-
-				memset(&fileheader, 0, sizeof(BITMAPFILEHEADER));
-				fileheader.bfType = 19778; // BM
-				fileheader.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
-				fileheader.bfSize = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + 3 * len * height * sizeof(char);
-
-				FileClass *file = _TheWritingFileFactory->Get_File( filename );
-				if ( file ) {
-					file->Create();
-					file->Open(FileClass::WRITE);
-					int num;
-					num = file->Write(&fileheader, sizeof(BITMAPFILEHEADER));
-					WWASSERT(num == sizeof(BITMAPFILEHEADER));
-					num = file->Write(&header, sizeof(BITMAPINFOHEADER));
-					WWASSERT(num == sizeof(BITMAPINFOHEADER));
-					char *temp = new char [3 * len];
-					memset(temp, 0, 3 * len * sizeof(char));
-					// invert image, pad and swap R and B
-					for (y = 0; y < (int) height; y++) {
-						memcpy(&temp[0], &image[ 3 * width * (height - y - 1)], 3 * width * sizeof(char));
-						for (x = 0; x < width; x++) {
-							char t2 = temp[3 * x];
-							temp[3 * x] = temp[3 * x + 2];
-							temp[3 * x + 2] = t2;
-						}
-						num = file->Write(&temp[0], len * sizeof(char));
-						WWASSERT(num == len * (int)sizeof(char));
-					}
-					delete [] temp;
-					file->Close();
-					_TheWritingFileFactory->Return_File( file );
-				}
-			}
-			break;
-	}
-
-	delete [] image;
+	// TheSuperHackers @info The TGA/BMP path read the Direct3D 8 back buffer, which Direct3D 12 mode does not have.
+	// The game's screenshots go through W3DScreenshot.
+	WWDEBUG_SAY(( "Make_Screen_Shot: not available in Direct3D 12 mode" ));
 }
 
 
@@ -1515,37 +1321,8 @@ void WW3D::Make_Screen_Shot( const char * filename_base , const float gamma, con
  *=============================================================================================*/
 void WW3D::Start_Movie_Capture( const char * filename_base, float frame_rate )
 {
-#ifdef _WIN32
-	// TheSuperHackers @info Movie capture reads the Direct3D 8 back buffer, which Direct3D 12 mode does not have.
-	if (DX12Device::Is_Active()) {
-		WWDEBUG_SAY(( "Start_Movie_Capture: movie capture is not available in Direct3D 12 mode" ));
-		return;
-	}
-	if (IsCapturing) {
-		Stop_Movie_Capture();
-	}
-	WWASSERT( !IsCapturing);
-	IsCapturing = true;
-
-	RECT bounds;
-	GetWindowRect(_Hwnd,&bounds);
-	int height=bounds.bottom-bounds.top;
-	int width=bounds.right-bounds.left;
-	int depth=24;
-
-	WWASSERT( Movie == nullptr);
-
-	if (frame_rate == 0.0f) {
-		frame_rate = 1.0f;
-		PauseRecord = true;
-	} else {
-		PauseRecord = false;
-	}
-
-	Movie = W3DNEW FrameGrabClass( filename_base, FrameGrabClass::AVI, width, height, depth, frame_rate);
-
-	WWDEBUG_SAY(( "Starting Movie %s", filename_base ));
-#endif
+	// TheSuperHackers @info Movie capture needs a readable back buffer, which Direct3D 12 mode does not have.
+	WWDEBUG_SAY(( "Start_Movie_Capture: movie capture is not available in Direct3D 12 mode" ));
 }
 
 
@@ -1721,69 +1498,8 @@ bool WW3D::Is_Movie_Ready()
  *=============================================================================================*/
 void WW3D::Update_Movie_Capture()
 {
-#ifdef _WIN32
-	WWASSERT( IsCapturing);
-	WWPROFILE("WW3D::Update_Movie_Capture");
-	WWDEBUG_SAY(( "Updating"));
-
-	// TheSuperHackers @bugfix xezon 21/05/2025 Get the back buffer and create a copy of the surface.
-	// Originally this code took the front buffer and tried to lock it. This does not work when the
-	// render view clips outside the desktop boundaries. It crashed the game.
-	SurfaceClass* surface = DX8Wrapper::_Get_DX8_Back_Buffer();
-	// There is no readable back buffer in Direct3D 12 mode yet.
-	if (surface == nullptr)
-		return;
-
-	SurfaceClass::SurfaceDescription surfaceDesc;
-	surface->Get_Description(surfaceDesc);
-
-	SurfaceClass* surfaceCopy = NEW_REF(SurfaceClass, (surfaceDesc.Width, surfaceDesc.Height, surfaceDesc.Format));
-	DX8Wrapper::_Copy_DX8_Rects(surface->Peek_D3D_Surface(), nullptr, 0, surfaceCopy->Peek_D3D_Surface(), nullptr);
-
-	surface->Release_Ref();
-	surface = nullptr;
-
-	struct Rect
-	{
-		int Pitch;
-		void* pBits;
-	} lrect;
-
-	lrect.pBits = surfaceCopy->Lock(&lrect.Pitch);
-	if (lrect.pBits == nullptr)
-	{
-		surfaceCopy->Release_Ref();
-		return;
-	}
-
-	unsigned int x,y,index,index2,width,height;
-
-	width = surfaceDesc.Width;
-	height = surfaceDesc.Height;
-
-	char *image=(char *)Movie->GetBuffer();
-
-	for (y=0; y<height; y++)
-	{
-		for (x=0; x<width; x++)
-		{
-			// index for image
-			index=3*(x+(height-y-1)*width);
-			// index for fb
-			index2=y*lrect.Pitch+4*x;
-
-			image[index]=*((char *) lrect.pBits + index2+0);
-			image[index+1]=*((char *) lrect.pBits + index2+1);
-			image[index+2]=*((char *) lrect.pBits + index2+2);
-		}
-	}
-
-	surfaceCopy->Unlock();
-	surfaceCopy->Release_Ref();
-	surfaceCopy = nullptr;
-
-	Movie->Grab(image);
-#endif
+	// TheSuperHackers @info Movie capture needs a readable back buffer, which Direct3D 12 mode does not have.
+	// Start_Movie_Capture never arms IsCapturing, so there is nothing to grab.
 }
 
 

@@ -163,9 +163,7 @@ protected:
 	DWORD					m_dwWaveVertexShader;	///<handle to D3D vertex shader
 	Int	m_numVertices;				///<number of vertices in D3D vertex buffer
 	Int m_numIndices;				///<number of indices in D3D index buffer
-	LPDIRECT3DTEXTURE8 m_pBumpTexture[NUM_BUMP_FRAMES]; ///<animation frames
-	LPDIRECT3DTEXTURE8 m_pBumpTexture2[NUM_BUMP_FRAMES]; ///<animation frames
-	TextureClass *m_pBumpTextureDX12;	///<bump map of the shader water in Direct3D 12 mode, du/dv biased by 128 in red/green (replaces m_pBumpTexture)
+	TextureClass *m_pBumpTextureDX12;	///<bump map of the shader water in Direct3D 12 mode, du/dv biased by 128 in red/green
 	Real				m_fBumpFrame;	///<current animation frame
 	Real				m_fBumpScale;	///<scales bump map uv perturbation
 	TextureClass * m_pReflectionTexture;	///<render target for reflection
@@ -244,7 +242,6 @@ protected:
 	void testCurvedWater();	///<draw the sky layer (clouds, stars, etc.)
 	void renderSkyBody(Matrix3D *mat);	///<draw the sky body (sun, moon, etc.)
 	void renderWaterMesh();			///<draw the water surface mesh (deformed 3d mesh).
-	HRESULT initBumpMap(LPDIRECT3DTEXTURE8 *pTex, TextureClass *pBumpSource);	///<copies data into bump-map format.
 	void initBumpMapDX12();	///<Direct3D 12 mode: creates m_pBumpTextureDX12.
 	void renderMirror(CameraClass *cam);	///< Draw reflected scene into texture
 	void drawSea(RenderInfoClass & rinfo);	///< Draw the surface of the water

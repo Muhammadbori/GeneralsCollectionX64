@@ -285,8 +285,6 @@ Bool W3DProjectedShadowManager::ReAcquireResources()
 			m_dynamicRenderTarget=DX8Wrapper::Create_Render_Target (DEFAULT_RENDER_TARGET_WIDTH, DEFAULT_RENDER_TARGET_HEIGHT);
 	}
 
-	DEBUG_ASSERTCRASH(DX12Device::Is_Active(), ("Trying to ReAcquireResources on W3DProjectedShadowManager without device"));
-
 	// Engine buffers. m_dynamicRenderTarget above is a Direct3D 12 render target. Projected shadows render their
 	// shadow textures into render targets (see W3DProjectedShadow::updateTexture) and draw the
 	// terrain part through the volumetric shadow engine buffers (see renderProjectedTerrainShadow).

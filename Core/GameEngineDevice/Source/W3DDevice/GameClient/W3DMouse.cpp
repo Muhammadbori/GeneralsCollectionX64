@@ -60,7 +60,7 @@ static Mouse::RedrawMode getSupportedRedrawMode(Mouse::RedrawMode mode)
 {
 	if (mode == Mouse::RM_DX8)
 		return Mouse::RM_POLYGON;
-	if (DX12Device::Is_Active() && mode == Mouse::RM_W3D)
+	if (mode == Mouse::RM_W3D)
 		return Mouse::RM_POLYGON;
 	return mode;
 }

@@ -152,177 +152,23 @@ Bool W3DSmudgeManager::updateBackgroundTexture()
 	return TRUE;
 }
 
-/*Copies a portion of the current render target into a specified buffer*/
-Int copyRect(unsigned char *buf, Int bufSize, int oX, int oY, int width, int height)
-{
- 	IDirect3DSurface8 *surface=nullptr;	///<previous render target
- 	IDirect3DSurface8 *tempSurface=nullptr;
-	Int result = 0;
-	HRESULT hr = S_OK;
-
-	if (!DX8Wrapper::Has_D3D_Device())
-		goto error;
-
- 	DX8Wrapper::Get_Render_Target_Surface(&surface);
-
-	if (!surface)
-		goto error;
-
- 	D3DSURFACE_DESC desc;
-
- 	surface->GetDesc(&desc);
-
-	RECT srcRect;
-	srcRect.left=oX;
-	srcRect.top=oY;
-	srcRect.right=oX+width;
-	srcRect.bottom=oY+height;
-
-	POINT dstPoint;
-	dstPoint.x=0;
-	dstPoint.y=0;
-
- 	hr=DX8Wrapper::Create_Image_Surface(  width, height, desc.Format, &tempSurface);
-
-	if (hr != S_OK)
-		goto error;
-
- 	hr=DX8Wrapper::Copy_Rects(surface,&srcRect,1,tempSurface,&dstPoint);
-
-	if (hr != S_OK)
-		goto error;
-
- 	D3DLOCKED_RECT lrect;
-
- 	hr=tempSurface->LockRect(&lrect,nullptr,D3DLOCK_READONLY);
-
-	if (hr != S_OK)
-		goto error;
-
- 	tempSurface->GetDesc(&desc);
-
-	if (desc.Size < bufSize)
-		bufSize = desc.Size;
-
-	memcpy(buf,lrect.pBits,bufSize);
-	result = bufSize;
-
-	tempSurface->UnlockRect();
-
-error:
-	if (surface)
-		surface->Release();
-	if (tempSurface)
-		tempSurface->Release();
-
-	return result;
-}
-
-#define UNIQUE_COLOR	(0x12345678)
-#define BLOCK_SIZE	(8)
-
 Bool W3DSmudgeManager::testHardwareSupport()
 {
 	if (m_hardwareSupportStatus == SMUDGE_SUPPORT_UNKNOWN)
 	{
 		//we have not done the test yet.
 
-		IDirect3DTexture8 *backTexture=W3DShaderManager::getRenderTexture();
-		if (!backTexture || !W3DShaderManager::isRenderingToTexture())
-		{
-			// TheSuperHackers @bugfix When Render-To-Texture is disabled globally, we fallback
-			// to copying the backbuffer to a texture.
-			if (m_backgroundTexture)
-			{
-				m_hardwareSupportStatus = SMUDGE_SUPPORT_YES;
-				return TRUE;
-			}
-
-			m_hardwareSupportStatus = SMUDGE_SUPPORT_NO;
-			return FALSE;
-		}
-
-		VertexMaterialClass *vmat=VertexMaterialClass::Get_Preset(VertexMaterialClass::PRELIT_DIFFUSE);
-		DX8Wrapper::Set_Material(vmat);
-		REF_PTR_RELEASE(vmat);	//no need to keep a reference since it's a preset.
-
-		ShaderClass shader=ShaderClass::_PresetOpaqueShader;
-		shader.Set_Depth_Compare(ShaderClass::PASS_ALWAYS);
-		shader.Set_Depth_Mask(ShaderClass::DEPTH_WRITE_DISABLE);
-		DX8Wrapper::Set_Shader(shader);
-		DX8Wrapper::Set_Texture(0,nullptr);
-		DX8Wrapper::Apply_Render_State_Changes();	//force update of view and projection matrices
-
-		struct _TRANS_LIT_TEX_VERTEX {
-			Vector4 p;
-			DWORD color;   // diffuse color
-			float	u;
-			float	v;
-		} v[4];
-
-		//bottom right
-		v[0].p = Vector4( BLOCK_SIZE-0.5f, BLOCK_SIZE-0.5f, 0.0f, 1.0f );
-		v[0].u = BLOCK_SIZE/(Real)TheDisplay->getWidth();
-		v[0].v = BLOCK_SIZE/(Real)TheDisplay->getHeight();
-		//top right
-		v[1].p = Vector4( BLOCK_SIZE-0.5f, 0-0.5f, 0.0f, 1.0f );
-		v[1].u = BLOCK_SIZE/(Real)TheDisplay->getWidth();
-		v[1].v = 0;
-		//bottom left
-		v[2].p = Vector4(  0-0.5f, BLOCK_SIZE-0.5f, 0.0f, 1.0f );
-		v[2].u = 0;
-		v[2].v = BLOCK_SIZE/(Real)TheDisplay->getHeight();
-		//top left
-		v[3].p = Vector4(  0-0.5f,  0-0.5f, 0.0f, 1.0f );
-		v[3].u = 0;
-		v[3].v = 0;
-
-		v[0].color = UNIQUE_COLOR;
-		v[1].color = UNIQUE_COLOR;
-		v[2].color = UNIQUE_COLOR;
-		v[3].color = UNIQUE_COLOR;
-
-		//draw polygons like this is very inefficient but for only 2 triangles, it's
-		//not worth bothering with index/vertex buffers.
-		DX8Wrapper::Set_Vertex_Shader(D3DFVF_XYZRHW | D3DFVF_DIFFUSE | D3DFVF_TEX1);
-
-		DX8Wrapper::Draw_Primitive_UP(D3DPT_TRIANGLESTRIP, 2, v, sizeof(_TRANS_LIT_TEX_VERTEX));
-
-		DWORD refData[BLOCK_SIZE*BLOCK_SIZE];
-		memset(refData,0,sizeof(refData));
-		Int bufSize=copyRect((unsigned char *)refData,sizeof(refData),0,0,BLOCK_SIZE,BLOCK_SIZE);	//copy area we just rendered using solid color
-		if (!bufSize)
-		{
-			m_hardwareSupportStatus = SMUDGE_SUPPORT_NO;
-			return FALSE;
-		}
-
-		DX8Wrapper::Set_DX8_Texture(0,backTexture);
-
-		DWORD testData[BLOCK_SIZE*BLOCK_SIZE];
-		memset(testData,0xff,sizeof(testData));
-
-		v[0].color = 0xffffffff;
-		v[1].color = 0xffffffff;
-		v[2].color = 0xffffffff;
-		v[3].color = 0xffffffff;
-
-		DX8Wrapper::Draw_Primitive_UP(D3DPT_TRIANGLESTRIP, 2, v, sizeof(_TRANS_LIT_TEX_VERTEX));
-		bufSize=copyRect((unsigned char *)testData,sizeof(testData),0,0,BLOCK_SIZE,BLOCK_SIZE);
-
-		if (!bufSize)
-		{
-			m_hardwareSupportStatus = SMUDGE_SUPPORT_NO;
-			return FALSE;
-		}
-
-		//compare the 2 buffers to see if they match.
-		if (memcmp(testData,refData,bufSize) == 0)
+		// TheSuperHackers @bugfix When Render-To-Texture is disabled globally, we fallback
+		// to copying the backbuffer to a texture. Direct3D 12 mode has no Direct3D 8 render texture, so this
+		// is the only path. The old Direct3D 8 probe that compared a rendered block with a copy of it is gone.
+		if (m_backgroundTexture)
 		{
 			m_hardwareSupportStatus = SMUDGE_SUPPORT_YES;
 			return TRUE;
 		}
+
 		m_hardwareSupportStatus = SMUDGE_SUPPORT_NO;
+		return FALSE;
 	}
 
 	return (SMUDGE_SUPPORT_YES == m_hardwareSupportStatus);

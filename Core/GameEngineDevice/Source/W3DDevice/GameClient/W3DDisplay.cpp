@@ -563,11 +563,6 @@ void W3DDisplay::getDisplayModeDescription(Int modeIndex, Int *xres, Int *yres, 
 
 void W3DDisplay::setGamma(Real gamma, Real bright, Real contrast, Bool calibrate)
 {
-	// TheSuperHackers @feature Direct3D 12 applies the gamma to the game's own frame only, so it works
-	// in a window too.
-	if (m_windowed && !DX12Device::Is_Active())
-		return;	//we don't allow gamma to change in window because it would affect desktop.
-
 	Renderer::Set_Gamma(gamma,bright,contrast,calibrate, false);
 }
 
@@ -1947,13 +1942,8 @@ void W3DDisplay::update()
 	WW3D::Sync(TheGameLogic->hasUpdated());
 
 	// update all views of the world - recomputes data which will affect drawing
-	if ((DX8Wrapper::Has_D3D_Device() || DX12Device::Is_Active()) && (DX8Wrapper::Test_Cooperative_Level()) == D3D_OK)
-	{
-		// Checking if we have the device before updating views because the heightmap crashes otherwise while
-		// trying to refresh the visible terrain geometry.
-		// TheSuperHackers @todo Remove the renderer dependency from the update.
-		updateViews();
-	}
+	// TheSuperHackers @todo Remove the renderer dependency from the update.
+	updateViews();
 }
 
 //=============================================================================
@@ -2104,23 +2094,20 @@ AGAIN:
 
 	do {
 
-		if ((DX8Wrapper::Has_D3D_Device() || DX12Device::Is_Active()) && (DX8Wrapper::Test_Cooperative_Level()) == D3D_OK)
-		{
-			// TheSuperHackers @info The views are updated in W3DDisplay::update, except in the repeated passes
-			// of this loop, which keep moving the camera while the time is frozen for a camera movement.
-			if (!viewsUpdated)
-				updateViews();
+		// TheSuperHackers @info The views are updated in W3DDisplay::update, except in the repeated passes
+		// of this loop, which keep moving the camera while the time is frozen for a camera movement.
+		if (!viewsUpdated)
+			updateViews();
 
-			TheParticleSystemManager->DRAW();
+		TheParticleSystemManager->DRAW();
 
-			if (TheWaterRenderObj && TheGlobalData->m_waterType == 2)
-				TheWaterRenderObj->updateRenderTargetTextures(primaryW3DView->get3DCamera());	//do a render into each texture
+		if (TheWaterRenderObj && TheGlobalData->m_waterType == 2)
+			TheWaterRenderObj->updateRenderTargetTextures(primaryW3DView->get3DCamera());	//do a render into each texture
 
-			//Can't render into textures while rendering to screen so these textures need to be updated
-			//before we enter main rendering loop.
-			if (TheW3DProjectedShadowManager)
-				TheW3DProjectedShadowManager->updateRenderTargetTextures();
-		}
+		//Can't render into textures while rendering to screen so these textures need to be updated
+		//before we enter main rendering loop.
+		if (TheW3DProjectedShadowManager)
+			TheW3DProjectedShadowManager->updateRenderTargetTextures();
 
 		viewsUpdated = FALSE;
 

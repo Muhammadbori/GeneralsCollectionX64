@@ -308,12 +308,6 @@ WaterRenderObjClass::~WaterRenderObjClass()
 		REF_PTR_RELEASE(m_settings[i].waterTexture);
 	}
 
-	i=NUM_BUMP_FRAMES;
-	while (i--)
-	{	SAFE_RELEASE( m_pBumpTexture[i]);
-		SAFE_RELEASE( m_pBumpTexture2[i]);
-	}
-
 	delete [] m_meshData;
 	m_meshData = nullptr;
 	m_meshDataSize = 0;
@@ -370,10 +364,6 @@ WaterRenderObjClass::WaterRenderObjClass()
 	m_gridCellsY=WATER_MESH_Y_VERTICES;
 	m_gridWidth = m_gridCellsX * m_gridCellSize;
 	m_gridHeight = m_gridCellsY * m_gridCellSize;
-
-	Int i=NUM_BUMP_FRAMES;
-	while (i--)
-		m_pBumpTexture[i]=nullptr;
 
 	m_riverVOrigin=0;
 	m_riverTexture=nullptr;
@@ -434,206 +424,10 @@ RenderObjClass *	 WaterRenderObjClass::Clone() const
 }
 
 //-------------------------------------------------------------------------------------------------
-/** Copies raw bits from pBumpSrc (a regular grayscale texture) into a D3D
-	*   bump-map format. */
-//-------------------------------------------------------------------------------------------------
-HRESULT WaterRenderObjClass::initBumpMap(LPDIRECT3DTEXTURE8 *pTex, TextureClass *pBumpSource)
-{
-    SurfaceClass::SurfaceDescription    d3dsd;
-	SurfaceClass * surf;
-    D3DLOCKED_RECT     d3dlr;
-	DWORD dwSrcPitch;
-	BYTE* pSrc;
-	Int numLevels;
-
-#ifdef MIPMAP_BUMP_TEXTURE
-
-	pBumpSource->Get_Level_Description(d3dsd);
-
-	if (Get_Bytes_Per_Pixel(d3dsd.Format) != 4)
-	{
-		// LORENZEN WAS BUGGED BY THIS,
-		//		DEBUG_CRASH(("WaterRenderObjClass::Invalid BumpMap format - Was it compressed?") );
-		return S_OK;
-	}
-
-	if (pBumpSource->Peek_D3D_Texture())
-	{
-		numLevels=pBumpSource->Peek_D3D_Texture()->GetLevelCount();
-	}
-	else
-		return S_OK;
-
-	pTex[0]=DX8Wrapper::_Create_DX8_Texture(d3dsd.Width,d3dsd.Height,WW3D_FORMAT_U8V8,MIP_LEVELS_ALL,D3DPOOL_MANAGED,false);
-
-	for (Int level=0; level < numLevels; level++)
-	{
-		surf=pBumpSource->Get_Surface_Level(level);
-		surf->Get_Description(d3dsd);
-		pSrc=(unsigned char *)surf->Lock((int *)&dwSrcPitch);
-
-		pTex[0]->LockRect( level, &d3dlr, nullptr, 0 );
-		DWORD dwDstPitch = (DWORD)d3dlr.Pitch;
-		BYTE* pDst       = (BYTE*)d3dlr.pBits;
-
-		for( DWORD y=0; y<d3dsd.Height; y++ )
-		{
-			BYTE* pDstT  = pDst;
-			BYTE* pSrcB0 = (BYTE*)pSrc;
-			BYTE* pSrcB1 = ( pSrcB0 + dwSrcPitch );
-			BYTE* pSrcB2 = ( pSrcB0 - dwSrcPitch );
-
-			if( y == d3dsd.Height-1 )  // Don't go past the last line
-				pSrcB1 = pSrcB0;
-			if( y == 0 )               // Don't go before first line
-				pSrcB2 = pSrcB0;
-
-			for( DWORD x=0; x<d3dsd.Width; x++ )
-			{
-				LONG v00 = 256-*(pSrcB0+0); // Get the current pixel
-				LONG v01 = 256-*(pSrcB0+4); // and the pixel to the right
-				LONG vM1 = 256-*(pSrcB0-4); // and the pixel to the left
-				LONG v10 = 256-*(pSrcB1+0); // and the pixel one line below.
-				LONG v1M = 256-*(pSrcB2+0); // and the pixel one line above.
-
-				LONG iDu = (vM1-v01); // The delta-u bump value
-				LONG iDv = (v1M-v10); // The delta-v bump value
-
-				if( (v00 < vM1) && (v00 < v01) )  // If we are at valley
-				{
-					iDu = vM1-v00;                 // Choose greater of 1st order diffs
-					if( iDu < v00-v01 )
-						iDu = v00-v01;
-				}
-
-				// The luminance bump value (land masses are less shiny)
-				WORD uL = ( v00>1 ) ? 63 : 127;
-
-				switch( D3DFMT_V8U8)//m_BumpMapFormat )
-				{
-					case D3DFMT_V8U8:
-						*pDstT++ = (BYTE)iDu;
-						*pDstT++ = (BYTE)iDv;
-						break;
-
-					case D3DFMT_L6V5U5:
-						*(WORD*)pDstT  = (WORD)( ( (iDu>>3) & 0x1f ) <<  0 );
-						*(WORD*)pDstT |= (WORD)( ( (iDv>>3) & 0x1f ) <<  5 );
-						*(WORD*)pDstT |= (WORD)( ( ( uL>>2) & 0x3f ) << 10 );
-						pDstT += 2;
-						break;
-
-					case D3DFMT_X8L8V8U8:
-						*pDstT++ = (BYTE)iDu;
-						*pDstT++ = (BYTE)iDv;
-						*pDstT++ = (BYTE)uL;
-						*pDstT++ = (BYTE)0L;
-						break;
-				}
-
-				// Move one pixel to the left (src is 32-bpp)
-				pSrcB0+=4;   pSrcB1+=4;   pSrcB2+=4;
-			}
-
-			// Move to the next line
-			pSrc += dwSrcPitch;    pDst += dwDstPitch;
-		}
-
-		pTex[0]->UnlockRect(level);
-		surf->Unlock();
-		REF_PTR_RELEASE (surf);
-	}
-
-#else
-	surf=pBumpSource->Get_Surface_Level();
-	surf->Get_Description(d3dsd);
-	pSrc=(unsigned char *)surf->Lock((int *)&dwSrcPitch);
-
-    // Create the bumpmap's surface and texture objects
-	m_pBumpTexture[i]=DX8Wrapper::_Create_DX8_Texture(d3dsd.Width,d3dsd.Height,WW3D_FORMAT_U8V8,TextureClass::MIP_LEVELS_1,D3DPOOL_MANAGED,false);
-
-    // Fill the bits of the new texture surface with bits from
-    // a private format.
-
-    m_pBumpTexture[i]->LockRect( 0, &d3dlr, 0, 0 );
-    DWORD dwDstPitch = (DWORD)d3dlr.Pitch;
-    BYTE* pDst       = (BYTE*)d3dlr.pBits;
-
-    for( DWORD y=0; y<d3dsd.Height; y++ )
-    {
-        BYTE* pDstT  = pDst;
-        BYTE* pSrcB0 = (BYTE*)pSrc;
-        BYTE* pSrcB1 = ( pSrcB0 + dwSrcPitch );
-        BYTE* pSrcB2 = ( pSrcB0 - dwSrcPitch );
-
-        if( y == d3dsd.Height-1 )  // Don't go past the last line
-            pSrcB1 = pSrcB0;
-        if( y == 0 )               // Don't go before first line
-            pSrcB2 = pSrcB0;
-
-        for( DWORD x=0; x<d3dsd.Width; x++ )
-        {
-            LONG v00 = 256-*(pSrcB0+0); // Get the current pixel
-            LONG v01 = 256-*(pSrcB0+4); // and the pixel to the right
-            LONG vM1 = 256-*(pSrcB0-4); // and the pixel to the left
-            LONG v10 = 256-*(pSrcB1+0); // and the pixel one line below.
-            LONG v1M = 256-*(pSrcB2+0); // and the pixel one line above.
-
-            LONG iDu = (vM1-v01); // The delta-u bump value
-            LONG iDv = (v1M-v10); // The delta-v bump value
-
-            if( (v00 < vM1) && (v00 < v01) )  // If we are at valley
-            {
-                iDu = vM1-v00;                 // Choose greater of 1st order diffs
-                if( iDu < v00-v01 )
-                    iDu = v00-v01;
-            }
-
-            // The luminance bump value (land masses are less shiny)
-            WORD uL = ( v00>1 ) ? 63 : 127;
-
-            switch( D3DFMT_V8U8)//m_BumpMapFormat )
-            {
-                case D3DFMT_V8U8:
-                    *pDstT++ = (BYTE)iDu;
-                    *pDstT++ = (BYTE)iDv;
-                    break;
-
-                case D3DFMT_L6V5U5:
-                    *(WORD*)pDstT  = (WORD)( ( (iDu>>3) & 0x1f ) <<  0 );
-                    *(WORD*)pDstT |= (WORD)( ( (iDv>>3) & 0x1f ) <<  5 );
-                    *(WORD*)pDstT |= (WORD)( ( ( uL>>2) & 0x3f ) << 10 );
-                    pDstT += 2;
-                    break;
-
-                case D3DFMT_X8L8V8U8:
-                    *pDstT++ = (BYTE)iDu;
-                    *pDstT++ = (BYTE)iDv;
-                    *pDstT++ = (BYTE)uL;
-                    *pDstT++ = (BYTE)0L;
-                    break;
-            }
-
-            // Move one pixel to the left (src is 32-bpp)
-            pSrcB0+=4;   pSrcB1+=4;   pSrcB2+=4;
-        }
-
-        // Move to the next line
-        pSrc += dwSrcPitch;    pDst += dwDstPitch;
-    }
-
-    m_pBumpTexture[i]->UnlockRect(0);
-    surf->Unlock();
-#endif
-
-    return S_OK;
-}
-
-//-------------------------------------------------------------------------------------------------
 /** Direct3D 12 mode: creates the bump map the shader water (wave_ps) reads on stage 0. Direct3D 12
 	*   mode has no signed texture formats, so the du/dv of the Direct3D 8 V8U8 bump map are stored
 	*   in red/green of an A8R8G8B8 texture, biased by 128 (see dx12shaders_water.cpp). The caustics
-	*   frames initBumpMap converts are not loaded in either game (see init), so Direct3D 8 draws the
+	*   caustics frames of the old Direct3D 8 bump map are not loaded in either game (see init), so Direct3D 8 drew the
 	*   sea with no bump texture, which texbem reads as no perturbation: the texture is a single flat
 	*   texel (du = dv = 0). */
 //-------------------------------------------------------------------------------------------------
@@ -988,38 +782,6 @@ Int WaterRenderObjClass::init(Real waterLevel, Real dx, Real dy, SceneClass *par
 	Set_Force_Visible(TRUE);	//water is always visible since it's a composite object made of multiple planes all over the map.
 
 	ReAcquireResources();
-#if 0	//MD does not support the old bump-mapped water at all so no point loading textures. -MW 8-11-03
-	if (type == WATER_TYPE_2_PVSHADER || (W3DShaderManager::getChipset() >= DC_GENERIC_PIXEL_SHADER_1_1))
-	{
-		//geforce3 specific water requires some extra D3D assets
-		//save previous thumbnail mode
-		bool thumbnails_enabled = WW3D::Get_Thumbnail_Enabled();
-		WW3D::Set_Thumbnail_Enabled(false);
-
-		//load bump map textures off disk
-		TextureClass *pBumpSource;	//temporary textures in a format W3D understands
-		TextureClass *pBumpSource2;	//temporary textures in a format W3D understands
-		Int i;
-		i=NUM_BUMP_FRAMES;
-		while (i--)
-		{
-			char bump_name[128];
-
-			sprintf(bump_name,"caust%.2d.tga",i);
-			pBumpSource=WW3DAssetManager::Get_Instance()->Get_Texture(bump_name);
-			sprintf(bump_name,"caustS%.2d.tga",i);
-			pBumpSource2=WW3DAssetManager::Get_Instance()->Get_Texture(bump_name);
-			initBumpMap(m_pBumpTexture+i, pBumpSource);
-			initBumpMap(m_pBumpTexture2+i, pBumpSource2);
-			WW3DAssetManager::Get_Instance()->Release_Texture(pBumpSource);
-			WW3DAssetManager::Get_Instance()->Release_Texture(pBumpSource2);
-			REF_PTR_RELEASE(pBumpSource);
-			REF_PTR_RELEASE(pBumpSource2);
-		}
-		//restore previous thumpnail mode
-		WW3D::Set_Thumbnail_Enabled(thumbnails_enabled);
-	}
-#endif
 
 	//Setup material for regular water
 	m_vertexMaterialClass=VertexMaterialClass::Get_Preset(VertexMaterialClass::PRELIT_DIFFUSE);

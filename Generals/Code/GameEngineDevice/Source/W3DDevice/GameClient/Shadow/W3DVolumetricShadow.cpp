@@ -3493,8 +3493,6 @@ Bool W3DVolumetricShadowManager::ReAcquireResources()
 {
 	ReleaseResources();
 
-	DEBUG_ASSERTCRASH(DX12Device::Is_Active(), ("Trying to ReAcquireResources on W3DVolumetricShadowManager without device"));
-
 	//Dynamic engine buffers; RenderDynamicMeshVolume fills them.
 	shadowIndexBufferDX12=NEW_REF(DX8IndexBufferClass,((unsigned short)SHADOW_INDEX_SIZE,DX8IndexBufferClass::USAGE_DYNAMIC));
 	shadowVertexBufferDX12=NEW_REF(DX8VertexBufferClass,(SHADOW_DYNAMIC_VOLUME_FVF,(unsigned short)SHADOW_VERTEX_SIZE,DX8VertexBufferClass::USAGE_DYNAMIC));
