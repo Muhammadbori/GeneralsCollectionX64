@@ -190,34 +190,17 @@ DX8_Stats	 DX8Wrapper::stats;
 **
 ***********************************************************************************/
 
+// TheSuperHackers @refactor The error code is logged as a number; the D3DX error string lookup is gone.
 void Log_DX8_ErrorCode(unsigned res)
 {
-	char tmp[256]="";
-
-	HRESULT new_res=D3DXGetErrorStringA(
-		res,
-		tmp,
-		sizeof(tmp));
-
-	if (new_res==D3D_OK) {
-		WWDEBUG_SAY(("%s", tmp));
-	}
+	WWDEBUG_SAY(("Direct3D error 0x%08X", res));
 
 	WWASSERT(0);
 }
 
 void Non_Fatal_Log_DX8_ErrorCode(unsigned res,const char * file,int line)
 {
-	char tmp[256]="";
-
-	HRESULT new_res=D3DXGetErrorStringA(
-		res,
-		tmp,
-		sizeof(tmp));
-
-	if (new_res==D3D_OK) {
-		WWDEBUG_SAY(("DX8 Error: %s, File: %s, Line: %d",tmp,file,line));
-	}
+	WWDEBUG_SAY(("DX8 Error: 0x%08X, File: %s, Line: %d",res,file,line));
 }
 
 // TheSuperHackers @info helmutbuhler 14/04/2025
