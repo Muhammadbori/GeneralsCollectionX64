@@ -30,7 +30,6 @@ static unsigned missing_image_depth=24;
 extern unsigned int missing_image_palette[];
 extern unsigned int missing_image_pixels[];
 
-static IDirect3DTexture8 * _MissingTexture = nullptr;
 static DX12TextureClass * _DX12MissingTexture = nullptr;
 
 static const unsigned MISSING_TEXTURE_COLOR = 0x7FFF00FF;
@@ -90,91 +89,29 @@ DX12TextureClass* MissingTexture::_Create_DX12_Missing_Surface()
 IDirect3DTexture8* MissingTexture::_Get_Missing_Texture()
 {
 	// There is no Direct3D 8 missing texture in Direct3D 12 mode.
-	if (DX12Device::Is_Active())
-	{
-		return nullptr;
-	}
-
-	WWASSERT(_MissingTexture);
-	_MissingTexture->AddRef();
-	return _MissingTexture;
+	return nullptr;
 }
 
 IDirect3DSurface8* MissingTexture::_Create_Missing_Surface()
 {
-	if (DX12Device::Is_Active())
-	{
-		return nullptr;
-	}
-
-	IDirect3DSurface8 *texture_surface = nullptr;
-	DX8_ErrorCode(_MissingTexture->GetSurfaceLevel(0, &texture_surface));
-	D3DSURFACE_DESC texture_surface_desc;
-	::ZeroMemory(&texture_surface_desc, sizeof(D3DSURFACE_DESC));
-	DX8_ErrorCode(texture_surface->GetDesc(&texture_surface_desc));
-
-	IDirect3DSurface8 *surface = nullptr;
-	DX8CALL(CreateImageSurface(
-		texture_surface_desc.Width,
-		texture_surface_desc.Height,
-		texture_surface_desc.Format,
-		&surface));
-	DX8CALL(CopyRects(texture_surface, nullptr, 0, surface, nullptr));
-	texture_surface->Release();
-	return surface;
+	return nullptr;
 }
 
 void MissingTexture::_Init()
 {
-	WWASSERT(!_MissingTexture);
-
-	if (DX12Device::Is_Active())
-	{
-		WWASSERT(!_DX12MissingTexture);
-		_DX12MissingTexture = DX12TextureClass::Create
-		(
-			missing_image_width,
-			missing_image_height,
-			WW3D_FORMAT_A8R8G8B8,
-			MIP_LEVELS_ALL,
-			false
-		);
-		if (_DX12MissingTexture != nullptr)
-		{
-			Fill_DX12_Missing_Texture(_DX12MissingTexture);
-		}
-		return;
-	}
-
-	IDirect3DTexture8* tex=DX8Wrapper::_Create_DX8_Texture
+	WWASSERT(!_DX12MissingTexture);
+	_DX12MissingTexture = DX12TextureClass::Create
 	(
 		missing_image_width,
 		missing_image_height,
 		WW3D_FORMAT_A8R8G8B8,
-		MIP_LEVELS_ALL
+		MIP_LEVELS_ALL,
+		false
 	);
-
-	// TheSuperHackers @fix bobtista 09/10/2026 Fill every mip level with the solid color.
-	for (unsigned level=0;level<tex->GetLevelCount();++level)
+	if (_DX12MissingTexture != nullptr)
 	{
-		D3DSURFACE_DESC desc;
-		D3DLOCKED_RECT locked_rect;
-		DX8_ErrorCode(tex->GetLevelDesc(level,&desc));
-		DX8_ErrorCode(tex->LockRect(level,&locked_rect,nullptr,0));
-
-		for (unsigned y=0;y<desc.Height;y++)
-		{
-			unsigned *buffer=reinterpret_cast<unsigned*>(static_cast<unsigned char*>(locked_rect.pBits)+y*locked_rect.Pitch);
-			for (unsigned x=0;x<desc.Width;x++)
-			{
-				buffer[x]=0x7FFF00FF;
-			}
-		}
-
-		DX8_ErrorCode(tex->UnlockRect(level));
+		Fill_DX12_Missing_Texture(_DX12MissingTexture);
 	}
-
-	_MissingTexture=tex;
 /*
 	//Load an 8-bit tga and generate text representation
 	FILE *fp;
@@ -217,11 +154,6 @@ void MissingTexture::_Init()
 void MissingTexture::_Deinit()
 {
 	REF_PTR_RELEASE(_DX12MissingTexture);
-	if (_MissingTexture)
-	{
-		_MissingTexture->Release();
-		_MissingTexture=nullptr;
-	}
 }
 
 unsigned int missing_image_palette[]={

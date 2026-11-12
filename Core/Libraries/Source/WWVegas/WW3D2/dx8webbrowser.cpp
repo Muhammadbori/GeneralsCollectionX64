@@ -65,59 +65,7 @@ bool DX8WebBrowser::Initialize(	const char* badpageurl,
 											const char* mousebusyfilename)
 {
 	// The browser engine renders through the Direct3D 8 device, which does not exist in Direct3D 12 mode.
-	if (DX12Device::Is_Active())
-		return false;
-
-	if(pBrowser == 0)
-	{
-		// Initialize COM
-		CoInitialize(nullptr);
-
-		// Create an instance of the browser control
-		HRESULT hr = pBrowser.CreateInstance(__uuidof(FEBrowserEngine2));
-
-		if(hr == REGDB_E_CLASSNOTREG)
-		{
-			HMODULE lib = ::LoadLibrary("BrowserEngine.DLL");
-			if(lib)
-			{
-				FARPROC proc = ::GetProcAddress(lib,"DllRegisterServer");
-				if(proc)
-				{
-					proc();
-					// Create an instance of the browser control
-					hr = pBrowser.CreateInstance(__uuidof(FEBrowserEngine2));
-				}
-				FreeLibrary(lib);
-			}
-		}
-
-		// Initialize the browser.
-		if(hr == S_OK)
-		{
-			hWnd = (HWND)WW3D::Get_Window();
-			pBrowser->Initialize(reinterpret_cast<long*>(DX8Wrapper::_Get_D3D_Device8()));
-
-			if(badpageurl)
-				pBrowser->put_BadPageURL(_bstr_t(badpageurl));
-
-			if(loadingpageurl)
-				pBrowser->put_LoadingPageURL(_bstr_t(loadingpageurl));
-
-			if(mousefilename)
-				pBrowser->put_MouseFileName(_bstr_t(mousefilename));
-
-			if(mousebusyfilename)
-				pBrowser->put_MouseBusyFileName(_bstr_t(mousebusyfilename));
-		}
-		else
-		{
-			pBrowser = 0;
-			return false;
-		}
-	}
-
-	return true;
+	return false;
 }
 
 void DX8WebBrowser::Shutdown()

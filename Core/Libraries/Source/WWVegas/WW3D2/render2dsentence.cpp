@@ -368,12 +368,8 @@ Render2DSentenceClass::Build_Textures ()
 		//
 		//	Copy the contents of the texture from the surface
 		//
-		if (DX12Device::Is_Active ()) {
-			if (texture_surface != nullptr) {
-				texture_surface->Copy (0, 0, 0, 0, desc.Width, desc.Height, curr_surface);
-			}
-		} else {
-			DX8Wrapper::_Copy_DX8_Rects (curr_surface->Peek_D3D_Surface (), nullptr, 0, texture_surface->Peek_D3D_Surface (), nullptr);
+		if (texture_surface != nullptr) {
+			texture_surface->Copy (0, 0, 0, 0, desc.Width, desc.Height, curr_surface);
 		}
 		REF_PTR_RELEASE (texture_surface);
 
@@ -656,11 +652,7 @@ Render2DSentenceClass::Allocate_New_Surface (const WCHAR *text, bool justCalcExt
 		//	The font does not fit the search range, so use the smallest texture that fits, limited to
 		//	the largest texture the device supports.
 		//
-		int max_device_size = 16384;	// Direct3D 12 feature level 11_0
-		if (!DX12Device::Is_Active ()) {
-			const D3DCAPS8 &dx8caps = DX8Wrapper::Get_Current_Caps ()->Get_DX8_Caps ();
-			max_device_size = (int)min (dx8caps.MaxTextureWidth, dx8caps.MaxTextureHeight);
-		}
+		const int max_device_size = 16384;	// Direct3D 12 feature level 11_0
 		while (max_pow2 > TextureSizeMinPow2 && (1 << max_pow2) > max_device_size) {
 			max_pow2 --;
 		}
