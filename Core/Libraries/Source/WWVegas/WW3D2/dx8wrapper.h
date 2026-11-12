@@ -423,15 +423,7 @@ public:
 	// so it is meant for screenshots. Returns null on failure.
 	static SurfaceClass * Read_Back_Buffer();
 
-	static void _Copy_DX8_Rects(
-			IDirect3DSurface8* pSourceSurface,
-			CONST RECT* pSourceRectsArray,
-			UINT cRects,
-			IDirect3DSurface8* pDestinationSurface,
-			CONST POINT* pDestPointsArray
-	);
 
-	static void Flush_DX8_Resource_Manager(unsigned int bytes=0);
 	static unsigned int Get_Free_Texture_RAM();
 
 	static unsigned _Get_Main_Thread_ID() { return _MainThreadID; }
@@ -561,8 +553,6 @@ public:
 		unsigned primitive_count);
 	static void Draw_Primitive_UP(unsigned primitive_type, unsigned primitive_count, const void* vertex_data, unsigned vertex_stride);
 
-	static HRESULT Create_Vertex_Shader(const DWORD* declaration, const DWORD* function, DWORD* handle, DWORD usage);
-	static HRESULT Create_Pixel_Shader(const DWORD* function, DWORD* handle);
 	static HRESULT Delete_Vertex_Shader(DWORD handle);
 	static HRESULT Delete_Pixel_Shader(DWORD handle);
 
@@ -574,39 +564,12 @@ public:
 	// and a zero handle, outside Direct3D 12 mode and when the shader is not registered, does not
 	// compile or has an unsupported declaration.
 	static HRESULT Create_DX12_Shader(const char* name, bool vertex_shader, const DWORD* declaration, DWORD* handle);
-	static HRESULT Create_Texture_Raw(
-		unsigned width,
-		unsigned height,
-		unsigned levels,
-		DWORD usage,
-		D3DFORMAT format,
-		D3DPOOL pool,
-		IDirect3DTexture8** texture);
-	static HRESULT Create_Image_Surface(unsigned width, unsigned height, D3DFORMAT format, IDirect3DSurface8** surface);
-	static HRESULT Create_Vertex_Buffer_Raw(unsigned length, DWORD usage, DWORD fvf, D3DPOOL pool, IDirect3DVertexBuffer8** vertex_buffer);
-	static HRESULT Create_Index_Buffer_Raw(unsigned length, DWORD usage, D3DFORMAT format, D3DPOOL pool, IDirect3DIndexBuffer8** index_buffer);
 
-	// Returned surfaces are AddRef'd by the device; the caller must Release them.
-	static HRESULT Get_Render_Target_Surface(IDirect3DSurface8** surface);
-	static HRESULT Get_Depth_Stencil_Surface(IDirect3DSurface8** surface);
-	static HRESULT Set_Render_Target_Raw(IDirect3DSurface8* render_target, IDirect3DSurface8* depth_buffer);
-	// Direct3D 12 version of Set_Render_Target_Raw: selects a render target texture with the default
-	// depth buffer (null selects the back buffer) and leaves IsRenderToTexture unchanged. Returns false
-	// outside Direct3D 12 mode or when the texture could not be selected.
+	// Selects a render target texture with the default depth buffer (null selects the back buffer) and
+	// leaves IsRenderToTexture unchanged. Returns false when the texture could not be selected.
 	static bool Set_DX12_Render_Target_Raw(TextureClass* texture);
-	static HRESULT Copy_Rects(
-		IDirect3DSurface8* pSourceSurface,
-		CONST RECT* pSourceRectsArray,
-		UINT cRects,
-		IDirect3DSurface8* pDestinationSurface,
-		CONST POINT* pDestPointsArray);
 
-	static bool Has_D3D_Device() { return D3DDevice != nullptr; }
-	static HRESULT Test_Cooperative_Level();
 
-	static BOOL Show_DX8_Cursor(BOOL show);
-	static HRESULT Set_DX8_Cursor_Properties(unsigned hot_spot_x, unsigned hot_spot_y, IDirect3DSurface8* cursor_bitmap);
-	static void Set_DX8_Cursor_Position(unsigned x, unsigned y, DWORD flags);
 
 
 	static IDirect3DDevice8* _Get_D3D_Device8() { return D3DDevice; }
@@ -653,11 +616,9 @@ public:
 
 protected:
 
-	static bool	Create_Device();
 	static void Release_Device();
 
 	static void Reset_Statistics();
-	static void Enumerate_Devices();
 	static void Enumerate_DX12_Device();
 	static void Set_Default_Global_Render_States();
 	static void Set_DX12_Default_Device_States();
@@ -706,10 +667,6 @@ protected:
 	** Internal functions
 	*/
 	static void Resize_And_Position_Window();
-	static bool Find_Color_And_Z_Mode(int resx,int resy,int bitdepth,D3DFORMAT * set_colorbuffer,D3DFORMAT * set_backbuffer, D3DFORMAT * set_zmode);
-	static bool Find_Color_Mode(D3DFORMAT colorbuffer, int resx, int resy, UINT *mode);
-	static bool Find_Z_Mode(D3DFORMAT colorbuffer,D3DFORMAT backbuffer, D3DFORMAT *zmode);
-	static bool Test_Z_Mode(D3DFORMAT colorbuffer,D3DFORMAT backbuffer, D3DFORMAT zmode);
 	static void Compute_Caps(WW3DFormat display_format);
 
 	/*
@@ -803,10 +760,6 @@ protected:
 	static IDirect3D8 *					D3DInterface;			//d3d8;
 	static IDirect3DDevice8 *			D3DDevice;				//d3ddevice8;
 
-	static IDirect3DSurface8 *			CurrentRenderTarget;
-	static IDirect3DSurface8 *			CurrentDepthBuffer;
-	static IDirect3DSurface8 *			DefaultRenderTarget;
-	static IDirect3DSurface8 *			DefaultDepthBuffer;
 
 	static unsigned							DrawPolygonLowBoundLimit;
 
@@ -882,7 +835,6 @@ WWINLINE void DX8Wrapper::_Set_DX8_Transform(D3DTRANSFORMSTATETYPE transform, co
 			m.m[1][0],m.m[1][1],m.m[1][2],m.m[1][3],
 			m.m[2][0],m.m[2][1],m.m[2][2],m.m[2][3]));
 		DX8_RECORD_MATRIX_CHANGE();
-		DX8CALL(SetTransform(transform,&m));
 	}
 }
 
@@ -949,7 +901,6 @@ WWINLINE void DX8Wrapper::Set_DX8_Material(const D3DMATERIAL8* mat)
 	WWASSERT(mat);
 	SNAPSHOT_SAY(("DX8 - SetMaterial"));
 	DX8Material=*mat;
-	DX8CALL(SetMaterial(mat));
 }
 
 WWINLINE void DX8Wrapper::Set_DX8_Light(int index, D3DLIGHT8* light)
@@ -957,15 +908,12 @@ WWINLINE void DX8Wrapper::Set_DX8_Light(int index, D3DLIGHT8* light)
 	if (light) {
 		DX8_RECORD_LIGHT_CHANGE();
 		DX8Lights[index]=*light;
-		DX8CALL(SetLight(index,light));
-		DX8CALL(LightEnable(index,TRUE));
 		CurrentDX8LightEnables[index]=true;
 		SNAPSHOT_SAY(("DX8 - SetLight %d",index));
 	}
 	else if (CurrentDX8LightEnables[index]) {
 		DX8_RECORD_LIGHT_CHANGE();
 		CurrentDX8LightEnables[index]=false;
-		DX8CALL(LightEnable(index,FALSE));
 		SNAPSHOT_SAY(("DX8 - DisableLight %d",index));
 	}
 }
@@ -992,7 +940,6 @@ WWINLINE void DX8Wrapper::Set_DX8_Render_State(D3DRENDERSTATETYPE state, unsigne
 
 WWINLINE void DX8Wrapper::Set_DX8_Clip_Plane(DWORD Index, CONST float* pPlane)
 {
-	DX8CALL(SetClipPlane( Index, pPlane ));
 }
 
 WWINLINE void DX8Wrapper::Set_DX8_Texture_Stage_State(unsigned stage, D3DTEXTURESTAGESTATETYPE state, unsigned value)
@@ -1025,22 +972,6 @@ WWINLINE void DX8Wrapper::Set_DX8_Texture(unsigned int stage, std::nullptr_t)
 {
 	// Clears the stage through the Direct3D 12 texture cache.
 	if (stage<MAX_TEXTURE_STAGES) Set_DX12_Texture(stage,nullptr);
-}
-
-WWINLINE void DX8Wrapper::_Copy_DX8_Rects(
-  IDirect3DSurface8* pSourceSurface,
-  CONST RECT* pSourceRectsArray,
-  UINT cRects,
-  IDirect3DSurface8* pDestinationSurface,
-  CONST POINT* pDestPointsArray
-)
-{
-	DX8CALL(CopyRects(
-  pSourceSurface,
-  pSourceRectsArray,
-  cRects,
-  pDestinationSurface,
-  pDestPointsArray));
 }
 
 // ----------------------------------------------------------------------------
@@ -1454,11 +1385,9 @@ WWINLINE void DX8Wrapper::Set_Projection_Transform_With_Z_Bias(const Matrix4x4& 
 		tmp_zbias*=1.0f / (ZFar - ZNear);
 		tmp.m[2][2]-=tmp_zbias*tmp.m[3][2];
 		DX8Transforms[D3DTS_PROJECTION]=tmp;
-		DX8CALL(SetTransform(D3DTS_PROJECTION,&tmp));
 	}
 	else {
 		DX8Transforms[D3DTS_PROJECTION]=ProjectionMatrix;
-		DX8CALL(SetTransform(D3DTS_PROJECTION,&ProjectionMatrix));
 	}
 }
 
@@ -1481,14 +1410,12 @@ WWINLINE void DX8Wrapper::Set_Transform(D3DTRANSFORMSTATETYPE transform,const Ma
 			ZFar=0.0f;
 			ZNear=0.0f;
 			DX8Transforms[D3DTS_PROJECTION]=ProjectionMatrix;
-			DX8CALL(SetTransform(D3DTS_PROJECTION,&ProjectionMatrix));
 		}
 		break;
 	default:
 		DX8_RECORD_MATRIX_CHANGE();
 		D3DMATRIX dxm=To_D3DMATRIX(m);
 		if (transform<=D3DTS_WORLD) DX8Transforms[transform]=dxm;
-		DX8CALL(SetTransform(transform,&dxm));
 		break;
 	}
 }
@@ -1510,7 +1437,6 @@ WWINLINE void DX8Wrapper::Set_Transform(D3DTRANSFORMSTATETYPE transform,const Ma
 		DX8_RECORD_MATRIX_CHANGE();
 		D3DMATRIX dxm=To_D3DMATRIX(m);
 		if (transform<=D3DTS_WORLD) DX8Transforms[transform]=dxm;
-		DX8CALL(SetTransform(transform,&dxm));
 		break;
 	}
 }
