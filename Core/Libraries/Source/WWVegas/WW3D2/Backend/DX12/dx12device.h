@@ -289,8 +289,7 @@ public:
 		unsigned Height;
 	};
 
-	// The Direct3D 12 renderer was selected (DX8Wrapper_UseDX12: the game's default, not -dx8). Set by
-	// DX8Wrapper::Init.
+	// The Direct3D 12 renderer was selected. DX8Wrapper::Init always sets it.
 	static bool Is_Requested() { return Requested; }
 	static void Set_Requested(bool requested) { Requested = requested; }
 	static bool Is_Active() { return Device != nullptr; }

@@ -42,8 +42,6 @@
 
 
 Bool TheDebugIgnoreSyncErrors = FALSE;
-extern Int DX8Wrapper_PreserveFPU;
-extern bool DX8Wrapper_UseDX12;
 extern bool DX12Device_DebugLayer;
 extern bool DX12Device_NoShaderCache;
 extern bool DX12Device_Stats;
@@ -151,8 +149,6 @@ Int parseWin(char *args[], int)
 // TheSuperHackers @feature The game renders with Direct3D 12. -dx12 is accepted and changes nothing.
 Int parseDX12(char *args[], int)
 {
-	DX8Wrapper_UseDX12 = true;
-
 	return 1;
 }
 
@@ -304,12 +300,9 @@ Int parseNoVideo(char *args[], int)
 
 //=============================================================================
 //=============================================================================
+// The FPU preserve flag only applied to Direct3D 8 device creation; the option is accepted and does nothing.
 Int parseFPUPreserve(char *args[], int argc)
 {
-	if (argc > 1)
-	{
-		DX8Wrapper_PreserveFPU = atoi(args[1]);
-	}
 	return 2;
 }
 

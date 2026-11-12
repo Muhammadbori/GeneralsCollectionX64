@@ -99,13 +99,6 @@ static DX8FrameStatistics LastFrameStatistics;
 
 bool DX8Wrapper_IsWindowed = true;
 
-// FPU_PRESERVE
-int DX8Wrapper_PreserveFPU = 0;
-
-// Selects the Direct3D 12 renderer. False here, so the tools stay on Direct3D 8; the game's WinMain sets it
-// before parsing the command line, and -dx8 / -dx12 change it (CommandLine.cpp).
-bool DX8Wrapper_UseDX12 = false;
-
 /***********************************************************************************
 **
 ** DX8Wrapper Static Variables
@@ -297,7 +290,8 @@ bool DX8Wrapper::Init(void * hwnd, bool lite)
 
 	Invalidate_Cached_Render_States();
 
-	DX12Device::Set_Requested(DX8Wrapper_UseDX12);
+	// Every caller of WW3D::Init renders with Direct3D 12.
+	DX12Device::Set_Requested(true);
 
 	if (!lite) {
 		WWDEBUG_SAY(("Create Direct3D12 device"));

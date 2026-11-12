@@ -65,9 +65,6 @@
 #include "resource.h"
 #ifdef RTS_ENABLE_CRASHDUMP
 #include "MiniDumper/MiniDumper.h"
-
-// TheSuperHackers @feature Selects the Direct3D 12 renderer; -dx8 clears it (CommandLine.cpp).
-extern bool DX8Wrapper_UseDX12;
 #endif
 
 
@@ -816,10 +813,6 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 {
 	Int exitcode = 1;
 
-	// TheSuperHackers @feature The game renders with Direct3D 12 unless -dx8 is given. This is set here, before
-	// any command line parsing, and not in WW3D2, so the tools that share WW3D2 (WorldBuilder and others) keep
-	// the Direct3D 8 renderer.
-	DX8Wrapper_UseDX12 = true;
 	try {
 
 		SetUnhandledExceptionFilter( UnHandledExceptionFilter );
