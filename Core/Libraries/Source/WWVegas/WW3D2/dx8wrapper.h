@@ -475,7 +475,6 @@ public:
 			CONST POINT* pDestPointsArray
 	);
 
-	static void _Update_Texture(TextureClass *system, TextureClass *video);
 	static void Flush_DX8_Resource_Manager(unsigned int bytes=0);
 	static unsigned int Get_Free_Texture_RAM();
 
@@ -1181,7 +1180,6 @@ WWINLINE void DX8Wrapper::Set_DX8_Texture_Raw(unsigned int stage, TextureBaseCla
 		Device_Set_DX12_Texture(stage,texture ? texture->Peek_DX12_Texture() : nullptr);
 		return;
 	}
-	Set_DX8_Texture_Raw(stage,texture ? texture->Peek_D3D_Base_Texture() : nullptr);
 }
 
 WWINLINE void DX8Wrapper::Set_DX8_Texture_Raw(unsigned int stage, std::nullptr_t)

@@ -236,7 +236,6 @@ class TextureLoadTaskClass : public TextureLoadTaskListNodeClass
 		unsigned int			Get_Locked_Surface_Pitch(unsigned int level) const;
 
 		TextureBaseClass *	Peek_Texture				()				{ return Texture;			}
-		IDirect3DTexture8	*	Peek_D3D_Texture			()				{ return (IDirect3DTexture8*)D3DTexture;		}
 
 		void						Set_Type						(TaskType t)		{ Type		= t;			}
 		void						Set_Priority				(PriorityType p)	{ Priority	= p;			}
@@ -261,8 +260,7 @@ class TextureLoadTaskClass : public TextureLoadTaskListNodeClass
 		void						Apply							(bool initialize);
 
 		TextureBaseClass*		Texture;
-		IDirect3DBaseTexture8*	D3DTexture;
-		DX12TextureClass*		DX12Texture;		// Used instead of D3DTexture in Direct3D 12 mode
+		DX12TextureClass*		DX12Texture;
 		WW3DFormat				Format;
 
 		unsigned int			Width;

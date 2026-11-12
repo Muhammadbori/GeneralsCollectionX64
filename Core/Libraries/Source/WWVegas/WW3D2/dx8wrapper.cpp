@@ -38,7 +38,6 @@
  * 08/05/02 KM Texture class redesign
  *---------------------------------------------------------------------------------------------*
  * Functions:                                                                                  *
- *   DX8Wrapper::_Update_Texture -- Copies a texture from system memory to video memory        *
  * - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - */
 
 //#define CREATE_DX8_MULTI_THREADED
@@ -3892,30 +3891,6 @@ IDirect3DSurface8 * DX8Wrapper::_Create_DX8_Surface(const char *filename_)
 }
 
 
-/***********************************************************************************************
- * DX8Wrapper::_Update_Texture -- Copies a texture from system memory to video memory          *
- *                                                                                             *
- *                                                                                             *
- *                                                                                             *
- *                                                                                             *
- * INPUT:                                                                                      *
- *                                                                                             *
- * OUTPUT:                                                                                     *
- *                                                                                             *
- * WARNINGS:                                                                                   *
- *                                                                                             *
- * HISTORY:                                                                                    *
- *   4/26/2001  hy : Created.                                                                  *
- *=============================================================================================*/
-void DX8Wrapper::_Update_Texture(TextureClass *system, TextureClass *video)
-{
-	WWASSERT(system);
-	WWASSERT(video);
-	WWASSERT(system->Get_Pool()==TextureClass::POOL_SYSTEMMEM);
-	WWASSERT(video->Get_Pool()==TextureClass::POOL_DEFAULT);
-	DX8CALL(UpdateTexture(system->Peek_D3D_Base_Texture(),video->Peek_D3D_Base_Texture()));
-}
-
 void DX8Wrapper::Compute_Caps(WW3DFormat display_format)
 {
 	DX8_THREAD_ASSERT();
@@ -4244,57 +4219,7 @@ bool DX8Wrapper::Set_DX12_Render_Target_Raw(TextureClass * texture)
 TextureClass *
 DX8Wrapper::Create_Render_Target (int width, int height, WW3DFormat format)
 {
-	if (DX12Device::Is_Active()) return Create_DX12_Render_Target(width, height, format);
-	DX8_THREAD_ASSERT();
-	DX8_Assert();
-	DX8_RECORD_DX8_CALLS();
-
-	// Use the current display format if format isn't specified
-	if (format==WW3D_FORMAT_UNKNOWN) {
-		D3DDISPLAYMODE mode;
-		DX8CALL(GetDisplayMode(&mode));
-		format=D3DFormat_To_WW3DFormat(mode.Format);
-	}
-
-	// If render target format isn't supported return null
-	if (!Get_Current_Caps()->Support_Render_To_Texture_Format(format)) {
-		WWDEBUG_SAY(("DX8Wrapper - Render target format is not supported"));
-		return nullptr;
-	}
-
-	//
-	//	Note: We're going to force the width and height to be powers of two and equal
-	//
-	const D3DCAPS8& dx8caps=Get_Current_Caps()->Get_DX8_Caps();
-	float poweroftwosize = width;
-	if (height > 0 && height < width) {
-		poweroftwosize = height;
-	}
-	poweroftwosize = ::Find_POT (poweroftwosize);
-
-	if (poweroftwosize>dx8caps.MaxTextureWidth) {
-		poweroftwosize=dx8caps.MaxTextureWidth;
-	}
-	if (poweroftwosize>dx8caps.MaxTextureHeight) {
-		poweroftwosize=dx8caps.MaxTextureHeight;
-	}
-
-	width = height = poweroftwosize;
-
-	//
-	//	Attempt to create the render target
-	//
-	TextureClass * tex = NEW_REF(TextureClass,(width,height,format,MIP_LEVELS_1,TextureClass::POOL_DEFAULT,true));
-
-	// 3dfx drivers are lying in the CheckDeviceFormat call and claiming
-	// that they support render targets!
-	if (tex->Peek_D3D_Base_Texture() == nullptr)
-	{
-		WWDEBUG_SAY(("DX8Wrapper - Render target creation failed!"));
-		REF_PTR_RELEASE(tex);
-	}
-
-	return tex;
+	return Create_DX12_Render_Target(width, height, format);
 }
 
 //**********************************************************************************************
@@ -4311,96 +4236,23 @@ void DX8Wrapper::Create_Render_Target
 	ZTextureClass** depth_buffer
 )
 {
-	if (DX12Device::Is_Active()) {
-		*target=nullptr;
-		*depth_buffer=nullptr;
+	*target=nullptr;
+	*depth_buffer=nullptr;
 
-		// As in Direct3D 8 mode, there is no display format to fall back on here.
-		if (format==WW3D_FORMAT_UNKNOWN || !Get_Current_Caps()->Support_Depth_Stencil_Format(zformat)) {
-			WWDEBUG_SAY(("DX8Wrapper - Render target with depth format is not supported"));
-			return;
-		}
-
-		*target=Create_DX12_Render_Target(width,height,format);
-		if (*target!=nullptr) {
-			const int size=(*target)->Get_Width();
-			*depth_buffer=NEW_REF(ZTextureClass,(size,size,zformat,MIP_LEVELS_1,TextureClass::POOL_DEFAULT));
-			if ((*depth_buffer)->Peek_DX12_Texture()==nullptr) {
-				REF_PTR_RELEASE((*depth_buffer));
-			}
-		}
-		return;
-	}
-
-	DX8_THREAD_ASSERT();
-	DX8_Assert();
-	DX8_RECORD_DX8_CALLS();
-
-	// Use the current display format if format isn't specified
-	if (format==WW3D_FORMAT_UNKNOWN)
-	{
-		*target=nullptr;
-		*depth_buffer=nullptr;
-		return;
-/*		D3DDISPLAYMODE mode;
-		DX8CALL(GetDisplayMode(&mode));
-		format=D3DFormat_To_WW3DFormat(mode.Format);*/
-	}
-
-	// If render target format isn't supported return null
-	if (!Get_Current_Caps()->Support_Render_To_Texture_Format(format) ||
-		 !Get_Current_Caps()->Support_Depth_Stencil_Format(zformat))
-	{
+	// As in Direct3D 8 mode, there is no display format to fall back on here.
+	if (format==WW3D_FORMAT_UNKNOWN || !Get_Current_Caps()->Support_Depth_Stencil_Format(zformat)) {
 		WWDEBUG_SAY(("DX8Wrapper - Render target with depth format is not supported"));
 		return;
 	}
 
-	//	Note: We're going to force the width and height to be powers of two and equal
-	const D3DCAPS8& dx8caps=Get_Current_Caps()->Get_DX8_Caps();
-	float poweroftwosize = width;
-	if (height > 0 && height < width)
-	{
-		poweroftwosize = height;
+	*target=Create_DX12_Render_Target(width,height,format);
+	if (*target!=nullptr) {
+		const int size=(*target)->Get_Width();
+		*depth_buffer=NEW_REF(ZTextureClass,(size,size,zformat,MIP_LEVELS_1,TextureClass::POOL_DEFAULT));
+		if ((*depth_buffer)->Peek_DX12_Texture()==nullptr) {
+			REF_PTR_RELEASE((*depth_buffer));
+		}
 	}
-	poweroftwosize = ::Find_POT (poweroftwosize);
-
-	if (poweroftwosize>dx8caps.MaxTextureWidth)
-	{
-		poweroftwosize=dx8caps.MaxTextureWidth;
-	}
-
-	if (poweroftwosize>dx8caps.MaxTextureHeight)
-	{
-		poweroftwosize=dx8caps.MaxTextureHeight;
-	}
-
-	width = height = poweroftwosize;
-
-	//	Attempt to create the render target
-	TextureClass* tex=NEW_REF(TextureClass,(width,height,format,MIP_LEVELS_1,TextureClass::POOL_DEFAULT,true));
-
-	// 3dfx drivers are lying in the CheckDeviceFormat call and claiming
-	// that they support render targets!
-	if (tex->Peek_D3D_Base_Texture() == nullptr)
-	{
-		WWDEBUG_SAY(("DX8Wrapper - Render target creation failed!"));
-		REF_PTR_RELEASE(tex);
-	}
-
-	*target=tex;
-
-	// attempt to create the depth stencil buffer
-	*depth_buffer=NEW_REF
-	(
-		ZTextureClass,
-		(
-			width,
-			height,
-			zformat,
-			MIP_LEVELS_1,
-			TextureClass::POOL_DEFAULT
-		)
-	);
 }
 
 /*!
@@ -4413,31 +4265,7 @@ void DX8Wrapper::Set_Render_Target_With_Z
 	ZTextureClass* ztexture
 )
 {
-	if (DX12Device::Is_Active()) {
-		Set_DX12_Render_Target(texture,ztexture);
-		return;
-	}
-
-	WWASSERT(texture!=nullptr);
-	IDirect3DSurface8 * d3d_surf = texture->Get_D3D_Surface_Level();
-	WWASSERT(d3d_surf != nullptr);
-
-	IDirect3DSurface8* d3d_zbuf=nullptr;
-	if (ztexture!=nullptr)
-	{
-
-		d3d_zbuf=ztexture->Get_D3D_Surface_Level();
-		WWASSERT(d3d_zbuf!=nullptr);
-		Set_Render_Target(d3d_surf,d3d_zbuf);
-		d3d_zbuf->Release();
-	}
-	else
-	{
-		Set_Render_Target(d3d_surf,true);
-	}
-	d3d_surf->Release();
-
-	IsRenderToTexture = true;
+	Set_DX12_Render_Target(texture,ztexture);
 }
 
 void

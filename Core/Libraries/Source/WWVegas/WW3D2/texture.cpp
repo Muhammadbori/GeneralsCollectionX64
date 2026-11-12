@@ -85,7 +85,6 @@ TextureBaseClass::TextureBaseClass
 	bool reducible
 )
 :	MipLevelCount(mip_level_count),
-	D3DTexture(nullptr),
 	DX12Texture(nullptr),
 	Initialized(false),
    Name(""),
@@ -121,11 +120,6 @@ TextureBaseClass::~TextureBaseClass()
 	delete ThumbnailLoadTask;
 	ThumbnailLoadTask=nullptr;
 
-	if (D3DTexture)
-	{
-		D3DTexture->Release();
-		D3DTexture = nullptr;
-	}
 	REF_PTR_RELEASE(DX12Texture);
 }
 
@@ -202,11 +196,6 @@ void TextureBaseClass::Invalidate()
 		return;
 	}
 
-	if (D3DTexture)
-	{
-		D3DTexture->Release();
-		D3DTexture = nullptr;
-	}
 	REF_PTR_RELEASE(DX12Texture);
 
 	Initialized=false;
@@ -247,35 +236,6 @@ void TextureBaseClass::Invalidate()
 	Initialized=false;
 
 	LastAccessed=WW3D::Get_Sync_Time();*/
-}
-
-//**********************************************************************************************
-//! Returns a pointer to the d3d texture
-/*!
-*/
-IDirect3DBaseTexture8 * TextureBaseClass::Peek_D3D_Base_Texture() const
-{
-	LastAccessed=WW3D::Get_Sync_Time();
-	return D3DTexture;
-}
-
-//**********************************************************************************************
-//! Set the d3d texture pointer.  Handles ref counts properly.
-/*!
-*/
-void TextureBaseClass::Set_D3D_Base_Texture(IDirect3DBaseTexture8* tex)
-{
-	// (gth) Generals does stuff directly with the D3DTexture pointer so lets
-	// reset the access timer whenever someon messes with this pointer.
-	LastAccessed=WW3D::Get_Sync_Time();
-
-	if (D3DTexture != nullptr) {
-		D3DTexture->Release();
-	}
-	D3DTexture = tex;
-	if (D3DTexture != nullptr) {
-		D3DTexture->AddRef();
-	}
 }
 
 //**********************************************************************************************
@@ -341,8 +301,6 @@ void TextureBaseClass::Apply_New_DX12_Surface
 void TextureBaseClass::Load_Locked_Surface()
 {
 	WWPROFILE(("TextureClass::Load_Locked_Surface()"));
-	if (D3DTexture) D3DTexture->Release();
-	D3DTexture=nullptr;
 	REF_PTR_RELEASE(DX12Texture);
 	TextureLoader::Request_Thumbnail(this);
 	Initialized=false;
@@ -747,7 +705,6 @@ TextureClass::TextureClass
 	if (!WW3D::Is_Texturing_Enabled())
 	{
 		Initialized=true;
-		Poke_Texture(nullptr);
 	}
 
 	// Find original size from the thumbnail (but don't create thumbnail texture yet!)
@@ -808,44 +765,6 @@ TextureClass::TextureClass
 	LastAccessed=WW3D::Get_Sync_Time();
 }
 
-// ----------------------------------------------------------------------------
-TextureClass::TextureClass(IDirect3DBaseTexture8* d3d_texture)
-:	TextureBaseClass
-	(
-		0,
-		0,
-		((MipCountType)d3d_texture->GetLevelCount())
-	),
-	Filter((MipCountType)d3d_texture->GetLevelCount())
-{
-	Initialized=true;
-	IsProcedural=true;
-	IsReducible=false;
-
-	Set_D3D_Base_Texture(d3d_texture);
-	IDirect3DSurface8* surface;
-	DX8_ErrorCode(Peek_D3D_Texture()->GetSurfaceLevel(0,&surface));
-	D3DSURFACE_DESC d3d_desc;
-	::ZeroMemory(&d3d_desc, sizeof(D3DSURFACE_DESC));
-	DX8_ErrorCode(surface->GetDesc(&d3d_desc));
-	Width=d3d_desc.Width;
-	Height=d3d_desc.Height;
-	TextureFormat=D3DFormat_To_WW3DFormat(d3d_desc.Format);
-	switch (TextureFormat)
-	{
-	case WW3D_FORMAT_DXT1:
-	case WW3D_FORMAT_DXT2:
-	case WW3D_FORMAT_DXT3:
-	case WW3D_FORMAT_DXT4:
-	case WW3D_FORMAT_DXT5:
-		IsCompressionAllowed=true;
-		break;
-	default: break;
-	}
-
-	LastAccessed=WW3D::Get_Sync_Time();
-}
-
 //**********************************************************************************************
 //! Initialise the texture
 /*!
@@ -891,44 +810,6 @@ void TextureClass::Init()
 
 	LastAccessed=WW3D::Get_Sync_Time();
 }
-
-//**********************************************************************************************
-//! Apply new surface to texture
-/*!
-*/
-void TextureClass::Apply_New_Surface
-(
-	IDirect3DBaseTexture8* d3d_texture,
-	bool initialized,
-	bool disable_auto_invalidation
-)
-{
-	IDirect3DBaseTexture8* d3d_tex=Peek_D3D_Base_Texture();
-
-	if (d3d_tex) d3d_tex->Release();
-
-	Poke_Texture(d3d_texture);//TextureLoadTask->Peek_D3D_Texture();
-	d3d_texture->AddRef();
-
-	if (initialized) Initialized=true;
-	if (disable_auto_invalidation) InactivationTime = 0;
-
-	WWASSERT(d3d_texture);
-	IDirect3DSurface8* surface;
-	DX8_ErrorCode(Peek_D3D_Texture()->GetSurfaceLevel(0,&surface));
-	D3DSURFACE_DESC d3d_desc;
-	::ZeroMemory(&d3d_desc, sizeof(D3DSURFACE_DESC));
-	DX8_ErrorCode(surface->GetDesc(&d3d_desc));
-	if (initialized)
-	{
-		TextureFormat=D3DFormat_To_WW3DFormat(d3d_desc.Format);
-		Width=d3d_desc.Width;
-		Height=d3d_desc.Height;
-	}
-	surface->Release();
-
-}
-
 
 //**********************************************************************************************
 //! Apply new dx12 texture
@@ -1025,15 +906,6 @@ void TextureClass::Get_Level_Description( SurfaceClass::SurfaceDescription & des
 		desc.Width = dx12_texture->Get_Width(level);
 		desc.Height = dx12_texture->Get_Height(level);
 	}
-}
-
-//**********************************************************************************************
-//! Get D3D surface from mip level
-/*!
-*/
-IDirect3DSurface8 *TextureClass::Get_D3D_Surface_Level(unsigned int level)
-{
-	return nullptr;
 }
 
 //**********************************************************************************************
@@ -1243,51 +1115,6 @@ ZTextureClass::ZTextureClass
 void ZTextureClass::Apply(unsigned int stage)
 {
 	DX8Wrapper::Set_DX12_Texture(stage, Peek_DX12_Texture());
-}
-
-//**********************************************************************************************
-//! Apply new surface to texture
-/*! KM
-*/
-void ZTextureClass::Apply_New_Surface
-(
-	IDirect3DBaseTexture8* d3d_texture,
-	bool initialized,
-	bool disable_auto_invalidation
-)
-{
-	IDirect3DBaseTexture8* d3d_tex=Peek_D3D_Base_Texture();
-
-	if (d3d_tex) d3d_tex->Release();
-
-	Poke_Texture(d3d_texture);//TextureLoadTask->Peek_D3D_Texture();
-	d3d_texture->AddRef();
-
-	if (initialized) Initialized=true;
-	if (disable_auto_invalidation) InactivationTime = 0;
-
-	WWASSERT(Peek_D3D_Texture());
-	IDirect3DSurface8* surface;
-	DX8_ErrorCode(Peek_D3D_Texture()->GetSurfaceLevel(0,&surface));
-	D3DSURFACE_DESC d3d_desc;
-	::ZeroMemory(&d3d_desc, sizeof(D3DSURFACE_DESC));
-	DX8_ErrorCode(surface->GetDesc(&d3d_desc));
-	if (initialized)
-	{
-		DepthStencilTextureFormat=D3DFormat_To_WW3DZFormat(d3d_desc.Format);
-		Width=d3d_desc.Width;
-		Height=d3d_desc.Height;
-	}
-	surface->Release();
-}
-
-//**********************************************************************************************
-//! Get D3D surface from mip level
-/*!
-*/
-IDirect3DSurface8* ZTextureClass::Get_D3D_Surface_Level(unsigned int level)
-{
-	return nullptr;
 }
 
 //**********************************************************************************************

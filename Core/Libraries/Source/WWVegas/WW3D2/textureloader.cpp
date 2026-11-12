@@ -991,7 +991,6 @@ void LoaderThreadClass::Thread_Function()
 
 TextureLoadTaskClass::TextureLoadTaskClass()
 :	Texture			(nullptr),
-	D3DTexture		(nullptr),
 	DX12Texture		(nullptr),
 	Format			(WW3D_FORMAT_UNKNOWN),
 	Width				(0),
@@ -1079,7 +1078,6 @@ void TextureLoadTaskClass::Init(TextureBaseClass* tc, TaskType type, PriorityTyp
 	Priority			= priority;
 	State				= STATE_NONE;
 
-	D3DTexture		= nullptr;
 	REF_PTR_RELEASE(DX12Texture);
 
 	TextureClass* tex=Texture->As_TextureClass();
@@ -1127,7 +1125,6 @@ void TextureLoadTaskClass::Deinit()
 	WWASSERT(Next == nullptr);
 	WWASSERT(Prev == nullptr);
 
-	WWASSERT(D3DTexture == nullptr);
 	WWASSERT(DX12Texture == nullptr);
 	REF_PTR_RELEASE(DX12Texture);
 
@@ -1195,7 +1192,7 @@ bool TextureLoadTaskClass::Begin_Load()
 bool TextureLoadTaskClass::Load()
 {
 	WWMEMLOG(MEM_TEXTURE);
-	WWASSERT(Peek_D3D_Texture() || DX12Texture);
+	WWASSERT(DX12Texture);
 
 	bool loaded = false;
 
@@ -1255,7 +1252,6 @@ void TextureLoadTaskClass::Finish_Load()
 void TextureLoadTaskClass::Apply_Missing_Texture()
 {
 	WWASSERT(TextureLoader::Is_DX8_Thread());
-	WWASSERT(!D3DTexture);
 
 	WWASSERT(!DX12Texture);
 	// Cube and volume textures stay empty in Direct3D 12 mode.
