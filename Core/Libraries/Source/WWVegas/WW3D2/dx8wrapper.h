@@ -44,7 +44,7 @@
 #include "WWLib/always.h"
 #include <Utility/bit_adapter.h>
 #include "dllist.h"
-#include "d3d8.h"
+#include "WWLib/d3d8defs.h"
 #include "WWMath/matrix4.h"
 #include "statistics.h"
 #include "WWLib/wwstring.h"

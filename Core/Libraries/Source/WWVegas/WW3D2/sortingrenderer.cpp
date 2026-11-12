@@ -44,7 +44,7 @@
 #include "dx8wrapper.h"
 #include "vertmaterial.h"
 #include "texture.h"
-#include "d3d8.h"
+#include "WWLib/d3d8defs.h"
 #include "WWMath/d3dmatrixmath.h"
 #include "statistics.h"
 #include <WWDebug/wwprofile.h>

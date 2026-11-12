@@ -32,6 +32,7 @@ set(WWLIB_SRC
     #crcstraw.h
     cstraw.cpp
     cstraw.h
+    d3d8defs.h
     Except.cpp
     Except.h
     FastAllocator.cpp

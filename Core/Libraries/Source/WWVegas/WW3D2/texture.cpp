@@ -41,7 +41,7 @@
 
 #include "texture.h"
 
-#include <d3d8.h>
+#include "WWLib/d3d8defs.h"
 #include "dx8wrapper.h"
 #include "WWLib/TARGA.h"
 #include <WWLib/nstrdup.h>

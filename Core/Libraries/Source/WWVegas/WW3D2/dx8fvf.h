@@ -42,7 +42,7 @@
 #pragma once
 
 #include "WWLib/always.h"
-#include <d3d8.h>
+#include "WWLib/d3d8defs.h"
 #include "WWDebug/wwdebug.h"
 
 class StringClass;

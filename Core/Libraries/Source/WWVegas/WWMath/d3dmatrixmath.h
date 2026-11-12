@@ -30,7 +30,7 @@
 
 #pragma once
 
-#include <d3d8types.h>
+#include "WWLib/d3d8defs.h"
 #include <xmmintrin.h>
 #include <math.h>
 
