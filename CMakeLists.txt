@@ -53,10 +53,6 @@ if(MINGW)
 endif()
 
 # Find/Add build dependencies and stubs shared by all projects
-if((WIN32 OR "${CMAKE_SYSTEM}" MATCHES "Windows") AND ${CMAKE_SIZEOF_VOID_P} EQUAL 4)
-    include(cmake/dx8.cmake)
-endif()
-
 if (IS_VS6_BUILD)
     include(cmake/stlport.cmake)
 else()
@@ -64,6 +60,12 @@ else()
 endif()
 
 include(cmake/config.cmake)
+
+# TheSuperHackers @build The games no longer use the Direct3D 8 SDK. It is fetched only for the tools that are not
+# ported to Direct3D 12 yet (RTS_BUILD_DX8_TOOLS) and the 3ds Max exporter in the extras.
+if((RTS_BUILD_DX8_TOOLS OR RTS_BUILD_CORE_EXTRAS) AND (WIN32 OR "${CMAKE_SYSTEM}" MATCHES "Windows") AND ${CMAKE_SIZEOF_VOID_P} EQUAL 4)
+    include(cmake/dx8.cmake)
+endif()
 include(cmake/gamespy.cmake)
 if (IS_VS6_BUILD)
     add_library(gamemath INTERFACE)
