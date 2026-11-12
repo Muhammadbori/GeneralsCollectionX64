@@ -47,7 +47,6 @@
 #include "WW3D2/Backend/DX12/dx12resource.h"
 #include "WW3D2/Renderer.h"
 #include "WW3D2/light.h"
-#include "d3dx8math.h"
 #include "WWMath/d3dmatrixmath.h"
 #include "WWLib/simplevec.h"
 #include "WW3D2/mesh.h"
@@ -1304,77 +1303,6 @@ void WaterRenderObjClass::Render(RenderInfoClass & rinfo)
 				//flip the winding order of polygons to draw the reflected back sides.
 				ShaderClass::Invert_Backface_Culling(true);
 
-			#ifdef CLIP_GEOMETRY_TO_PLANE
-			  // Set a clip plane, so that only objects above the water are reflected
-				WaterPlane.W *= -1.0f;	//flip sign of plane distance for D3D use.
-
-			//	DX8Wrapper::Set_DX8_Clip_Plane( 0, &WaterPlane.X );
-			//	DX8Wrapper::Set_DX8_Render_State(D3DRS_CLIPPLANEENABLE, D3DCLIPPLANE0 );	//turn on first clip plane
-
-				// Alternate Clipping Method using alpha testing hack!
-				/**************************************************************************************/
-
-				//get current view matrix
-				D3DXMATRIX curView;
-				DX8Wrapper::_Get_DX8_Transform(D3DTS_VIEW, curView);
-
-				//get inverse of view matrix(= view to world matrix)
-				D3DXMATRIX inv;
-				Real det;
-				D3DXMatrixInverse(&inv, &det, &curView);
-
-				//create clipping matrix by inserting our plane equation into the 1st column
-				D3DXMATRIX clipMatrix;
-				D3DXMatrixIdentity(&clipMatrix);
-				clipMatrix(0,0)=WaterNormal.X;
-				clipMatrix(1,0)=WaterNormal.Y;
-				clipMatrix(2,0)=WaterNormal.Z;
-				clipMatrix(3,0)=WaterPlane.W+0.5f;
-				inv *=clipMatrix;
-
-				// Change texture wrapping mode to 'clamp' for texture stage 1
-				DX8Wrapper::Set_DX8_Texture_Stage_State( 1, D3DTSS_ADDRESSU, D3DTADDRESS_CLAMP);
-				DX8Wrapper::Set_DX8_Texture_Stage_State( 1, D3DTSS_ADDRESSV, D3DTADDRESS_CLAMP);
-
-				// Use CameraSpace vertices as input to matrix and use texture wrap mode from stage 1
-				DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_TEXCOORDINDEX, D3DTSS_TCI_CAMERASPACEPOSITION|1);
-				// Two output coordinates are used.
-				DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_TEXTURETRANSFORMFLAGS, D3DTTFF_COUNT2);
-
-				// Set texture generation matrix for stage 1
-				DX8Wrapper::_Set_DX8_Transform(D3DTS_TEXTURE1, inv);
-
-				// Disable bilinear filtering
-				DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_MINFILTER, D3DTEXF_POINT);
-				DX8Wrapper::Set_DX8_Texture_Stage_State(1, D3DTSS_MAGFILTER, D3DTEXF_POINT);
-
-				// Pass stage 0 texture data untouched(by modulating with white)
-				DX8Wrapper::Set_DX8_Texture_Stage_State( 1, D3DTSS_COLORARG1, D3DTA_TEXTURE );	//stage 1 texture
-				DX8Wrapper::Set_DX8_Texture_Stage_State( 1, D3DTSS_COLORARG2, D3DTA_CURRENT );	//previous stage texture
-				DX8Wrapper::Set_DX8_Texture_Stage_State( 1, D3DTSS_COLOROP,   D3DTOP_MODULATE );	//module with white => does nothing
-
-				DX8Wrapper::Set_DX8_Texture_Stage_State( 1, D3DTSS_ALPHAARG1, D3DTA_TEXTURE );	//stage 1 texture
-				DX8Wrapper::Set_DX8_Texture_Stage_State( 1, D3DTSS_ALPHAARG2, D3DTA_CURRENT );	//previous stage texture
-				DX8Wrapper::Set_DX8_Texture_Stage_State( 1, D3DTSS_ALPHAOP,   D3DTOP_MODULATE );	//modulate with clipping texture
-
-				DX8Wrapper::Set_DX8_Render_State(D3DRS_ALPHAREF,0x00);
-				DX8Wrapper::Set_DX8_Render_State(D3DRS_ALPHAFUNC,D3DCMP_NOTEQUAL);	//pass pixels who's alpha is not zero
-				DX8Wrapper::Set_DX8_Render_State(D3DRS_ALPHATESTENABLE, true);	//test pixels if transparent(clipped) before rendering.
-
-				// Set clipping texture
-				m_alphaClippingTexture->Set_U_Addr_Mode(TextureClass::TEXTURE_ADDRESS_CLAMP);
-				m_alphaClippingTexture->Set_V_Addr_Mode(TextureClass::TEXTURE_ADDRESS_CLAMP);
-				m_alphaClippingTexture->Set_Min_Filter(TextureClass::FILTER_TYPE_NONE);
-				m_alphaClippingTexture->Set_Mag_Filter(TextureClass::FILTER_TYPE_NONE);
-				m_alphaClippingTexture->Set_Mip_Mapping(TextureClass::FILTER_TYPE_NONE);
-
-				DX8Wrapper::Set_Texture(0,m_alphaClippingTexture);
-
-				//TODO: Will have to make sure that the shader system is not resetting my stage 1 setup
-				//while rendering the scene
-
-				/*************************************************************************************/
-			#endif
 
 			#if 0	// No longer do simple rendering.
 				if (TheGlobalData->m_useWaterPlane)
