@@ -1074,17 +1074,14 @@ TextureClass * WW3DAssetManager::Get_Texture
 	*/
 	if (!tex)
 	{
-		if (type==TextureBaseClass::TEX_REGULAR)
+		if (type==TextureBaseClass::TEX_REGULAR || type==TextureBaseClass::TEX_CUBEMAP || type==TextureBaseClass::TEX_VOLUME)
 		{
+			// The Direct3D 12 renderer has no cube or volume textures: load the file as a regular texture.
+			if (type!=TextureBaseClass::TEX_REGULAR)
+			{
+				WWDEBUG_SAY(("Get_Texture: %s requested as a cube or volume texture, loaded as a regular texture", filename));
+			}
 			tex = NEW_REF (TextureClass, (lower_case_name, nullptr, mip_level_count, texture_format, allow_compression, allow_reduction));
-		}
-		else if (type==TextureBaseClass::TEX_CUBEMAP)
-		{
-			tex = NEW_REF (CubeTextureClass, (lower_case_name, nullptr, mip_level_count, texture_format, allow_compression, allow_reduction));
-		}
-		else if (type==TextureBaseClass::TEX_VOLUME)
-		{
-			tex = NEW_REF (VolumeTextureClass, (lower_case_name, nullptr, mip_level_count, texture_format, allow_compression, allow_reduction));
 		}
 		else
 		{

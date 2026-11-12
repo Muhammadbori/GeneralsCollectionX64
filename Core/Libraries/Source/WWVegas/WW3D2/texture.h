@@ -51,8 +51,6 @@
 
 struct IDirect3DBaseTexture8;
 struct IDirect3DTexture8;
-struct IDirect3DCubeTexture8;
-struct IDirect3DVolumeTexture8;
 
 class DX8Wrapper;
 class DX12TextureClass;
@@ -60,8 +58,6 @@ class TextureLoader;
 class LoaderThreadClass;
 class TextureLoadTaskClass;
 class TextureClass;
-class CubeTextureClass;
-class VolumeTextureClass;
 
 class TextureBaseClass : public RefCountClass
 {
@@ -202,12 +198,8 @@ public:
 	static void Apply_Null(unsigned int stage);
 
 	virtual TextureClass* As_TextureClass() { return nullptr; }
-	virtual CubeTextureClass* As_CubeTextureClass() { return nullptr; }
-	virtual VolumeTextureClass* As_VolumeTextureClass() { return nullptr; }
 
 	IDirect3DTexture8* Peek_D3D_Texture() const { return (IDirect3DTexture8*)Peek_D3D_Base_Texture(); }
-	IDirect3DVolumeTexture8* Peek_D3D_VolumeTexture() const { return (IDirect3DVolumeTexture8*)Peek_D3D_Base_Texture(); }
-	IDirect3DCubeTexture8* Peek_D3D_CubeTexture() const { return (IDirect3DCubeTexture8*)Peek_D3D_Base_Texture(); }
 
 protected:
 
@@ -259,8 +251,6 @@ private:
 	bool Dirty;
 
 	friend class TextureLoadTaskClass;
-	friend class CubeTextureLoadTaskClass;
-	friend class VolumeTextureLoadTaskClass;
 	TextureLoadTaskClass* TextureLoadTask;
 	TextureLoadTaskClass* ThumbnailLoadTask;
 
@@ -390,100 +380,6 @@ public:
 private:
 
 	WW3DZFormat DepthStencilTextureFormat;
-};
-
-class CubeTextureClass : public TextureClass
-{
-public:
-	// Create texture with desired height, width and format.
-	CubeTextureClass
-	(
-		unsigned width,
-		unsigned height,
-		WW3DFormat format,
-		MipCountType mip_level_count=MIP_LEVELS_ALL,
-		PoolType pool=POOL_MANAGED,
-		bool rendertarget=false,
-		bool allow_reduction=true
-	);
-
-	// Create texture from a file. If format is specified the texture is converted to that format.
-	// Note that the format must be supported by the current device and that a texture can't exist
-	// in the system with the same name in multiple formats.
-	CubeTextureClass
-	(
-		const char *name,
-		const char *full_path=nullptr,
-		MipCountType mip_level_count=MIP_LEVELS_ALL,
-		WW3DFormat texture_format=WW3D_FORMAT_UNKNOWN,
-		bool allow_compression=true,
-		bool allow_reduction=true
-	);
-
-	// Create texture from a surface.
-	CubeTextureClass
-	(
-		SurfaceClass *surface,
-		MipCountType mip_level_count=MIP_LEVELS_ALL
-	);
-
-	CubeTextureClass(IDirect3DBaseTexture8* d3d_texture);
-
-	virtual void Apply_New_Surface(IDirect3DBaseTexture8* tex, bool initialized, bool disable_auto_invalidation = false) override;	// If the parameter is true, the texture will be flagged as initialised
-
-	virtual TexAssetType Get_Asset_Type() const override { return TEX_CUBEMAP; }
-
-	virtual CubeTextureClass* As_CubeTextureClass() override { return this; }
-
-};
-
-class VolumeTextureClass : public TextureClass
-{
-public:
-	// Create texture with desired height, width and format.
-	VolumeTextureClass
-	(
-		unsigned width,
-		unsigned height,
-		unsigned depth,
-		WW3DFormat format,
-		MipCountType mip_level_count=MIP_LEVELS_ALL,
-		PoolType pool=POOL_MANAGED,
-		bool rendertarget=false,
-		bool allow_reduction=true
-	);
-
-	// Create texture from a file. If format is specified the texture is converted to that format.
-	// Note that the format must be supported by the current device and that a texture can't exist
-	// in the system with the same name in multiple formats.
-	VolumeTextureClass
-	(
-		const char *name,
-		const char *full_path=nullptr,
-		MipCountType mip_level_count=MIP_LEVELS_ALL,
-		WW3DFormat texture_format=WW3D_FORMAT_UNKNOWN,
-		bool allow_compression=true,
-		bool allow_reduction=true
-	);
-
-	// Create texture from a surface.
-	VolumeTextureClass
-	(
-		SurfaceClass *surface,
-		MipCountType mip_level_count=MIP_LEVELS_ALL
-	);
-
-	VolumeTextureClass(IDirect3DBaseTexture8* d3d_texture);
-
-	virtual void Apply_New_Surface(IDirect3DBaseTexture8* tex, bool initialized, bool disable_auto_invalidation = false) override;	// If the parameter is true, the texture will be flagged as initialised
-
-	virtual TexAssetType Get_Asset_Type() const override { return TEX_VOLUME; }
-
-	virtual VolumeTextureClass* As_VolumeTextureClass() override { return this; }
-
-protected:
-
-	int Depth;
 };
 
 // Utility functions for loading and saving texture descriptions from/to W3D files
