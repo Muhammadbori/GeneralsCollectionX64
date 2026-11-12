@@ -47,7 +47,6 @@
 #include "WWDebug/wwmemlog.h"
 #include "WW3D2/Backend/DX12/dx12device.h"
 #include "WW3D2/Backend/DX12/dx12resource.h"
-#include <d3dx8core.h>
 
 #define DEFAULT_VB_SIZE 5000
 

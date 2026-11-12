@@ -57,7 +57,6 @@
 #include "textureloader.h"
 #include "Backend/DX12/dx12device.h"
 #include "Backend/DX12/dx12resource.h"
-#include <d3dx8.h>
 
 void Convert_Pixel(Vector3 &rgb, const SurfaceClass::SurfaceDescription &sd, const unsigned char * pixel)
 {
