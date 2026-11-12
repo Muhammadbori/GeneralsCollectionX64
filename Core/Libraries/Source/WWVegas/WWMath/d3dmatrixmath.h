@@ -298,3 +298,31 @@ inline D3DMATRIX* Inverse(D3DMATRIX* out, float* determinant, const D3DMATRIX* m
 }
 
 } // namespace D3DMatrixMath
+
+// A D3DMATRIX with the D3DXMATRIX product operators: a * b and a *= b are D3DMatrixMath::Multiply(a, b), as the
+// D3DXMATRIX operators call D3DXMatrixMultiply.
+struct D3DMatrix : public D3DMATRIX
+{
+	D3DMatrix() {}
+	D3DMatrix operator*(const D3DMATRIX& b) const
+	{
+		D3DMatrix r;
+		D3DMatrixMath::Multiply(&r, this, &b);
+		return r;
+	}
+	D3DMatrix& operator*=(const D3DMATRIX& b)
+	{
+		D3DMatrixMath::Multiply(this, this, &b);
+		return *this;
+	}
+};
+
+// Four floats with the layout and the pointer conversion of D3DXVECTOR4 (shader constants, vertex data).
+struct D3DVector4
+{
+	D3DVector4() {}
+	D3DVector4(float x_, float y_, float z_, float w_) : x(x_), y(y_), z(z_), w(w_) {}
+	operator float*() { return &x; }
+	operator const float*() const { return &x; }
+	float x, y, z, w;
+};
