@@ -122,6 +122,19 @@
             }
         },
         {
+            "name": "win64",
+            "inherits": "default",
+            "hidden": false,
+            "displayName": "Windows 64bit Release",
+            "architecture": {
+                "value": "x64",
+                "strategy": "external"
+            },
+            "cacheVariables": {
+                "RTS_FLAGS": "/W3"
+            }
+        },
+        {
             "name": "win32-vcpkg",
             "inherits": "default-vcpkg",
             "hidden": false,
@@ -229,6 +242,13 @@
             "configurePreset": "win32",
             "displayName": "Build Windows 32bit Release",
             "description": "Build Windows 32bit Release",
+            "configuration": "Release"
+        },
+        {
+            "name": "win64",
+            "configurePreset": "win64",
+            "displayName": "Build Windows 64bit Release",
+            "description": "Build Windows 64bit Release",
             "configuration": "Release"
         },
         {
