@@ -876,7 +876,9 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 #else
 
 		// in release, the file only ever lives in the root dir
-		gLoadScreenBitmap = (HBITMAP)LoadImage(hInstance, "Install_Final.bmp", IMAGE_BITMAP, 0, 0, LR_SHARED|LR_LOADFROMFILE);
+		// TheSuperHackers @feature A folder shared with Generals keeps one splash picture per game.
+		const char *splashFile = (GetFileAttributes("Install_Final_ZeroHour.bmp") != INVALID_FILE_ATTRIBUTES) ? "Install_Final_ZeroHour.bmp" : "Install_Final.bmp";
+		gLoadScreenBitmap = (HBITMAP)LoadImage(hInstance, splashFile, IMAGE_BITMAP, 0, 0, LR_SHARED|LR_LOADFROMFILE);
 #endif
 
 #ifdef RTS_ENABLE_CRASHDUMP

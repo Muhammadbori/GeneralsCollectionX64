@@ -851,7 +851,9 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
  		// [SKB: Jun 24 2003 @ 1:50pm] :
 		// Force to be loaded from a file, not a resource so same exe can be used in germany and retail.
- 		gLoadScreenBitmap = (HBITMAP)LoadImage(hInstance, "Install_Final.bmp",	IMAGE_BITMAP, 0, 0, LR_SHARED|LR_LOADFROMFILE);
+ 		// TheSuperHackers @feature A folder shared with Zero Hour keeps one splash picture per game.
+ 		const char *splashFile = (GetFileAttributes("Install_Final_Generals.bmp") != INVALID_FILE_ATTRIBUTES) ? "Install_Final_Generals.bmp" : "Install_Final.bmp";
+ 		gLoadScreenBitmap = (HBITMAP)LoadImage(hInstance, splashFile,	IMAGE_BITMAP, 0, 0, LR_SHARED|LR_LOADFROMFILE);
 
 #ifdef RTS_ENABLE_CRASHDUMP
 		// Initialize minidump facilities - requires TheGlobalData so performed after parseCommandLineForStartup
