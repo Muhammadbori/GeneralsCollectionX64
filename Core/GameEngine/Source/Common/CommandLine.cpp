@@ -1018,6 +1018,17 @@ Int parseShotFrames(char *args[], int num)
 	return 1;
 }
 
+// TheSuperHackers @feature Write a test save game at the given logic frames, see FrameShots::setSaveFrames.
+Int parseSaveFrames(char *args[], int num)
+{
+	if (num > 1)
+	{
+		FrameShots::setSaveFrames(args[1]);
+		return 2;
+	}
+	return 1;
+}
+
 Int parseTestLogicFps(char *args[], int num)
 {
 	if (num > 1)
@@ -1562,6 +1573,7 @@ static CommandLineParam paramsForEngineInit[] =
 	// TheSuperHackers @feature bobtista 08/08/2026 Play a replay file from the command line.
 	{ "-loadreplay", parseLoadReplay },
 	{ "-shotFrames", parseShotFrames },
+	{ "-saveFrames", parseSaveFrames },
 	{ "-shotDir", parseShotDir },
 	{ "-shotExit", parseShotExit },
 	{ "-fps", parseFPSLimit },

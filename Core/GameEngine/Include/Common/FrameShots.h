@@ -30,6 +30,12 @@ public:
 
 	static void setNoImage(Bool noImage); ///< Write the frames.csv rows but no image files (-shotNoImage). Cheap for long timing runs.
 
+	/// Test saves: -saveFrames <list> writes a save game when the logic reaches each listed frame, as the save menu does, to
+	/// Save\frame_<8 digits>.sav in the user data folder, and a row per save to saves.csv in the shot folder. Frames that a
+	/// game starts after (for example in a loaded save) are skipped. With -shotExit, list a shot frame after the last save frame.
+	/// Load a save without the menus with the existing -loadsave <file>.
+	static void setSaveFrames(const char *commaSeparatedFrames);
+
 	/// Test input: -testInput "<kind>:<arg>@<from>-<to>[;...]" injects the raw messages a device would create while the logic frame
 	/// is in [from,to). Kinds: key:left|right|up|down, rmb:<dx>,<dy> (right button drag from the screen center), edge:left|right|up|down.
 	static void setTestInput(const char *specs);
@@ -52,6 +58,8 @@ private:
 	static void capture(UnsignedInt listedFrame);
 	static Bool prepareOutput();
 	static void exitGame();
+	static void writeSave(UnsignedInt frame);
+	static void updateEnabled();
 
 	static Bool s_enabled;
 	static Int s_failureExitCode;

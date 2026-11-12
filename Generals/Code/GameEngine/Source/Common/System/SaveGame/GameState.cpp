@@ -32,6 +32,7 @@
 #include "Common/file.h"
 #include "Common/FileSystem.h"
 #include "Common/FramePacer.h"
+#include "Common/FrameShots.h"
 #include "Common/GameEngine.h"
 #include "Common/GameState.h"
 #include "Common/GameStateMap.h"
@@ -751,6 +752,14 @@ SaveCode GameState::loadGame( AvailableGameInfo gameInfo )
 //-------------------------------------------------------------------------------------------------
 static void showQueuedSaveGameLoadFailure( void )
 {
+	// TheSuperHackers @feature An unattended test run (-shotFrames, -saveFrames) ends with exit code 6 instead of
+	// waiting in the shell behind a message.
+	if( FrameShots::isEnabled() )
+	{
+		FrameShots::failStartup( "The save game given with -loadsave could not be loaded.", 6 );
+		return;
+	}
+
 	UnicodeString title = TheGameText->FETCH_OR_SUBSTITUTE("GUI:SaveGameLoadFailedTitle", L"CANNOT LOAD SAVE");
 	UnicodeString body = TheGameText->FETCH_OR_SUBSTITUTE("GUI:SaveGameLoadFailed", L"The saved game file could not be opened or is invalid.");
 
@@ -806,6 +815,8 @@ void GameState::loadQueuedSaveGame()
 			TheGameLogic->clearGameData( FALSE );
 		TheGameEngine->reset();
 		TheGameEngine->setQuitting( TRUE );
+		if( FrameShots::isEnabled() )
+			FrameShots::failStartup( "The save game given with -loadsave could not be loaded.", 6 );
 	}
 }
 

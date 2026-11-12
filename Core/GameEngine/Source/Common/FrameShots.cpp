@@ -22,6 +22,7 @@
 
 #include "Common/FramePacer.h"
 #include "Common/GameEngine.h"
+#include "Common/GameState.h"
 #include "Common/GlobalData.h"
 #include "Common/Recorder.h"
 
@@ -44,6 +45,9 @@ Int FrameShots::s_failureExitCode = 0;
 namespace
 {
 	std::vector<UnsignedInt> s_frames; ///< Listed logic frames, ascending and unique.
+	std::vector<UnsignedInt> s_saveFrames; ///< Logic frames of the test saves (-saveFrames), ascending and unique.
+	size_t s_nextSaveIndex = 0; ///< First listed save frame that the logic has not reached yet.
+	FILE *s_savesCsv = nullptr;
 	size_t s_nextFrameIndex = 0; ///< First listed frame that the logic has not reached yet.
 	std::vector<UnsignedInt> s_pendingFrames; ///< Listed frames reached by the logic, waiting for the next render.
 	UnsignedInt s_renderCountAtLogicUpdate = 0; ///< Rendered frame count when the last pending frame was reached.
@@ -88,6 +92,27 @@ namespace
 		return (double)ticks * 1000.0 / (double)freq.QuadPart;
 	}
 
+	// Reads "300,900,1800" into an ascending list without duplicates.
+	void parseFrameList(const char *commaSeparatedFrames, std::vector<UnsignedInt> &frames)
+	{
+		frames.clear();
+		const char *p = commaSeparatedFrames;
+		while (p != nullptr && *p != '\0')
+		{
+			char *end = nullptr;
+			const unsigned long value = strtoul(p, &end, 10);
+			if (end == p)
+			{
+				++p; // skip a separator
+				continue;
+			}
+			frames.push_back((UnsignedInt)value);
+			p = end;
+		}
+		std::sort(frames.begin(), frames.end());
+		frames.erase(std::unique(frames.begin(), frames.end()), frames.end());
+	}
+
 	// Creates each folder of the path in turn. Existing folders are fine.
 	void createDirectories(const AsciiString &path)
 	{
@@ -109,24 +134,21 @@ namespace
 
 void FrameShots::setFrames(const char *commaSeparatedFrames)
 {
-	s_frames.clear();
-	const char *p = commaSeparatedFrames;
-	while (p != nullptr && *p != '\0')
-	{
-		char *end = nullptr;
-		const unsigned long value = strtoul(p, &end, 10);
-		if (end == p)
-		{
-			++p; // skip a separator
-			continue;
-		}
-		s_frames.push_back((UnsignedInt)value);
-		p = end;
-	}
-	std::sort(s_frames.begin(), s_frames.end());
-	s_frames.erase(std::unique(s_frames.begin(), s_frames.end()), s_frames.end());
+	parseFrameList(commaSeparatedFrames, s_frames);
 	s_nextFrameIndex = 0;
-	s_enabled = !s_frames.empty();
+	updateEnabled();
+}
+
+void FrameShots::setSaveFrames(const char *commaSeparatedFrames)
+{
+	parseFrameList(commaSeparatedFrames, s_saveFrames);
+	s_nextSaveIndex = 0;
+	updateEnabled();
+}
+
+void FrameShots::updateEnabled()
+{
+	s_enabled = !s_frames.empty() || !s_saveFrames.empty();
 }
 
 void FrameShots::setNoImage(Bool noImage)
@@ -328,6 +350,47 @@ void FrameShots::onLogicUpdated()
 	{
 		s_renderCountAtLogicUpdate = TheDisplay->getRenderedFrameCount();
 	}
+
+	// Test saves run here, between two logic updates, as a save from the menu does. A listed frame below the
+	// current one was never reached in this game (it started later, for example from a save) and is skipped.
+	while (s_nextSaveIndex < s_saveFrames.size() && s_saveFrames[s_nextSaveIndex] <= frame)
+	{
+		const UnsignedInt saveFrame = s_saveFrames[s_nextSaveIndex];
+		++s_nextSaveIndex;
+		if (saveFrame == frame)
+		{
+			writeSave(frame);
+		}
+		else
+		{
+			DEBUG_LOG(("FrameShots: save frame %u skipped, the game is at frame %u", saveFrame, frame));
+		}
+	}
+}
+
+void FrameShots::writeSave(UnsignedInt frame)
+{
+	AsciiString fileName;
+	fileName.format("frame_%08u.sav", frame);
+	UnicodeString description;
+	description.format(L"Test save at logic frame %u", frame);
+
+	const SaveResult result = TheGameState->saveGame(fileName, description, SAVE_FILE_TYPE_NORMAL);
+	DEBUG_LOG(("FrameShots: save at frame %u to '%s', code %d", frame, fileName.str(), (Int)result.saveCode));
+
+	if (!prepareOutput())
+		return;
+	if (s_savesCsv == nullptr)
+	{
+		AsciiString csvPath = s_directory;
+		csvPath.concat("\\saves.csv");
+		s_savesCsv = fopen(csvPath.str(), "w");
+		if (s_savesCsv == nullptr)
+			return;
+		fprintf(s_savesCsv, "logic_frame,save_code,file\n");
+	}
+	fprintf(s_savesCsv, "%u,%d,%s\n", frame, (Int)result.saveCode, TheGameState->getFilePathInSaveDirectory(fileName).str());
+	fflush(s_savesCsv);
 }
 
 void FrameShots::onClientUpdated()
@@ -371,7 +434,7 @@ void FrameShots::onClientUpdated()
 	}
 	s_pendingFrames.clear();
 
-	if (s_exitWhenDone && s_nextFrameIndex >= s_frames.size())
+	if (s_exitWhenDone && s_nextFrameIndex >= s_frames.size() && s_nextSaveIndex >= s_saveFrames.size())
 	{
 		s_exitRequested = TRUE;
 	}
@@ -472,6 +535,11 @@ void FrameShots::exitGame()
 	{
 		fclose(s_csv);
 		s_csv = nullptr;
+	}
+	if (s_savesCsv != nullptr)
+	{
+		fclose(s_savesCsv);
+		s_savesCsv = nullptr;
 	}
 
 	// The normal quit path, as used by the benchmark timer in GameEngine::execute.
