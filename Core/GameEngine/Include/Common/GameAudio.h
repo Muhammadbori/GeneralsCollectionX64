@@ -200,7 +200,8 @@ class AudioManager : public SubsystemInterface
 		virtual void *getDevice() = 0;
 
 		// Device Dependent notification functions
-		virtual void notifyOfAudioCompletion( UnsignedInt audioCompleted, UnsignedInt flags ) = 0;
+		// audioCompleted is the Miles sample or stream handle: pointer sized.
+		virtual void notifyOfAudioCompletion( uintptr_t audioCompleted, UnsignedInt flags ) = 0;
 
 		// Device Dependent enumerate providers functions. It is okay for there to be only 1 provider (Miles provides a maximum of 64.
 		virtual UnsignedInt getProviderCount() const = 0;

@@ -48,13 +48,20 @@ typedef struct BINK
     /* Original struct has more members, but we only need these to match the ABI*/
 } BINK, *HBINK;
 
-typedef void *(__stdcall *SndOpenCallback)(unsigned long param);
+/* The sound system parameter carries a pointer (the DirectSound object): unsigned long in the
+   32-bit SDK, pointer sized in 64-bit builds. */
+#if defined(_WIN64)
+typedef unsigned long long BinkSoundParam;
+#else
+typedef unsigned long BinkSoundParam;
+#endif
+typedef void *(__stdcall *SndOpenCallback)(BinkSoundParam param);
 typedef unsigned int u32;
 
 HBINK __stdcall BinkOpen(const char *name, unsigned int flags);
 void __stdcall BinkSetSoundTrack(unsigned int total_tracks, unsigned int *tracks);
-int __stdcall BinkSetSoundSystem(SndOpenCallback open, unsigned long param);
-void *__stdcall BinkOpenDirectSound(unsigned long param);
+int __stdcall BinkSetSoundSystem(SndOpenCallback open, BinkSoundParam param);
+void *__stdcall BinkOpenDirectSound(BinkSoundParam param);
 void __stdcall BinkClose(HBINK handle);
 int __stdcall BinkWait(HBINK handle);
 int __stdcall BinkDoFrame(HBINK handle);
@@ -64,7 +71,7 @@ void __stdcall BinkSetVolume(HBINK handle, unsigned int trackid, int volume);
 void __stdcall BinkNextFrame(HBINK handle);
 void __stdcall BinkGoto(HBINK handle, unsigned int frame, int flags);
 
-#define BinkSoundUseDirectSound(x) BinkSetSoundSystem(BinkOpenDirectSound, (unsigned long)x)
+#define BinkSoundUseDirectSound(x) BinkSetSoundSystem(BinkOpenDirectSound, (BinkSoundParam)x)
 
 #ifdef __cplusplus
 } // extern "C"

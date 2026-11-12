@@ -122,7 +122,7 @@ class SoundSceneObjClass : public MultiListObjectClass, public RefCountClass
 		//////////////////////////////////////////////////////////////////////
 		//	Event handling
 		//////////////////////////////////////////////////////////////////////
-		virtual void			On_Event (AudioCallbackClass::EVENTS event, uint32 param1 = 0, uint32 param2 = 0);
+		virtual void			On_Event (AudioCallbackClass::EVENTS event, ULONG_PTR param1 = 0, ULONG_PTR param2 = 0); // params carry pointers
 		virtual void			Register_Callback (AudioCallbackClass::EVENTS events, AudioCallbackClass *callback);
 
 		//////////////////////////////////////////////////////////////////////
@@ -218,8 +218,8 @@ __inline void
 SoundSceneObjClass::On_Event
 (
 	AudioCallbackClass::EVENTS	event,
-	uint32							param1,
-	uint32							param2
+	ULONG_PTR						param1,
+	ULONG_PTR						param2
 )
 {
 	if ((m_pCallback != nullptr) && (m_RegisteredEvents & event)) {

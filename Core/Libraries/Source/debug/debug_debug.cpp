@@ -77,7 +77,7 @@ Debug::LogDescription::LogDescription(const char *fileOrGroup, const char *descr
 Debug Debug::Instance;
 
 // more class static members
-unsigned Debug::curStackFrame;
+uintptr_t Debug::curStackFrame;
 
 // this constructor is empty on purpose because all construction
 // work is done in PreStaticInit (and some in PostStaticInit)
@@ -309,10 +309,10 @@ bool Debug::SkipNext()
 
   // do not implement this function inline, we do need
   // a valid frame pointer here!
-  unsigned help;
+  uintptr_t help;
 #if defined(_MSC_VER) && defined(_WIN64)
   // x64 has no inline assembler; _ReturnAddress is the same return address.
-  help=(unsigned)(uintptr_t)_ReturnAddress();
+  help=(uintptr_t)_ReturnAddress();
 #elif defined(_MSC_VER)
   __asm
   {
@@ -916,8 +916,13 @@ Debug& Debug::operator<<(const void *ptr)
   (*this) << "ptr:";
   if (ptr)
   {
+#ifdef _WIN64
+    char help[17];
+    (*this) << "0x" << _ui64toa((unsigned __int64)ptr,help,16);
+#else
     char help[9];
     (*this) << "0x" << _ultoa((unsigned long)ptr,help,16);
+#endif
   }
   else
     (*this) << "null";
@@ -948,8 +953,16 @@ Debug& Debug::operator<<(const MemDump &dump)
   for (unsigned i=0;i<dump.m_numItems;i+=itemPerLine,cur+=itemPerLine*dump.m_bytePerItem)
   {
     // address
+#ifdef _WIN64
+    char buf[17];
+    if (dump.m_absAddr)
+      sprintf(buf,"%016llx",(unsigned long long)(uintptr_t)cur);
+    else
+      sprintf(buf,"%08x",(unsigned)(cur-dump.m_startPtr));
+#else
     char buf[9];
     sprintf(buf,"%08x",dump.m_absAddr?unsigned(cur):cur-dump.m_startPtr);
+#endif
     operator<<(buf);
 
     // items
@@ -1027,9 +1040,9 @@ bool Debug::IsLogEnabled(const char *fileOrGroup)
   // to be used from the D_ISLOG macros only and those guarantee
   // that we are having real static strings let's use
   // that strings address as frame address...
-  FrameHashEntry *e=Instance.LookupFrame((unsigned)fileOrGroup);
+  FrameHashEntry *e=Instance.LookupFrame((uintptr_t)fileOrGroup);
   if (!e)
-    e=Instance.AddFrameEntry((unsigned)fileOrGroup,FrameTypeLog,fileOrGroup,0);
+    e=Instance.AddFrameEntry((uintptr_t)fileOrGroup,FrameTypeLog,fileOrGroup,0);
   if (e->status==Unknown)
     Instance.UpdateFrameStatus(*e);
   return e->status==NoSkip;
@@ -1212,7 +1225,7 @@ void Debug::Update()
   }
 }
 
-Debug::FrameHashEntry* Debug::AddFrameEntry(unsigned addr, unsigned type,
+Debug::FrameHashEntry* Debug::AddFrameEntry(uintptr_t addr, unsigned type,
                                             const char *fileOrGroup, int line)
 {
   __ASSERT(LookupFrame(addr)==nullptr);

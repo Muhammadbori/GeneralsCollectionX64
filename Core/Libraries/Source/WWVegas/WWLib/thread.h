@@ -91,6 +91,10 @@ protected:
 
 private:
 	static void __cdecl Internal_Thread_Function(void*);
+#ifdef _WIN64
+	volatile uintptr_t handle; // the _beginthread handle is 64 bits on x64
+#else
 	volatile unsigned long handle;
+#endif
 	int thread_priority;
 };
