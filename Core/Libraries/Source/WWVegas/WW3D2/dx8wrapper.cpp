@@ -2592,10 +2592,6 @@ void DX8Wrapper::Draw_Sorting_IB_VB(
 		}
 	}
 
-	DX8CALL(SetStreamSource(
-		0,
-		static_cast<DX8VertexBufferClass*>(dyn_vb_access.VertexBuffer)->Get_DX8_Vertex_Buffer(),
-		dyn_vb_access.FVF_Info().Get_FVF_Size()));
 	if (DX12Device::Is_Active()) {
 		Device_Set_Stream(
 			static_cast<DX8VertexBufferClass*>(dyn_vb_access.VertexBuffer)->Get_DX12_Buffer(),
@@ -2634,9 +2630,6 @@ void DX8Wrapper::Draw_Sorting_IB_VB(
 		}
 	}
 
-	DX8CALL(SetIndices(
-		static_cast<DX8IndexBufferClass*>(dyn_ib_access.IndexBuffer)->Get_DX8_Index_Buffer(),
-		dyn_vb_access.VertexBufferOffset));
 	if (DX12Device::Is_Active()) {
 		Device_Set_Indices(
 			static_cast<DX8IndexBufferClass*>(dyn_ib_access.IndexBuffer)->Get_DX12_Buffer(),
@@ -3256,10 +3249,6 @@ void DX8Wrapper::Apply_Render_State_Changes()
 					//->Type()) {
 				case BUFFER_TYPE_DX8:
 				case BUFFER_TYPE_DYNAMIC_DX8:
-					DX8CALL(SetStreamSource(
-						i,
-						static_cast<DX8VertexBufferClass*>(render_state.vertex_buffers[i])->Get_DX8_Vertex_Buffer(),
-						render_state.vertex_buffers[i]->FVF_Info().Get_FVF_Size()));
 					if (DX12Device::Is_Active() && i==0) {
 						Device_Set_Stream(
 							static_cast<DX8VertexBufferClass*>(render_state.vertex_buffers[i])->Get_DX12_Buffer(),
@@ -3294,9 +3283,6 @@ void DX8Wrapper::Apply_Render_State_Changes()
 				//->Type()) {
 			case BUFFER_TYPE_DX8:
 			case BUFFER_TYPE_DYNAMIC_DX8:
-				DX8CALL(SetIndices(
-					static_cast<DX8IndexBufferClass*>(render_state.index_buffer)->Get_DX8_Index_Buffer(),
-					render_state.index_base_offset+render_state.vba_offset));
 				if (DX12Device::Is_Active()) {
 					Device_Set_Indices(
 						static_cast<DX8IndexBufferClass*>(render_state.index_buffer)->Get_DX12_Buffer(),

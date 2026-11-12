@@ -1232,7 +1232,6 @@ WWINLINE void DX8Wrapper::Set_Stream_Source_Raw(unsigned stream, VertexBufferCla
 		if (stream==0) Device_Set_Stream(vertex_buffer ? static_cast<DX8VertexBufferClass*>(vertex_buffer)->Get_DX12_Buffer() : nullptr,stride);
 		return;
 	}
-	Set_Stream_Source_Raw(stream,vertex_buffer ? static_cast<DX8VertexBufferClass*>(vertex_buffer)->Get_DX8_Vertex_Buffer() : nullptr,stride);
 }
 
 WWINLINE void DX8Wrapper::Set_Stream_Source_Raw(unsigned stream, std::nullptr_t, unsigned stride)
@@ -1255,7 +1254,6 @@ WWINLINE void DX8Wrapper::Set_Indices_Raw(IndexBufferClass* index_buffer, unsign
 		Device_Set_Indices(index_buffer ? static_cast<DX8IndexBufferClass*>(index_buffer)->Get_DX12_Buffer() : nullptr,base_vertex_index);
 		return;
 	}
-	Set_Indices_Raw(index_buffer ? static_cast<DX8IndexBufferClass*>(index_buffer)->Get_DX8_Index_Buffer() : nullptr,base_vertex_index);
 }
 
 WWINLINE void DX8Wrapper::Set_Indices_Raw(std::nullptr_t, unsigned base_vertex_index)
