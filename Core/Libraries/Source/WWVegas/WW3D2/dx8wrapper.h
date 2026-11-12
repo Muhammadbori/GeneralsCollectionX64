@@ -402,54 +402,13 @@ public:
 	** Resources
 	*/
 
-	static IDirect3DVolumeTexture8* _Create_DX8_Volume_Texture
-	(
-		unsigned int width,
-		unsigned int height,
-		unsigned int depth,
-		WW3DFormat format,
-		MipCountType mip_level_count,
-		D3DPOOL pool=D3DPOOL_MANAGED
-	);
-
-	static IDirect3DCubeTexture8* _Create_DX8_Cube_Texture
-	(
-		unsigned int width,
-		unsigned int height,
-		WW3DFormat format,
-		MipCountType mip_level_count,
-		D3DPOOL pool=D3DPOOL_MANAGED,
-		bool rendertarget=false
-	);
 
 
-	static IDirect3DTexture8* _Create_DX8_ZTexture
-	(
-		unsigned int width,
-		unsigned int height,
-		WW3DZFormat zformat,
-		MipCountType mip_level_count,
-		D3DPOOL pool=D3DPOOL_MANAGED
-	);
 
 
-	static IDirect3DTexture8 * _Create_DX8_Texture
-	(
-		unsigned int width,
-		unsigned int height,
-		WW3DFormat format,
-		MipCountType mip_level_count,
-		D3DPOOL pool=D3DPOOL_MANAGED,
-		bool rendertarget=false
-	);
-	static IDirect3DTexture8 * _Create_DX8_Texture(const char *filename, MipCountType mip_level_count);
-	static IDirect3DTexture8 * _Create_DX8_Texture(IDirect3DSurface8 *surface, MipCountType mip_level_count);
 
-	static IDirect3DSurface8 * _Create_DX8_Surface(unsigned int width, unsigned int height, WW3DFormat format);
-	static IDirect3DSurface8 * _Create_DX8_Surface(const char *filename);
-	static IDirect3DSurface8 * _Get_DX8_Front_Buffer();
+
 	// Returns null in Direct3D 12 mode; use Read_Back_Buffer or Copy_Back_Buffer_To_Texture there.
-	static SurfaceClass * _Get_DX8_Back_Buffer(unsigned int num=0);
 
 	// Direct3D 12 mode: copies the rectangle src_rect (null for all) of the current render target, the
 	// back buffer or the texture selected with Set_Render_Target / Set_Render_Target_With_Z, into level
@@ -540,13 +499,10 @@ public:
 	*/
 	static TextureClass *	Create_Render_Target (int width, int height, WW3DFormat format = WW3D_FORMAT_UNKNOWN);
 
-	static void					Set_Render_Target (IDirect3DSurface8 *render_target, bool use_default_depth_buffer = false);
-	static void					Set_Render_Target (IDirect3DSurface8* render_target, IDirect3DSurface8* dpeth_buffer);
 	// Renders into level 0 of texture with the default depth buffer (Set_Render_Target_With_Z(texture));
 	// null selects the back buffer.
 	static void					Set_Render_Target (TextureClass *texture);
 
-	static void					Set_Render_Target (IDirect3DSwapChain8 *swap_chain);
 	static bool					Is_Render_To_Texture() { return IsRenderToTexture; }
 
 	// for depth map support KJM V

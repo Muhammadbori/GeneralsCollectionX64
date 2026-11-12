@@ -76,7 +76,6 @@ class SurfaceClass : public RefCountClass
 		SurfaceClass(const char *filename);
 
 		// Create the surface from a D3D pointer
-		SurfaceClass(IDirect3DSurface8 *d3d_surface);
 
 		// Create the surface from one level of a Direct3D 12 texture (keeps a reference to it)
 		SurfaceClass(DX12TextureClass *texture, unsigned level);
@@ -127,13 +126,9 @@ class SurfaceClass : public RefCountClass
 		unsigned char *CreateCopy(int *width,int *height,int*size,bool flip=false);
 
 			// For use by TextureClass:
-		IDirect3DSurface8 *Peek_D3D_Surface() { return D3DSurface; }
 		DX12TextureClass *Peek_DX12_Texture() { return DX12Texture; }
 		unsigned Get_DX12_Level() const { return DX12Level; }
 
-		// Attaching and detaching a surface pointer
-		void	Attach (IDirect3DSurface8 *surface);
-		void	Detach ();
 
 		// draws a horizontal line
 		void Draw_H_Line(const unsigned int y, const unsigned int x1, const unsigned int x2,
@@ -172,7 +167,6 @@ class SurfaceClass : public RefCountClass
 		void Copy_DX12(const tagRECT &dest, const SurfaceClass *source, const tagRECT &src);
 
 		// Direct3D surface object
-		IDirect3DSurface8 *D3DSurface;
 
 		// Direct3D 12 texture and level (owned reference)
 		DX12TextureClass *DX12Texture;

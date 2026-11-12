@@ -335,7 +335,6 @@ static void Copy_Texels
 **                             SurfaceClass
 *************************************************************************/
 SurfaceClass::SurfaceClass(unsigned width, unsigned height, WW3DFormat format):
-	D3DSurface(nullptr),
 	DX12Texture(nullptr),
 	DX12Level(0),
 	SurfaceFormat(format)
@@ -346,7 +345,6 @@ SurfaceClass::SurfaceClass(unsigned width, unsigned height, WW3DFormat format):
 }
 
 SurfaceClass::SurfaceClass(const char *filename):
-	D3DSurface(nullptr),
 	DX12Texture(nullptr),
 	DX12Level(0)
 {
@@ -357,19 +355,7 @@ SurfaceClass::SurfaceClass(const char *filename):
 	SurfaceFormat=desc.Format;
 }
 
-SurfaceClass::SurfaceClass(IDirect3DSurface8 *d3d_surface)	:
-	D3DSurface (nullptr),
-	DX12Texture (nullptr),
-	DX12Level (0)
-{
-	Attach (d3d_surface);
-	SurfaceDescription desc;
-	Get_Description(desc);
-	SurfaceFormat=desc.Format;
-}
-
 SurfaceClass::SurfaceClass(DX12TextureClass *texture, unsigned level) :
-	D3DSurface (nullptr),
 	DX12Texture (nullptr),
 	DX12Level (level)
 {
@@ -381,10 +367,6 @@ SurfaceClass::SurfaceClass(DX12TextureClass *texture, unsigned level) :
 
 SurfaceClass::~SurfaceClass()
 {
-	if (D3DSurface) {
-		D3DSurface->Release();
-		D3DSurface = nullptr;
-	}
 	REF_PTR_RELEASE(DX12Texture);
 }
 
@@ -1044,63 +1026,6 @@ void SurfaceClass::Get_Pixel(Vector3 &rgb, int x, int y, LockedSurfacePtr pBits,
 	unsigned char* dst = static_cast<unsigned char *>(pBits) + y * pitch + x * bytesPerPixel;
 	Convert_Pixel(rgb,sd,dst);
 }
-
-/***********************************************************************************************
- * SurfaceClass::Attach -- Attaches a surface pointer to the object, releasing the current ptr.*
- *                                                                                             *
- *                                                                                             *
- *                                                                                             *
- *                                                                                             *
- * INPUT:                                                                                      *
- *                                                                                             *
- * OUTPUT:                                                                                     *
- *                                                                                             *
- * WARNINGS:                                                                                   *
- *                                                                                             *
- * HISTORY:                                                                                    *
- *   3/27/2001  pds : Created.                                                                 *
- *=============================================================================================*/
-void SurfaceClass::Attach (IDirect3DSurface8 *surface)
-{
-	Detach ();
-	D3DSurface = surface;
-
-	//
-	//	Lock a reference onto the object
-	//
-	if (D3DSurface != nullptr) {
-		D3DSurface->AddRef ();
-	}
-}
-
-
-/***********************************************************************************************
- * SurfaceClass::Detach -- Releases the reference on the internal surface ptr, and NULLs it.	 .*
- *                                                                                             *
- *                                                                                             *
- *                                                                                             *
- *                                                                                             *
- * INPUT:                                                                                      *
- *                                                                                             *
- * OUTPUT:                                                                                     *
- *                                                                                             *
- * WARNINGS:                                                                                   *
- *                                                                                             *
- * HISTORY:                                                                                    *
- *   3/27/2001  pds : Created.                                                                 *
- *=============================================================================================*/
-void SurfaceClass::Detach ()
-{
-	//
-	//	Release the hold we have on the D3D object
-	//
-	if (D3DSurface != nullptr) {
-		D3DSurface->Release ();
-	}
-
-	D3DSurface = nullptr;
-}
-
 
 /***********************************************************************************************
  * SurfaceClass::DrawPixel -- draws a pixel                                                    *

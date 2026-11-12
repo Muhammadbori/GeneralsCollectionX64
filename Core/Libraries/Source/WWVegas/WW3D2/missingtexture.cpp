@@ -86,17 +86,6 @@ DX12TextureClass* MissingTexture::_Create_DX12_Missing_Surface()
 	return surface;
 }
 
-IDirect3DTexture8* MissingTexture::_Get_Missing_Texture()
-{
-	// There is no Direct3D 8 missing texture in Direct3D 12 mode.
-	return nullptr;
-}
-
-IDirect3DSurface8* MissingTexture::_Create_Missing_Surface()
-{
-	return nullptr;
-}
-
 void MissingTexture::_Init()
 {
 	WWASSERT(!_DX12MissingTexture);

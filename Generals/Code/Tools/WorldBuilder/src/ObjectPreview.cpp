@@ -250,7 +250,7 @@ static UnsignedByte * generatePreview( const ThingTemplate *tt )
 			}
 
 			// Change the rendertarget back to the main backbuffer
-			DX8Wrapper::Set_Render_Target((IDirect3DSurface8 *)nullptr);
+			DX8Wrapper::Set_Render_Target((TextureClass *)nullptr);
 
 			if (renderResult == WW3D_ERROR_OK)
 			{

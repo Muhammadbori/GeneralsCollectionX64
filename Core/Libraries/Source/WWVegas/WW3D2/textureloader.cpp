@@ -390,32 +390,6 @@ void TextureLoader::Validate_Texture_Size
 	depth=poweroftwodepth;
 }
 
-IDirect3DTexture8* TextureLoader::Load_Thumbnail(const StringClass& filename, const Vector3& hsv_shift)//,WW3DFormat texture_format)
-{
-	WWASSERT(Is_DX8_Thread());
-
-	return nullptr;
-}
-
-
-// ----------------------------------------------------------------------------
-//
-// Load image to a surface. The function tries to create texture that matches
-// targa format. If suitable format is not available, it selects closest matching
-// format and performs color space conversion.
-//
-// ----------------------------------------------------------------------------
-IDirect3DSurface8* TextureLoader::Load_Surface_Immediate(
-	const StringClass& filename,
-	WW3DFormat texture_format,
-	bool allow_compression)
-{
-	WWASSERT(Is_DX8_Thread());
-
-	return nullptr;
-}
-
-
 // ----------------------------------------------------------------------------
 //
 // Direct3D 12 version of Load_Thumbnail.
