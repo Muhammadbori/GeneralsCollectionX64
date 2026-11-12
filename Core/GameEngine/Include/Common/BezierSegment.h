@@ -29,16 +29,30 @@
 
 #pragma once
 
-#include <d3dx8math.h>
 #include "Common/STLTypedefs.h"
 #include "Lib/BaseDefines.h"
 
 #define USUAL_TOLERANCE 1.0f
 
+// TheSuperHackers @refactor The Bezier math keeps its own 4-float vector and 4x4 matrix types instead of the
+// D3DX ones. They have the same memory layout: x, y, z, w and m[row][column].
+struct BezierVector4
+{
+	BezierVector4() {}
+	BezierVector4(float x_, float y_, float z_, float w_) : x(x_), y(y_), z(z_), w(w_) {}
+	float x, y, z, w;
+};
+
+struct BezierMatrix
+{
+	float m[4][4];
+};
+
 class BezierMath
 {
 public:
-	static void D3DXVec4Transform(D3DXVECTOR4* out, const D3DXVECTOR4* v, const D3DXMATRIX* m)
+	// Row vector times matrix.
+	static void Vec4Transform(BezierVector4* out, const BezierVector4* v, const BezierMatrix* m)
 	{
 #if USE_DETERMINISTIC_MATH
 		const float x = v->x, y = v->y, z = v->z, w = v->w;
@@ -47,16 +61,23 @@ public:
 		out->z = ((x * m->m[0][2] + y * m->m[1][2]) + z * m->m[2][2]) + w * m->m[3][2];
 		out->w = ((x * m->m[0][3] + y * m->m[1][3]) + z * m->m[2][3]) + w * m->m[3][3];
 #else
-		::D3DXVec4Transform(out, v, m);
+		// The retail game called D3DXVec4Transform here. Its SSE and SSE2 versions in d3dx8.lib add the rows
+		// pairwise, which is the order below. Not verified in this configuration (RETAIL_COMPATIBLE_CRC=1).
+		const float x = v->x, y = v->y, z = v->z, w = v->w;
+		out->x = (x * m->m[0][0] + y * m->m[1][0]) + (z * m->m[2][0] + w * m->m[3][0]);
+		out->y = (x * m->m[0][1] + y * m->m[1][1]) + (z * m->m[2][1] + w * m->m[3][1]);
+		out->z = (x * m->m[0][2] + y * m->m[1][2]) + (z * m->m[2][2] + w * m->m[3][2]);
+		out->w = (x * m->m[0][3] + y * m->m[1][3]) + (z * m->m[2][3] + w * m->m[3][3]);
 #endif
 	}
 
-	static float D3DXVec4Dot(const D3DXVECTOR4* a, const D3DXVECTOR4* b)
+	static float Vec4Dot(const BezierVector4* a, const BezierVector4* b)
 	{
 #if USE_DETERMINISTIC_MATH
 		return ((a->x * b->x + a->y * b->y) + a->z * b->z) + a->w * b->w;
 #else
-		return ::D3DXVec4Dot(a, b);
+		// The retail game called the D3DXVec4Dot inline of d3dx8math.inl, the same left-to-right sum.
+		return a->x * b->x + a->y * b->y + a->z * b->z + a->w * b->w;
 #endif
 	}
 };
@@ -64,7 +85,7 @@ public:
 class BezierSegment
 {
 	protected:
-		static const D3DXMATRIX s_bezBasisMatrix;
+		static const BezierMatrix s_bezBasisMatrix;
 		Coord3D m_controlPoints[4];
 
 	public:	// Constructors
