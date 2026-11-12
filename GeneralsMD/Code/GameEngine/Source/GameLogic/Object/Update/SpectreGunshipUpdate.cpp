@@ -886,11 +886,23 @@ void SpectreGunshipUpdate::xfer( Xfer *xfer )
 
 	if( version < 2 )
 	{
+#ifdef _WIN64
+		// Version 1 saved the decals raw, in their 32-bit layout of 12 bytes (two pointers and a Bool).
+		// The pointers mean nothing in this process: skip the bytes and keep the decals empty.
+		Byte legacyDecal[ 12 ];
+		xfer->xferUser( legacyDecal, sizeof( legacyDecal ) );
+		xfer->xferUser( legacyDecal, sizeof( legacyDecal ) );
+
+#if defined TRACKERS
+		xfer->xferUser( legacyDecal, sizeof( legacyDecal ) );
+#endif
+#else
 		xfer->xferUser( &m_attackAreaDecal, sizeof( RadiusDecal ) );
 		xfer->xferUser( &m_targetingReticleDecal, sizeof( RadiusDecal ) );
 
 #if defined TRACKERS
 		xfer->xferUser( &m_howitzerTrackerDecal, sizeof( RadiusDecal ) );
+#endif
 #endif
 	}
 
