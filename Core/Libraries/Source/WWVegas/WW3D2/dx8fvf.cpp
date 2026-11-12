@@ -41,11 +41,44 @@
 
 #include "dx8fvf.h"
 #include "WWLib/wwstring.h"
-#include <d3dx8core.h>
 
+// TheSuperHackers @refactor Replaces D3DXGetFVFVertexSize with the same computation (read from the d3dx8.lib
+// code): the position size from the D3DFVF_POSITION_MASK bits, 12 bytes for a normal, 4 each for point size,
+// diffuse and specular, then the texture coordinate sets (8 bytes each without D3DFVF_TEXCOORDSIZEn bits,
+// otherwise 4, 8, 12 or 16 bytes as given by the two bits per set).
 static unsigned Get_FVF_Vertex_Size(unsigned FVF)
 {
-	return D3DXGetFVFVertexSize(FVF);
+	unsigned size=0;
+	switch (FVF&D3DFVF_POSITION_MASK) {
+	case D3DFVF_XYZ:		size=12; break;
+	case D3DFVF_XYZRHW:	size=16; break;
+	case D3DFVF_XYZB1:	size=16; break;
+	case D3DFVF_XYZB2:	size=20; break;
+	case D3DFVF_XYZB3:	size=24; break;
+	case D3DFVF_XYZB4:	size=28; break;
+	case D3DFVF_XYZB5:	size=32; break;
+	default: break;
+	}
+	if (FVF&D3DFVF_NORMAL) size+=12;
+	if (FVF&D3DFVF_PSIZE) size+=4;
+	if (FVF&D3DFVF_DIFFUSE) size+=4;
+	if (FVF&D3DFVF_SPECULAR) size+=4;
+
+	unsigned tex_count=(FVF>>8)&0xf;
+	unsigned tex_sizes=FVF>>16;
+	if (tex_sizes==0) {
+		return size+tex_count*8;
+	}
+	for (unsigned i=0;i<tex_count;++i) {
+		switch (tex_sizes&3) {
+		case 0: size+=8; break;		// D3DFVF_TEXTUREFORMAT2
+		case 1: size+=12; break;	// D3DFVF_TEXTUREFORMAT3
+		case 2: size+=16; break;	// D3DFVF_TEXTUREFORMAT4
+		case 3: size+=4; break;		// D3DFVF_TEXTUREFORMAT1
+		}
+		tex_sizes>>=2;
+	}
+	return size;
 }
 
 FVFInfoClass::FVFInfoClass(unsigned FVF_)
