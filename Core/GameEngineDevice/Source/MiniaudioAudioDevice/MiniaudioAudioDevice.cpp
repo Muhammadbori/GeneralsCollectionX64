@@ -27,7 +27,8 @@
 // no device lock held while the device calls AudioDeviceListener::onVoiceDone.
 // - The audio thread only queues ends (miniaudio forbids starting or freeing a sound inside its end callback, and
 //   the manager starts the next loop or portion from onVoiceDone, as it does on Miles' timer thread).
-// - The end thread reports them through onVoiceDone, with the delivery lock held and the device lock released.
+// - The end thread reports them through onVoiceDone, with the delivery lock held and the device lock released. It
+//   also reports the ends miniaudio does not call back for: a looping stream reaching its stop time.
 // - The main thread deletes released voices in update(), with the delivery lock held, so the end thread never
 //   holds a deleted voice.
 
@@ -62,7 +63,7 @@ namespace
 	const ma_uint32 kEngineRate = 44100;
 	const ma_uint32 kEngineChannels = 2;
 	const ma_uint32 kRampFrames = 64;            ///< gain changes glide over 64 frames, so they do not click
-	const DWORD kEndThreadPollMS = 5;            ///< the end thread also wakes this often
+	const DWORD kEndThreadPollMS = 5;            ///< the end thread also wakes this often to check stop times
 
 	enum { WAV_FORMAT_PCM = 1, WAV_FORMAT_IMA_ADPCM = 0x11, WAV_HEADER_BYTES = 44 };
 
@@ -311,8 +312,13 @@ struct MiniaudioVoice
 	Real distanceArg1;
 	Real distanceArg2;
 
+	Int loopCount;                   ///< streams: as set (Miles' default 1; 0 = for ever)
+	ma_uint64 passFrames;            ///< streams: one pass in engine frames
 	ma_uint64 startTime;
 	ma_uint64 pauseTime;
+	bool hasStopTime;
+	ma_uint64 stopTime;
+	bool startedOnce;
 };
 
 struct MiniaudioEnd
@@ -340,6 +346,7 @@ struct MiniaudioDeviceState
 	std::atomic<int> quit;
 
 	std::vector<MiniaudioVoice *> voices;
+	std::list<MiniaudioVoice *> oneShots;
 	Coord3D listenerPosition;
 	Coord3D listenerLook;
 	AudioFileLengths fileLengths;
@@ -428,8 +435,13 @@ namespace
 		v->position.x = v->position.y = v->position.z = 0.0f;
 		v->distanceArg1 = 0.0f;
 		v->distanceArg2 = 0.0f;
+		v->loopCount = 1;
+		v->passFrames = 1;
 		v->startTime = 0;
 		v->pauseTime = 0;
+		v->hasStopTime = false;
+		v->stopTime = 0;
+		v->startedOnce = false;
 		if (!initNode(s, v)) {
 			delete v;
 			return nullptr;
@@ -541,7 +553,7 @@ namespace
 		memcpy(w + 36, "data", 4); wr32(w + 40, dataBytes);
 	}
 
-	/// Reports queued ends through the listener; the device lock is released while it calls.
+	/// Reports queued ends and stop-time ends through the listener; the device lock is released while it calls.
 	void deliverEnds(MiniaudioDeviceState *s)
 	{
 		std::lock_guard<std::mutex> delivery(s->deliveryLock);
@@ -562,6 +574,19 @@ namespace
 				v->playing = false;
 				v->ended = true;
 				ended.push_back(v);
+			}
+			if (s->engineReady)
+			{
+				const ma_uint64 now = engineTime(s);
+				for (size_t i = 0; i < s->voices.size(); ++i)
+				{
+					MiniaudioVoice *v = s->voices[i];
+					if (v->playing && !v->paused && !v->dead && v->hasStopTime && now >= v->stopTime) {
+						v->playing = false;
+						v->ended = true;
+						ended.push_back(v);
+					}
+				}
 			}
 		}
 		if (s->listener) {
@@ -731,6 +756,10 @@ void MiniaudioAudioDevice::close()
 		deleteVoice(s->voices[i]);
 	}
 	s->voices.clear();
+	for (std::list<MiniaudioVoice *>::iterator it = s->oneShots.begin(); it != s->oneShots.end(); ++it) {
+		deleteVoice(*it);
+	}
+	s->oneShots.clear();
 	s->endQueue.clear();
 	if (s->engineReady) {
 		ma_engine_uninit(&s->engine);
@@ -882,16 +911,94 @@ void MiniaudioAudioDevice::play3D(AudioVoice voice, const AudioSample &sample, R
 //-------------------------------------------------------------------------------------------------
 AudioVoice MiniaudioAudioDevice::openStream(const char *fileName)
 {
-	return 0;
+	MiniaudioDeviceState *s = m_state;
+	if (!s->engineReady) {
+		return 0;
+	}
+	const AudioFileLengths::Entry *entry = s->fileLengths.get(AsciiString(fileName));
+	if (entry == nullptr) {
+		return 0;	// like AIL_open_stream: the file cannot be opened
+	}
+	MiniaudioVoice *v = newVoice(s, AVK_Stream);
+	if (v == nullptr) {
+		return 0;
+	}
+	if (ma_sound_init_from_file(&s->engine, fileName, MA_SOUND_FLAG_STREAM | MA_SOUND_FLAG_NO_SPATIALIZATION | MA_SOUND_FLAG_NO_DEFAULT_ATTACHMENT,
+		nullptr, nullptr, &v->sound) != MA_SUCCESS)
+	{
+		deleteVoice(v);
+		return 0;
+	}
+	v->soundReady = true;
+	ma_node_attach_output_bus(&v->sound, 0, &v->node.base, 0);
+	ma_sound_set_end_callback(&v->sound, onSoundEnd, v);
+	ma_uint32 rate = 0;
+	ma_sound_get_data_format(&v->sound, nullptr, nullptr, &rate, nullptr, 0);
+	v->rate = (Int)rate;
+	const ma_uint64 frames = (ma_uint64)(entry->playMS * (kEngineRate / 1000.0) + 0.5);
+	v->passFrames = frames > 0 ? frames : 1;
+	applyGains2D(v);
+
+	std::lock_guard<std::mutex> guard(s->lock);
+	s->voices.push_back(v);
+	return (AudioVoice)v;
 }
 
+/// Miles: AIL_set_stream_loop_count (when loopCount >= 0) and AIL_start_stream, which plays from the start.
+/// N passes: one pass plays to its end callback; more loop and stop at N x the pass length (end found by polling).
 void MiniaudioAudioDevice::startStream(AudioVoice stream, Int loopCount)
 {
+	MiniaudioDeviceState *s = m_state;
+	std::lock_guard<std::mutex> guard(s->lock);
+	MiniaudioVoice *v = toVoice(stream);
+	if (!v->soundReady) {
+		return;
+	}
+	if (loopCount >= 0) {
+		v->loopCount = loopCount;
+	}
+	++v->generation;
+	v->endGeneration.store(v->generation, std::memory_order_release);
+	if (v->startedOnce) {
+		ma_sound_stop(&v->sound);
+		ma_sound_seek_to_pcm_frame(&v->sound, 0);
+	}
+	const ma_uint64 now = engineTime(s);
+	ma_sound_set_looping(&v->sound, v->loopCount != 1 ? MA_TRUE : MA_FALSE);
+	if (v->loopCount > 1) {
+		v->hasStopTime = true;
+		v->stopTime = now + v->passFrames * (ma_uint64)v->loopCount;
+		ma_sound_set_stop_time_in_pcm_frames(&v->sound, v->stopTime);
+	} else {
+		v->hasStopTime = false;
+		ma_sound_set_stop_time_in_pcm_frames(&v->sound, ~(ma_uint64)0);
+	}
+	v->node.snap.store(1);
+	ma_sound_start(&v->sound);
+	v->startTime = now;
+	v->startedOnce = true;
+	v->playing = true;
+	v->paused = false;
+	v->ended = false;
 }
 
 Int MiniaudioAudioDevice::streamLoopCount(AudioVoice stream) const
 {
-	return 1;
+	MiniaudioDeviceState *s = m_state;
+	std::lock_guard<std::mutex> guard(s->lock);
+	const MiniaudioVoice *v = toVoice(stream);
+	if (v->loopCount <= 0) {
+		return v->loopCount;
+	}
+	if (v->ended) {
+		return 1;
+	}
+	if (!v->playing) {
+		return v->loopCount;
+	}
+	const ma_uint64 now = v->paused ? v->pauseTime : engineTime(s);
+	const ma_uint64 passes = now > v->startTime ? (now - v->startTime) / v->passFrames : 0;
+	return milesStreamLoopCount(v->loopCount, passes);
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -929,7 +1036,13 @@ void MiniaudioAudioDevice::resume(AudioVoice voice, AudioVoiceKind kind)
 	if (!v->paused || !v->soundReady) {
 		return;
 	}
-	v->startTime += engineTime(s) - v->pauseTime;
+	const ma_uint64 now = engineTime(s);
+	const ma_uint64 held = now - v->pauseTime;
+	v->startTime += held;
+	if (v->hasStopTime) {
+		v->stopTime += held;
+		ma_sound_set_stop_time_in_pcm_frames(&v->sound, v->stopTime);
+	}
 	ma_sound_start(&v->sound);
 	v->paused = false;
 }
@@ -980,6 +1093,10 @@ void MiniaudioAudioDevice::debugVoiceValues(AudioVoice voice, AudioVoiceKind kin
 		case AVK_3D:
 			*volume = v->volume3D;
 			*rate = v->pitch > 0.0f ? REAL_TO_INT(v->rate * v->pitch) : v->rate;
+			break;
+		case AVK_Stream:
+			*volume = v->volume;
+			*pan = v->pan;
 			break;
 	}
 }
@@ -1053,13 +1170,47 @@ void MiniaudioAudioDevice::freeSample(void *deviceData)
 }
 
 //-------------------------------------------------------------------------------------------------
+/// Mission briefings (Miles: AIL_quick_load_and_play + AIL_quick_set_volume(volume, 0.5)): a 2D stream with
+/// the 2D gains of the volume at the centre. Nothing reads their end.
 AudioVoice MiniaudioAudioDevice::playOneShot(const char *fileName, Real volume, Real pan)
 {
-	return 0;
+	MiniaudioDeviceState *s = m_state;
+	if (!s->engineReady) {
+		return 0;
+	}
+	MiniaudioVoice *v = newVoice(s, AVK_Stream);
+	if (v == nullptr) {
+		return 0;
+	}
+	if (ma_sound_init_from_file(&s->engine, fileName, MA_SOUND_FLAG_STREAM | MA_SOUND_FLAG_NO_SPATIALIZATION | MA_SOUND_FLAG_NO_DEFAULT_ATTACHMENT,
+		nullptr, nullptr, &v->sound) != MA_SUCCESS)
+	{
+		deleteVoice(v);
+		return 0;
+	}
+	v->soundReady = true;
+	ma_node_attach_output_bus(&v->sound, 0, &v->node.base, 0);
+	v->volume = volume;
+	v->pan = pan;
+	applyGains2D(v);
+	v->node.snap.store(1);
+	ma_sound_start(&v->sound);
+	v->playing = true;
+
+	std::lock_guard<std::mutex> guard(s->lock);
+	s->oneShots.push_back(v);
+	return (AudioVoice)v;
 }
 
 void MiniaudioAudioDevice::freeOneShot(AudioVoice voice)
 {
+	MiniaudioDeviceState *s = m_state;
+	MiniaudioVoice *v = toVoice(voice);
+	{
+		std::lock_guard<std::mutex> guard(s->lock);
+		s->oneShots.remove(v);
+	}
+	deleteVoice(v);
 }
 
 //-------------------------------------------------------------------------------------------------
