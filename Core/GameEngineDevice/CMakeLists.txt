@@ -1,4 +1,6 @@
 set(GAMEENGINEDEVICE_SRC
+    Include/AudioDevice/AudioDevice.h
+    Include/MilesAudioDevice/MilesAudioDevice.h
     Include/MilesAudioDevice/MilesAudioManager.h
     Include/VideoDevice/Bink/BinkVideoPlayer.h
     Include/W3DDevice/Common/W3DConvert.h
@@ -90,6 +92,7 @@ set(GAMEENGINEDEVICE_SRC
     Include/Win32Device/GameClient/Win32DIKeyboard.h
     #Include/Win32Device/GameClient/Win32DIMouse.h
     Include/Win32Device/GameClient/Win32Mouse.h
+    Source/MilesAudioDevice/MilesAudioDevice.cpp
     Source/MilesAudioDevice/MilesAudioManager.cpp
     Source/VideoDevice/Bink/BinkVideoPlayer.cpp
     Source/W3DDevice/Common/System/W3DFunctionLexicon.cpp
