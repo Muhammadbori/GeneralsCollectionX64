@@ -60,4 +60,8 @@ public:
 	// AudioLengths.tsv (every .wav/.mp3 under Data\Audio and the length Miles reports for it) to the user data folder and the
 	// game quits. A test tool; it needs Miles, so on a 64-bit build it only writes a note.
 	static bool isAudioLenDumpEnabled();
+
+	// TheSuperHackers @feature -audio miles|miniaudio|null: the sound library for a test run, or null when not given.
+	// The audio manager checks it against the libraries the build has (RTS_AUDIO_BACKEND).
+	static const char * getAudioDevice();
 };

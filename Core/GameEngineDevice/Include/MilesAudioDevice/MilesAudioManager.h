@@ -339,10 +339,12 @@ class MilesAudioManager : public AudioManager, public AudioDeviceListener
 		Bool m_milesLoaded;
 
 		MilesAudioDevice m_milesDevice;
-		NullAudioDevice m_nullDevice;	///< when the Miles library cannot be loaded
+		NullAudioDevice m_nullDevice;	///< when the Miles library cannot be loaded, or no output device opens
+		AudioDevice *m_miniaudioDevice;	///< built with RTS_AUDIO_BACKEND=miniaudio, created when chosen; else null
 		AudioDevice *m_device;	///< every sound library call goes through it
 
 		void dumpAudioLengths();	///< -audioLenDump: AudioLengths.tsv in the user data folder
+		AudioDevice *chooseAudioDevice();	///< the default device of the build, or the one -audio asks for
 
 #if defined(RTS_DEBUG)
 		typedef std::set<AsciiString> SetAsciiString;

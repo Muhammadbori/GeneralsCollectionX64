@@ -329,6 +329,33 @@ Int parseAudioLenDump(char *[], int)
 	return 1;
 }
 
+const char * CommandLine::getAudioDevice()
+{
+	static int s_state = -1;
+	static const char *s_device = nullptr;
+	if (s_state < 0)
+	{
+		s_state = 0;
+		for (int arg = 1; arg + 1 < __argc; ++arg)
+		{
+			if (stricmp(__argv[arg], "-audio") == 0)
+			{
+				s_device = __argv[arg + 1];
+				s_state = 1;
+				break;
+			}
+		}
+	}
+	return s_device;
+}
+
+// TheSuperHackers @feature -audio <device>: see CommandLine::getAudioDevice(). Parsed from the raw command line; this
+// entry only makes the option and its value known.
+Int parseAudioDevice(char *[], int num)
+{
+	return num > 1 ? 2 : 1;
+}
+
 // TheSuperHackers @feature -audioLog: see CommandLine::isAudioLogEnabled(). Parsed from the raw command line; this entry only
 // makes the option known.
 Int parseAudioLog(char *[], int)
@@ -1571,6 +1598,7 @@ static CommandLineParam paramsForStartup[] =
 	{ "-noRegistry", parseNoRegistry },
 	{ "-audioLog", parseAudioLog },
 	{ "-audioLenDump", parseAudioLenDump },
+	{ "-audio", parseAudioDevice },
 
 	// TheSuperHackers @feature 2026 Do not read or write the Direct3D 12 shader cache.
 	{ "-noShaderCache", parseNoShaderCache },

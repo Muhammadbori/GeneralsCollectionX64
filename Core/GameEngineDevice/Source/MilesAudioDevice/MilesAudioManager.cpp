@@ -68,6 +68,9 @@
 #include "Common/file.h"
 
 #include <Utility/interlocked_adapter.h>
+#ifdef RTS_HAS_MINIAUDIO
+#include "MiniaudioAudioDevice/MiniaudioAudioDevice.h"
+#endif
 #include <map>
 
 enum { INFINITE_LOOP_COUNT = 1000000 };
@@ -86,6 +89,7 @@ MilesAudioManager::MilesAudioManager() :
 	m_milesLoaded(false),
 	m_hasListener(false),
 	m_device(&m_milesDevice),
+	m_miniaudioDevice(nullptr),
 	m_binkHandle(nullptr),
 	m_pref3DProvider(AsciiString::TheEmptyString),
 	m_prefSpeaker(AsciiString::TheEmptyString)
@@ -114,6 +118,8 @@ MilesAudioManager::~MilesAudioManager()
 	releaseHandleForBink();
 	closeDevice();
 	delete m_audioCache;
+	delete m_miniaudioDevice;
+	m_miniaudioDevice = nullptr;
 
 	DEBUG_ASSERTCRASH(this == TheAudio, ("Umm..."));
 	TheAudio = nullptr;
@@ -1471,7 +1477,20 @@ void MilesAudioManager::openDevice()
 
 	// The device loads its library, starts it and opens the output.
 	const AudioSettings *audioSettings = getAudioSettings();
+	m_device = chooseAudioDevice();
+	m_audioCache->setDevice(m_device);
 	AudioDevice::OpenResult openResult = m_device->open(audioSettings, this);
+	if (openResult == AudioDevice::OPEN_NO_OUTPUT && m_device != &m_milesDevice && m_device != &m_nullDevice)
+	{
+		// TheSuperHackers @feature No output device (none present, or it cannot be opened): the null device, so the game
+		// keeps the lengths, ends and loop counts it reads, as with no Miles library below. Miles keeps its old
+		// behaviour (audio off) for the 32-bit game.
+		AUDIO_LOG("DEVICECHOICE", "device=%s result=no_output fallback=%s", m_device->name(), m_nullDevice.name());
+		m_device->close();
+		m_device = &m_nullDevice;
+		m_audioCache->setDevice(m_device);
+		openResult = m_device->open(audioSettings, this);
+	}
 	if (openResult == AudioDevice::OPEN_NO_LIBRARY)
 	{
 		// TheSuperHackers @feature No Miles library (the 64-bit build, or mss32.dll missing): the null device plays
@@ -1503,8 +1522,8 @@ void MilesAudioManager::openDevice()
 	}
 
 	UnsignedInt preferredProvider = TheAudio->getProviderIndex(m_pref3DProvider);
-	if (preferredProvider == PROVIDER_ERROR && m_device == &m_nullDevice) {
-		preferredProvider = 0;	// the null device has one provider, which no preference names
+	if (preferredProvider == PROVIDER_ERROR && m_device != &m_milesDevice) {
+		preferredProvider = 0;	// the null and miniaudio devices have one provider, which no preference names
 	}
 	selectProvider(preferredProvider);
 
@@ -1521,6 +1540,60 @@ void MilesAudioManager::openDevice()
 	}
 
 	initDelayFilter();
+}
+
+//-------------------------------------------------------------------------------------------------
+// TheSuperHackers @feature The sound library. By default Miles on the 32-bit game (unchanged), and miniaudio on the
+// 64-bit game when the build has it (RTS_AUDIO_BACKEND=miniaudio); headless runs never open an output there and take
+// the null device. -audio miles|miniaudio|null overrides this for a test run; a library the build does not have is
+// reported (debug log and -audioLog) and the default is kept. Miles that cannot be loaded falls back to the null
+// device in openDevice, as before.
+AudioDevice *MilesAudioManager::chooseAudioDevice()
+{
+#if defined(RTS_HAS_MINIAUDIO) && defined(_WIN64)
+	const char *defaultName = TheGlobalData->m_headless ? "null" : "miniaudio";
+#else
+	const char *defaultName = "miles";
+#endif
+	const char *requested = CommandLine::getAudioDevice();
+	const char *chosen = defaultName;
+	const char *why = "default";
+	if (requested != nullptr)
+	{
+		if (stricmp(requested, "miles") == 0 || stricmp(requested, "null") == 0) {
+			chosen = stricmp(requested, "miles") == 0 ? "miles" : "null";
+			why = "requested";
+		} else if (stricmp(requested, "miniaudio") == 0) {
+#ifdef RTS_HAS_MINIAUDIO
+			chosen = "miniaudio";
+			why = "requested";
+#else
+			why = "requested_not_in_build";
+			DEBUG_LOG(("-audio miniaudio: this build has no miniaudio device (RTS_AUDIO_BACKEND=Miles); using %s", defaultName));
+#endif
+		} else {
+			why = "requested_unknown";
+			DEBUG_LOG(("-audio %s: unknown (miles, miniaudio or null); using %s", requested, defaultName));
+		}
+	}
+
+	AudioDevice *device = &m_milesDevice;
+	if (strcmp(chosen, "null") == 0) {
+		device = &m_nullDevice;
+	}
+#ifdef RTS_HAS_MINIAUDIO
+	if (strcmp(chosen, "miniaudio") == 0) {
+		if (m_miniaudioDevice == nullptr) {
+			m_miniaudioDevice = NEW MiniaudioAudioDevice;
+		}
+		device = m_miniaudioDevice;
+	}
+#endif
+	// Only when something other than the 32-bit default happens, so the 32-bit -audioLog stays as it was.
+	if (requested != nullptr || device != &m_milesDevice) {
+		AUDIO_LOG("DEVICECHOICE", "requested=%s chosen=%s why=%s", requested ? requested : "-", device->name(), why);
+	}
+	return device;
 }
 
 //-------------------------------------------------------------------------------------------------
