@@ -23,6 +23,7 @@
 #include "Common/AsciiString.h"
 #include "Common/GameAudio.h"
 #include "MilesAudioDevice/MilesAudioDevice.h"
+#include "AudioDevice/NullAudioDevice.h"
 #include "WWLib/mutex.h"
 
 class AudioEventRTS;
@@ -120,6 +121,7 @@ class AudioFileCache
 		void *openFile( AudioEventRTS *eventToOpenFrom );
 		void closeFile( void *fileToClose );
 		void setMaxSize( UnsignedInt size );
+		void setDevice( AudioDevice *device ) { m_device = device; }	///< only while no file is open
 		// End Protected by mutex
 
 		// Note: These functions should be used for informational purposes only. For speed reasons,
@@ -333,6 +335,7 @@ class MilesAudioManager : public AudioManager, public AudioDeviceListener
 		Bool m_milesLoaded;
 
 		MilesAudioDevice m_milesDevice;
+		NullAudioDevice m_nullDevice;	///< when the Miles library cannot be loaded
 		AudioDevice *m_device;	///< every sound library call goes through it
 
 		void dumpAudioLengths();	///< -audioLenDump: AudioLengths.tsv in the user data folder

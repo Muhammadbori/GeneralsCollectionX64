@@ -469,7 +469,7 @@ void MilesAudioManager::dumpAudioLengths()
 	}
 	fprintf(out, "path\tms\n");
 
-	if (!m_milesLoaded || !m_digitalHandle)
+	if (!m_milesLoaded || (m_device == &m_milesDevice && !m_digitalHandle))
 	{
 		fprintf(out, "# no audio device: Miles is not loaded (64-bit build, audio off, or mss32.dll missing)\n");
 		fclose(out);
@@ -1471,7 +1471,17 @@ void MilesAudioManager::openDevice()
 
 	// The device loads its library, starts it and opens the output.
 	const AudioSettings *audioSettings = getAudioSettings();
-	const AudioDevice::OpenResult openResult = m_device->open(audioSettings, this);
+	AudioDevice::OpenResult openResult = m_device->open(audioSettings, this);
+	if (openResult == AudioDevice::OPEN_NO_LIBRARY)
+	{
+		// TheSuperHackers @feature No Miles library (the 64-bit build, or mss32.dll missing): the null device plays
+		// nothing, but gives the file lengths, the ends of the sounds and the music loop counts that the scripts and
+		// this manager read with Miles (dx12-notes/av-3-design.md section 4).
+		m_device->close();
+		m_device = &m_nullDevice;
+		m_audioCache->setDevice(m_device);
+		openResult = m_device->open(audioSettings, this);
+	}
 	if (openResult == AudioDevice::OPEN_NO_LIBRARY)
 	{
 		setOn(false, AudioAffect_All);
@@ -1492,7 +1502,11 @@ void MilesAudioManager::openDevice()
 		setOn( false, AudioAffect_All );
 	}
 
-	selectProvider(TheAudio->getProviderIndex(m_pref3DProvider));
+	UnsignedInt preferredProvider = TheAudio->getProviderIndex(m_pref3DProvider);
+	if (preferredProvider == PROVIDER_ERROR && m_device == &m_nullDevice) {
+		preferredProvider = 0;	// the null device has one provider, which no preference names
+	}
+	selectProvider(preferredProvider);
 
 	// Now that we're all done, update the cached variables so that everything is in sync.
 	TheAudio->refreshCachedVariables();
