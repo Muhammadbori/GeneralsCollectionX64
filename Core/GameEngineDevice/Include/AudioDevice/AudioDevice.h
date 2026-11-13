@@ -17,7 +17,8 @@
 */
 
 // AudioDevice.h ////////////////////////////////////////////////////////////////////////////////////
-// TheSuperHackers @refactor The sound device under the audio manager (dx12-notes/av-2-design.md).
+// TheSuperHackers @refactor The sound device under the audio manager, so that the manager can run on a sound
+// library other than Miles (whose mss32.dll exists only for 32-bit Windows).
 // The manager keeps every game rule (requests, limits, priorities, fades, volumes, the file cache
 // policy); a device only does what it is told. No sound library type appears in this header.
 // Each method is one step of the manager's current Miles code, so that the calls reach the library

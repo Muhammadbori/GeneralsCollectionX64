@@ -219,7 +219,7 @@ Int NullAudioDevice::voiceDebugIndex(AudioVoice voice, AudioVoiceKind kind) cons
 
 //-------------------------------------------------------------------------------------------------
 // Miles' init: the voice stops, a queued end is dropped. 2D voices play at pitch 1, as with Miles, which resets the
-// rate set here when the file is set (AV-3 MEASURE section 3); so neither pitch nor delay changes the length.
+// rate set here when the file is set (measured with the game's mss32.dll); so neither pitch nor delay changes the length.
 void NullAudioDevice::prepare2D(AudioVoice voice, Real volume, Real pitchShift, Real delaySeconds)
 {
 	Voice *v = toVoice(voice);

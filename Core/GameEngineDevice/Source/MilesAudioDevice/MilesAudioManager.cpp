@@ -1476,7 +1476,7 @@ void MilesAudioManager::openDevice()
 	{
 		// TheSuperHackers @feature No Miles library (the 64-bit build, or mss32.dll missing): the null device plays
 		// nothing, but gives the file lengths, the ends of the sounds and the music loop counts that the scripts and
-		// this manager read with Miles (dx12-notes/av-3-design.md section 4).
+		// this manager read with Miles, so the game takes the same script branches as with Miles.
 		m_device->close();
 		m_device = &m_nullDevice;
 		m_audioCache->setDevice(m_device);

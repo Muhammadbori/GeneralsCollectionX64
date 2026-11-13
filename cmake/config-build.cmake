@@ -28,6 +28,16 @@ add_feature_info(DebugBuild RTS_BUILD_OPTION_DEBUG "Building as a \"Debug\" buil
 add_feature_info(AddressSanitizer RTS_BUILD_OPTION_ASAN "Building with address sanitizer")
 add_feature_info(Vc6FullDebug RTS_BUILD_OPTION_VC6_FULL_DEBUG "Building VC6 with full debug info")
 add_feature_info(FFmpegSupport RTS_BUILD_OPTION_FFMPEG "Building with FFmpeg support")
+
+# TheSuperHackers @feature The sound library under the audio manager. "Miles": mss32.dll when it loads (32-bit),
+# otherwise the null device (no output; lengths and ends as with Miles). "miniaudio": also builds MiniaudioAudioDevice
+# from Dependencies/miniaudio.
+set(RTS_AUDIO_BACKEND "Miles" CACHE STRING "Sound library under the audio manager: Miles or miniaudio")
+set_property(CACHE RTS_AUDIO_BACKEND PROPERTY STRINGS Miles miniaudio)
+if(NOT RTS_AUDIO_BACKEND STREQUAL "Miles" AND NOT RTS_AUDIO_BACKEND STREQUAL "miniaudio")
+    message(FATAL_ERROR "RTS_AUDIO_BACKEND must be Miles or miniaudio, not '${RTS_AUDIO_BACKEND}'")
+endif()
+message(STATUS "Audio backend: ${RTS_AUDIO_BACKEND}")
 add_feature_info(Tests RTS_BUILD_OPTION_TESTS "Building the unit tests")
 add_feature_info(Benchmarks RTS_BUILD_OPTION_BENCHMARKS "Building the benchmarks")
 add_feature_info(Dx8Tools RTS_BUILD_DX8_TOOLS "Building WorldBuilder, W3DView and GUIEdit (not ported to Direct3D 12)")

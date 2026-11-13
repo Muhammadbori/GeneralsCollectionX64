@@ -27,6 +27,7 @@
 #include "Common/GameCommon.h"
 #include "Common/file.h"
 
+#include <string.h>
 #include <windows.h>
 
 //-------------------------------------------------------------------------------------------------
@@ -115,7 +116,7 @@ const AudioFileLengths::Entry *AudioFileLengths::get(const AsciiString &fileName
 		return nullptr;
 	}
 
-	Entry entry;
+	Entry entry = { 0, 0.0f };
 	Bool ok = FALSE;
 	File *file = TheFileSystem->openFile(fileName.str());
 	if (file)

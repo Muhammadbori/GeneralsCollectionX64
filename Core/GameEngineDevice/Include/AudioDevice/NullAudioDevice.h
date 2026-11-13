@@ -21,7 +21,7 @@
 // (the 64-bit build). It plays nothing, but its voices last as long as the sound would, on the device clock
 // (AudioDeviceClock: logic frames in a game, real time outside one), its file lengths are the ones Miles
 // reports, and its stream loop counter counts like Miles'. So the manager, the scripts and the limits see
-// what they see with Miles. dx12-notes/av-3-design.md section 4.
+// what they see with Miles, and a 64-bit game takes the same script branches as a 32-bit game with Miles.
 
 #pragma once
 

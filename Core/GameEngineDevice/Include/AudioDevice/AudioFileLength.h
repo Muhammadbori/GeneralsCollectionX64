@@ -20,7 +20,7 @@
 // TheSuperHackers @feature The length of a sound file from its headers only, for a device without the Miles
 // library (the null audio device's fileLengthMS). No game dependency: it reads a byte buffer. The same
 // algorithm as dx12-tools/audiolen.py, checked against its table row by row; AudioFileLength_MilesMS equals
-// the lengths Miles reports for all 13,639 audio files of Generals and Zero Hour (dx12-notes/av-3-design.md).
+// the lengths Miles reports (its -audioLenDump) for all 13,639 audio files of Generals and Zero Hour.
 
 #pragma once
 
@@ -42,7 +42,7 @@ enum AudioLengthRule
 	ALR_FACT,          ///< the 'fact' chunk sample count (the data size when there is none)
 	ALR_BLOCKS,        ///< full blocks x samples per block, plus a partial last block (what decoders produce)
 	ALR_BYTE_RATE,     ///< data bytes / the fmt average byte rate
-	ALR_MILES,         ///< what Miles' AIL_stream_ms_position reports (AV-3 MEASURE): WAV data bytes x 1000 / byte rate,
+	ALR_MILES,         ///< what Miles' AIL_stream_ms_position reports (measured with the game's mss32.dll): WAV data bytes x 1000 / byte rate,
 	                   ///< MP3 whole file bytes x 8 / kbps of the first frame; see AudioFileLength_MilesMS for the rounding
 };
 

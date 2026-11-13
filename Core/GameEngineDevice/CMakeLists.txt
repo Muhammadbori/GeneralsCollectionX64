@@ -251,3 +251,12 @@ if(RTS_BUILD_OPTION_FFMPEG)
         target_compile_definitions(corei_gameenginedevice_public INTERFACE RTS_HAS_FFMPEG)
     endif()
 endif()
+
+if(RTS_AUDIO_BACKEND STREQUAL "miniaudio")
+    target_sources(corei_gameenginedevice_private INTERFACE
+        Include/MiniaudioAudioDevice/MiniaudioAudioDevice.h
+        Source/MiniaudioAudioDevice/MiniaudioAudioDevice.cpp
+    )
+    target_link_libraries(corei_gameenginedevice_public INTERFACE deps_miniaudio)
+    target_compile_definitions(corei_gameenginedevice_public INTERFACE RTS_HAS_MINIAUDIO)
+endif()

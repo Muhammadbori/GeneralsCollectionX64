@@ -17,9 +17,9 @@
 */
 
 // AudioDeviceCommon.h //////////////////////////////////////////////////////////////////////////////
-// TheSuperHackers @feature Parts shared by the audio devices that do not use Miles (the null device now,
-// a device with output later): the device clock, the file lengths, and Miles' stream loop counter.
-// dx12-notes/av-3-design.md sections 1 and 4.
+// TheSuperHackers @feature Parts shared by the audio devices that do not use Miles (the null device and the
+// miniaudio device): the device clock, the file lengths and Miles' stream loop counter.
+// They reproduce what Miles reports to the manager, so the scripts and the manager see the same numbers.
 
 #pragma once
 
@@ -79,7 +79,7 @@ private:
 	MissingMap m_missing;
 };
 
-/// Miles' stream loop counter (AV-3 MEASURE section 7): a stream set to N loops plays exactly N passes, and
+/// Miles' stream loop counter (measured with the game's mss32.dll): a stream set to N loops plays exactly N passes, and
 /// AIL_stream_loop_count reads N, N-1, ... 1 and stays 1 after the end. 0 means "loop for ever" and reads 0.
 inline Int milesStreamLoopCount(Int loopCount, UnsignedInt64 passesDone)
 {
