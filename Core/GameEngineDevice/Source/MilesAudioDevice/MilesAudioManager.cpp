@@ -1491,6 +1491,11 @@ void MilesAudioManager::openDevice()
 		m_audioCache->setDevice(m_device);
 		openResult = m_device->open(audioSettings, this);
 	}
+	else if (openResult == AudioDevice::OPEN_OK && m_device != &m_milesDevice && m_device != &m_nullDevice)
+	{
+		// The name now says which backend is in use (the DEVICE line's provider says it too).
+		AUDIO_LOG("DEVICECHOICE", "device=%s result=ok", m_device->name());
+	}
 	if (openResult == AudioDevice::OPEN_NO_LIBRARY)
 	{
 		// TheSuperHackers @feature No Miles library (the 64-bit build, or mss32.dll missing): the null device plays
@@ -1545,9 +1550,11 @@ void MilesAudioManager::openDevice()
 //-------------------------------------------------------------------------------------------------
 // TheSuperHackers @feature The sound library. By default Miles on the 32-bit game (unchanged), and miniaudio on the
 // 64-bit game when the build has it (RTS_AUDIO_BACKEND=miniaudio); headless runs never open an output there and take
-// the null device. -audio miles|miniaudio|null overrides this for a test run; a library the build does not have is
-// reported (debug log and -audioLog) and the default is kept. Miles that cannot be loaded falls back to the null
-// device in openDevice, as before.
+// the null device. -audio miles|miniaudio|miniaudio-null|null overrides this for a test run; a library the build does
+// not have is reported (debug log and -audioLog) and the default is kept. Miles that cannot be loaded falls back to the
+// null device in openDevice, as before. miniaudio-null is the miniaudio device on miniaudio's null backend: decoding,
+// mixing, its threads and all manager paths run in real time, and nothing reaches an output device, so unattended runs
+// stay silent whatever the volumes; a build without miniaudio takes the null device for it, not its default.
 AudioDevice *MilesAudioManager::chooseAudioDevice()
 {
 #if defined(RTS_HAS_MINIAUDIO) && defined(_WIN64)
@@ -1563,17 +1570,20 @@ AudioDevice *MilesAudioManager::chooseAudioDevice()
 		if (stricmp(requested, "miles") == 0 || stricmp(requested, "null") == 0) {
 			chosen = stricmp(requested, "miles") == 0 ? "miles" : "null";
 			why = "requested";
-		} else if (stricmp(requested, "miniaudio") == 0) {
+		} else if (stricmp(requested, "miniaudio") == 0 || stricmp(requested, "miniaudio-null") == 0) {
 #ifdef RTS_HAS_MINIAUDIO
-			chosen = "miniaudio";
+			chosen = stricmp(requested, "miniaudio") == 0 ? "miniaudio" : "miniaudio-null";
 			why = "requested";
 #else
 			why = "requested_not_in_build";
-			DEBUG_LOG(("-audio miniaudio: this build has no miniaudio device (RTS_AUDIO_BACKEND=Miles); using %s", defaultName));
+			if (stricmp(requested, "miniaudio-null") == 0) {
+				chosen = "null";	// asked for silence: never fall back to a device with output
+			}
+			DEBUG_LOG(("-audio %s: this build has no miniaudio device (RTS_AUDIO_BACKEND=Miles); using %s", requested, chosen));
 #endif
 		} else {
 			why = "requested_unknown";
-			DEBUG_LOG(("-audio %s: unknown (miles, miniaudio or null); using %s", requested, defaultName));
+			DEBUG_LOG(("-audio %s: unknown (miles, miniaudio, miniaudio-null or null); using %s", requested, defaultName));
 		}
 	}
 
@@ -1582,16 +1592,20 @@ AudioDevice *MilesAudioManager::chooseAudioDevice()
 		device = &m_nullDevice;
 	}
 #ifdef RTS_HAS_MINIAUDIO
-	if (strcmp(chosen, "miniaudio") == 0) {
+	if (strcmp(chosen, "miniaudio") == 0 || strcmp(chosen, "miniaudio-null") == 0) {
 		if (m_miniaudioDevice == nullptr) {
-			m_miniaudioDevice = NEW MiniaudioAudioDevice;
+			MiniaudioAudioDevice::TestOptions options = { FALSE, FALSE, FALSE, FALSE };
+			options.nullBackend = strcmp(chosen, "miniaudio-null") == 0;
+			m_miniaudioDevice = NEW MiniaudioAudioDevice(options);
 		}
 		device = m_miniaudioDevice;
 	}
 #endif
-	// Only when something other than the 32-bit default happens, so the 32-bit -audioLog stays as it was.
+	// Only when something other than the 32-bit default happens, so the 32-bit -audioLog stays as it was. The device is
+	// not open yet; for miniaudio, openDevice logs the backend after the open.
 	if (requested != nullptr || device != &m_milesDevice) {
-		AUDIO_LOG("DEVICECHOICE", "requested=%s chosen=%s why=%s", requested ? requested : "-", device->name(), why);
+		AUDIO_LOG("DEVICECHOICE", "requested=%s chosen=%s why=%s", requested ? requested : "-",
+			strcmp(chosen, "miniaudio-null") == 0 ? "miniaudio (null backend requested)" : device->name(), why);
 	}
 	return device;
 }

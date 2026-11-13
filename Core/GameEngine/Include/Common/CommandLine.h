@@ -61,7 +61,8 @@ public:
 	// game quits. A test tool; it needs Miles, so on a 64-bit build it only writes a note.
 	static bool isAudioLenDumpEnabled();
 
-	// TheSuperHackers @feature -audio miles|miniaudio|null: the sound library for a test run, or null when not given.
+	// TheSuperHackers @feature -audio miles|miniaudio|miniaudio-null|null: the sound library for a test run, or null when
+	// not given. miniaudio-null runs the miniaudio device on its null backend: everything but the output, silent.
 	// The audio manager checks it against the libraries the build has (RTS_AUDIO_BACKEND).
 	static const char * getAudioDevice();
 };

@@ -38,12 +38,14 @@ struct MiniaudioDeviceState;
 class MiniaudioAudioDevice : public AudioDevice
 {
 public:
-	/// For tests only. The game uses the defaults (an output device, a decoding thread, an end thread).
+	/// For tests. The game uses the defaults (an output device, a decoding thread, an end thread), or nullBackend
+	/// for -audio miniaudio-null.
 	struct TestOptions
 	{
 		Bool noOutputDevice;    ///< render with renderForTest() instead of an output device
 		Bool endsInUpdate;      ///< report ends from update() on the caller's thread instead of the end thread
 		Bool noJobThread;       ///< decode streams in renderForTest() instead of on miniaudio's job thread
+		Bool nullBackend;       ///< a device on miniaudio's null backend only: mixed in real time, never sent to any output
 	};
 
 	MiniaudioAudioDevice();
@@ -101,7 +103,7 @@ public:
 	virtual UnsignedInt pushMovieSound(AudioVoice sound, const Short *frames, UnsignedInt frameCount) override;
 	virtual UnsignedInt64 movieSoundPlayedFrames(AudioVoice sound) const override;
 	virtual void closeMovieSound(AudioVoice sound) override;
-	virtual const char *name() const override { return "miniaudio"; }
+	virtual const char *name() const override;	///< "miniaudio", and the backend once open: "miniaudio (WASAPI backend)"
 	virtual UnsignedInt debugTimerDelay() const override { return 0; }
 
 	/// With TestOptions::noOutputDevice: mixes 'frameCount' stereo float frames at 44.1 kHz into 'out'.

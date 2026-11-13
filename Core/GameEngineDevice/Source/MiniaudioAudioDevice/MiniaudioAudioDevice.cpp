@@ -46,6 +46,7 @@
 #include <list>
 #include <math.h>
 #include <mutex>
+#include <stdio.h>
 #include <string.h>
 #include <vector>
 
@@ -386,6 +387,9 @@ struct MiniaudioEnd
 struct MiniaudioDeviceState
 {
 	MiniaudioAudioDevice::TestOptions options;
+	ma_context context;              ///< nullBackend: a context with miniaudio's null backend only
+	bool contextReady;
+	char name[64];                   ///< name(): the backend once open
 	ma_vfs_callbacks vfs;            ///< miniaudio is given its address as the ma_vfs
 	ma_resource_manager resourceManager;
 	bool resourceManagerReady;
@@ -720,6 +724,9 @@ MiniaudioAudioDevice::MiniaudioAudioDevice()
 	m_state->options.noOutputDevice = FALSE;
 	m_state->options.endsInUpdate = FALSE;
 	m_state->options.noJobThread = FALSE;
+	m_state->options.nullBackend = FALSE;
+	m_state->contextReady = false;
+	snprintf(m_state->name, sizeof(m_state->name), "miniaudio");
 	m_state->resourceManagerReady = false;
 	m_state->engineReady = false;
 	m_state->listener = nullptr;
@@ -764,6 +771,18 @@ AudioDevice::OpenResult MiniaudioAudioDevice::open(const AudioSettings *settings
 	if (s->options.noOutputDevice) {
 		ec.noDevice = MA_TRUE;
 	}
+	else if (s->options.nullBackend)
+	{
+		// TheSuperHackers @feature -audio miniaudio-null: the context knows the null backend only, so the engine's device
+		// can be nothing else; it pulls the mix in real time and discards it. No output device is opened.
+		const ma_backend backends[1] = { ma_backend_null };
+		ma_context_config cc = ma_context_config_init();
+		if (ma_context_init(backends, 1, &cc, &s->context) != MA_SUCCESS) {
+			return OPEN_NO_OUTPUT;
+		}
+		s->contextReady = true;
+		ec.pContext = &s->context;
+	}
 	if (s->options.noJobThread)
 	{
 		ma_resource_manager_config rc = ma_resource_manager_config_init();
@@ -787,9 +806,21 @@ AudioDevice::OpenResult MiniaudioAudioDevice::open(const AudioSettings *settings
 			ma_resource_manager_uninit(&s->resourceManager);
 			s->resourceManagerReady = false;
 		}
+		if (s->contextReady) {
+			ma_context_uninit(&s->context);
+			s->contextReady = false;
+		}
 		return OPEN_NO_OUTPUT;
 	}
 	s->engineReady = true;
+
+	// The backend in use, for the manager's DEVICE and DEVICECHOICE log lines.
+	const ma_device *device = ma_engine_get_device(&s->engine);
+	if (device != nullptr && device->pContext != nullptr) {
+		snprintf(s->name, sizeof(s->name), "miniaudio (%s backend)", ma_get_backend_name(device->pContext->backend));
+	} else {
+		snprintf(s->name, sizeof(s->name), "miniaudio (no device)");
+	}
 
 	if (!s->options.endsInUpdate)
 	{
@@ -837,10 +868,16 @@ void MiniaudioAudioDevice::close()
 		ma_resource_manager_uninit(&s->resourceManager);
 		s->resourceManagerReady = false;
 	}
+	if (s->contextReady) {
+		ma_context_uninit(&s->context);
+		s->contextReady = false;
+	}
+	snprintf(s->name, sizeof(s->name), "miniaudio");
 	s->fileLengths.clear();
 	s->listener = nullptr;
 }
 
+const char *MiniaudioAudioDevice::name() const { return m_state->name; }
 Bool MiniaudioAudioDevice::isLoaded() const { return m_state->engineReady; }
 void *MiniaudioAudioDevice::nativeDevice() { return m_state->engineReady ? &m_state->engine : nullptr; }
 
