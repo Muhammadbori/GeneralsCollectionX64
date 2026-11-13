@@ -236,7 +236,9 @@ target_link_libraries(corei_gameenginedevice_public INTERFACE
 )
 
 if(RTS_BUILD_OPTION_FFMPEG)
-    find_package(FFMPEG REQUIRED)
+    if(NOT RTS_FFMPEG_DIR)
+        find_package(FFMPEG REQUIRED)
+    endif()
 
     if(FFMPEG_FOUND)
         target_sources(corei_gameenginedevice_private INTERFACE

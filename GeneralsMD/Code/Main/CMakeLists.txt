@@ -71,3 +71,6 @@ endif()
 if(MINGW AND COMMAND add_debug_strip_target)
     add_debug_strip_target(z_generals)
 endif()
+
+# The FFmpeg DLLs next to the executable when a prebuilt FFmpeg package is used (cmake/ffmpeg-prebuilt.cmake).
+rts_copy_ffmpeg_runtime(z_generals)
