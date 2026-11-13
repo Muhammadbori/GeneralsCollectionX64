@@ -119,6 +119,7 @@ set(GAMEENGINE_SRC
 #    Include/Common/StackDump.h
 #    Include/Common/StateMachine.h
 #    Include/Common/StatsCollector.h
+    Include/Common/StateTrace.h
     Include/Common/STLTypedefs.h
     Include/Common/StreamingArchiveFile.h
     Include/Common/SubsystemInterface.h
@@ -656,6 +657,7 @@ set(GAMEENGINE_SRC
 #    Source/Common/SkirmishBattleHonors.cpp
 #    Source/Common/StateMachine.cpp
 #    Source/Common/StatsCollector.cpp
+    Source/Common/StateTrace.cpp
     Source/Common/System/ArchiveFile.cpp
     Source/Common/System/ArchiveFileSystem.cpp
     Source/Common/System/AsciiString.cpp

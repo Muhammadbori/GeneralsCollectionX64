@@ -363,6 +363,18 @@ Int parseAudioLog(char *[], int)
 	return 1;
 }
 
+// TheSuperHackers @feature -stateTrace and -stateTraceCalls A-B: see StateTrace.h. Read from the raw command line when the
+// program starts; these entries only make the options (and the range) known.
+Int parseStateTrace(char *[], int)
+{
+	return 1;
+}
+
+Int parseStateTraceCalls(char *[], int num)
+{
+	return num > 1 ? 2 : 1;
+}
+
 Int parseUserDataDir(char *args[], int num)
 {
 	if (num > 1)
@@ -1597,6 +1609,8 @@ static CommandLineParam paramsForStartup[] =
 	// TheSuperHackers @feature 2026 Do not read or write the registry keys of the game.
 	{ "-noRegistry", parseNoRegistry },
 	{ "-audioLog", parseAudioLog },
+	{ "-stateTrace", parseStateTrace },
+	{ "-stateTraceCalls", parseStateTraceCalls },
 	{ "-audioLenDump", parseAudioLenDump },
 	{ "-audio", parseAudioDevice },
 

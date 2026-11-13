@@ -60,6 +60,7 @@
 #include "Lib/BaseType.h"
 #include "Common/file.h"
 #include "Common/FileSystem.h"
+#include "Common/StateTrace.h"
 #include "W3DDevice/GameClient/W3DShaderManager.h"
 #include "W3DDevice/GameClient/W3DShroud.h"
 #include "W3DDevice/GameClient/HeightMap.h"
@@ -1580,6 +1581,8 @@ void TerrainShader2Stage::updateCloud()
 	// This moves offsets towards zero when smaller -1.0 or larger 1.0
 	m_xOffset -= (Int)m_xOffset;
 	m_yOffset -= (Int)m_yOffset;
+
+	STATE_TRACE(cloudUpdate(frame_time, m_xOffset, m_yOffset));
 }
 
 void TerrainShader2Stage::updateNoise1(D3DMatrix *destMatrix,D3DMatrix *curViewInverse, Bool doUpdate)

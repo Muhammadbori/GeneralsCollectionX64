@@ -29,6 +29,9 @@
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
 
 #include "Common/RandomValue.h"
+#include "Common/StateTrace.h"
+
+#include <intrin.h>
 #include "Common/crc.h"
 #include "Common/Debug.h"
 #include "GameLogic/GameLogic.h"
@@ -75,6 +78,13 @@ UnsignedInt GetGameLogicRandomSeedCRC()
 	return c.get();
 }
 
+UnsignedInt GetGameClientRandomSeedCRC()
+{
+	CRC c;
+	c.computeCRC(theGameClientSeed, sizeof(theGameClientSeed));
+	return c.get();
+}
+
 static void seedRandom(UnsignedInt SEED, UnsignedInt (&seed)[6])
 {
 	UnsignedInt ax;
@@ -110,6 +120,7 @@ void InitRandom()
 	seedRandom(seconds, theGameLogicSeed);
 	theGameLogicBaseSeed = seconds;
 #endif
+	STATE_TRACE(initRandom(theGameLogicBaseSeed, TRUE, _ReturnAddress()));
 }
 
 void InitRandom( UnsignedInt seed )
@@ -126,6 +137,7 @@ void InitRandom( UnsignedInt seed )
 #ifdef DEBUG_RANDOM_LOGIC
 	DEBUG_LOG(("InitRandom %08lx", seed));
 #endif
+	STATE_TRACE(initRandom(seed, FALSE, _ReturnAddress()));
 }
 
 // Add with carry. SUM is replaced with A + B + C, C is replaced with 1 if there was a carry, 0 if there wasn't.
@@ -231,6 +243,7 @@ Int GetGameClientRandomValue( int lo, int hi, const char *file, int line )
 
 	const UnsignedInt delta = hi - lo + 1;
 	const Int rval = ((Int)(randomValue(theGameClientSeed) % delta)) + lo;
+	STATE_TRACE(clientDraw());
 
 #ifdef DEBUG_RANDOM_CLIENT
 	DEBUG_LOG(( "%d: GetGameClientRandomValue = %d (%d - %d), %s line %d",
@@ -251,6 +264,7 @@ Real GetGameClientRandomValueReal( Real lo, Real hi, const char *file, int line 
 
 	const Real delta = hi - lo;
 	const Real rval = ((Real)(randomValue(theGameClientSeed)) * theMultFactor) * delta + lo;
+	STATE_TRACE(clientDraw());
 
 #ifdef DEBUG_RANDOM_CLIENT
 	DEBUG_LOG(( "%d: GetGameClientRandomValueReal = %f, %s line %d",
@@ -278,6 +292,7 @@ Int GetGameLogicRandomValue( int lo, int hi, const char *file, int line )
 #endif
 
 	const Int rval = ((Int)(randomValue(theGameLogicSeed) % delta)) + lo;
+	STATE_TRACE(logicDraw(file, line, lo, hi, rval));
 
 #ifdef DEBUG_RANDOM_LOGIC
 	DEBUG_LOG(( "%d: GetGameLogicRandomValue = %d (%d - %d), %s line %d",
@@ -305,6 +320,7 @@ Real GetGameLogicRandomValueReal( Real lo, Real hi, const char *file, int line )
 #endif
 
 	const Real rval = ((Real)(randomValue(theGameLogicSeed)) * theMultFactor) * delta + lo;
+	STATE_TRACE(logicDraw(file, line, lo, hi, rval));
 
 #ifdef DEBUG_RANDOM_LOGIC
 	DEBUG_LOG(( "%d: GetGameLogicRandomValueReal = %f, %s line %d",
@@ -324,6 +340,7 @@ Real GetGameLogicRandomValueReal( Real lo, Real hi, const char *file, int line )
 Int GetGameLogicRandomValueUnchanged( int lo, int hi, const char *file, int line )
 {
 #if RETAIL_COMPATIBLE_CRC
+	STATE_TRACE(logicUnchanged(file, line, lo, hi, 0));
 	return GetGameLogicRandomValue(lo, hi, file, line);
 #endif
 
@@ -335,6 +352,7 @@ Int GetGameLogicRandomValueUnchanged( int lo, int hi, const char *file, int line
 
 	const UnsignedInt delta = hi - lo + 1;
 	const Int rval = ((Int)(randomValue(seed) % delta)) + lo;
+	STATE_TRACE(logicUnchanged(file, line, lo, hi, rval));
 
 #ifdef DEBUG_RANDOM_LOGIC
 	DEBUG_LOG(( "%d: GetGameLogicRandomValueUnchanged = %d (%d - %d), %s line %d",
@@ -354,6 +372,7 @@ Int GetGameLogicRandomValueUnchanged( int lo, int hi, const char *file, int line
 Real GetGameLogicRandomValueRealUnchanged( Real lo, Real hi, const char *file, int line )
 {
 #if RETAIL_COMPATIBLE_CRC
+	STATE_TRACE(logicUnchanged(file, line, lo, hi, 0));
 	return GetGameLogicRandomValueReal(lo, hi, file, line);
 #endif
 
@@ -365,6 +384,7 @@ Real GetGameLogicRandomValueRealUnchanged( Real lo, Real hi, const char *file, i
 
 	const Real delta = hi - lo;
 	const Real rval = ((Real)(randomValue(seed)) * theMultFactor) * delta + lo;
+	STATE_TRACE(logicUnchanged(file, line, lo, hi, rval));
 
 #ifdef DEBUG_RANDOM_LOGIC
 	DEBUG_LOG(( "%d: GetGameLogicRandomValueRealUnchanged = %f, %s line %d",

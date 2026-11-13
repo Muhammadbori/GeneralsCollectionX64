@@ -32,6 +32,7 @@ extern void InitRandom();
 extern void InitRandom( UnsignedInt seed );
 extern UnsignedInt GetGameLogicRandomSeed();   ///< Get the seed (used for replays)
 extern UnsignedInt GetGameLogicRandomSeedCRC();///< Get the seed (used for CRCs)
+extern UnsignedInt GetGameClientRandomSeedCRC();///< TheSuperHackers @feature The client generator's state, for -stateTrace
 
 struct RandomValueClass
 {

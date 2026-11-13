@@ -54,6 +54,7 @@ static void drawFramerateBar();
 #include "Common/PlayerList.h"
 #include "Common/ThingTemplate.h"
 #include "Common/GameLOD.h"
+#include "Common/StateTrace.h"
 #include "Common/DrawModule.h"
 #include "GameLogic/AIPathfind.h"
 #include "GameLogic/Module/PhysicsUpdate.h"
@@ -1940,6 +1941,7 @@ void W3DDisplay::update()
 
 	// TheSuperHackers @info This binds the WW3D update to the logic update.
 	WW3D::Sync(TheGameLogic->hasUpdated());
+	STATE_TRACE(displayUpdate(WW3D::Get_Sync_Time(), WW3D::Get_Logic_Frame_Time_Milliseconds()));
 
 	// update all views of the world - recomputes data which will affect drawing
 	// TheSuperHackers @todo Remove the renderer dependency from the update.

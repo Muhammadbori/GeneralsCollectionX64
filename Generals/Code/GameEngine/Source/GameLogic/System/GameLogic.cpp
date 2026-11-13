@@ -51,6 +51,7 @@
 #include "Common/Radar.h"
 #include "Common/RandomValue.h"
 #include "Common/Recorder.h"
+#include "Common/StateTrace.h"
 #include "Common/StatsCollector.h"
 #include "Common/ThingFactory.h"
 #include "Common/Team.h"
@@ -3204,6 +3205,7 @@ void GameLogic::update()
 	PROFILER_SECTION_COLOR(0x4CAF50);
 
 	LatchRestore<Bool> inUpdateLatch(m_isInUpdate, TRUE);
+	StateTrace::LogicUpdateScope stateTraceScope;	// TheSuperHackers @feature -stateTrace: a line when this update ends
 #ifdef DO_UNIT_TIMINGS
 	unitTimings();
 #endif
