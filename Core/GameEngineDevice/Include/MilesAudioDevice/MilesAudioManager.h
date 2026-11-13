@@ -22,7 +22,6 @@
 
 #include "Common/AsciiString.h"
 #include "Common/GameAudio.h"
-#include "mss/mss.h"
 #include "MilesAudioDevice/MilesAudioDevice.h"
 #include "WWLib/mutex.h"
 
@@ -56,12 +55,7 @@ enum PlayingWhich CPP_11(: Int)
 
 struct PlayingAudio
 {
-	union
-	{
-		HSAMPLE m_sample;
-		H3DSAMPLE m_3DSample;
-		HSTREAM m_stream;
-	};
+	AudioVoice m_voice; // the 2D sample, 3D sample or stream, as m_type says
 
 	RefCountPtr<DynamicAudioEventRTS> m_audioEventRTS;
 	void *m_file; // The file that was opened to play this
@@ -73,7 +67,7 @@ struct PlayingAudio
 	volatile Bool m_requestStop; // Let the audio finish but stop looping if it is looping
 
 	PlayingAudio()
-		: m_sample(nullptr)
+		: m_voice(0)
 		, m_audioEventRTS(nullptr)
 		, m_file(nullptr)
 		, m_type(PAT_INVALID)
@@ -100,18 +94,14 @@ struct PlayingAudio
 struct ProviderInfo
 {
   AsciiString name;
-  HPROVIDER id;
 	Bool m_isValid;
 };
 
 struct OpenAudioFile
 {
 	AudioSampleInfo m_soundInfo;
-	void *m_file;
+	AudioSample m_sample;	// data, the size the cache counts, and whether the device made it (then the device frees it)
 	UnsignedInt m_openCount;
-	UnsignedInt m_fileSize;
-
-	Bool m_compressed;	// if the file was compressed, then we need to free it with a miles function.
 
 	// Note: OpenAudioFile does not own this m_eventInfo, and should not delete it.
 	const AudioEventInfo *m_eventInfo;	// Not mutable, unlike the one on AudioEventRTS.
@@ -254,10 +244,10 @@ class MilesAudioManager : public AudioManager, public AudioDeviceListener
 		// Looping functions
 		Bool startNextLoop( PlayingAudio *playing );
 
-		void playStream( AudioEventRTS *event, HSTREAM stream );
+		void playStream( AudioEventRTS *event, AudioVoice stream );
 		// Returns the file handle for attachment to the PlayingAudio structure
-		void *playSample( AudioEventRTS *event, HSAMPLE sample );
-		void *playSample3D( AudioEventRTS *event, H3DSAMPLE sample3D );
+		void *playSample( AudioEventRTS *event, AudioVoice sample );
+		void *playSample3D( AudioEventRTS *event, AudioVoice sample3D );
 
 		void buildProviderList();
 		void createListener();
@@ -288,8 +278,8 @@ class MilesAudioManager : public AudioManager, public AudioDeviceListener
 		void stopAllAudioImmediately();
 		void freeAllMilesHandles();
 
-		HSAMPLE getAvailable2DSample( AudioEventRTS *event );
-		H3DSAMPLE getAvailable3DSample( AudioEventRTS *event );
+		AudioVoice getAvailable2DSample( AudioEventRTS *event );
+		AudioVoice getAvailable3DSample( AudioEventRTS *event );
 
 		void adjustPlayingVolume( PlayingAudio *audio );
 
@@ -305,16 +295,16 @@ class MilesAudioManager : public AudioManager, public AudioDeviceListener
 		AsciiString m_pref3DProvider;
 		AsciiString m_prefSpeaker;
 
-		HDIGDRIVER m_digitalHandle;
+		void *m_digitalHandle;
 		Bool m_hasListener;
 
 		// This is a list of all handles that are forcibly played. They always play as UI sounds.
-		std::list<HAUDIO> m_audioForcePlayed;
+		std::list<AudioVoice> m_audioForcePlayed;
 
 		// Available handles for play. Note that there aren't handles open in advance for
 		// streaming things, only 2-D and 3-D sounds.
-		std::vector<HSAMPLE> m_availableSamples;
-		std::vector<H3DSAMPLE> m_available3DSamples;
+		std::vector<AudioVoice> m_availableSamples;
+		std::vector<AudioVoice> m_available3DSamples;
 
 		// Currently Playing audio. Useful if we have to preempt it.
 		// This should rarely if ever happen, as we mirror this in Sounds, and attempt to

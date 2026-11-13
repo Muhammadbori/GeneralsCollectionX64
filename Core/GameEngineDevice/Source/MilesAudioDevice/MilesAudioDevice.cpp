@@ -89,6 +89,27 @@ namespace
 	}
 
 	static_assert(sizeof(AILSOUNDINFO) <= sizeof(((AudioSampleInfo *)nullptr)->deviceData), "AILSOUNDINFO must fit into AudioSampleInfo::deviceData");
+
+	// The game's speaker numbers and the Miles 3D speaker constants have always had the same values: the manager
+	// used to store the Miles constant and the game's number in the same variable.
+	static_assert(AST_2Speakers == AIL_3D_2_SPEAKER && AST_Headphones == AIL_3D_HEADPHONE && AST_Surround == AIL_3D_SURROUND
+		&& AST_4Speakers == AIL_3D_4_SPEAKER && AST_5_1Surround == AIL_3D_51_SPEAKER && AST_7_1Surround == AIL_3D_71_SPEAKER,
+		"the game's speaker numbers must equal the Miles 3D speaker constants");
+
+	/// The Miles constant for the game's speaker number. Other numbers pass unchanged, as before.
+	S32 milesSpeakerType(UnsignedInt speakerType)
+	{
+		switch (speakerType)
+		{
+			case AST_2Speakers: return AIL_3D_2_SPEAKER;
+			case AST_Headphones: return AIL_3D_HEADPHONE;
+			case AST_Surround: return AIL_3D_SURROUND;
+			case AST_4Speakers: return AIL_3D_4_SPEAKER;
+			case AST_5_1Surround: return AIL_3D_51_SPEAKER;
+			case AST_7_1Surround: return AIL_3D_71_SPEAKER;
+		}
+		return (S32)speakerType;
+	}
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -214,32 +235,32 @@ UnsignedInt MilesAudioDevice::openProvider(UnsignedInt requested, UnsignedInt fa
 		switch( DSSPEAKER_CONFIG( speakerConfig ) )
 		{
 			case DSSPEAKER_DIRECTOUT:
-				*speakerType = AIL_3D_2_SPEAKER;
+				*speakerType = AST_2Speakers;
 				break;
 			case DSSPEAKER_MONO:
-				*speakerType = AIL_3D_2_SPEAKER;
+				*speakerType = AST_2Speakers;
 				break;
 			case DSSPEAKER_STEREO:
-				*speakerType = AIL_3D_2_SPEAKER;
+				*speakerType = AST_2Speakers;
 				break;
 			case DSSPEAKER_HEADPHONE:
-				*speakerType = AIL_3D_HEADPHONE;
+				*speakerType = AST_Headphones;
 				useDolby = TRUE;
 				break;
 			case DSSPEAKER_QUAD:
-				*speakerType = AIL_3D_4_SPEAKER;
+				*speakerType = AST_4Speakers;
 				useDolby = TRUE;
 				break;
 			case DSSPEAKER_SURROUND:
-				*speakerType = AIL_3D_SURROUND;
+				*speakerType = AST_Surround;
 				useDolby = TRUE;
 				break;
 			case DSSPEAKER_5POINT1:
-				*speakerType = AIL_3D_51_SPEAKER;
+				*speakerType = AST_5_1Surround;
 				useDolby = TRUE;
 				break;
 			case DSSPEAKER_7POINT1:
-				*speakerType = AIL_3D_71_SPEAKER;
+				*speakerType = AST_7_1Surround;
 				useDolby = TRUE;
 				break;
 		}
@@ -289,7 +310,7 @@ void MilesAudioDevice::closeListenerAndProvider(UnsignedInt provider)
 // setSpeakerType :1841
 void MilesAudioDevice::setSpeakerType(UnsignedInt provider, UnsignedInt speakerType)
 {
-	AIL_set_3D_speaker_type( m_providers[provider].id, speakerType );
+	AIL_set_3D_speaker_type( m_providers[provider].id, milesSpeakerType(speakerType) );
 }
 
 //-------------------------------------------------------------------------------------------------

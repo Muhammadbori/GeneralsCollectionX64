@@ -54,7 +54,19 @@ struct AudioSampleInfo
 	UnsignedByte deviceData[64];
 };
 
-/// A sample ready for play2D/play3D. 'data' is what the device plays (Miles: the complete in-memory WAV
+/// The speaker setup, as the game numbers it (AudioManager::translateSpeakerTypeToUnsignedInt, the order of
+/// TheSpeakerTypes in GameAudio.cpp). openProvider and setSpeakerType use these values.
+enum AudioSpeakerType CPP_11(: UnsignedInt)
+{
+	AST_2Speakers,
+	AST_Headphones,
+	AST_Surround,
+	AST_4Speakers,
+	AST_5_1Surround,
+	AST_7_1Surround,
+};
+
+/// A sample ready for start2D/play3D. 'data' is what the device plays (Miles: the complete in-memory WAV
 /// image) and 'bytes' is what the manager's file cache counts against its size limit.
 struct AudioSample
 {
