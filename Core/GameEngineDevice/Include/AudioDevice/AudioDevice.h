@@ -101,6 +101,10 @@ public:
 	virtual Bool isLoaded() const = 0;
 	virtual void *nativeDevice() = 0;       ///< AudioManager::getDevice()
 	virtual void setStreamFileCallbacks() = 0; ///< stream files through TheFileSystem
+	/// Called by the manager every update on the main thread, before it processes its requests and playing lists.
+	/// 'logicFrame' is the game logic frame; 'logicIsRunning' is FALSE outside a game and while a map loads.
+	/// A device with its own output (Miles) ignores it; the null device advances its clock here.
+	virtual void update(UnsignedInt logicFrame, Bool logicIsRunning) = 0;
 
 	// --- providers, speakers, listener ---------------------------------------------------------
 	virtual UnsignedInt providerCount() const = 0;

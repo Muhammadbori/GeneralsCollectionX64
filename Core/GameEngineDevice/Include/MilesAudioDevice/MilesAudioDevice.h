@@ -35,6 +35,7 @@ public:
 	virtual Bool isLoaded() const override { return m_loaded; }
 	virtual void *nativeDevice() override { return m_digitalHandle; }
 	virtual void setStreamFileCallbacks() override;
+	virtual void update(UnsignedInt logicFrame, Bool logicIsRunning) override {} ///< Miles keeps its own time
 
 	virtual UnsignedInt providerCount() const override { return m_providerCount; }
 	virtual AsciiString providerName(UnsignedInt index) const override;

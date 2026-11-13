@@ -508,6 +508,12 @@ void MilesAudioManager::update()
 {
 	AudioManager::update();
 	setDeviceListenerPosition();
+
+	// The device's clock: the null device reports the ends of its voices here, Miles does nothing. Before the
+	// requests, so that a sound started in this update counts its length from this frame.
+	const Bool logicIsRunning = TheGameLogic != nullptr && TheGameLogic->isInGame() && !TheGameLogic->isLoadingMap();
+	m_device->update(TheGameLogic != nullptr ? TheGameLogic->getFrame() : 0, logicIsRunning);
+
 	processRequestList();
 	processPlayingList();
 	processFadingList();
