@@ -805,6 +805,10 @@ void GameState::loadQueuedSaveGame()
 		return;
 	}
 
+	// TheSuperHackers @feature A test load with -seed <n> starts from a known random state.
+	if( TheGlobalData->m_fixedSeed >= 0 )
+		InitRandom( TheGlobalData->m_fixedSeed );
+
 	// this hides the shell, keeping the menu screens on the stack for when the game ends
 	TheGameLogic->prepareNewGame( GAME_SINGLE_PLAYER, DIFFICULTY_NORMAL, 0 );
 
