@@ -32,9 +32,6 @@
 
 namespace
 {
-	UnsignedInt le16(const unsigned char *p) { return (UnsignedInt)p[0] | ((UnsignedInt)p[1] << 8); }
-	UnsignedInt le32(const unsigned char *p) { return (UnsignedInt)p[0] | ((UnsignedInt)p[1] << 8) | ((UnsignedInt)p[2] << 16) | ((UnsignedInt)p[3] << 24); }
-
 	enum { WAV_HEADER_BYTES = 44, WAV_FORMAT_PCM = 1, WAV_FORMAT_IMA_ADPCM = 0x11 };
 }
 
@@ -361,33 +358,9 @@ Int NullAudioDevice::fileLengthMS(const char *fileName) const
 }
 
 //-------------------------------------------------------------------------------------------------
-// The 'fmt ' chunk of a WAV file in memory (Miles: AIL_WAV_info). The file size is not passed in, so the walk stays
-// inside the RIFF size and the first 4 KB.
 void NullAudioDevice::readSampleInfo(const void *fileBytes, AudioSampleInfo *info) const
 {
-	memset(info, 0, sizeof(*info));
-	const unsigned char *d = (const unsigned char *)fileBytes;
-	if (d == nullptr || memcmp(d, "RIFF", 4) != 0 || memcmp(d + 8, "WAVE", 4) != 0) {
-		return;
-	}
-	size_t n = (size_t)le32(d + 4) + 8;
-	if (n > 4096) {
-		n = 4096;
-	}
-	size_t p = 12;
-	while (p + 8 <= n)
-	{
-		const UnsignedInt size = le32(d + p + 4);
-		if (memcmp(d + p, "fmt ", 4) == 0 && size >= 16 && p + 8 + 16 <= n)
-		{
-			info->format = (Int)le16(d + p + 8);
-			info->channels = le16(d + p + 10);
-			info->rate = le32(d + p + 12);
-			info->bits = le16(d + p + 22);
-			return;
-		}
-		p += 8 + (size_t)size + (size & 1);
-	}
+	audioReadWavFormat(fileBytes, info);
 }
 
 //-------------------------------------------------------------------------------------------------

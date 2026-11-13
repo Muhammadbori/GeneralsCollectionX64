@@ -18,13 +18,14 @@
 
 // AudioDeviceCommon.h //////////////////////////////////////////////////////////////////////////////
 // TheSuperHackers @feature Parts shared by the audio devices that do not use Miles (the null device and the
-// miniaudio device): the device clock, the file lengths and Miles' stream loop counter.
+// miniaudio device): the device clock, the file lengths, Miles' stream loop counter and the WAV format reader.
 // They reproduce what Miles reports to the manager, so the scripts and the manager see the same numbers.
 
 #pragma once
 
 #include "Lib/BaseType.h"
 #include "Common/AsciiString.h"
+#include "AudioDevice/AudioDevice.h"
 
 #include <map>
 
@@ -78,6 +79,10 @@ private:
 	EntryMap m_entries;
 	MissingMap m_missing;
 };
+
+/// The 'fmt ' chunk of a WAV file in memory, as Miles' AIL_WAV_info gives it (format, channels, rate, bits). The file
+/// size is not passed in, so the walk stays inside the RIFF size and the first 4 KB. Zeros when it is not a WAV file.
+void audioReadWavFormat(const void *fileBytes, AudioSampleInfo *info);
 
 /// Miles' stream loop counter (measured with the game's mss32.dll): a stream set to N loops plays exactly N passes, and
 /// AIL_stream_loop_count reads N, N-1, ... 1 and stays 1 after the end. 0 means "loop for ever" and reads 0.

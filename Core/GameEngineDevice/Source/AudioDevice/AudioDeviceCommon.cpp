@@ -31,6 +31,37 @@
 #include <windows.h>
 
 //-------------------------------------------------------------------------------------------------
+void audioReadWavFormat(const void *fileBytes, AudioSampleInfo *info)
+{
+	memset(info, 0, sizeof(*info));
+	const unsigned char *d = (const unsigned char *)fileBytes;
+	if (d == nullptr || memcmp(d, "RIFF", 4) != 0 || memcmp(d + 8, "WAVE", 4) != 0) {
+		return;
+	}
+	const UnsignedInt riffSize = (UnsignedInt)d[4] | ((UnsignedInt)d[5] << 8) | ((UnsignedInt)d[6] << 16) | ((UnsignedInt)d[7] << 24);
+	size_t n = (size_t)riffSize + 8;
+	if (n > 4096) {
+		n = 4096;
+	}
+	size_t p = 12;
+	while (p + 8 <= n)
+	{
+		const unsigned char *c = d + p;
+		const UnsignedInt size = (UnsignedInt)c[4] | ((UnsignedInt)c[5] << 8) | ((UnsignedInt)c[6] << 16) | ((UnsignedInt)c[7] << 24);
+		if (memcmp(c, "fmt ", 4) == 0 && size >= 16 && p + 8 + 16 <= n)
+		{
+			const unsigned char *f = c + 8;
+			info->format = (Int)((UnsignedInt)f[0] | ((UnsignedInt)f[1] << 8));
+			info->channels = (UnsignedInt)f[2] | ((UnsignedInt)f[3] << 8);
+			info->rate = (UnsignedInt)f[4] | ((UnsignedInt)f[5] << 8) | ((UnsignedInt)f[6] << 16) | ((UnsignedInt)f[7] << 24);
+			info->bits = (UnsignedInt)f[14] | ((UnsignedInt)f[15] << 8);
+			return;
+		}
+		p += 8 + (size_t)size + (size & 1);
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
 AudioDeviceClock::AudioDeviceClock()
 	: m_ticks(0)
 	, m_mode(MODE_NONE)
