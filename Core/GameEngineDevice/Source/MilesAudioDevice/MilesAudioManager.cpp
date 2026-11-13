@@ -66,6 +66,7 @@
 #include "Common/file.h"
 
 #include <Utility/interlocked_adapter.h>
+#include <map>
 #include "MilesLoader.h"
 
 #include <dsound.h>
@@ -100,6 +101,20 @@ MilesAudioManager::MilesAudioManager() :
 	m_prefSpeaker(AsciiString::TheEmptyString)
 {
 	m_audioCache = NEW AudioFileCache;
+}
+
+//-------------------------------------------------------------------------------------------------
+// -audioLog: a small number for a 2D or 3D sample handle, in the order the handles are first seen. The raw handle is a
+// pointer and differs from run to run; the order of use of the pool does not.
+static int audioLogVoiceId(const void *voice)
+{
+	static std::map<const void *, int> ids;
+	std::map<const void *, int>::iterator it = ids.find(voice);
+	if (it == ids.end())
+	{
+		it = ids.insert(std::make_pair(voice, (int)ids.size())).first;
+	}
+	return it->second;
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -710,7 +725,12 @@ void MilesAudioManager::playAudioEvent( AudioRequest* req )
 	 			}
 				AIL_set_stream_volume_pan(stream, getEffectiveVolume(event), 0.5f);
 				playStream(event, stream);
-				AUDIO_LOG_EVENT("START", event, "pool=stream file=%s eff=%.3f", fileToPlay.str(), getEffectiveVolume(event));
+				if (AudioLog::g_on) {
+				F32 logVol = 0.0f, logPan = 0.0f;
+				AIL_stream_volume_pan(stream, &logVol, &logPan);
+				AUDIO_LOG_EVENT("START", event, "pool=stream slot=%d file=%s eff=%.3f dvol=%.3f pan=%.3f loops=%d",
+					(int)m_playingStreams.size(), fileToPlay.str(), getEffectiveVolume(event), logVol, logPan, (int)AIL_stream_loop_count(stream));
+			}
 
 				CriticalSectionClass::LockClass lock(m_playingStreamsCS);
 				m_playingStreams.push_back(newPlaying);
@@ -786,7 +806,16 @@ void MilesAudioManager::playAudioEvent( AudioRequest* req )
 				}
 				else
 				{
-					AUDIO_LOG_EVENT("START", event, "pool=3D file=%s eff=%.3f", event->getFilename().str(), getEffectiveVolume(event));
+					if (AudioLog::g_on) {
+						const Coord3D *logPos = getCurrentPositionFromEvent(event);
+						const Bool logGlobal = (event->getAudioEventInfo()->m_type & ST_GLOBAL) != 0;
+						const Real logMin = logGlobal ? TheAudio->getAudioSettings()->m_globalMinRange : event->getAudioEventInfo()->m_minDistance;
+						const Real logMax = logGlobal ? TheAudio->getAudioSettings()->m_globalMaxRange : event->getAudioEventInfo()->m_maxDistance;
+						const Real logOcclusion = (logPos && event->getAudioEventInfo()->m_lowPassFreq > 0 && !isOnScreen(logPos)) ? 1.0f - event->getAudioEventInfo()->m_lowPassFreq : 0.0f;
+						AUDIO_LOG_EVENT("START", event, "pool=3D voice=%d file=%s eff=%.3f dvol=%.3f rate=%d min=%.1f max=%.1f occl=%.3f delay=%.1f",
+							audioLogVoiceId(sample3D), event->getFilename().str(), getEffectiveVolume(event), (float)AIL_3D_sample_volume(sample3D),
+							(int)AIL_3D_sample_playback_rate(sample3D), logMin, logMax, logOcclusion, event->getDelay());
+					}
 					CriticalSectionClass::LockClass lock(m_playing3DSoundsCS);
 					m_playing3DSounds.push_back(newPlaying);
 					newPlaying = nullptr;
@@ -851,7 +880,13 @@ void MilesAudioManager::playAudioEvent( AudioRequest* req )
 						DEBUG_LOG((" Killed (no handles available)"));
 					#endif
 				} else {
-					AUDIO_LOG_EVENT("START", event, "pool=2D file=%s eff=%.3f", event->getFilename().str(), getEffectiveVolume(event));
+					if (AudioLog::g_on) {
+						F32 logVol = 0.0f, logPan = 0.0f;
+						AIL_sample_volume_pan(sample, &logVol, &logPan);
+						AUDIO_LOG_EVENT("START", event, "pool=2D voice=%d file=%s eff=%.3f dvol=%.3f pan=%.3f rate=%d delay=%.1f",
+							audioLogVoiceId(sample), event->getFilename().str(), getEffectiveVolume(event), logVol, logPan,
+							(int)AIL_sample_playback_rate(sample), event->getDelay());
+					}
 					CriticalSectionClass::LockClass lock(m_playingSoundsCS);
 					m_playingSounds.push_back(newPlaying);
 					newPlaying = nullptr;
@@ -1426,9 +1461,13 @@ Bool MilesAudioManager::hasMusicTrackCompleted( const AsciiString& trackName, In
 {
 	if (const PlayingAudio *playing = findActiveMusic(&trackName)) {
 		if (INFINITE_LOOP_COUNT - AIL_stream_loop_count(playing->m_stream) >= numberOfTimes) {
+			AUDIO_LOG("MUSICDONE", "track=%s n=%d result=1 completed=%d", trackName.str(), numberOfTimes, (int)(INFINITE_LOOP_COUNT - AIL_stream_loop_count(playing->m_stream)));
 			return TRUE;
 		}
+		AUDIO_LOG("MUSICDONE", "track=%s n=%d result=0 completed=%d", trackName.str(), numberOfTimes, (int)(INFINITE_LOOP_COUNT - AIL_stream_loop_count(playing->m_stream)));
+		return FALSE;
 	}
+	AUDIO_LOG("MUSICDONE", "track=%s n=%d result=0 not_playing", trackName.str(), numberOfTimes);
 	return FALSE;
 }
 
@@ -1475,6 +1514,11 @@ void MilesAudioManager::openDevice()
 
 	// Now that we're all done, update the cached variables so that everything is in sync.
 	TheAudio->refreshCachedVariables();
+
+	AUDIO_LOG("DEVICE", "provider=%s speaker=%u(%s) digital_on=%d outputrate=%d bits=%d channels=%d",
+		isValidProvider() ? m_provider3D[m_selectedProvider].name.str() : "none", (unsigned)m_selectedSpeakerType,
+		TheAudio->translateUnsignedIntToSpeakerType(m_selectedSpeakerType).str(), (int)isOn(AudioAffect_Sound3D),
+		(int)audioSettings->m_outputRate, (int)audioSettings->m_outputBits, (int)audioSettings->m_outputChannels);
 
 	if (!isValidProvider()) {
 		return;
@@ -2611,6 +2655,7 @@ Real MilesAudioManager::getFileLengthMS( AsciiString strToLoad ) const
 	// Load it as a stream to get the file info without actually opening the file.
 	HSTREAM stream = AIL_open_stream(m_digitalHandle, strToLoad.str(), 0);
 	if (!stream) {
+		AUDIO_LOG("LEN", "file=%s ms=-1 open_failed", strToLoad.str());
 		return 0.0f;
 	}
 
@@ -2618,6 +2663,7 @@ Real MilesAudioManager::getFileLengthMS( AsciiString strToLoad ) const
 	AIL_stream_ms_position(stream, &retVal, nullptr);
 	// Now close the stream
 	AIL_close_stream(stream);
+	AUDIO_LOG("LEN", "file=%s ms=%ld", strToLoad.str(), retVal);
 
 	return INT_TO_REAL(retVal);
 }
@@ -2655,6 +2701,15 @@ void MilesAudioManager::setDeviceListenerPosition()
 		Real y = m_listenerPosition.y;
 		Real z = m_listenerPosition.z;
 		AIL_set_3D_position( m_listener, x, y, z );
+		if (AudioLog::g_on) {
+			static UnsignedInt s_lastLoggedFrame = 0xFFFFFFFFu;
+			const UnsignedInt logFrame = TheGameLogic ? TheGameLogic->getFrame() : 0;
+			if (logFrame % 300 == 0 && logFrame != s_lastLoggedFrame) {
+				s_lastLoggedFrame = logFrame;
+				AUDIO_LOG("LISTENER", "pos=%.1f,%.1f,%.1f orient=%.3f,%.3f,%.3f", x, y, z,
+					m_listenerOrientation.x, m_listenerOrientation.y, m_listenerOrientation.z);
+			}
+		}
 	}
 }
 

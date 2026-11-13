@@ -1088,9 +1088,11 @@ Real AudioManager::getAudioLengthMS( const AudioEventRTS *event )
 
 	tmpEvent.generateFilename();
 	tmpEvent.generatePlayInfo();
-	return getFileLengthMS(tmpEvent.getAttackFilename()) +
+	const Real totalMS = getFileLengthMS(tmpEvent.getAttackFilename()) +
 				 getFileLengthMS(tmpEvent.getFilename()) +
 				 getFileLengthMS(tmpEvent.getDecayFilename());
+	AUDIO_LOG("LENEV", "ev=%s total_ms=%.1f", event->getEventName().str(), totalMS);
+	return totalMS;
 }
 
 //-------------------------------------------------------------------------------------------------
