@@ -29,6 +29,7 @@
 #include "AudioDevice/AudioFileLength.h"
 
 #include <string.h>
+#include <windows.h>
 
 namespace
 {
@@ -67,6 +68,10 @@ void NullAudioDevice::close()
 		delete *it;
 	}
 	m_oneShots.clear();
+	for (std::list<MovieSound *>::iterator it = m_movieSounds.begin(); it != m_movieSounds.end(); ++it) {
+		delete *it;
+	}
+	m_movieSounds.clear();
 	m_sampleLengths.clear();
 	m_fileLengths.clear();
 	m_listener = nullptr;
@@ -407,4 +412,54 @@ void NullAudioDevice::freeOneShot(AudioVoice voice)
 	Voice *v = toVoice(voice);
 	m_oneShots.remove(v);
 	delete v;
+}
+
+//-------------------------------------------------------------------------------------------------
+// Movie sound: nothing is played, but the frames are taken at the pace a device with output takes them (real time,
+// from the first frame pushed), with about two seconds of queue, so a player waiting on the queue keeps its timing.
+AudioVoice NullAudioDevice::openMovieSound(UnsignedInt sampleRate, UnsignedInt channels, Real volume)
+{
+	if (!m_open || sampleRate == 0 || channels == 0 || channels > 2) {
+		return 0;
+	}
+	MovieSound *m = NEW MovieSound;
+	m->sampleRate = sampleRate;
+	m->pushed = 0;
+	m->started = FALSE;
+	m->startMS = 0;
+	m_movieSounds.push_back(m);
+	return (AudioVoice)m;
+}
+
+UnsignedInt64 NullAudioDevice::movieSoundPlayedFrames(AudioVoice sound) const
+{
+	const MovieSound *m = (const MovieSound *)sound;
+	if (!m->started) {
+		return 0;
+	}
+	const UnsignedInt64 elapsed = (UnsignedInt)(::GetTickCount() - m->startMS);
+	const UnsignedInt64 played = elapsed * m->sampleRate / 1000;
+	return played < m->pushed ? played : m->pushed;
+}
+
+UnsignedInt NullAudioDevice::pushMovieSound(AudioVoice sound, const Short *frames, UnsignedInt frameCount)
+{
+	MovieSound *m = (MovieSound *)sound;
+	const UnsignedInt64 queued = m->pushed - movieSoundPlayedFrames(sound);
+	const UnsignedInt64 capacity = (UnsignedInt64)m->sampleRate * 2;
+	const UnsignedInt64 room = queued < capacity ? capacity - queued : 0;
+	const UnsignedInt taken = frameCount < room ? frameCount : (UnsignedInt)room;
+	if (taken > 0 && !m->started) {
+		m->started = TRUE;
+		m->startMS = (UnsignedInt)::GetTickCount();
+	}
+	m->pushed += taken;
+	return taken;
+}
+
+void NullAudioDevice::closeMovieSound(AudioVoice sound)
+{
+	MovieSound *m = (MovieSound *)sound;
+	m_movieSounds.remove(m);
+	delete m;
 }

@@ -2955,6 +2955,29 @@ void *MilesAudioManager::getHandleForBink()
 }
 
 //-------------------------------------------------------------------------------------------------
+// TheSuperHackers @feature Movie sound for the FFmpeg video player, at the volume the Bink player sets: the speech
+// volume x 0.8, plus 1 percent (Bink plays volume 0 at full volume).
+uintptr_t MilesAudioManager::openMovieSound( UnsignedInt sampleRate, UnsignedInt channels )
+{
+	const Int mod = (Int)((getVolume(AudioAffect_Speech) * 0.8f) * 100) + 1;
+	return m_device->openMovieSound(sampleRate, channels, mod / 100.0f);
+}
+
+//-------------------------------------------------------------------------------------------------
+UnsignedInt MilesAudioManager::pushMovieSound( uintptr_t sound, const Short *frames, UnsignedInt frameCount )
+{
+	return sound ? m_device->pushMovieSound(sound, frames, frameCount) : 0;
+}
+
+//-------------------------------------------------------------------------------------------------
+void MilesAudioManager::closeMovieSound( uintptr_t sound )
+{
+	if (sound) {
+		m_device->closeMovieSound(sound);
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
 void MilesAudioManager::releaseHandleForBink()
 {
 	if (m_binkHandle) {

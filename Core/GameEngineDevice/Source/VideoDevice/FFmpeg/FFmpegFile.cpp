@@ -364,6 +364,14 @@ Int FFmpegFile::getPixelFormat() const
 	return stream->codec_ctx->pix_fmt;
 }
 
+Real FFmpegFile::getFrameRate() const
+{
+	const FFmpegStream *stream = findMatch(AVMEDIA_TYPE_VIDEO);
+	if (stream == nullptr || m_fmtCtx == nullptr)
+		return 0.0f;
+	return (Real)av_q2d(m_fmtCtx->streams[stream->stream_idx]->avg_frame_rate);
+}
+
 UnsignedInt FFmpegFile::getFrameTime() const
 {
 	const FFmpegStream *stream = findMatch(AVMEDIA_TYPE_VIDEO);

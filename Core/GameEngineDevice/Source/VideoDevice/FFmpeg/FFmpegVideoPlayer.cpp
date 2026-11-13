@@ -43,15 +43,12 @@
 
 extern "C" {
 	#include <libavcodec/avcodec.h>
+	#include <libavutil/samplefmt.h>
 	#include <libswscale/swscale.h>
 }
 
-#ifdef RTS_HAS_OPENAL
-#include "OpenALAudioDevice/OpenALAudioManager.h"
-#include "OpenALAudioDevice/OpenALAudioStream.h"
-#endif
-
 #include <chrono>
+#include <math.h>
 
 //----------------------------------------------------------------------------
 //         Externals
@@ -95,6 +92,50 @@ extern "C" {
 //----------------------------------------------------------------------------
 //         Private Functions
 //----------------------------------------------------------------------------
+
+// TheSuperHackers @feature One decoded sample as 16 bits, from any of FFmpeg's sample formats.
+static Short sampleToShort(const uint8_t *p, AVSampleFormat packedFormat)
+{
+	switch (packedFormat)
+	{
+		case AV_SAMPLE_FMT_U8: return (Short)(((Int)*p - 128) * 256);
+		case AV_SAMPLE_FMT_S16: return *(const int16_t *)p;
+		case AV_SAMPLE_FMT_S32: return (Short)(*(const int32_t *)p / 65536);
+		case AV_SAMPLE_FMT_S64: return (Short)(*(const int64_t *)p / 281474976710656LL);
+		case AV_SAMPLE_FMT_FLT:
+		case AV_SAMPLE_FMT_DBL:
+		{
+			double v = packedFormat == AV_SAMPLE_FMT_FLT ? *(const float *)p : *(const double *)p;
+			v = v > 1.0 ? 1.0 : (v < -1.0 ? -1.0 : v);
+			return (Short)lrint(v * 32767.0);
+		}
+		default: return 0;
+	}
+}
+
+// Appends the frame's sound as 16-bit interleaved frames of 'channels' channels (the first one or two of the frame).
+static void appendSound(const AVFrame *frame, UnsignedInt channels, std::vector<Short> &out)
+{
+	const AVSampleFormat format = static_cast<AVSampleFormat>(frame->format);
+	const AVSampleFormat packed = av_get_packed_sample_fmt(format);
+	const Bool planar = av_sample_fmt_is_planar(format) != 0;
+	const Int bytes = av_get_bytes_per_sample(format);
+	const Int sourceChannels = frame->ch_layout.nb_channels;
+	if (bytes <= 0 || sourceChannels <= 0) {
+		return;
+	}
+	const size_t first = out.size();
+	out.resize(first + (size_t)frame->nb_samples * channels);
+	Short *dst = &out[first];
+	for (Int i = 0; i < frame->nb_samples; ++i) {
+		for (UnsignedInt c = 0; c < channels; ++c) {
+			const Int source = (Int)c < sourceChannels ? (Int)c : 0;
+			const uint8_t *p = planar ? frame->extended_data[source] + (size_t)i * bytes
+				: frame->extended_data[0] + ((size_t)i * sourceChannels + source) * bytes;
+			*dst++ = sampleToShort(p, packed);
+		}
+	}
+}
 
 
 
@@ -311,20 +352,17 @@ FFmpegVideoStream::FFmpegVideoStream(FFmpegFile* file)
 	m_ffmpegFile->setFrameCallback(onFrame);
 	m_ffmpegFile->setUserData(this);
 
-#ifdef RTS_USE_OPENAL
-	// Release the audio handle if it's already in use
-	OpenALAudioStream* audioStream = (OpenALAudioStream*)TheAudio->getHandleForBink();
-	audioStream->reset();
-#endif
+	// TheSuperHackers @feature The movie's sound goes to the audio device as 16-bit frames (mono, or the first two
+	// channels). Without such a stream (Miles: Bink only, or audio off) the movie plays without sound.
+	if (m_ffmpegFile->hasAudio() && m_ffmpegFile->getSampleRate() > 0) {
+		m_soundChannels = m_ffmpegFile->getNumChannels() >= 2 ? 2 : 1;
+		m_movieSound = TheAudio->openMovieSound(m_ffmpegFile->getSampleRate(), m_soundChannels);
+	}
 
 	// Decode until we have our first video frame
 	while (m_good && m_gotFrame == false)
 		m_good = m_ffmpegFile->decodePacket();
-
- #ifdef RTS_USE_OPENAL
-	// Start audio playback
-	audioStream->play();
-#endif
+	pushSound();
 
 	m_startTime = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
@@ -335,7 +373,8 @@ FFmpegVideoStream::FFmpegVideoStream(FFmpegFile* file)
 
 FFmpegVideoStream::~FFmpegVideoStream()
 {
-	av_freep(&m_audioBuffer);
+	TheAudio->closeMovieSound(m_movieSound);
+	m_movieSound = 0;
 	av_frame_free(&m_frame);
 	sws_freeContext(m_swsContext);
 	delete m_ffmpegFile;
@@ -349,42 +388,12 @@ void FFmpegVideoStream::onFrame(AVFrame *frame, int stream_idx, int stream_type,
 		videoStream->m_frame = av_frame_clone(frame);
 		videoStream->m_gotFrame = true;
 	}
-#ifdef RTS_USE_OPENAL
 	else if (stream_type == AVMEDIA_TYPE_AUDIO) {
-		OpenALAudioStream* audioStream = (OpenALAudioStream*)TheAudio->getHandleForBink();
-		audioStream->update();
-		AVSampleFormat sampleFmt = static_cast<AVSampleFormat>(frame->format);
-		const int bytesPerSample = av_get_bytes_per_sample(sampleFmt);
-		const int frameSize = av_samples_get_buffer_size(nullptr, frame->ch_layout.nb_channels, frame->nb_samples, sampleFmt, 1);
-		uint8_t* frameData = frame->data[0];
-		// The format is planar - convert it to interleaved
-		if (av_sample_fmt_is_planar(sampleFmt))
-		{
-			videoStream->m_audioBuffer = static_cast<uint8_t*>(av_realloc(videoStream->m_audioBuffer, frameSize));
-			if (videoStream->m_audioBuffer == nullptr)
-			{
-				DEBUG_LOG(("Failed to allocate audio buffer"));
-				return;
-			}
-
-			// Write the samples into our audio buffer
-			for (int sample_idx = 0; sample_idx < frame->nb_samples; sample_idx++)
-			{
-				int byte_offset = sample_idx * bytesPerSample;
-				for (int channel_idx = 0; channel_idx < frame->ch_layout.nb_channels; channel_idx++)
-				{
-					uint8_t* dst = &videoStream->m_audioBuffer[byte_offset * frame->ch_layout.nb_channels + channel_idx * bytesPerSample];
-					uint8_t* src = &frame->data[channel_idx][byte_offset];
-					memcpy(dst, src, bytesPerSample);
-				}
-			}
-			frameData = videoStream->m_audioBuffer;
+		if (videoStream->m_movieSound != 0) {
+			appendSound(frame, videoStream->m_soundChannels, videoStream->m_pendingSound);
+			videoStream->pushSound();
 		}
-
-		ALenum format = OpenALAudioManager::getALFormat(frame->ch_layout.nb_channels, bytesPerSample * 8);
-		audioStream->bufferData(frameData, frameSize, format, frame->sample_rate);
 	}
-#endif
 }
 
 
@@ -394,12 +403,21 @@ void FFmpegVideoStream::onFrame(AVFrame *frame, int stream_idx, int stream_type,
 
 void FFmpegVideoStream::update()
 {
-#ifdef RTS_USE_OPENAL
-	// Start audio playback
-	OpenALAudioStream* audioStream = (OpenALAudioStream*)TheAudio->getHandleForBink();
-	audioStream->play();
-#endif
-	//BinkWait( m_handle );
+	pushSound();
+}
+
+//============================================================================
+// FFmpegVideoStream::pushSound
+//============================================================================
+
+void FFmpegVideoStream::pushSound()
+{
+	if (m_movieSound == 0 || m_pendingSound.empty()) {
+		return;
+	}
+	const UnsignedInt frames = (UnsignedInt)(m_pendingSound.size() / m_soundChannels);
+	const UnsignedInt taken = TheAudio->pushMovieSound(m_movieSound, m_pendingSound.data(), frames);
+	m_pendingSound.erase(m_pendingSound.begin(), m_pendingSound.begin() + (size_t)taken * m_soundChannels);
 }
 
 //============================================================================
@@ -409,8 +427,13 @@ void FFmpegVideoStream::update()
 Bool FFmpegVideoStream::isFrameReady()
 {
 	uint64_t time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-	bool ready = (time - m_startTime) >= m_ffmpegFile->getFrameTime() * frameIndex();
-	return ready;
+	// TheSuperHackers @fix The exact frame rate: whole milliseconds per frame (33 for 29.97 fps) ran the picture ahead
+	// of the sound by about 1 percent.
+	const double fps = m_ffmpegFile->getFrameRate();
+	if (fps <= 0.0) {
+		return (time - m_startTime) >= m_ffmpegFile->getFrameTime() * frameIndex();
+	}
+	return (double)(time - m_startTime) * fps >= 1000.0 * frameIndex();
 
 	//return !BinkWait( m_handle );
 }

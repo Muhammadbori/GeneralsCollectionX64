@@ -34,6 +34,9 @@
 
 #include "GameClient/VideoPlayer.h"
 
+#include <stdint.h>
+#include <vector>
+
 //----------------------------------------------------------------------------
 //           Forward References
 //----------------------------------------------------------------------------
@@ -62,12 +65,15 @@ class FFmpegVideoStream : public VideoStream
 		FFmpegFile		*m_ffmpegFile;			///< The AVUI abstraction											///< Bink streaming handle;
 		Char			*m_memFile;				///< Pointer to memory resident file
 		UnsignedInt64	m_startTime = 0;		///< Time the stream started
-		UnsignedByte *	m_audioBuffer = nullptr;///< Audio buffer for the stream
+		uintptr_t		m_movieSound = 0;		///< The audio device's movie sound (0: none, or the device plays none)
+		UnsignedInt		m_soundChannels = 0;	///< Channels pushed to it (1 or 2)
+		std::vector<Short> m_pendingSound;		///< Decoded frames the device has not taken yet
 
 		FFmpegVideoStream(FFmpegFile* file);																///< only BinkVideoPlayer can create these
 		virtual ~FFmpegVideoStream();
 
 		static void onFrame(AVFrame *frame, int stream_idx, int stream_type, void *user_data);
+		void pushSound();														///< Hands pending sound frames to the audio device
 	public:
 
 		virtual void update();											///< Update bink stream

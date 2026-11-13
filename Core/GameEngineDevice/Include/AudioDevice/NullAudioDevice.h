@@ -84,6 +84,10 @@ public:
 	virtual AudioVoice playOneShot(const char *fileName, Real volume, Real pan) override;
 	virtual void freeOneShot(AudioVoice voice) override;
 	virtual void *movieAudioHandle(AudioVoice reserved2D) override { return nullptr; }
+	virtual AudioVoice openMovieSound(UnsignedInt sampleRate, UnsignedInt channels, Real volume) override;
+	virtual UnsignedInt pushMovieSound(AudioVoice sound, const Short *frames, UnsignedInt frameCount) override;
+	virtual UnsignedInt64 movieSoundPlayedFrames(AudioVoice sound) const override;
+	virtual void closeMovieSound(AudioVoice sound) override;
 	virtual const char *name() const override { return "No audio device"; }
 	virtual UnsignedInt debugTimerDelay() const override { return 0; }
 
@@ -119,6 +123,16 @@ private:
 
 	std::vector<Voice *> m_voices;          ///< 2D and 3D voices and streams, in creation order
 	std::list<Voice *> m_oneShots;
+
+	/// Movie sound: taken in real time, about two seconds ahead at most, as a device with output would.
+	struct MovieSound
+	{
+		UnsignedInt sampleRate;
+		UnsignedInt64 pushed;
+		Bool started;
+		UnsignedInt startMS;
+	};
+	std::list<MovieSound *> m_movieSounds;
 
 	typedef std::map<const void *, Real> SampleLengthMap;
 	SampleLengthMap m_sampleLengths;        ///< play length in ms of each sample decodeSample has seen, by its data

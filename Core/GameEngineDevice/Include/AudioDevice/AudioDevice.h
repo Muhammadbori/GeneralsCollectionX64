@@ -168,7 +168,16 @@ public:
 	// --- one-shots (mission briefings), movies, debug -----------------------------------------
 	virtual AudioVoice playOneShot(const char *fileName, Real volume, Real pan) = 0;
 	virtual void freeOneShot(AudioVoice voice) = 0;
-	virtual void *movieAudioHandle(AudioVoice reserved2D) = 0;  ///< stage 2 only (Bink's DirectSound)
+	virtual void *movieAudioHandle(AudioVoice reserved2D) = 0;  ///< Bink's DirectSound (Miles only; others: null)
+
+	// --- movie sound pushed by a video player that decodes its own sound (FFmpeg) ---------------
+	/// A stream of 16-bit interleaved frames (1 or 2 channels) played at 'volume' (linear, as Bink's volume).
+	/// Returns 0 when the device has no such stream (Miles: Bink plays its sound through movieAudioHandle).
+	virtual AudioVoice openMovieSound(UnsignedInt sampleRate, UnsignedInt channels, Real volume) = 0;
+	/// Queues frames for playing; returns how many it took (fewer when its queue of about two seconds is full).
+	virtual UnsignedInt pushMovieSound(AudioVoice sound, const Short *frames, UnsignedInt frameCount) = 0;
+	virtual UnsignedInt64 movieSoundPlayedFrames(AudioVoice sound) const = 0;  ///< frames played so far
+	virtual void closeMovieSound(AudioVoice sound) = 0;
 	virtual const char *name() const = 0;
 	virtual UnsignedInt debugTimerDelay() const = 0;
 };

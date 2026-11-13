@@ -37,7 +37,7 @@ struct AVCodec;
 struct AVCodecContext;
 struct AVFrame;
 struct AVPacket;
-struct File;
+class File;
 
 using FFmpegFrameCallback = std::function<void(AVFrame *, int, int, void *)>;
 
@@ -71,6 +71,7 @@ public:
 	Int getCurrentFrame() const;
 	Int getPixelFormat() const;
 	UnsignedInt getFrameTime() const;
+	Real getFrameRate() const;	///< frames per second of the video stream (0 without one)
 
 private:
 	struct FFmpegStream

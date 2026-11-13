@@ -200,6 +200,10 @@ class MilesAudioManager : public AudioManager, public AudioDeviceListener
 
 		virtual void friend_forcePlayAudioEventRTS(const AudioEventRTS* eventToPlay) override;
 
+		virtual uintptr_t openMovieSound( UnsignedInt sampleRate, UnsignedInt channels ) override;
+		virtual UnsignedInt pushMovieSound( uintptr_t sound, const Short *frames, UnsignedInt frameCount ) override;
+		virtual void closeMovieSound( uintptr_t sound ) override;
+
 		virtual UnsignedInt getNum2DSamples() const override;
 		virtual UnsignedInt getNum3DSamples() const override;
 		virtual UnsignedInt getNumStreams() const override;

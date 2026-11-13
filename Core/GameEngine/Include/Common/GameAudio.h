@@ -260,6 +260,12 @@ class AudioManager : public SubsystemInterface
  		virtual void *getHandleForBink() = 0;
  		virtual void releaseHandleForBink() = 0;
 
+		// TheSuperHackers @feature Movie sound for a video player that decodes the sound itself (FFmpeg): 16-bit
+		// interleaved frames, pushed as they are decoded. 0 when there is no such stream (Miles: Bink plays the sound).
+		virtual uintptr_t openMovieSound( UnsignedInt sampleRate, UnsignedInt channels ) { return 0; }
+		virtual UnsignedInt pushMovieSound( uintptr_t sound, const Short *frames, UnsignedInt frameCount ) { return 0; }
+		virtual void closeMovieSound( uintptr_t sound ) {}
+
 		// this function will play an audio event rts by loading it into memory. It should not be used
 		// by anything except for the load screens.
 		virtual void friend_forcePlayAudioEventRTS(const AudioEventRTS* eventToPlay) = 0;

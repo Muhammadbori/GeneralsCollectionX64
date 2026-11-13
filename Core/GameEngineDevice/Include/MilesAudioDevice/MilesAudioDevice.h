@@ -77,6 +77,10 @@ public:
 	virtual AudioVoice playOneShot(const char *fileName, Real volume, Real pan) override;
 	virtual void freeOneShot(AudioVoice voice) override;
 	virtual void *movieAudioHandle(AudioVoice reserved2D) override;
+	virtual AudioVoice openMovieSound(UnsignedInt sampleRate, UnsignedInt channels, Real volume) override { return 0; } ///< Bink plays it
+	virtual UnsignedInt pushMovieSound(AudioVoice sound, const Short *frames, UnsignedInt frameCount) override { return 0; }
+	virtual UnsignedInt64 movieSoundPlayedFrames(AudioVoice sound) const override { return 0; }
+	virtual void closeMovieSound(AudioVoice sound) override {}
 	virtual const char *name() const override { return "Miles Sound System"; }
 	virtual UnsignedInt debugTimerDelay() const override;
 

@@ -283,6 +283,61 @@ namespace
 }
 
 //-------------------------------------------------------------------------------------------------
+/// Movie sound: a ring buffer of 16-bit frames the video player fills; the audio thread plays silence when it runs
+/// dry (the decoder is behind) and counts only the frames it really played.
+struct MiniaudioMovieSource
+{
+	ma_data_source_base base;        ///< first: miniaudio sees this struct as the data source
+	ma_pcm_rb buffer;
+	ma_uint32 channels;
+	ma_uint32 sampleRate;
+	std::atomic<ma_uint64> played;
+};
+
+namespace
+{
+	ma_result movieRead(ma_data_source *source, void *framesOut, ma_uint64 frameCount, ma_uint64 *framesRead)
+	{
+		MiniaudioMovieSource *m = (MiniaudioMovieSource *)source;
+		short *out = (short *)framesOut;
+		ma_uint64 done = 0;
+		while (done < frameCount)
+		{
+			ma_uint32 n = (ma_uint32)((frameCount - done) > 0x7FFFFFFF ? 0x7FFFFFFF : (frameCount - done));
+			void *p = nullptr;
+			if (ma_pcm_rb_acquire_read(&m->buffer, &n, &p) != MA_SUCCESS || n == 0) {
+				break;
+			}
+			memcpy(out + done * m->channels, p, (size_t)n * m->channels * sizeof(short));
+			ma_pcm_rb_commit_read(&m->buffer, n);
+			done += n;
+		}
+		m->played.fetch_add(done, std::memory_order_relaxed);
+		if (done < frameCount) {
+			memset(out + done * m->channels, 0, (size_t)(frameCount - done) * m->channels * sizeof(short));
+		}
+		if (framesRead) {
+			*framesRead = frameCount;
+		}
+		return MA_SUCCESS;
+	}
+
+	ma_result movieSeek(ma_data_source *, ma_uint64) { return MA_NOT_IMPLEMENTED; }
+
+	ma_result movieFormat(ma_data_source *source, ma_format *format, ma_uint32 *channels, ma_uint32 *sampleRate, ma_channel *channelMap, size_t channelMapCap)
+	{
+		MiniaudioMovieSource *m = (MiniaudioMovieSource *)source;
+		if (format) *format = ma_format_s16;
+		if (channels) *channels = m->channels;
+		if (sampleRate) *sampleRate = m->sampleRate;
+		if (channelMap) ma_channel_map_init_standard(ma_standard_channel_map_default, channelMap, channelMapCap, m->channels);
+		return MA_SUCCESS;
+	}
+
+	ma_data_source_vtable g_movieVtable = { movieRead, movieSeek, movieFormat, nullptr, nullptr, nullptr, 0 };
+}
+
+//-------------------------------------------------------------------------------------------------
 struct MiniaudioVoice
 {
 	MiniaudioDeviceState *state;
@@ -294,6 +349,7 @@ struct MiniaudioVoice
 	ma_sound sound;
 	bool soundReady;
 	ma_audio_buffer_ref buffer;
+	MiniaudioMovieSource *movie;     ///< movie sound only
 
 	UnsignedInt generation;          ///< changes when the voice starts again or is released (under the device lock)
 	std::atomic<UnsignedInt> endGeneration;  ///< the generation of the sound now playing, read by the audio thread
@@ -347,6 +403,7 @@ struct MiniaudioDeviceState
 
 	std::vector<MiniaudioVoice *> voices;
 	std::list<MiniaudioVoice *> oneShots;
+	std::list<MiniaudioVoice *> movieSounds;
 	Coord3D listenerPosition;
 	Coord3D listenerLook;
 	AudioFileLengths fileLengths;
@@ -421,6 +478,7 @@ namespace
 		v->debugIndex = 0;
 		v->nodeReady = false;
 		v->soundReady = false;
+		v->movie = nullptr;
 		v->generation = 0;
 		v->endGeneration.store(0);
 		v->playing = false;
@@ -460,6 +518,12 @@ namespace
 	void deleteVoice(MiniaudioVoice *v)
 	{
 		stopSound(v);
+		if (v->movie) {
+			ma_pcm_rb_uninit(&v->movie->buffer);
+			ma_data_source_uninit(&v->movie->base);
+			delete v->movie;
+			v->movie = nullptr;
+		}
 		if (v->nodeReady) {
 			ma_node_uninit(&v->node.base, nullptr);
 			if (v->node.lpfReady) {
@@ -760,6 +824,10 @@ void MiniaudioAudioDevice::close()
 		deleteVoice(*it);
 	}
 	s->oneShots.clear();
+	for (std::list<MiniaudioVoice *>::iterator it = s->movieSounds.begin(); it != s->movieSounds.end(); ++it) {
+		deleteVoice(*it);
+	}
+	s->movieSounds.clear();
 	s->endQueue.clear();
 	if (s->engineReady) {
 		ma_engine_uninit(&s->engine);
@@ -1209,6 +1277,96 @@ void MiniaudioAudioDevice::freeOneShot(AudioVoice voice)
 	{
 		std::lock_guard<std::mutex> guard(s->lock);
 		s->oneShots.remove(v);
+	}
+	deleteVoice(v);
+}
+
+//-------------------------------------------------------------------------------------------------
+/// Movie sound: a voice whose data source is a ring buffer of about two seconds; the gains are the volume itself on
+/// both channels (linear, as Bink's volume).
+AudioVoice MiniaudioAudioDevice::openMovieSound(UnsignedInt sampleRate, UnsignedInt channels, Real volume)
+{
+	MiniaudioDeviceState *s = m_state;
+	if (!s->engineReady || sampleRate == 0 || channels == 0 || channels > 2) {
+		return 0;
+	}
+	MiniaudioVoice *v = newVoice(s, AVK_Stream);
+	if (v == nullptr) {
+		return 0;
+	}
+	MiniaudioMovieSource *m = new MiniaudioMovieSource;
+	m->channels = channels;
+	m->sampleRate = sampleRate;
+	m->played.store(0);
+	ma_data_source_config dc = ma_data_source_config_init();
+	dc.vtable = &g_movieVtable;
+	if (ma_data_source_init(&dc, &m->base) != MA_SUCCESS) {
+		delete m;
+		deleteVoice(v);
+		return 0;
+	}
+	if (ma_pcm_rb_init(ma_format_s16, channels, sampleRate * 2, nullptr, nullptr, &m->buffer) != MA_SUCCESS) {
+		ma_data_source_uninit(&m->base);
+		delete m;
+		deleteVoice(v);
+		return 0;
+	}
+	v->movie = m;
+
+	ma_sound_config sc = ma_sound_config_init_2(&s->engine);
+	sc.pDataSource = &m->base;
+	sc.flags = MA_SOUND_FLAG_NO_SPATIALIZATION | MA_SOUND_FLAG_NO_DEFAULT_ATTACHMENT;
+	if (ma_sound_init_ex(&s->engine, &sc, &v->sound) != MA_SUCCESS) {
+		deleteVoice(v);
+		return 0;
+	}
+	v->soundReady = true;
+	ma_node_attach_output_bus(&v->sound, 0, &v->node.base, 0);
+	v->volume = volume;
+	setTargets(v, volume, volume);
+	v->node.snap.store(1);
+	ma_sound_start(&v->sound);
+	v->playing = true;
+
+	std::lock_guard<std::mutex> guard(s->lock);
+	s->movieSounds.push_back(v);
+	return (AudioVoice)v;
+}
+
+UnsignedInt MiniaudioAudioDevice::pushMovieSound(AudioVoice sound, const Short *frames, UnsignedInt frameCount)
+{
+	MiniaudioMovieSource *m = toVoice(sound)->movie;
+	if (m == nullptr) {
+		return 0;
+	}
+	UnsignedInt done = 0;
+	while (done < frameCount)
+	{
+		ma_uint32 n = frameCount - done;
+		void *p = nullptr;
+		if (ma_pcm_rb_acquire_write(&m->buffer, &n, &p) != MA_SUCCESS || n == 0) {
+			break;
+		}
+		memcpy(p, frames + (size_t)done * m->channels, (size_t)n * m->channels * sizeof(short));
+		ma_pcm_rb_commit_write(&m->buffer, n);
+		done += n;
+	}
+	return done;
+}
+
+UnsignedInt64 MiniaudioAudioDevice::movieSoundPlayedFrames(AudioVoice sound) const
+{
+	const MiniaudioMovieSource *m = toVoice(sound)->movie;
+	return m ? m->played.load(std::memory_order_relaxed) : 0;
+}
+
+void MiniaudioAudioDevice::closeMovieSound(AudioVoice sound)
+{
+	MiniaudioDeviceState *s = m_state;
+	MiniaudioVoice *v = toVoice(sound);
+	{
+		std::lock_guard<std::mutex> guard(s->lock);
+		s->movieSounds.remove(v);
 	}
 	deleteVoice(v);
 }
