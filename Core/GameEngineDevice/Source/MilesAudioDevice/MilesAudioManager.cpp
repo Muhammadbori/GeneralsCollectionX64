@@ -45,6 +45,8 @@
 #include "Common/AudioHandleSpecialValues.h"
 #include "Common/AudioRequest.h"
 #include "Common/AudioSettings.h"
+#include "Common/CommandLine.h"
+#include "Common/GameEngine.h"
 #include "Common/AsciiString.h"
 #include "Common/AudioEventInfo.h"
 #include "Common/FileSystem.h"
@@ -457,6 +459,50 @@ void MilesAudioManager::init()
 void MilesAudioManager::postProcessLoad()
 {
 	AudioManager::postProcessLoad();
+
+	if (CommandLine::isAudioLenDumpEnabled())
+	{
+		dumpAudioLengths();
+		TheGameEngine->setQuitting(TRUE);
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
+// -audioLenDump: the length Miles reports (AIL_stream_ms_position, whole milliseconds, before the conversion to Real that
+// getFileLengthMS does) for every audio file the file system sees. The path is written as the file system lists it.
+void MilesAudioManager::dumpAudioLengths()
+{
+	AsciiString outPath = TheGlobalData->getPath_UserData();
+	outPath.concat("AudioLengths.tsv");
+	FILE *out = fopen(outPath.str(), "w");
+	if (!out)
+	{
+		return;
+	}
+	fprintf(out, "path\tms\n");
+
+	if (!m_milesLoaded || !m_digitalHandle)
+	{
+		fprintf(out, "# no audio device: Miles is not loaded (64-bit build, audio off, or mss32.dll missing)\n");
+		fclose(out);
+		return;
+	}
+
+	FilenameList files;
+	TheFileSystem->getFileListInDirectory("Data\\Audio\\", "*.wav", files, TRUE);
+	TheFileSystem->getFileListInDirectory("Data\\Audio\\", "*.mp3", files, TRUE);
+	for (FilenameList::const_iterator it = files.begin(); it != files.end(); ++it)
+	{
+		long ms = -1;
+		HSTREAM stream = AIL_open_stream(m_digitalHandle, it->str(), 0);
+		if (stream)
+		{
+			AIL_stream_ms_position(stream, &ms, nullptr);
+			AIL_close_stream(stream);
+		}
+		fprintf(out, "%s\t%ld\n", it->str(), ms);
+	}
+	fclose(out);
 }
 
 //-------------------------------------------------------------------------------------------------

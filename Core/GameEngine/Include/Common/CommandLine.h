@@ -55,4 +55,9 @@ public:
 
 	// TheSuperHackers @feature True with -audioLog: the audio manager writes AudioEvents.log in the user data folder.
 	static bool isAudioLogEnabled();
+
+	// TheSuperHackers @feature True with -audioLenDump: after the audio subsystem is loaded the Miles audio manager writes
+	// AudioLengths.tsv (every .wav/.mp3 under Data\Audio and the length Miles reports for it) to the user data folder and the
+	// game quits. A test tool; it needs Miles, so on a 64-bit build it only writes a note.
+	static bool isAudioLenDumpEnabled();
 };

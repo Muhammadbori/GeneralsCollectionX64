@@ -343,6 +343,8 @@ class MilesAudioManager : public AudioManager
 		Bool m_deviceOpened;
 		Bool m_milesLoaded;
 
+		void dumpAudioLengths();	///< -audioLenDump: AudioLengths.tsv in the user data folder
+
 #if defined(RTS_DEBUG)
 		typedef std::set<AsciiString> SetAsciiString;
 		typedef SetAsciiString::iterator SetAsciiStringIt;

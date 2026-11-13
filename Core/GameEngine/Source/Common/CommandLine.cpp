@@ -307,6 +307,28 @@ bool CommandLine::isAudioLogEnabled()
 	return s_state == 1;
 }
 
+bool CommandLine::isAudioLenDumpEnabled()
+{
+	static int s_state = -1;
+	if (s_state < 0)
+	{
+		s_state = 0;
+		for (int arg = 1; arg < __argc && s_state == 0; ++arg)
+		{
+			if (stricmp(__argv[arg], "-audioLenDump") == 0)
+			{
+				s_state = 1;
+			}
+		}
+	}
+	return s_state == 1;
+}
+
+Int parseAudioLenDump(char *[], int)
+{
+	return 1;
+}
+
 // TheSuperHackers @feature -audioLog: see CommandLine::isAudioLogEnabled(). Parsed from the raw command line; this entry only
 // makes the option known.
 Int parseAudioLog(char *[], int)
@@ -1548,6 +1570,7 @@ static CommandLineParam paramsForStartup[] =
 	// TheSuperHackers @feature 2026 Do not read or write the registry keys of the game.
 	{ "-noRegistry", parseNoRegistry },
 	{ "-audioLog", parseAudioLog },
+	{ "-audioLenDump", parseAudioLenDump },
 
 	// TheSuperHackers @feature 2026 Do not read or write the Direct3D 12 shader cache.
 	{ "-noShaderCache", parseNoShaderCache },
