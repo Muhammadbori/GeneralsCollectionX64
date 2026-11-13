@@ -23,6 +23,7 @@
 #include "Common/AsciiString.h"
 #include "Common/GameAudio.h"
 #include "mss/mss.h"
+#include "MilesAudioDevice/MilesAudioDevice.h"
 #include "WWLib/mutex.h"
 
 class AudioEventRTS;
@@ -105,7 +106,7 @@ struct ProviderInfo
 
 struct OpenAudioFile
 {
-	AILSOUNDINFO m_soundInfo;
+	AudioSampleInfo m_soundInfo;
 	void *m_file;
 	UnsignedInt m_openCount;
 	UnsignedInt m_fileSize;
@@ -122,7 +123,7 @@ typedef OpenFilesHash::iterator OpenFilesHashIt;
 class AudioFileCache
 {
 	public:
-		AudioFileCache();
+		AudioFileCache( AudioDevice *device );
 
 		// Protected by mutex
 		virtual ~AudioFileCache();
@@ -148,9 +149,10 @@ class AudioFileCache
 		UnsignedInt m_maxSize;
 		HANDLE m_mutex;
 		const char *m_mutexName;
+		AudioDevice *m_device;
 };
 
-class MilesAudioManager : public AudioManager
+class MilesAudioManager : public AudioManager, public AudioDeviceListener
 {
 
 	public:
@@ -190,6 +192,7 @@ class MilesAudioManager : public AudioManager
 
 		virtual void notifyOfAudioCompletion( uintptr_t handle, UnsignedInt flags ) override; ///< Is called on MSS Timer thread
 		virtual PlayingAudio *findPlayingAudioFrom( uintptr_t handle, UnsignedInt flags );
+		virtual void onVoiceDone( uintptr_t voice, UnsignedInt kind ) override; ///< AudioDeviceListener: on the device's thread
 
 		virtual UnsignedInt getProviderCount() const override;
 		virtual AsciiString getProviderName( UnsignedInt providerNum ) const override;
@@ -292,9 +295,6 @@ class MilesAudioManager : public AudioManager
 
 		void stopAllSpeech();
 
-		void initFilters( HSAMPLE sample, AudioEventRTS *eventInfo );
-		void initFilters3D( H3DSAMPLE sample, AudioEventRTS *eventInfo, const Coord3D *pos );
-
 	protected:
 		ProviderInfo m_provider3D[MAXPROVIDERS];
 		UnsignedInt m_providerCount;
@@ -306,8 +306,7 @@ class MilesAudioManager : public AudioManager
 		AsciiString m_prefSpeaker;
 
 		HDIGDRIVER m_digitalHandle;
-		H3DPOBJECT m_listener;
-		HPROVIDER m_delayFilter;
+		Bool m_hasListener;
 
 		// This is a list of all handles that are forcibly played. They always play as UI sounds.
 		std::list<HAUDIO> m_audioForcePlayed;
@@ -342,6 +341,9 @@ class MilesAudioManager : public AudioManager
 
 		Bool m_deviceOpened;
 		Bool m_milesLoaded;
+
+		MilesAudioDevice m_milesDevice;
+		AudioDevice *m_device;	///< every sound library call goes through it
 
 		void dumpAudioLengths();	///< -audioLenDump: AudioLengths.tsv in the user data folder
 
