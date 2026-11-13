@@ -20,7 +20,7 @@
 // TheSuperHackers @feature See MiniaudioAudioDevice.h.
 //
 // Graph: each voice is an ma_sound (spatialization off, volume 1) feeding the voice's own gain node, which applies
-// Miles' gains and feeds the engine's endpoint. The engine mixes at
+// Miles' gains (and, for 3D voices, the occlusion low-pass) and feeds the engine's endpoint. The engine mixes at
 // 44.1 kHz stereo, the game's output format; the output device converts when it runs at another rate.
 //
 // Threads and lock order (the same for every AudioDevice): the manager's lists first, the device lock second, and
@@ -54,6 +54,7 @@ namespace
 	const double kHeadroom = 0.9961;             ///< full scale minus the 16-bit mix headroom
 	const double kVolumeExponent = 1.660964;     ///< log2(sqrt(10)): -10 dB per halving of the volume
 	const double kPanExponent = 0.301;           ///< 2D pan: L = (1 - pan)^0.301, R = pan^0.301
+	const double kRearFactor = 0.75;             ///< 3D sources behind the listener
 	/// Miles applies no pitch to 2D samples in the manager's call order (the rate is set before the file, and
 	/// setting the file resets it). Set to false to play 2D samples at the pitch the INI asks for.
 	const bool kMilesResets2DPitch = true;
@@ -83,6 +84,41 @@ namespace
 		*right = (float)(g * pow(p, kPanExponent));
 	}
 
+	/// The occlusion low-pass. Miles' response at occlusion 0.25, 0.5 and 0.75 is one 2-pole low-pass (Q 0.7071)
+	/// at 16552, 11139 and 5795 Hz (fits within 0.15 dB from 250 Hz to 12 kHz); in between the cutoff is
+	/// interpolated. At full occlusion it is a steep low-pass at about 540 Hz over a floor 27 dB down.
+	struct OcclusionSetting
+	{
+		int biquads;     ///< 0 = no filter
+		double cutoff;
+		double q;
+		double dry;      ///< part of the unfiltered sound mixed back (full occlusion only)
+	};
+
+	OcclusionSetting occlusionFor(double occlusion)
+	{
+		OcclusionSetting s = { 0, 0.0, 0.707107, 0.0 };
+		if (!(occlusion > 0.02)) {
+			return s;
+		}
+		if (occlusion >= 0.999) {
+			s.biquads = 2;
+			s.cutoff = 540.0;
+			s.q = 0.45;
+			s.dry = -0.046;
+			return s;
+		}
+		const double fc = occlusion <= 0.5
+			? 16552.0 + (occlusion - 0.25) * (11139.0 - 16552.0) / 0.25
+			: 11139.0 + (occlusion - 0.5) * (5795.0 - 11139.0) / 0.25;
+		if (fc >= 20000.0) {
+			return s;
+		}
+		s.biquads = 1;
+		s.cutoff = fc < 100.0 ? 100.0 : fc;
+		return s;
+	}
+
 	//---------------------------------------------------------------------------------------------
 	// The voice's gain node: stereo in, stereo out.
 	struct GainNode
@@ -93,7 +129,19 @@ namespace
 		std::atomic<int> snap;                 ///< jump to the targets (a new sound starts)
 		float left;
 		float right;
+
+		OcclusionSetting requested;            ///< written by the device before 'requestedVersion' changes
+		std::atomic<int> requestedVersion;
+		int appliedVersion;
+		OcclusionSetting active;
+		ma_lpf2 lpf[2];
+		bool lpfReady;
 	};
+
+	ma_lpf2_config lpfConfig(double cutoff, double q)
+	{
+		return ma_lpf2_config_init(ma_format_f32, kEngineChannels, kEngineRate, cutoff, q);
+	}
 
 	void gainNodeProcess(ma_node *node, const float **framesIn, ma_uint32 *frameCountIn, float **framesOut, ma_uint32 *frameCountOut)
 	{
@@ -101,6 +149,32 @@ namespace
 		const ma_uint32 frames = *frameCountOut;
 		const float *in = framesIn[0];
 		float *out = framesOut[0];
+
+		const int version = n->requestedVersion.load(std::memory_order_acquire);
+		if (version != n->appliedVersion)
+		{
+			n->active = n->requested;
+			n->appliedVersion = version;
+			if (n->lpfReady && n->active.biquads > 0) {
+				ma_lpf2_config c = lpfConfig(n->active.cutoff, n->active.q);
+				ma_lpf2_reinit(&c, &n->lpf[0]);
+				ma_lpf2_reinit(&c, &n->lpf[1]);
+			}
+		}
+		if (n->lpfReady && n->active.biquads > 0)
+		{
+			ma_lpf2_process_pcm_frames(&n->lpf[0], out, in, frames);
+			if (n->active.biquads > 1) {
+				ma_lpf2_process_pcm_frames(&n->lpf[1], out, out, frames);
+			}
+			if (n->active.dry != 0.0) {
+				const float dry = (float)n->active.dry;
+				for (ma_uint32 i = 0; i < frames * kEngineChannels; ++i) {
+					out[i] = dry * in[i] + (1.0f - dry) * out[i];
+				}
+			}
+			in = out;
+		}
 
 		const float targetLeft = n->targetLeft.load(std::memory_order_relaxed);
 		const float targetRight = n->targetRight.load(std::memory_order_relaxed);
@@ -232,6 +306,10 @@ struct MiniaudioVoice
 	Real pitch;
 	Int rate;                        ///< the file's sample rate (for the -audioLog values)
 
+	Real volume3D;
+	Coord3D position;
+	Real distanceArg1;
+	Real distanceArg2;
 
 	ma_uint64 startTime;
 	ma_uint64 pauseTime;
@@ -295,6 +373,20 @@ namespace
 		n.snap.store(1);
 		n.left = 0.0f;
 		n.right = 0.0f;
+		n.requested = occlusionFor(0.0);
+		n.active = n.requested;
+		n.requestedVersion.store(0);
+		n.appliedVersion = 0;
+		n.lpfReady = false;
+
+		const ma_lpf2_config c = lpfConfig(1000.0, 0.707107);
+		if (ma_lpf2_init(&c, nullptr, &n.lpf[0]) == MA_SUCCESS) {
+			if (ma_lpf2_init(&c, nullptr, &n.lpf[1]) == MA_SUCCESS) {
+				n.lpfReady = true;
+			} else {
+				ma_lpf2_uninit(&n.lpf[0], nullptr);
+			}
+		}
 
 		const ma_uint32 channels[1] = { kEngineChannels };
 		ma_node_config nc = ma_node_config_init();
@@ -302,6 +394,11 @@ namespace
 		nc.pInputChannels = channels;
 		nc.pOutputChannels = channels;
 		if (ma_node_init(ma_engine_get_node_graph(&s->engine), &nc, nullptr, &n.base) != MA_SUCCESS) {
+			if (n.lpfReady) {
+				ma_lpf2_uninit(&n.lpf[0], nullptr);
+				ma_lpf2_uninit(&n.lpf[1], nullptr);
+				n.lpfReady = false;
+			}
 			return false;
 		}
 		ma_node_attach_output_bus(&n.base, 0, ma_engine_get_endpoint(&s->engine), 0);
@@ -327,6 +424,10 @@ namespace
 		v->pan = 0.5f;
 		v->pitch = 1.0f;
 		v->rate = 0;
+		v->volume3D = 1.0f;
+		v->position.x = v->position.y = v->position.z = 0.0f;
+		v->distanceArg1 = 0.0f;
+		v->distanceArg2 = 0.0f;
 		v->startTime = 0;
 		v->pauseTime = 0;
 		if (!initNode(s, v)) {
@@ -349,6 +450,10 @@ namespace
 		stopSound(v);
 		if (v->nodeReady) {
 			ma_node_uninit(&v->node.base, nullptr);
+			if (v->node.lpfReady) {
+				ma_lpf2_uninit(&v->node.lpf[0], nullptr);
+				ma_lpf2_uninit(&v->node.lpf[1], nullptr);
+			}
 		}
 		delete v;
 	}
@@ -364,6 +469,43 @@ namespace
 		float left, right;
 		gains2D(v->volume, v->pan, &left, &right);
 		setTargets(v, left, right);
+	}
+
+	/// Miles' 3D gains: full inside the minimum distance, min/distance up to the maximum, silence beyond it (the
+	/// two distances in either order); pan linear in the angle over the front half, sources behind at 0.75.
+	void applyGains3D(MiniaudioDeviceState *s, MiniaudioVoice *v)
+	{
+		const double g = volumeGain(v->volume3D);
+		const double rx = (double)v->position.x - s->listenerPosition.x;
+		const double ry = (double)v->position.y - s->listenerPosition.y;
+		const double rz = (double)v->position.z - s->listenerPosition.z;
+		const double distance = sqrt(rx * rx + ry * ry + rz * rz);
+		const double lo = v->distanceArg1 < v->distanceArg2 ? v->distanceArg1 : v->distanceArg2;
+		const double hi = v->distanceArg1 < v->distanceArg2 ? v->distanceArg2 : v->distanceArg1;
+		const double falloff = distance <= lo ? 1.0 : (distance <= hi ? lo / distance : 0.0);
+
+		// look; up is (0, 0, -1) as the game sets it; right = up x look
+		double lx = s->listenerLook.x, ly = s->listenerLook.y, lz = s->listenerLook.z;
+		const double ll = sqrt(lx * lx + ly * ly + lz * lz);
+		if (ll > 0.0) {
+			lx /= ll; ly /= ll; lz /= ll;
+		} else {
+			lx = 0.0; ly = 1.0; lz = 0.0;
+		}
+		const double ux = 0.0, uy = 0.0, uz = -1.0;
+		const double gx = uy * lz - uz * ly, gy = uz * lx - ux * lz, gz = ux * ly - uy * lx;
+		const double lateral = rx * gx + ry * gy + rz * gz;
+		const double ahead = rx * lx + ry * ly + rz * lz;
+
+		double angle = (lateral == 0.0 && ahead == 0.0) ? 0.0 : atan2(lateral, ahead) * 180.0 / 3.14159265358979323846;
+		double rear = 1.0;
+		if (ahead < 0.0) {
+			rear = kRearFactor;
+			angle = angle > 0.0 ? 180.0 - angle : -180.0 - angle;
+		}
+		const double p = 0.5 + angle / 180.0;
+		const double gain = g * falloff * rear;
+		setTargets(v, (float)(gain * (1.0 - p)), (float)(gain * p));
 	}
 
 	bool startFromBuffer(MiniaudioDeviceState *s, MiniaudioVoice *v, const AudioSample &sample)
@@ -627,6 +769,11 @@ void MiniaudioAudioDevice::setListener(const Coord3D &position, const Coord3D &o
 	std::lock_guard<std::mutex> guard(s->lock);
 	s->listenerPosition = position;
 	s->listenerLook = orientation;
+	for (size_t i = 0; i < s->voices.size(); ++i) {
+		if (s->voices[i]->kind == AVK_3D && s->voices[i]->playing) {
+			applyGains3D(s, s->voices[i]);
+		}
+	}
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -701,6 +848,35 @@ Bool MiniaudioAudioDevice::start2D(AudioVoice voice, const AudioSample &sample)
 void MiniaudioAudioDevice::play3D(AudioVoice voice, const AudioSample &sample, Real distanceArg1, Real distanceArg2,
 	const Coord3D &position, Real volume, Real pitchShift, Bool useOcclusion, Real occlusion)
 {
+	MiniaudioDeviceState *s = m_state;
+	std::lock_guard<std::mutex> guard(s->lock);
+	MiniaudioVoice *v = toVoice(voice);
+	++v->generation;
+	stopSound(v);
+	v->playing = false;
+	v->paused = false;
+	v->ended = false;
+	v->distanceArg1 = distanceArg1;
+	v->distanceArg2 = distanceArg2;
+	v->position = position;
+	v->volume3D = volume;
+	v->pitch = pitchShift;
+	applyGains3D(s, v);
+
+	v->node.requested = occlusionFor(useOcclusion ? occlusion : 0.0);
+	v->node.requestedVersion.fetch_add(1, std::memory_order_release);
+
+	if (!startFromBuffer(s, v, sample)) {
+		return;
+	}
+	if (pitchShift > 0.0f) {
+		// The pitch shift as given. (The manager gives Miles the whole rate REAL_TO_INT(rate x pitch shift); miniaudio's
+		// resampler steps its ratio in thousandths, so the whole rate would play further from Miles than this does.)
+		ma_sound_set_pitch(&v->sound, pitchShift);
+	}
+	v->node.snap.store(1);
+	ma_sound_start(&v->sound);
+	v->playing = true;
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -776,10 +952,18 @@ void MiniaudioAudioDevice::getPan(AudioVoice voice, AudioVoiceKind kind, Real *p
 
 void MiniaudioAudioDevice::set3DVolume(AudioVoice voice, Real volume)
 {
+	std::lock_guard<std::mutex> guard(m_state->lock);
+	MiniaudioVoice *v = toVoice(voice);
+	v->volume3D = volume;
+	applyGains3D(m_state, v);
 }
 
 void MiniaudioAudioDevice::set3DPosition(AudioVoice voice, const Coord3D &position)
 {
+	std::lock_guard<std::mutex> guard(m_state->lock);
+	MiniaudioVoice *v = toVoice(voice);
+	v->position = position;
+	applyGains3D(m_state, v);
 }
 
 void MiniaudioAudioDevice::debugVoiceValues(AudioVoice voice, AudioVoiceKind kind, Real *volume, Real *pan, Int *rate) const
@@ -792,6 +976,10 @@ void MiniaudioAudioDevice::debugVoiceValues(AudioVoice voice, AudioVoiceKind kin
 			*volume = v->volume;
 			*pan = v->pan;
 			*rate = v->rate;
+			break;
+		case AVK_3D:
+			*volume = v->volume3D;
+			*rate = v->pitch > 0.0f ? REAL_TO_INT(v->rate * v->pitch) : v->rate;
 			break;
 	}
 }
