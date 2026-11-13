@@ -128,6 +128,18 @@ enum
 	-December 2002
 */
 
+// TheSuperHackers @feature Audio event log (-audioLog): one text line per decision of the audio manager, written to
+// AudioEvents.log in the user data folder. Off by default; when off, the macros below cost one flag test.
+namespace AudioLog
+{
+	extern Bool g_on;
+	void init();																								///< reads the command line, call once from AudioManager::init
+	void log(const char *tag, const char *fmt, ...);						///< "<seq> f=<logic frame> TAG text"
+	void logEvent(const char *tag, AudioEventRTS *ev, const char *fmt, ...);	///< same, with the event description in front of the text
+}
+#define AUDIO_LOG(...)				do { if (AudioLog::g_on) AudioLog::log(__VA_ARGS__); } while (0)
+#define AUDIO_LOG_EVENT(...)	do { if (AudioLog::g_on) AudioLog::logEvent(__VA_ARGS__); } while (0)
+
 class AudioManager : public SubsystemInterface
 {
 	public:

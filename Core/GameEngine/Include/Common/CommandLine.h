@@ -52,4 +52,7 @@ public:
 	// TheSuperHackers @feature True with -noRegistry, and when the archive list exists (a self-contained folder): the
 	// game then neither reads nor writes its registry keys. Safe to call before the command line is parsed.
 	static bool isRegistryDisabled();
+
+	// TheSuperHackers @feature True with -audioLog: the audio manager writes AudioEvents.log in the user data folder.
+	static bool isAudioLogEnabled();
 };

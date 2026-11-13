@@ -141,6 +141,7 @@ Bool SoundManager::addAudioEvent(DynamicAudioEventRTS *eventToAdd)
 		audioRequest->m_pendingEvent = eventToAdd;
 		audioRequest->m_request = AR_Play;
 		TheAudio->appendAudioRequest(audioRequest);
+		AUDIO_LOG_EVENT("QUE", eventToAdd, "pool=%s", eventToAdd->isPositionalAudio() ? "3D" : "2D");
 		return true;
 	}
 
@@ -180,6 +181,7 @@ Bool SoundManager::canPlayNow( AudioEventRTS *event )
 #ifdef INTENSIVE_AUDIO_DEBUG
 				DEBUG_LOG(("- culled due to distance (%.2f).", distance.length()));
 #endif
+				AUDIO_LOG_EVENT("REJ", event, "why=range dist=%.1f max=%.1f", distance.length(), event->getAudioEventInfo()->m_maxDistance);
 				return false;
 			}
 
@@ -191,6 +193,7 @@ Bool SoundManager::canPlayNow( AudioEventRTS *event )
 #ifdef INTENSIVE_AUDIO_DEBUG
 				DEBUG_LOG(("- culled due to shroud."));
 #endif
+				AUDIO_LOG_EVENT("REJ", event, "why=shroud");
 				return false;
 			}
 		}
@@ -208,6 +211,7 @@ Bool SoundManager::canPlayNow( AudioEventRTS *event )
 #ifdef INTENSIVE_AUDIO_DEBUG
 		DEBUG_LOG(("- culled due to voice."));
 #endif
+			AUDIO_LOG_EVENT("REJ", event, "why=voice");
 			return false;
 		}
 	}
@@ -217,6 +221,7 @@ Bool SoundManager::canPlayNow( AudioEventRTS *event )
 #ifdef INTENSIVE_AUDIO_DEBUG
 		DEBUG_LOG(("- culled due to limit." ));
 #endif
+		AUDIO_LOG_EVENT("REJ", event, "why=limit limit=%d", event->getAudioEventInfo()->m_limit);
 		return false;
 	}
 	else if( isInterrupting( event ) )
@@ -261,12 +266,14 @@ Bool SoundManager::canPlayNow( AudioEventRTS *event )
 #ifdef INTENSIVE_AUDIO_DEBUG
 			DEBUG_LOG(("- culled due to no channels available and non-interrupting." ));
 #endif
+			AUDIO_LOG_EVENT("REJ", event, "why=no_channel_interrupt");
 			return false;
 		}
 	}
 #ifdef INTENSIVE_AUDIO_DEBUG
 	DEBUG_LOG(("culled due to unavailable channels"));
 #endif
+	AUDIO_LOG_EVENT("REJ", event, "why=no_channel_priority");
 	return false;
 }
 

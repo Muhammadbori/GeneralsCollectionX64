@@ -51,6 +51,7 @@
 #include "Common/AudioHandleSpecialValues.h"
 #include "Common/AudioRequest.h"
 #include "Common/AudioSettings.h"
+#include "Common/CommandLine.h"
 #include "Common/FileSystem.h"
 #include "Common/GameEngine.h"
 #include "Common/GameMusic.h"
@@ -212,8 +213,113 @@ AudioManager::~AudioManager()
 }
 
 //-------------------------------------------------------------------------------------------------
+// Audio event log (-audioLog)
+//-------------------------------------------------------------------------------------------------
+namespace AudioLog
+{
+	Bool g_on = FALSE;
+	static FILE *s_file = nullptr;
+	static UnsignedInt s_seq = 0;
+
+	void init()
+	{
+		if (s_file || !CommandLine::isAudioLogEnabled())
+			return;
+
+		AsciiString path = TheGlobalData->getPath_UserData();
+		path.concat("AudioEvents.log");
+		s_file = fopen(path.str(), "w");
+		if (s_file)
+		{
+			g_on = TRUE;
+			fprintf(s_file, "# AudioEvents.log version 1\n");
+		}
+	}
+
+	static const char *kindOf(const AudioEventInfo *info)
+	{
+		if (!info)
+			return "?";
+		switch (info->m_soundType)
+		{
+			case AT_Music: return "music";
+			case AT_SoundEffect: return "sound";
+			case AT_Streaming: return "speech";
+		}
+		return "?";
+	}
+
+	static void vwrite(const char *tag, const char *text)
+	{
+		if (!s_file)
+			return;
+		const UnsignedInt frame = TheGameLogic ? TheGameLogic->getFrame() : 0;
+		fprintf(s_file, "%u f=%u %s %s\n", ++s_seq, frame, tag, text);
+		fflush(s_file);
+	}
+
+	void log(const char *tag, const char *fmt, ...)
+	{
+		char buf[768];
+		va_list args;
+		va_start(args, fmt);
+		vsnprintf(buf, sizeof(buf), fmt, args);
+		va_end(args);
+		buf[sizeof(buf) - 1] = 0;
+		vwrite(tag, buf);
+	}
+
+	void logEvent(const char *tag, AudioEventRTS *ev, const char *fmt, ...)
+	{
+		char head[384];
+		const AudioEventInfo *info = ev->getAudioEventInfo();
+		int n = _snprintf(head, sizeof(head), "ev=%s kind=%s h=%u prio=%d vol=%.3f pl=%d",
+			ev->getEventName().str(), kindOf(info), (UnsignedInt)ev->getPlayingHandle(),
+			info ? (int)info->m_priority : -1, ev->getVolume(), ev->getPlayerIndex());
+		if (n < 0 || n >= (int)sizeof(head))
+			n = (int)sizeof(head) - 1;
+		switch (ev->getOwnerType())
+		{
+			case OT_Positional:
+			{
+				const Coord3D *pos = ev->getPosition();
+				if (pos)
+					n += _snprintf(head + n, sizeof(head) - n, " pos=%.1f,%.1f,%.1f", pos->x, pos->y, pos->z);
+				break;
+			}
+			case OT_Object:
+				n += _snprintf(head + n, sizeof(head) - n, " obj=%u", (UnsignedInt)ev->getObjectID());
+				break;
+			case OT_Drawable:
+				n += _snprintf(head + n, sizeof(head) - n, " drw=%u", (UnsignedInt)ev->getDrawableID());
+				break;
+			case OT_Dead:
+				n += _snprintf(head + n, sizeof(head) - n, " dead");
+				break;
+			default:
+				break;
+		}
+		head[sizeof(head) - 1] = 0;
+
+		char tail[320];
+		va_list args;
+		va_start(args, fmt);
+		vsnprintf(tail, sizeof(tail), fmt, args);
+		va_end(args);
+		tail[sizeof(tail) - 1] = 0;
+
+		char all[768];
+		_snprintf(all, sizeof(all), "%s %s", head, tail);
+		all[sizeof(all) - 1] = 0;
+		vwrite(tag, all);
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
 void AudioManager::init()
 {
+	AudioLog::init();
+
 	INI ini;
 	ini.loadFileDirectory( "Data\\INI\\AudioSettings", INI_LOAD_OVERWRITE, nullptr);
 
@@ -400,6 +506,8 @@ AudioHandle AudioManager::addAudioEvent(const AudioEventRTS *eventToAdd)
 
 	const AudioType soundType = eventToAdd->getAudioEventInfo()->m_soundType;
 
+	AUDIO_LOG_EVENT("REQ", const_cast<AudioEventRTS *>(eventToAdd), "");
+
 	// Check if audio type is on
 	// TheSuperHackers @info Zero audio volume is not a fail condition, because music, speech and sounds
 	// still need to be in flight in case the user raises the volume on runtime after the audio was already triggered.
@@ -407,18 +515,30 @@ AudioHandle AudioManager::addAudioEvent(const AudioEventRTS *eventToAdd)
 	{
 		case AT_Music:
 			if (!isOn(AudioAffect_Music))
+			{
+				AUDIO_LOG_EVENT("REJ", const_cast<AudioEventRTS *>(eventToAdd), "why=category_off");
 				return AHSV_NoSound;
+			}
 			break;
 		case AT_SoundEffect:
 			if (!isOn(AudioAffect_Sound) || !isOn(AudioAffect_Sound3D))
+			{
+				AUDIO_LOG_EVENT("REJ", const_cast<AudioEventRTS *>(eventToAdd), "why=category_off");
 				return AHSV_NoSound;
+			}
 			break;
 		case AT_Streaming:
 			// if we're currently playing uninterruptable speech, then disallow the addition of this sample
 			if (getDisallowSpeech())
+			{
+				AUDIO_LOG_EVENT("REJ", const_cast<AudioEventRTS *>(eventToAdd), "why=speech_disallowed");
 				return AHSV_NoSound;
+			}
 			if (!isOn(AudioAffect_Speech))
+			{
+				AUDIO_LOG_EVENT("REJ", const_cast<AudioEventRTS *>(eventToAdd), "why=category_off");
 				return AHSV_NoSound;
+			}
 			break;
 	}
 
@@ -434,6 +554,7 @@ AudioHandle AudioManager::addAudioEvent(const AudioEventRTS *eventToAdd)
 
 	if (!logicalAudio && notForLocal)
 	{
+		AUDIO_LOG_EVENT("REJ", const_cast<AudioEventRTS *>(eventToAdd), "why=not_for_local");
 		return AHSV_NotForLocal;
 	}
 
@@ -455,6 +576,7 @@ AudioHandle AudioManager::addAudioEvent(const AudioEventRTS *eventToAdd)
 #if RETAIL_COMPATIBLE_CRC
 	if (notForLocal)
 	{
+		AUDIO_LOG_EVENT("REJ", audioEvent.Peek(), "why=not_for_local");
 		return AHSV_NotForLocal;
 	}
 #endif
@@ -464,11 +586,13 @@ AudioHandle AudioManager::addAudioEvent(const AudioEventRTS *eventToAdd)
 #ifdef INTENSIVE_AUDIO_DEBUG
 		DEBUG_LOG((" - culled due to muting (%d).", audioEvent->getVolume()));
 #endif
+		AUDIO_LOG_EVENT("REJ", audioEvent.Peek(), "why=volume_zero min=%.3f", m_audioSettings->m_minVolume);
 		return AHSV_Muted;
 	}
 
 	if (soundType == AT_Music)
 	{
+		AUDIO_LOG_EVENT("QUE", audioEvent.Peek(), "pool=stream");
 		m_music->addAudioEvent(audioEvent.Peek());
 	}
 	else
@@ -569,6 +693,7 @@ AsciiString AudioManager::prevTrackName(const AsciiString& currentTrack )
 void AudioManager::removeAudioEvent(AudioHandle audioEvent)
 {
 	if (audioEvent == AHSV_StopTheMusic || audioEvent == AHSV_StopTheMusicFade) {
+		AUDIO_LOG("STOPCALL", "h=%s", audioEvent == AHSV_StopTheMusic ? "StopTheMusic" : "StopTheMusicFade");
 		m_music->removeAudioEvent(audioEvent);
 		return;
 	}
@@ -576,6 +701,8 @@ void AudioManager::removeAudioEvent(AudioHandle audioEvent)
 	if (audioEvent < AHSV_FirstHandle) {
 		return;
 	}
+
+	AUDIO_LOG("STOPCALL", "h=%u", (UnsignedInt)audioEvent);
 
 	AudioRequest *req = allocateAudioRequest();
 	req->m_handleToInteractOn = audioEvent;
@@ -596,6 +723,8 @@ void AudioManager::setAudioEventVolumeOverride( AsciiString eventToAffect, Real 
 		m_adjustedVolumes.clear();
 		return;
 	}
+
+	AUDIO_LOG("OVERRIDE", "ev=%s vol=%.3f", eventToAffect.str(), newVolume);
 
 	// Find any playing audio events and adjust their volume accordingly.
 	if (newVolume != -1.0f) {
@@ -681,6 +810,7 @@ Bool AudioManager::isOn( AudioAffect whichToGet ) const
 //-------------------------------------------------------------------------------------------------
 void AudioManager::setOn( Bool turnOn, AudioAffect whichToAffect )
 {
+	AUDIO_LOG("ON", "on=%d affect=0x%x", turnOn ? 1 : 0, (unsigned)whichToAffect);
 	if (whichToAffect & AudioAffect_Music) {
 		m_musicOn = turnOn;
 	}
@@ -713,6 +843,7 @@ void AudioManager::setVolume( Real volume, AudioAffect whichToAffect )
 		{
 			m_musicVolume = newVolume;
 			m_volumeHasChanged = true;
+			AUDIO_LOG("VOL", "cat=music total=%.4f system=%d", newVolume, (whichToAffect & AudioAffect_SystemSetting) ? 1 : 0);
 		}
 	}
 
@@ -728,6 +859,7 @@ void AudioManager::setVolume( Real volume, AudioAffect whichToAffect )
 		{
 			m_soundVolume = newVolume;
 			m_volumeHasChanged = true;
+			AUDIO_LOG("VOL", "cat=sound total=%.4f system=%d", newVolume, (whichToAffect & AudioAffect_SystemSetting) ? 1 : 0);
 		}
 	}
 
@@ -743,6 +875,7 @@ void AudioManager::setVolume( Real volume, AudioAffect whichToAffect )
 		{
 			m_sound3DVolume = newVolume;
 			m_volumeHasChanged = true;
+			AUDIO_LOG("VOL", "cat=sound3d total=%.4f system=%d", newVolume, (whichToAffect & AudioAffect_SystemSetting) ? 1 : 0);
 		}
 	}
 
@@ -758,6 +891,7 @@ void AudioManager::setVolume( Real volume, AudioAffect whichToAffect )
 		{
 			m_speechVolume = newVolume;
 			m_volumeHasChanged = true;
+			AUDIO_LOG("VOL", "cat=speech total=%.4f system=%d", newVolume, (whichToAffect & AudioAffect_SystemSetting) ? 1 : 0);
 		}
 	}
 }
@@ -1067,6 +1201,7 @@ void AudioManager::muteAudio( MuteAudioReason reason )
 {
 	m_muteReasonBits |= 1u << reason;
 
+	AUDIO_LOG("MUTE", "reason=%s bits=%u", MuteAudioReasonNames[reason], m_muteReasonBits);
 	DEBUG_LOG(("AudioManager::muteAudio(%s): m_muteReason=%u muted=%d",
 		MuteAudioReasonNames[reason], m_muteReasonBits, (int)(m_muteReasonBits != 0)));
 
@@ -1089,6 +1224,7 @@ void AudioManager::unmuteAudio( MuteAudioReason reason )
 {
 	m_muteReasonBits &= ~(1u << reason);
 
+	AUDIO_LOG("UNMUTE", "reason=%s bits=%u", MuteAudioReasonNames[reason], m_muteReasonBits);
 	DEBUG_LOG(("AudioManager::unmuteAudio(%s): m_muteReason=%u muted=%d",
 		MuteAudioReasonNames[reason], m_muteReasonBits, (int)(m_muteReasonBits != 0)));
 

@@ -273,7 +273,7 @@ class MilesAudioManager : public AudioManager
 		PlayingAudio *allocatePlayingAudio();
 		void releaseMilesHandles( PlayingAudio *playing );
 		void releasePlayingAudio( PlayingAudio *playing );
-		void stopPlayingAudio( PlayingAudio *playing );
+		void stopPlayingAudio( PlayingAudio *playing, const char *why = "stop" );	///< why is only used by the -audioLog event log; null = not logged
 		void rerequestPlayingAudio( PlayingAudio *playing );
 		void rerequestPlayingAudioWhenSignalled( PlayingAudio *playing );
 		void fadePlayingAudio( PlayingAudio *playing );
