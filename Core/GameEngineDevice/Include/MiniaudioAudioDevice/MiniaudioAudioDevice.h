@@ -102,6 +102,7 @@ public:
 	virtual AudioVoice openMovieSound(UnsignedInt sampleRate, UnsignedInt channels, Real volume) override;
 	virtual UnsignedInt pushMovieSound(AudioVoice sound, const Short *frames, UnsignedInt frameCount) override;
 	virtual UnsignedInt64 movieSoundPlayedFrames(AudioVoice sound) const override;
+	virtual void movieSoundGaps(AudioVoice sound, UnsignedInt *gaps, UnsignedInt64 *gapFrames) const override;
 	virtual void closeMovieSound(AudioVoice sound) override;
 	virtual const char *name() const override;	///< "miniaudio", and the backend once open: "miniaudio (WASAPI backend)"
 	virtual UnsignedInt debugTimerDelay() const override { return 0; }

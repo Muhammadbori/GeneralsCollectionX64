@@ -293,6 +293,11 @@ struct MiniaudioMovieSource
 	ma_uint32 channels;
 	ma_uint32 sampleRate;
 	std::atomic<ma_uint64> played;
+	// -audioLog, written by the audio thread: a gap is a run of silence after the first frame played that more frames
+	// follow (the silence after the last frame, until the close, is not a gap).
+	ma_uint64 dryFrames;                 ///< the silence since the last frame played (audio thread only)
+	std::atomic<UnsignedInt> gaps;
+	std::atomic<ma_uint64> gapFrames;
 };
 
 namespace
@@ -313,7 +318,15 @@ namespace
 			ma_pcm_rb_commit_read(&m->buffer, n);
 			done += n;
 		}
-		m->played.fetch_add(done, std::memory_order_relaxed);
+		const ma_uint64 playedBefore = m->played.fetch_add(done, std::memory_order_relaxed);
+		if (done > 0 && m->dryFrames > 0) {
+			m->gaps.fetch_add(1, std::memory_order_relaxed);
+			m->gapFrames.fetch_add(m->dryFrames, std::memory_order_relaxed);
+			m->dryFrames = 0;
+		}
+		if (done < frameCount && playedBefore + done > 0) {
+			m->dryFrames += frameCount - done;
+		}
 		if (done < frameCount) {
 			memset(out + done * m->channels, 0, (size_t)(frameCount - done) * m->channels * sizeof(short));
 		}
@@ -1335,6 +1348,9 @@ AudioVoice MiniaudioAudioDevice::openMovieSound(UnsignedInt sampleRate, Unsigned
 	m->channels = channels;
 	m->sampleRate = sampleRate;
 	m->played.store(0);
+	m->dryFrames = 0;
+	m->gaps.store(0);
+	m->gapFrames.store(0);
 	ma_data_source_config dc = ma_data_source_config_init();
 	dc.vtable = &g_movieVtable;
 	if (ma_data_source_init(&dc, &m->base) != MA_SUCCESS) {
@@ -1395,6 +1411,13 @@ UnsignedInt64 MiniaudioAudioDevice::movieSoundPlayedFrames(AudioVoice sound) con
 {
 	const MiniaudioMovieSource *m = toVoice(sound)->movie;
 	return m ? m->played.load(std::memory_order_relaxed) : 0;
+}
+
+void MiniaudioAudioDevice::movieSoundGaps(AudioVoice sound, UnsignedInt *gaps, UnsignedInt64 *gapFrames) const
+{
+	const MiniaudioMovieSource *m = toVoice(sound)->movie;
+	*gaps = m ? m->gaps.load(std::memory_order_relaxed) : 0;
+	*gapFrames = m ? m->gapFrames.load(std::memory_order_relaxed) : 0;
 }
 
 void MiniaudioAudioDevice::closeMovieSound(AudioVoice sound)

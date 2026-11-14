@@ -177,6 +177,9 @@ public:
 	/// Queues frames for playing; returns how many it took (fewer when its queue of about two seconds is full).
 	virtual UnsignedInt pushMovieSound(AudioVoice sound, const Short *frames, UnsignedInt frameCount) = 0;
 	virtual UnsignedInt64 movieSoundPlayedFrames(AudioVoice sound) const = 0;  ///< frames played so far
+	/// For -audioLog: how often the queue ran dry while more sound was still to come, and the frames of silence played
+	/// (or due) in those gaps. A device without a movie sound queue has none.
+	virtual void movieSoundGaps(AudioVoice sound, UnsignedInt *gaps, UnsignedInt64 *gapFrames) const { *gaps = 0; *gapFrames = 0; }
 	virtual void closeMovieSound(AudioVoice sound) = 0;
 	virtual const char *name() const = 0;
 	virtual UnsignedInt debugTimerDelay() const = 0;

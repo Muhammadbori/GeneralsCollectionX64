@@ -262,9 +262,11 @@ class AudioManager : public SubsystemInterface
 
 		// TheSuperHackers @feature Movie sound for a video player that decodes the sound itself (FFmpeg): 16-bit
 		// interleaved frames, pushed as they are decoded. 0 when there is no such stream (Miles: Bink plays the sound).
-		virtual uintptr_t openMovieSound( UnsignedInt sampleRate, UnsignedInt channels ) { return 0; }
+		// The movie name and, at the close, the video frames shown, the movie's frames and its frame rate are for the
+		// -audioLog lines only.
+		virtual uintptr_t openMovieSound( UnsignedInt sampleRate, UnsignedInt channels, const char *movieName = nullptr ) { return 0; }
 		virtual UnsignedInt pushMovieSound( uintptr_t sound, const Short *frames, UnsignedInt frameCount ) { return 0; }
-		virtual void closeMovieSound( uintptr_t sound ) {}
+		virtual void closeMovieSound( uintptr_t sound, Int framesShown = -1, Int framesTotal = -1, Real framesPerSecond = 0.0f ) {}
 
 		// this function will play an audio event rts by loading it into memory. It should not be used
 		// by anything except for the load screens.

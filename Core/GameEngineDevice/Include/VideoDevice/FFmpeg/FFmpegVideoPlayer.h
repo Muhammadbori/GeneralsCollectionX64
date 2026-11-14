@@ -69,7 +69,7 @@ class FFmpegVideoStream : public VideoStream
 		UnsignedInt		m_soundChannels = 0;	///< Channels pushed to it (1 or 2)
 		std::vector<Short> m_pendingSound;		///< Decoded frames the device has not taken yet
 
-		FFmpegVideoStream(FFmpegFile* file);																///< only BinkVideoPlayer can create these
+		FFmpegVideoStream(FFmpegFile* file, const char *movieName);										///< only BinkVideoPlayer can create these; the name is for -audioLog
 		virtual ~FFmpegVideoStream();
 
 		static void onFrame(AVFrame *frame, int stream_idx, int stream_type, void *user_data);

@@ -26,6 +26,8 @@
 #include "AudioDevice/NullAudioDevice.h"
 #include "WWLib/mutex.h"
 
+#include <map>
+
 class AudioEventRTS;
 class DynamicAudioEventRTS;
 
@@ -200,9 +202,9 @@ class MilesAudioManager : public AudioManager, public AudioDeviceListener
 
 		virtual void friend_forcePlayAudioEventRTS(const AudioEventRTS* eventToPlay) override;
 
-		virtual uintptr_t openMovieSound( UnsignedInt sampleRate, UnsignedInt channels ) override;
+		virtual uintptr_t openMovieSound( UnsignedInt sampleRate, UnsignedInt channels, const char *movieName = nullptr ) override;
 		virtual UnsignedInt pushMovieSound( uintptr_t sound, const Short *frames, UnsignedInt frameCount ) override;
-		virtual void closeMovieSound( uintptr_t sound ) override;
+		virtual void closeMovieSound( uintptr_t sound, Int framesShown = -1, Int framesTotal = -1, Real framesPerSecond = 0.0f ) override;
 
 		virtual UnsignedInt getNum2DSamples() const override;
 		virtual UnsignedInt getNum3DSamples() const override;
@@ -342,6 +344,18 @@ class MilesAudioManager : public AudioManager, public AudioDeviceListener
 		NullAudioDevice m_nullDevice;	///< when the Miles library cannot be loaded, or no output device opens
 		AudioDevice *m_miniaudioDevice;	///< built with RTS_AUDIO_BACKEND=miniaudio, created when chosen; else null
 		AudioDevice *m_device;	///< every sound library call goes through it
+
+		/// -audioLog: each open movie sound, for its MOVIESOUND close line (kept only while the log is on).
+		struct MovieSoundLog
+		{
+			AsciiString name;
+			UnsignedInt sampleRate;
+			UnsignedInt channels;
+			UnsignedInt64 pushed;
+			UnsignedInt pushCalls;
+			UnsignedInt openMS;
+		};
+		std::map<uintptr_t, MovieSoundLog> m_movieSoundLogs;
 
 		void dumpAudioLengths();	///< -audioLenDump: AudioLengths.tsv in the user data folder
 		AudioDevice *chooseAudioDevice();	///< the default device of the build, or the one -audio asks for

@@ -3044,24 +3044,74 @@ void *MilesAudioManager::getHandleForBink()
 //-------------------------------------------------------------------------------------------------
 // TheSuperHackers @feature Movie sound for the FFmpeg video player, at the volume the Bink player sets: the speech
 // volume x 0.8, plus 1 percent (Bink plays volume 0 at full volume).
-uintptr_t MilesAudioManager::openMovieSound( UnsignedInt sampleRate, UnsignedInt channels )
+// With -audioLog, a MOVIESOUND line at the open (the stream the device made, or none) and one at the close.
+uintptr_t MilesAudioManager::openMovieSound( UnsignedInt sampleRate, UnsignedInt channels, const char *movieName )
 {
 	const Int mod = (Int)((getVolume(AudioAffect_Speech) * 0.8f) * 100) + 1;
-	return m_device->openMovieSound(sampleRate, channels, mod / 100.0f);
+	const uintptr_t sound = m_device->openMovieSound(sampleRate, channels, mod / 100.0f);
+	if (AudioLog::g_on)
+	{
+		AUDIO_LOG("MOVIESOUND", "open movie=%s device=%s rate=%u channels=%u volume=%.2f result=%s", movieName ? movieName : "-",
+			m_device->name(), sampleRate, channels, mod / 100.0f, sound ? "ok" : "no_stream");
+		if (sound)
+		{
+			MovieSoundLog &m = m_movieSoundLogs[sound];
+			m.name = movieName ? movieName : "-";
+			m.sampleRate = sampleRate;
+			m.channels = channels;
+			m.pushed = 0;
+			m.pushCalls = 0;
+			m.openMS = (UnsignedInt)::GetTickCount();
+		}
+	}
+	return sound;
 }
 
 //-------------------------------------------------------------------------------------------------
 UnsignedInt MilesAudioManager::pushMovieSound( uintptr_t sound, const Short *frames, UnsignedInt frameCount )
 {
-	return sound ? m_device->pushMovieSound(sound, frames, frameCount) : 0;
+	const UnsignedInt taken = sound ? m_device->pushMovieSound(sound, frames, frameCount) : 0;
+	if (AudioLog::g_on && sound)
+	{
+		std::map<uintptr_t, MovieSoundLog>::iterator it = m_movieSoundLogs.find(sound);
+		if (it != m_movieSoundLogs.end()) {
+			it->second.pushed += taken;
+			++it->second.pushCalls;
+		}
+	}
+	return taken;
 }
 
 //-------------------------------------------------------------------------------------------------
-void MilesAudioManager::closeMovieSound( uintptr_t sound )
+// The close line: frames pushed and played (and as ms at the sound's rate), the wall time the sound was open, the
+// video frames shown of the movie's frames (and as ms at its frame rate), and the gaps: times the device's queue ran
+// dry while more sound was still to come, with the frames of silence in them.
+void MilesAudioManager::closeMovieSound( uintptr_t sound, Int framesShown, Int framesTotal, Real framesPerSecond )
 {
-	if (sound) {
-		m_device->closeMovieSound(sound);
+	if (!sound) {
+		return;
 	}
+	if (AudioLog::g_on)
+	{
+		std::map<uintptr_t, MovieSoundLog>::iterator it = m_movieSoundLogs.find(sound);
+		if (it != m_movieSoundLogs.end())
+		{
+			const MovieSoundLog &m = it->second;
+			const UnsignedInt64 played = m_device->movieSoundPlayedFrames(sound);
+			UnsignedInt gaps = 0;
+			UnsignedInt64 gapFrames = 0;
+			m_device->movieSoundGaps(sound, &gaps, &gapFrames);
+			const double rate = m.sampleRate ? (double)m.sampleRate : 1.0;
+			const double shownMS = framesPerSecond > 0.0f && framesShown >= 0 ? framesShown * 1000.0 / framesPerSecond : -1.0;
+			AUDIO_LOG("MOVIESOUND", "close movie=%s device=%s pushed=%llu played=%llu pushed_ms=%.0f played_ms=%.0f pushes=%u open_ms=%u "
+				"shown=%d/%d fps=%.3f shown_ms=%.0f gaps=%u gap_frames=%llu gap_ms=%.0f",
+				m.name.str(), m_device->name(), (unsigned long long)m.pushed, (unsigned long long)played, m.pushed * 1000.0 / rate,
+				played * 1000.0 / rate, m.pushCalls, (UnsignedInt)::GetTickCount() - m.openMS, framesShown, framesTotal,
+				(double)framesPerSecond, shownMS, gaps, (unsigned long long)gapFrames, gapFrames * 1000.0 / rate);
+			m_movieSoundLogs.erase(it);
+		}
+	}
+	m_device->closeMovieSound(sound);
 }
 
 //-------------------------------------------------------------------------------------------------

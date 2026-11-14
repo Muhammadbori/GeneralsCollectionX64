@@ -427,6 +427,8 @@ AudioVoice NullAudioDevice::openMovieSound(UnsignedInt sampleRate, UnsignedInt c
 	m->pushed = 0;
 	m->started = FALSE;
 	m->startMS = 0;
+	m->gaps = 0;
+	m->gapFrames = 0;
 	m_movieSounds.push_back(m);
 	return (AudioVoice)m;
 }
@@ -445,6 +447,15 @@ UnsignedInt64 NullAudioDevice::movieSoundPlayedFrames(AudioVoice sound) const
 UnsignedInt NullAudioDevice::pushMovieSound(AudioVoice sound, const Short *frames, UnsignedInt frameCount)
 {
 	MovieSound *m = (MovieSound *)sound;
+	if (m->started && frameCount > 0)
+	{
+		// A device with output would have played silence since the queue ran dry: count that as a gap.
+		const UnsignedInt64 due = (UnsignedInt64)(UnsignedInt)(::GetTickCount() - m->startMS) * m->sampleRate / 1000;
+		if (due > m->pushed) {
+			++m->gaps;
+			m->gapFrames += due - m->pushed;
+		}
+	}
 	const UnsignedInt64 queued = m->pushed - movieSoundPlayedFrames(sound);
 	const UnsignedInt64 capacity = (UnsignedInt64)m->sampleRate * 2;
 	const UnsignedInt64 room = queued < capacity ? capacity - queued : 0;
@@ -455,6 +466,13 @@ UnsignedInt NullAudioDevice::pushMovieSound(AudioVoice sound, const Short *frame
 	}
 	m->pushed += taken;
 	return taken;
+}
+
+void NullAudioDevice::movieSoundGaps(AudioVoice sound, UnsignedInt *gaps, UnsignedInt64 *gapFrames) const
+{
+	const MovieSound *m = (const MovieSound *)sound;
+	*gaps = m->gaps;
+	*gapFrames = m->gapFrames;
 }
 
 void NullAudioDevice::closeMovieSound(AudioVoice sound)

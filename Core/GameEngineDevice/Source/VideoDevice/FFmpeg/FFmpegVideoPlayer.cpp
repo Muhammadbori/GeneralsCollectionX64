@@ -240,7 +240,7 @@ VideoStreamInterface* FFmpegVideoPlayer::createStream( File* file )
 		return nullptr;
 	}
 
-	FFmpegVideoStream *stream = NEW FFmpegVideoStream(ffmpegHandle);
+	FFmpegVideoStream *stream = NEW FFmpegVideoStream(ffmpegHandle, file->getName());
 
 	if ( stream )
 	{
@@ -346,7 +346,7 @@ void FFmpegVideoPlayer::initializeBinkWithMiles()
 // FFmpegVideoStream::FFmpegVideoStream
 //============================================================================
 
-FFmpegVideoStream::FFmpegVideoStream(FFmpegFile* file)
+FFmpegVideoStream::FFmpegVideoStream(FFmpegFile* file, const char *movieName)
 : m_ffmpegFile(file)
 {
 	m_ffmpegFile->setFrameCallback(onFrame);
@@ -356,7 +356,7 @@ FFmpegVideoStream::FFmpegVideoStream(FFmpegFile* file)
 	// channels). Without such a stream (Miles: Bink only, or audio off) the movie plays without sound.
 	if (m_ffmpegFile->hasAudio() && m_ffmpegFile->getSampleRate() > 0) {
 		m_soundChannels = m_ffmpegFile->getNumChannels() >= 2 ? 2 : 1;
-		m_movieSound = TheAudio->openMovieSound(m_ffmpegFile->getSampleRate(), m_soundChannels);
+		m_movieSound = TheAudio->openMovieSound(m_ffmpegFile->getSampleRate(), m_soundChannels, movieName);
 	}
 
 	// Decode until we have our first video frame
@@ -373,7 +373,9 @@ FFmpegVideoStream::FFmpegVideoStream(FFmpegFile* file)
 
 FFmpegVideoStream::~FFmpegVideoStream()
 {
-	TheAudio->closeMovieSound(m_movieSound);
+	if (m_movieSound != 0) {
+		TheAudio->closeMovieSound(m_movieSound, frameIndex(), frameCount(), m_ffmpegFile->getFrameRate());
+	}
 	m_movieSound = 0;
 	av_frame_free(&m_frame);
 	sws_freeContext(m_swsContext);
