@@ -187,6 +187,7 @@ class MilesAudioManager : public AudioManager, public AudioDeviceListener
 		virtual void notifyOfAudioCompletion( uintptr_t handle, UnsignedInt flags ) override; ///< Is called on MSS Timer thread
 		virtual PlayingAudio *findPlayingAudioFrom( uintptr_t handle, UnsignedInt flags );
 		virtual void onVoiceDone( uintptr_t voice, UnsignedInt kind ) override; ///< AudioDeviceListener: on the device's thread
+		virtual void onDeviceEvent( const char *event, const char *detail ) override; ///< AudioDeviceListener: a DEVICE log line
 
 		virtual UnsignedInt getProviderCount() const override;
 		virtual AsciiString getProviderName( UnsignedInt providerNum ) const override;

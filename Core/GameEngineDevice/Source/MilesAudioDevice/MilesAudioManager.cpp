@@ -1594,8 +1594,11 @@ AudioDevice *MilesAudioManager::chooseAudioDevice()
 #ifdef RTS_HAS_MINIAUDIO
 	if (strcmp(chosen, "miniaudio") == 0 || strcmp(chosen, "miniaudio-null") == 0) {
 		if (m_miniaudioDevice == nullptr) {
-			MiniaudioAudioDevice::TestOptions options = { FALSE, FALSE, FALSE, FALSE };
+			MiniaudioAudioDevice::TestOptions options = { FALSE, FALSE, FALSE, FALSE, 0.0f, -1.0f };
 			options.nullBackend = strcmp(chosen, "miniaudio-null") == 0;
+			// TheSuperHackers @feature -audioTestDeviceLoss A[,B]: the output stops as if by itself A seconds after the
+			// open, and the real device comes back B seconds later (never without B). Works on the null backend too.
+			CommandLine::getAudioTestDeviceLoss(&options.testLossAfterSeconds, &options.testBackAfterSeconds);
 			m_miniaudioDevice = NEW MiniaudioAudioDevice(options);
 		}
 		device = m_miniaudioDevice;
@@ -3176,6 +3179,15 @@ void MilesAudioManager::friend_forcePlayAudioEventRTS(const AudioEventRTS* event
 //-------------------------------------------------------------------------------------------------
 //-------------------------------------------------------------------------------------------------
 // The end of a voice, from the device (Miles: its timer thread). The kinds are the PAT_* values.
+// TheSuperHackers @feature The output device's changes (lost, rerouted, null_fallback, restored, retry_failed, no_output),
+// from the device's update() on the main thread.
+void MilesAudioManager::onDeviceEvent( const char *event, const char *detail )
+{
+	AUDIO_LOG("DEVICE", "%s %s", event, detail);
+	DEBUG_LOG(("Audio output device: %s %s", event, detail));
+}
+
+//-------------------------------------------------------------------------------------------------
 void MilesAudioManager::onVoiceDone( uintptr_t voice, UnsignedInt kind )
 {
 	TheAudio->notifyOfAudioCompletion(voice, kind);

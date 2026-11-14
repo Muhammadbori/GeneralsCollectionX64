@@ -356,6 +356,33 @@ Int parseAudioDevice(char *[], int num)
 	return num > 1 ? 2 : 1;
 }
 
+bool CommandLine::getAudioTestDeviceLoss(Real *lossAfterSeconds, Real *backAfterSeconds)
+{
+	for (int arg = 1; arg + 1 < __argc; ++arg)
+	{
+		if (stricmp(__argv[arg], "-audioTestDeviceLoss") == 0)
+		{
+			float a = 0.0f, b = -1.0f;
+			const int n = sscanf(__argv[arg + 1], "%f,%f", &a, &b);
+			if (n >= 1 && a > 0.0f)
+			{
+				*lossAfterSeconds = a;
+				*backAfterSeconds = n >= 2 && b >= 0.0f ? b : -1.0f;
+				return true;
+			}
+			return false;
+		}
+	}
+	return false;
+}
+
+// TheSuperHackers @feature -audioTestDeviceLoss A[,B]: see CommandLine::getAudioTestDeviceLoss(). Parsed from the raw
+// command line; this entry only makes the option and its value known.
+Int parseAudioTestDeviceLoss(char *[], int num)
+{
+	return num > 1 ? 2 : 1;
+}
+
 // TheSuperHackers @feature -audioLog: see CommandLine::isAudioLogEnabled(). Parsed from the raw command line; this entry only
 // makes the option known.
 Int parseAudioLog(char *[], int)
@@ -1613,6 +1640,7 @@ static CommandLineParam paramsForStartup[] =
 	{ "-stateTraceCalls", parseStateTraceCalls },
 	{ "-audioLenDump", parseAudioLenDump },
 	{ "-audio", parseAudioDevice },
+	{ "-audioTestDeviceLoss", parseAudioTestDeviceLoss },
 
 	// TheSuperHackers @feature 2026 Do not read or write the Direct3D 12 shader cache.
 	{ "-noShaderCache", parseNoShaderCache },

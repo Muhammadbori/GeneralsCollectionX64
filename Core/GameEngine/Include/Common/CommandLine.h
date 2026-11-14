@@ -65,4 +65,10 @@ public:
 	// not given. miniaudio-null runs the miniaudio device on its null backend: everything but the output, silent.
 	// The audio manager checks it against the libraries the build has (RTS_AUDIO_BACKEND).
 	static const char * getAudioDevice();
+
+	// TheSuperHackers @feature -audioTestDeviceLoss A[,B]: a test of the miniaudio device's output loss handling. A seconds
+	// after the device opens, its output stops as if by itself (an unplug); the real device can be opened again B
+	// seconds after that, never without B. Works with -audio miniaudio-null, where every output is a null backend device.
+	// Returns false (and leaves the values) when not given.
+	static bool getAudioTestDeviceLoss(Real *lossAfterSeconds, Real *backAfterSeconds);
 };

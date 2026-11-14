@@ -82,6 +82,9 @@ class AudioDeviceListener
 public:
 	virtual ~AudioDeviceListener() {}
 	virtual void onVoiceDone(uintptr_t voice, UnsignedInt kind) = 0;
+	/// A change of the output device ("lost", "rerouted", "null_fallback", "restored", "retry_failed", "no_output")
+	/// with a detail text, called from the device's update() on the main thread.
+	virtual void onDeviceEvent(const char * /*event*/, const char * /*detail*/) {}
 };
 
 class AudioDevice

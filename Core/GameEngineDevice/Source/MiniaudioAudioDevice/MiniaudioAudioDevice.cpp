@@ -31,6 +31,16 @@
 //   also reports the ends miniaudio does not call back for: a looping stream reaching its stop time.
 // - The main thread deletes released voices in update(), with the delivery lock held, so the end thread never
 //   holds a deleted voice.
+//
+// TheSuperHackers @bugfix The output device. The device opens its own ma_device (the configuration ma_engine_init
+// would give it, plus a notification callback) and hands it to the engine, so the engine's mix, period and latency
+// are as before. A stop of the output that the device did not ask for (unplugged, invalidated, taken by the system)
+// marks it lost. update() on the main thread then waits out miniaudio's own rerouting (it restarts a device on a new
+// default device by itself when its notification comes first), and if the output still does not run: reopens it on
+// the current default device, or runs the engine on a device of miniaudio's null backend, so the engine clock, ends,
+// stream passes and movie sound go on in real time, and tries the real default device again every 2 seconds. The
+// listener gets each change (onDeviceEvent). With nullBackend the real output is a null backend device as well: no
+// path ever opens another backend.
 
 #include "Lib/BaseType.h"
 #include "MiniaudioAudioDevice/MiniaudioAudioDevice.h"
@@ -46,6 +56,7 @@
 #include <list>
 #include <math.h>
 #include <mutex>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <vector>
@@ -400,8 +411,29 @@ struct MiniaudioEnd
 struct MiniaudioDeviceState
 {
 	MiniaudioAudioDevice::TestOptions options;
-	ma_context context;              ///< nullBackend: a context with miniaudio's null backend only
+	ma_context context;              ///< the output's context: the default backends, or nullBackend: the null backend only
 	bool contextReady;
+	ma_device device;                ///< the output device, given to the engine (ma_engine_config::pDevice)
+	bool deviceReady;
+	ma_context fallbackContext;      ///< the null backend for the fallback output (without nullBackend)
+	bool fallbackContextReady;
+	ma_device fallbackDevice;        ///< runs the engine on the null backend while the output is lost
+	bool fallbackReady;
+	int output;                      ///< OUTPUT_REAL, OUTPUT_FALLBACK or OUTPUT_NONE (main thread)
+	std::atomic<int> ourStop;        ///< set while the device stops or closes an output itself: no loss
+	std::atomic<int> lost;           ///< a stop of an output that the device did not ask for
+	std::atomic<UnsignedInt> lostAtMS;
+	std::atomic<UnsignedInt> lastNotifyMS;   ///< the last notification of an output (miniaudio may be rerouting)
+	std::atomic<UnsignedInt> reroutes;       ///< miniaudio's own reroutes
+	UnsignedInt reroutesSeen;
+	UnsignedInt lostSinceMS;         ///< when the real output was lost (main thread)
+	UnsignedInt nextRetryMS;
+	bool retryFailedLogged;
+	UnsignedInt openMS;
+	bool testLossDone;               ///< TestOptions::testLossAfterSeconds has fired
+	bool testRealBlocked;            ///< testSimulateOutputLoss: the real device cannot be opened
+	bool testRealBlockedForever;
+	UnsignedInt testRealBackMS;
 	char name[64];                   ///< name(): the backend once open
 	ma_vfs_callbacks vfs;            ///< miniaudio is given its address as the ma_vfs
 	ma_resource_manager resourceManager;
@@ -431,6 +463,275 @@ namespace
 	MiniaudioVoice *toVoice(AudioVoice voice) { return (MiniaudioVoice *)voice; }
 
 	ma_uint64 engineTime(MiniaudioDeviceState *s) { return ma_engine_get_time_in_pcm_frames(&s->engine); }
+
+	//---------------------------------------------------------------------------------------------
+	// The output device.
+	enum { OUTPUT_NONE, OUTPUT_REAL, OUTPUT_FALLBACK };
+	const UnsignedInt kLossGraceMS = 300;        ///< after the last notification: miniaudio's own reroute is done by then
+	const UnsignedInt kRetryMS = 2000;           ///< the real default device is tried this often while it is lost
+	const UnsignedInt kMaxCatchUpMS = 10000;     ///< the most engine time the fallback makes up for at its start
+
+	/// What ma_engine_init's own device callback does.
+	void outputData(ma_device *device, void *out, const void *, ma_uint32 frameCount)
+	{
+		MiniaudioDeviceState *s = (MiniaudioDeviceState *)device->pUserData;
+		ma_engine_read_pcm_frames(&s->engine, out, frameCount, nullptr);
+	}
+
+	/// On miniaudio's threads (the audio thread for started and stopped, its notification thread for rerouted).
+	void outputNotification(const ma_device_notification *n)
+	{
+		MiniaudioDeviceState *s = (MiniaudioDeviceState *)n->pDevice->pUserData;
+		const UnsignedInt now = (UnsignedInt)::GetTickCount();
+		s->lastNotifyMS.store(now);
+		if (n->type == ma_device_notification_type_stopped && !s->ourStop.load()) {
+			if (!s->lost.exchange(1)) {
+				s->lostAtMS.store(now);
+			}
+		} else if (n->type == ma_device_notification_type_rerouted) {
+			s->reroutes.fetch_add(1);
+		}
+	}
+
+	/// The device configuration ma_engine_init gives the device it makes itself (miniaudio 0.11.26), with our
+	/// callbacks: the same format, rate, channels and period, so the engine mixes and latency are as before.
+	ma_device_config outputConfig(MiniaudioDeviceState *s)
+	{
+		ma_device_config dc = ma_device_config_init(ma_device_type_playback);
+		dc.playback.pDeviceID = nullptr;
+		dc.playback.format = ma_format_f32;
+		dc.playback.channels = kEngineChannels;
+		dc.sampleRate = kEngineRate;
+		dc.dataCallback = outputData;
+		dc.pUserData = s;
+		dc.notificationCallback = outputNotification;
+		dc.periodSizeInFrames = 0;
+		dc.periodSizeInMilliseconds = 0;
+		dc.noPreSilencedOutputBuffer = MA_TRUE;
+		dc.noClip = MA_TRUE;
+		return dc;
+	}
+
+	void setOutputName(MiniaudioDeviceState *s, ma_device *d, const char *suffix)
+	{
+		snprintf(s->name, sizeof(s->name), "miniaudio (%s backend%s)", ma_get_backend_name(d->pContext->backend), suffix);
+	}
+
+	void outputEvent(MiniaudioDeviceState *s, const char *event, const char *fmt, ...)
+	{
+		if (s->listener == nullptr) {
+			return;
+		}
+		char detail[384];
+		va_list args;
+		va_start(args, fmt);
+		vsnprintf(detail, sizeof(detail), fmt, args);
+		va_end(args);
+		s->listener->onDeviceEvent(event, detail);
+	}
+
+	/// Stops and closes an output of ours: its stop is no loss.
+	void closeOutput(MiniaudioDeviceState *s, ma_device *d, bool *ready)
+	{
+		if (!*ready) {
+			return;
+		}
+		s->ourStop.store(1);
+		ma_device_uninit(d);
+		s->ourStop.store(0);
+		*ready = false;
+	}
+
+	bool realAvailable(MiniaudioDeviceState *s, UnsignedInt now)
+	{
+		if (s->testRealBlocked && !s->testRealBlockedForever && (Int)(now - s->testRealBackMS) >= 0) {
+			s->testRealBlocked = false;
+		}
+		return !s->testRealBlocked;
+	}
+
+	/// Opens the real output into s->device, not started.
+	bool initReal(MiniaudioDeviceState *s, UnsignedInt now)
+	{
+		if (!s->contextReady || !realAvailable(s, now)) {
+			return false;
+		}
+		ma_device_config dc = outputConfig(s);
+		if (ma_device_init(&s->context, &dc, &s->device) != MA_SUCCESS) {
+			return false;
+		}
+		s->deviceReady = true;
+		return true;
+	}
+
+	bool startReal(MiniaudioDeviceState *s)
+	{
+		if (ma_device_start(&s->device) != MA_SUCCESS) {
+			closeOutput(s, &s->device, &s->deviceReady);
+			return false;
+		}
+		s->output = OUTPUT_REAL;
+		setOutputName(s, &s->device, "");
+		return true;
+	}
+
+	/// Brings the engine time up to the wall clock since the loss (at most kMaxCatchUpMS), while no output reads it, so
+	/// ends and stream passes come when they would have come on a running output. Returns the milliseconds made up.
+	UnsignedInt catchUp(MiniaudioDeviceState *s, UnsignedInt now, UnsignedInt lostAt)
+	{
+		const Int sinceLoss = (Int)(now - lostAt);    // signed: a notification may carry a later tick than 'now'
+		UnsignedInt missedMS = sinceLoss > 0 ? (UnsignedInt)sinceLoss : 0;
+		if (missedMS > kMaxCatchUpMS) {
+			missedMS = kMaxCatchUpMS;
+		}
+		ma_uint64 missed = (ma_uint64)missedMS * kEngineRate / 1000;
+		float scratch[1024 * kEngineChannels];
+		while (missed > 0)
+		{
+			const ma_uint64 n = missed < 1024 ? missed : 1024;
+			ma_engine_read_pcm_frames(&s->engine, scratch, n, nullptr);
+			missed -= n;
+		}
+		return missedMS;
+	}
+
+	/// Runs the engine on the null backend, after making up the engine time lost since 'lostAt'.
+	void openFallback(MiniaudioDeviceState *s, UnsignedInt now, UnsignedInt lostAt)
+	{
+		ma_context *context = &s->context;
+		if (!s->options.nullBackend)
+		{
+			if (!s->fallbackContextReady)
+			{
+				const ma_backend backends[1] = { ma_backend_null };
+				ma_context_config cc = ma_context_config_init();
+				s->fallbackContextReady = ma_context_init(backends, 1, &cc, &s->fallbackContext) == MA_SUCCESS;
+			}
+			context = s->fallbackContextReady ? &s->fallbackContext : nullptr;
+		}
+		ma_device_config dc = outputConfig(s);
+		if (context == nullptr || ma_device_init(context, &dc, &s->fallbackDevice) != MA_SUCCESS)
+		{
+			s->output = OUTPUT_NONE;
+			outputEvent(s, "no_output", "fallback=failed engine_frames=%llu", (unsigned long long)engineTime(s));
+			return;
+		}
+		s->fallbackReady = true;
+		const UnsignedInt missedMS = catchUp(s, now, lostAt);
+		if (ma_device_start(&s->fallbackDevice) != MA_SUCCESS)
+		{
+			closeOutput(s, &s->fallbackDevice, &s->fallbackReady);
+			s->output = OUTPUT_NONE;
+			outputEvent(s, "no_output", "fallback=not_started engine_frames=%llu", (unsigned long long)engineTime(s));
+			return;
+		}
+		s->output = OUTPUT_FALLBACK;
+		setOutputName(s, &s->fallbackDevice, ", fallback");
+		outputEvent(s, "null_fallback", "device=%s endpoint=%s caught_up_ms=%u engine_frames=%llu", s->name, s->fallbackDevice.playback.name,
+			missedMS, (unsigned long long)engineTime(s));
+	}
+
+	/// Back to the real default device from the fallback (or from no output).
+	void restoreReal(MiniaudioDeviceState *s, UnsignedInt now)
+	{
+		if (!initReal(s, now))
+		{
+			if (!s->retryFailedLogged) {
+				s->retryFailedLogged = true;
+				outputEvent(s, "retry_failed", "next_try_ms=%u", kRetryMS);
+			}
+			if (s->output == OUTPUT_NONE) {
+				openFallback(s, now, now);
+			}
+			return;
+		}
+		closeOutput(s, &s->fallbackDevice, &s->fallbackReady);    // never two outputs reading the engine at once
+		if (!startReal(s)) {
+			openFallback(s, now, now);
+			return;
+		}
+		outputEvent(s, "restored", "device=%s endpoint=%s after_ms=%u engine_frames=%llu", s->name, s->device.playback.name,
+			now - s->lostSinceMS, (unsigned long long)engineTime(s));
+	}
+
+	void simulateOutputLoss(MiniaudioDeviceState *s, Int realUnavailableMS)
+	{
+		ma_device *active = s->output == OUTPUT_REAL ? &s->device : (s->output == OUTPUT_FALLBACK ? &s->fallbackDevice : nullptr);
+		if (active == nullptr) {
+			return;
+		}
+		s->testRealBlocked = true;
+		s->testRealBlockedForever = realUnavailableMS < 0;
+		s->testRealBackMS = (UnsignedInt)::GetTickCount() + (UnsignedInt)(realUnavailableMS < 0 ? 0 : realUnavailableMS);
+		ma_device_stop(active);    // not ourStop: the notification sees a stop nobody asked for, as after an unplug
+	}
+
+	/// update(): the test switch, miniaudio's own reroutes, a loss, and the retries of the real device.
+	void watchOutput(MiniaudioDeviceState *s)
+	{
+		const UnsignedInt now = (UnsignedInt)::GetTickCount();
+		if (s->options.testLossAfterSeconds > 0.0f && !s->testLossDone && now - s->openMS >= (UnsignedInt)(s->options.testLossAfterSeconds * 1000.0f))
+		{
+			s->testLossDone = true;
+			simulateOutputLoss(s, s->options.testBackAfterSeconds < 0.0f ? -1 : (Int)(s->options.testBackAfterSeconds * 1000.0f));
+		}
+
+		const UnsignedInt reroutes = s->reroutes.load();
+		if (reroutes != s->reroutesSeen && s->output == OUTPUT_REAL)
+		{
+			s->reroutesSeen = reroutes;
+			outputEvent(s, "rerouted", "device=%s endpoint=%s engine_frames=%llu", s->name, s->device.playback.name, (unsigned long long)engineTime(s));
+		}
+
+		if (s->lost.load())
+		{
+			ma_device *active = s->output == OUTPUT_REAL ? &s->device : &s->fallbackDevice;
+			const bool ready = s->output == OUTPUT_REAL ? s->deviceReady : (s->output == OUTPUT_FALLBACK ? s->fallbackReady : false);
+			if (ready && ma_device_get_state(active) == ma_device_state_started) {
+				s->lost.store(0);    // it runs again: miniaudio restarted it after its own reroute
+				return;
+			}
+			if ((Int)(now - s->lastNotifyMS.load()) < (Int)kLossGraceMS) {
+				return;              // miniaudio may still be rerouting it (signed: the notification may be newer than 'now')
+			}
+			s->lost.store(0);
+			const UnsignedInt lostAt = s->lostAtMS.load();
+			outputEvent(s, "lost", "device=%s endpoint=%s engine_frames=%llu", s->name, ready ? active->playback.name : "-", (unsigned long long)engineTime(s));
+			if (s->output == OUTPUT_REAL)
+			{
+				closeOutput(s, &s->device, &s->deviceReady);
+				s->output = OUTPUT_NONE;
+				s->lostSinceMS = lostAt;
+				s->retryFailedLogged = false;
+				if (initReal(s, now))
+				{
+					const UnsignedInt missedMS = catchUp(s, now, lostAt);
+					if (startReal(s)) {
+						outputEvent(s, "restored", "device=%s endpoint=%s after_ms=%u caught_up_ms=%u engine_frames=%llu", s->name, s->device.playback.name,
+							now - s->lostSinceMS, missedMS, (unsigned long long)engineTime(s));
+						return;
+					}
+					openFallback(s, now, now);    // the engine time is made up already
+					s->nextRetryMS = now + kRetryMS;
+					return;
+				}
+			}
+			else
+			{
+				closeOutput(s, &s->fallbackDevice, &s->fallbackReady);
+				s->output = OUTPUT_NONE;
+			}
+			openFallback(s, now, lostAt);
+			s->nextRetryMS = now + kRetryMS;
+			return;
+		}
+
+		if (s->output != OUTPUT_REAL && (Int)(now - s->nextRetryMS) >= 0)
+		{
+			s->nextRetryMS = now + kRetryMS;
+			restoreReal(s, now);
+		}
+	}
 
 	void onSoundEnd(void *userData, ma_sound *)
 	{
@@ -739,6 +1040,26 @@ MiniaudioAudioDevice::MiniaudioAudioDevice()
 	m_state->options.noJobThread = FALSE;
 	m_state->options.nullBackend = FALSE;
 	m_state->contextReady = false;
+	m_state->options.testLossAfterSeconds = 0.0f;
+	m_state->options.testBackAfterSeconds = -1.0f;
+	m_state->deviceReady = false;
+	m_state->fallbackContextReady = false;
+	m_state->fallbackReady = false;
+	m_state->output = OUTPUT_NONE;
+	m_state->ourStop.store(0);
+	m_state->lost.store(0);
+	m_state->lostAtMS.store(0);
+	m_state->lastNotifyMS.store(0);
+	m_state->reroutes.store(0);
+	m_state->reroutesSeen = 0;
+	m_state->lostSinceMS = 0;
+	m_state->nextRetryMS = 0;
+	m_state->retryFailedLogged = false;
+	m_state->openMS = 0;
+	m_state->testLossDone = false;
+	m_state->testRealBlocked = false;
+	m_state->testRealBlockedForever = false;
+	m_state->testRealBackMS = 0;
 	snprintf(m_state->name, sizeof(m_state->name), "miniaudio");
 	m_state->resourceManagerReady = false;
 	m_state->engineReady = false;
@@ -784,17 +1105,31 @@ AudioDevice::OpenResult MiniaudioAudioDevice::open(const AudioSettings *settings
 	if (s->options.noOutputDevice) {
 		ec.noDevice = MA_TRUE;
 	}
-	else if (s->options.nullBackend)
+	else
 	{
-		// TheSuperHackers @feature -audio miniaudio-null: the context knows the null backend only, so the engine's device
-		// can be nothing else; it pulls the mix in real time and discards it. No output device is opened.
-		const ma_backend backends[1] = { ma_backend_null };
+		// The context ma_engine_init would make (the default backends in miniaudio's order), or for -audio miniaudio-null
+		// a context that knows the null backend only, so no device of it can be anything else: it pulls the mix in real
+		// time and discards it. The device is ours and given to the engine, which takes its rate, channels and period.
 		ma_context_config cc = ma_context_config_init();
-		if (ma_context_init(backends, 1, &cc, &s->context) != MA_SUCCESS) {
+		ma_result made;
+		if (s->options.nullBackend) {
+			const ma_backend backends[1] = { ma_backend_null };
+			made = ma_context_init(backends, 1, &cc, &s->context);
+		} else {
+			made = ma_context_init(nullptr, 0, &cc, &s->context);
+		}
+		if (made != MA_SUCCESS) {
 			return OPEN_NO_OUTPUT;
 		}
 		s->contextReady = true;
-		ec.pContext = &s->context;
+		ma_device_config dc = outputConfig(s);
+		if (ma_device_init(&s->context, &dc, &s->device) != MA_SUCCESS) {
+			ma_context_uninit(&s->context);
+			s->contextReady = false;
+			return OPEN_NO_OUTPUT;
+		}
+		s->deviceReady = true;
+		ec.pDevice = &s->device;
 	}
 	if (s->options.noJobThread)
 	{
@@ -815,6 +1150,7 @@ AudioDevice::OpenResult MiniaudioAudioDevice::open(const AudioSettings *settings
 
 	if (ma_engine_init(&ec, &s->engine) != MA_SUCCESS)
 	{
+		closeOutput(s, &s->device, &s->deviceReady);
 		if (s->resourceManagerReady) {
 			ma_resource_manager_uninit(&s->resourceManager);
 			s->resourceManagerReady = false;
@@ -827,13 +1163,19 @@ AudioDevice::OpenResult MiniaudioAudioDevice::open(const AudioSettings *settings
 	}
 	s->engineReady = true;
 
-	// The backend in use, for the manager's DEVICE and DEVICECHOICE log lines.
-	const ma_device *device = ma_engine_get_device(&s->engine);
-	if (device != nullptr && device->pContext != nullptr) {
-		snprintf(s->name, sizeof(s->name), "miniaudio (%s backend)", ma_get_backend_name(device->pContext->backend));
+	// The backend in use, for the manager's DEVICE and DEVICECHOICE log lines. ma_engine_init has started the device.
+	if (s->deviceReady) {
+		s->output = OUTPUT_REAL;
+		setOutputName(s, &s->device, "");
 	} else {
+		s->output = OUTPUT_NONE;
 		snprintf(s->name, sizeof(s->name), "miniaudio (no device)");
 	}
+	s->openMS = (UnsignedInt)::GetTickCount();
+	s->lost.store(0);
+	s->reroutesSeen = s->reroutes.load();
+	s->testLossDone = false;
+	s->testRealBlocked = false;
 
 	if (!s->options.endsInUpdate)
 	{
@@ -873,6 +1215,11 @@ void MiniaudioAudioDevice::close()
 	}
 	s->movieSounds.clear();
 	s->endQueue.clear();
+	// The outputs before the engine: no audio thread may read the engine while it goes.
+	closeOutput(s, &s->device, &s->deviceReady);
+	closeOutput(s, &s->fallbackDevice, &s->fallbackReady);
+	s->output = OUTPUT_NONE;
+	s->lost.store(0);
 	if (s->engineReady) {
 		ma_engine_uninit(&s->engine);
 		s->engineReady = false;
@@ -884,6 +1231,10 @@ void MiniaudioAudioDevice::close()
 	if (s->contextReady) {
 		ma_context_uninit(&s->context);
 		s->contextReady = false;
+	}
+	if (s->fallbackContextReady) {
+		ma_context_uninit(&s->fallbackContext);
+		s->fallbackContextReady = false;
 	}
 	snprintf(s->name, sizeof(s->name), "miniaudio");
 	s->fileLengths.clear();
@@ -901,6 +1252,16 @@ void MiniaudioAudioDevice::update(UnsignedInt logicFrame, Bool logicIsRunning)
 		deliverEnds(m_state);
 	}
 	deleteDeadVoices(m_state);
+	if (m_state->engineReady && !m_state->options.noOutputDevice) {
+		watchOutput(m_state);
+	}
+}
+
+void MiniaudioAudioDevice::testSimulateOutputLoss(Int realUnavailableMS)
+{
+	if (m_state->engineReady && !m_state->options.noOutputDevice) {
+		simulateOutputLoss(m_state, realUnavailableMS);
+	}
 }
 
 //-------------------------------------------------------------------------------------------------

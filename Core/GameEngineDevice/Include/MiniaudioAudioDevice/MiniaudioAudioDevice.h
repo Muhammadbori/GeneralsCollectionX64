@@ -46,6 +46,10 @@ public:
 		Bool endsInUpdate;      ///< report ends from update() on the caller's thread instead of the end thread
 		Bool noJobThread;       ///< decode streams in renderForTest() instead of on miniaudio's job thread
 		Bool nullBackend;       ///< a device on miniaudio's null backend only: mixed in real time, never sent to any output
+		/// -audioTestDeviceLoss A[,B]: A > 0: A seconds after the open the output stops as if by itself (once); the real
+		/// device can be opened again B seconds after that (B < 0: never). See testSimulateOutputLoss.
+		Real testLossAfterSeconds;
+		Real testBackAfterSeconds;
 	};
 
 	MiniaudioAudioDevice();
@@ -109,6 +113,11 @@ public:
 
 	/// With TestOptions::noOutputDevice: mixes 'frameCount' stereo float frames at 44.1 kHz into 'out'.
 	UnsignedInt renderForTest(float *out, UnsignedInt frameCount);
+
+	/// Tests: the running output device stops as if by itself (miniaudio's audio thread left its loop: no stop of
+	/// ours), and the real device cannot be opened again for 'realUnavailableMS' (< 0: for the rest of the run).
+	/// The next update() calls handle it as a loss. Nothing happens when no output device runs.
+	void testSimulateOutputLoss(Int realUnavailableMS);
 
 private:
 	MiniaudioDeviceState *m_state;
