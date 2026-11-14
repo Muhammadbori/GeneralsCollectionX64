@@ -243,7 +243,7 @@ Int GetGameClientRandomValue( int lo, int hi, const char *file, int line )
 
 	const UnsignedInt delta = hi - lo + 1;
 	const Int rval = ((Int)(randomValue(theGameClientSeed) % delta)) + lo;
-	STATE_TRACE(clientDraw());
+	STATE_TRACE(clientDraw(file, line, lo, hi, rval, _ReturnAddress()));
 
 #ifdef DEBUG_RANDOM_CLIENT
 	DEBUG_LOG(( "%d: GetGameClientRandomValue = %d (%d - %d), %s line %d",
@@ -264,7 +264,7 @@ Real GetGameClientRandomValueReal( Real lo, Real hi, const char *file, int line 
 
 	const Real delta = hi - lo;
 	const Real rval = ((Real)(randomValue(theGameClientSeed)) * theMultFactor) * delta + lo;
-	STATE_TRACE(clientDraw());
+	STATE_TRACE(clientDraw(file, line, lo, hi, rval, _ReturnAddress()));
 
 #ifdef DEBUG_RANDOM_CLIENT
 	DEBUG_LOG(( "%d: GetGameClientRandomValueReal = %f, %s line %d",

@@ -20,7 +20,8 @@
 // TheSuperHackers @feature State trace (-stateTrace): StateTrace.log in the user data folder, for finding where two runs
 // that should be equal part. One line per logic update with the logic and client random generator states and the client
 // clock; one line per logic random draw made outside a logic update; one line per InitRandom; with -stateTraceCalls A-B
-// one line per logic random draw in logic frames A to B. Off by default: no file, and each hook below is one flag test.
+// one line per logic random draw and one per client random draw in logic frames A to B. Off by default: no file, and each
+// hook below is one flag test.
 // The trace only reads state; it draws no random number and changes no order or CRC.
 
 #pragma once
@@ -34,7 +35,7 @@ namespace StateTrace
 	// Random generators (RandomValue.cpp)
 	void logicDraw(const char *file, Int line, double lo, double hi, double value);       ///< a draw that moved the logic seed
 	void logicUnchanged(const char *file, Int line, double lo, double hi, double value);  ///< GetGameLogicRandomValue[Real]Unchanged
-	void clientDraw();
+	void clientDraw(const char *file, Int line, double lo, double hi, double value, void *caller);  ///< caller: _ReturnAddress()
 	void initRandom(UnsignedInt seed, Bool fromTime, void *caller);
 
 	// Logic update (GameLogic::update of both games): a line at the end of each

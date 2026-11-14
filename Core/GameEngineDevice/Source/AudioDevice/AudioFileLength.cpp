@@ -18,7 +18,8 @@
 
 // AudioFileLength.cpp //////////////////////////////////////////////////////////////////////////////
 // TheSuperHackers @feature See AudioFileLength.h. Mirrors dx12-tools/audiolen.py (wav_info, mp3_header,
-// mp3_info) step by step, so the two can be compared on every audio file of the game archives.
+// mp3_info) step by step, so the two can be compared on every audio file of the game archives. The parsers read
+// through an AudioFileLengthSource, so a file need not be in memory as a whole.
 
 #include "AudioDevice/AudioFileLength.h"
 
@@ -30,14 +31,42 @@ namespace
 	uint32_t le32(const unsigned char *p) { return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24); }
 	uint32_t be32(const unsigned char *p) { return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | (uint32_t)p[3]; }
 
-	bool parseWav(const unsigned char *d, size_t n, AudioFileLengthInfo *r)
+	/// The whole file in memory.
+	struct BufferSource : AudioFileLengthSource
 	{
-		if (n < 12 || memcmp(d, "RIFF", 4) != 0 || memcmp(d + 8, "WAVE", 4) != 0)
+		BufferSource(const unsigned char *data, size_t size) : m_data(data), m_size(size) {}
+		virtual uint64_t size() override { return m_size; }
+		virtual bool read(uint64_t offset, void *dst, size_t bytes) override
+		{
+			if (offset > m_size || bytes > m_size - offset)
+				return false;
+			memcpy(dst, m_data + offset, bytes);
+			return true;
+		}
+		const unsigned char *m_data;
+		size_t m_size;
+	};
+
+	/// 'bytes' bytes from 'offset', zeros for the part past the end of the file. The MP3 Xing and VBRI frame counts are
+	/// taken this way: audiolen.py checks only the tag id against the file size, and reads the count after it.
+	void readOrZero(AudioFileLengthSource &s, size_t n, size_t offset, unsigned char *dst, size_t bytes)
+	{
+		memset(dst, 0, bytes);
+		if (offset < n)
+			s.read(offset, dst, bytes < n - offset ? bytes : n - offset);
+	}
+
+	bool parseWav(AudioFileLengthSource &s, AudioFileLengthInfo *r)
+	{
+		const size_t n = (size_t)s.size();
+		unsigned char head[12];
+		if (n < 12 || !s.read(0, head, 12) || memcmp(head, "RIFF", 4) != 0 || memcmp(head + 8, "WAVE", 4) != 0)
 			return false;
 
 		// Walk the chunks; a later chunk of the same id replaces an earlier one (as audiolen.py does).
 		size_t p = 12;
-		const unsigned char *fmt = nullptr;
+		bool haveFmt = false;
+		size_t fmtOff = 0;
 		size_t fmtLen = 0;
 		bool haveData = false;
 		size_t dataOff = 0;
@@ -46,28 +75,37 @@ namespace
 		uint32_t fact = 0;
 		while (p + 8 <= n)
 		{
-			const unsigned char *id = d + p;
-			const uint32_t size = le32(d + p + 4);
+			unsigned char chunk[8];
+			if (!s.read(p, chunk, 8))
+				return false;
+			const uint32_t size = le32(chunk + 4);
 			const size_t bodyOff = p + 8;
 			const size_t bodyLen = bodyOff >= n ? 0 : ((uint64_t)size < (uint64_t)(n - bodyOff) ? (size_t)size : n - bodyOff);
-			if (memcmp(id, "fmt ", 4) == 0) {
-				fmt = d + bodyOff;
+			if (memcmp(chunk, "fmt ", 4) == 0) {
+				haveFmt = true;
+				fmtOff = bodyOff;
 				fmtLen = bodyLen;
-			} else if (memcmp(id, "fact", 4) == 0 && size >= 4) {
+			} else if (memcmp(chunk, "fact", 4) == 0 && size >= 4) {
 				if (bodyLen >= 4) {
-					fact = le32(d + bodyOff);
+					unsigned char f[4];
+					if (!s.read(bodyOff, f, 4))
+						return false;
+					fact = le32(f);
 					haveFact = true;
 				}
-			} else if (memcmp(id, "data", 4) == 0) {
+			} else if (memcmp(chunk, "data", 4) == 0) {
 				haveData = true;
 				dataOff = bodyOff;
 				dataSize = size;
 			}
 			p += 8 + (size_t)size + (size & 1);
 		}
-		if (fmt == nullptr || !haveData || fmtLen < 16)
+		if (!haveFmt || !haveData || fmtLen < 16)
 			return false;
 
+		unsigned char fmt[20] = {};
+		if (!s.read(fmtOff, fmt, fmtLen < 20 ? fmtLen : 20))
+			return false;
 		const uint32_t tag = le16(fmt);
 		const uint32_t ch = le16(fmt + 2);
 		const uint32_t rate = le32(fmt + 4);
@@ -126,16 +164,17 @@ namespace
 	const uint32_t kRates[4][3] = { { 11025, 12000, 8000 }, { 0, 0, 0 }, { 22050, 24000, 16000 }, { 44100, 48000, 32000 } };
 
 	// audiolen.py mp3_header: MPEG-1/2/2.5 Layer III only.
-	bool mp3Header(const unsigned char *d, size_t n, size_t p, Mp3Header *h)
+	bool mp3Header(AudioFileLengthSource &s, size_t n, size_t p, Mp3Header *h)
 	{
-		if (p + 4 > n || d[p] != 0xFF || (d[p + 1] & 0xE0) != 0xE0)
+		unsigned char d[4];
+		if (p + 4 > n || !s.read(p, d, 4) || d[0] != 0xFF || (d[1] & 0xE0) != 0xE0)
 			return false;
-		const uint32_t ver = (d[p + 1] >> 3) & 3;
-		const uint32_t layer = (d[p + 1] >> 1) & 3;
-		const uint32_t bri = d[p + 2] >> 4;
-		const uint32_t sri = (d[p + 2] >> 2) & 3;
-		const uint32_t pad = (d[p + 2] >> 1) & 1;
-		const uint32_t mode = d[p + 3] >> 6;
+		const uint32_t ver = (d[1] >> 3) & 3;
+		const uint32_t layer = (d[1] >> 1) & 3;
+		const uint32_t bri = d[2] >> 4;
+		const uint32_t sri = (d[2] >> 2) & 3;
+		const uint32_t pad = (d[2] >> 1) & 1;
+		const uint32_t mode = d[3] >> 6;
 		if (ver == 1 || layer != 1 || bri == 0 || bri == 15 || sri == 3)
 			return false;
 		h->ver = ver;
@@ -147,18 +186,21 @@ namespace
 		return true;
 	}
 
-	bool parseMp3(const unsigned char *d, size_t n, AudioFileLengthInfo *r)
+	bool parseMp3(AudioFileLengthSource &s, AudioFileLengthInfo *r, bool countFrames)
 	{
+		const size_t n = (size_t)s.size();
 		size_t p = 0;
-		if (n >= 10 && memcmp(d, "ID3", 3) == 0) {
-			const size_t sz = ((size_t)d[6] << 21) | ((size_t)d[7] << 14) | ((size_t)d[8] << 7) | d[9];
-			p = 10 + sz + ((d[5] & 0x10) ? 10 : 0);
+		unsigned char id3[10];
+		if (n >= 10 && s.read(0, id3, 10) && memcmp(id3, "ID3", 3) == 0) {
+			const size_t sz = ((size_t)id3[6] << 21) | ((size_t)id3[7] << 14) | ((size_t)id3[8] << 7) | id3[9];
+			p = 10 + sz + ((id3[5] & 0x10) ? 10 : 0);
 		}
-		const size_t end = (n >= 128 && memcmp(d + n - 128, "TAG", 3) == 0) ? n - 128 : n;
+		unsigned char tag[3];
+		const size_t end = (n >= 128 && s.read(n - 128, tag, 3) && memcmp(tag, "TAG", 3) == 0) ? n - 128 : n;
 		Mp3Header h;
-		while (p < end && !mp3Header(d, n, p, &h))
+		while (p < end && !mp3Header(s, n, p, &h))
 			++p;
-		if (!mp3Header(d, n, p, &h)) {
+		if (!mp3Header(s, n, p, &h)) {
 			r->kind = AFK_UNKNOWN;
 			return false;
 		}
@@ -173,25 +215,33 @@ namespace
 		const size_t side = h.ver == 3 ? (h.channels == 2 ? 32 : 17) : (h.channels == 2 ? 17 : 9);
 		bool haveTag = false;
 		uint32_t tagFrames = 0;
-		if (p + 8 + side <= n && (memcmp(d + p + 4 + side, "Xing", 4) == 0 || memcmp(d + p + 4 + side, "Info", 4) == 0)) {
-			const uint32_t flags = be32(d + p + 8 + side);
+		unsigned char id[4];
+		unsigned char v[4];
+		if (p + 8 + side <= n && s.read(p + 4 + side, id, 4) && (memcmp(id, "Xing", 4) == 0 || memcmp(id, "Info", 4) == 0)) {
+			readOrZero(s, n, p + 8 + side, v, 4);
+			const uint32_t flags = be32(v);
 			if (flags & 1) {
-				tagFrames = be32(d + p + 12 + side);
+				readOrZero(s, n, p + 12 + side, v, 4);
+				tagFrames = be32(v);
 				haveTag = true;
 			}
-		} else if (p + 40 <= n && memcmp(d + p + 36, "VBRI", 4) == 0) {
-			tagFrames = be32(d + p + 50);
+		} else if (p + 40 <= n && s.read(p + 36, id, 4) && memcmp(id, "VBRI", 4) == 0) {
+			readOrZero(s, n, p + 50, v, 4);
+			tagFrames = be32(v);
 			haveTag = true;
 		}
 
-		size_t q = p;
 		uint64_t frames = 0;
-		Mp3Header hh;
-		while (q < end) {
-			if (!mp3Header(d, n, q, &hh) || hh.length == 0)
-				break;
-			++frames;
-			q += hh.length;
+		if (countFrames || !haveTag)
+		{
+			size_t q = p;
+			Mp3Header hh;
+			while (q < end) {
+				if (!mp3Header(s, n, q, &hh) || hh.length == 0)
+					break;
+				++frames;
+				q += hh.length;
+			}
 		}
 		r->dataBytes = end - p;
 		r->mp3Frames = frames;
@@ -202,20 +252,32 @@ namespace
 	}
 }
 
-bool AudioFileLength_ParseWav(const unsigned char *data, size_t size, AudioFileLengthInfo *info)
+bool AudioFileLength_ParseWavFrom(AudioFileLengthSource &source, AudioFileLengthInfo *info)
 {
 	memset(info, 0, sizeof(*info));
 	info->kind = AFK_UNKNOWN;
-	info->fileBytes = size;
-	return parseWav(data, size, info);
+	info->fileBytes = source.size();
+	return parseWav(source, info);
+}
+
+bool AudioFileLength_ParseMp3From(AudioFileLengthSource &source, AudioFileLengthInfo *info, bool countFrames)
+{
+	memset(info, 0, sizeof(*info));
+	info->kind = AFK_UNKNOWN;
+	info->fileBytes = source.size();
+	return parseMp3(source, info, countFrames);
+}
+
+bool AudioFileLength_ParseWav(const unsigned char *data, size_t size, AudioFileLengthInfo *info)
+{
+	BufferSource source(data, size);
+	return AudioFileLength_ParseWavFrom(source, info);
 }
 
 bool AudioFileLength_ParseMp3(const unsigned char *data, size_t size, AudioFileLengthInfo *info)
 {
-	memset(info, 0, sizeof(*info));
-	info->kind = AFK_UNKNOWN;
-	info->fileBytes = size;
-	return parseMp3(data, size, info);
+	BufferSource source(data, size);
+	return AudioFileLength_ParseMp3From(source, info, true);
 }
 
 bool AudioFileLength_Parse(const unsigned char *data, size_t size, AudioFileLengthInfo *info)

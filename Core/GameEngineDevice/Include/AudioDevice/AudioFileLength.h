@@ -74,6 +74,24 @@ bool AudioFileLength_Parse(const unsigned char *data, size_t size, AudioFileLeng
 bool AudioFileLength_ParseWav(const unsigned char *data, size_t size, AudioFileLengthInfo *info);
 bool AudioFileLength_ParseMp3(const unsigned char *data, size_t size, AudioFileLengthInfo *info);
 
+/// TheSuperHackers @performance A file read in pieces, so that a length does not need the whole file in memory. The
+/// parsers below read only what they look at: the WAV chunk headers, 'fmt ' and 'fact'; the MP3 ID3 header, the
+/// ID3v1 tag, the bytes up to the first frame, its Xing/Info/VBRI header and, when the frames are counted, each frame
+/// header. The functions above are these parsers over a buffer, so both give the same result for the same bytes.
+struct AudioFileLengthSource
+{
+	virtual ~AudioFileLengthSource() {}
+	virtual uint64_t size() = 0;
+	/// Copies 'bytes' bytes from 'offset'; false when they are not all inside the file or cannot be read.
+	virtual bool read(uint64_t offset, void *dst, size_t bytes) = 0;
+};
+
+bool AudioFileLength_ParseWavFrom(AudioFileLengthSource &source, AudioFileLengthInfo *info);
+
+/// countFrames false: an MP3 whose Xing/Info/VBRI header gives the frame count is not walked frame by frame (the
+/// lengths use that count; mp3Frames stays 0). An MP3 without that header is always walked.
+bool AudioFileLength_ParseMp3From(AudioFileLengthSource &source, AudioFileLengthInfo *info, bool countFrames);
+
 /// Length in milliseconds (not rounded). PCM and MP3 ignore the rule except ALR_BYTE_RATE, which gives the
 /// byte-rate reading for a WAV and the constant-bit-rate reading (bytes x 8 / kbps) for an MP3.
 /// Returns a negative value when that reading does not exist for the file.

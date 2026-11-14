@@ -64,7 +64,9 @@ public:
 		Real playMS;     ///< how long it plays: decoded samples / rate (ADPCM: full blocks)
 	};
 
-	/// nullptr when the file cannot be opened or read.
+	/// nullptr when the file cannot be opened or read. A WAV: reads only the chunk headers the lengths need, not the
+	/// whole file. An MP3: one read of the whole file (its play length needs every frame header unless a frame count
+	/// header gives it). The result equals fromBytes over the whole file.
 	const Entry *get(const AsciiString &fileName);
 
 	/// The lengths of a whole file in memory. A name ending in ".wav" is read as WAV, any other as MP3

@@ -1790,7 +1790,6 @@ static CommandLineParam paramsForEngineInit[] =
 	{ "-shellmap", parseShellMap },
 	{ "-winCursors", parseWinCursors },
 	{ "-constantDebug", parseConstantDebug },
-	{ "-seed", parseSeed },
 	{ "-noagpfix", parseIncrAGPBuf },
 	{ "-noFPSLimit", parseNoFPSLimit },
 	{ "-dumpAssetUsage", parseDumpAssetUsage },
@@ -1799,6 +1798,10 @@ static CommandLineParam paramsForEngineInit[] =
 	{ "-showTeamDot", parseShowTeamDot },
 	{ "-extraLogging", parseExtraLogging },
 #endif
+
+	// TheSuperHackers @tweak -seed N also in Release builds: a queued save game load is seeded with N (GameState::loadQueuedSaveGame),
+	// so that two loads of one save can be compared.
+	{ "-seed", parseSeed },
 
 #ifdef DEBUG_LOGGING
 	{ "-setDebugLevel", parseSetDebugLevel },

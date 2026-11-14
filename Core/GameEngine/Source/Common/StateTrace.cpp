@@ -25,6 +25,9 @@
 //     cx=<cloud x offset> cy=<cloud y offset> put=<frame pacer update time, s> step=<frame pacer logic step, ms>
 //   O n=<number> f=<frame> v=<value> lo=<lo> hi=<hi> at=<file>:<line>      a logic draw outside a logic update
 //   C f=<frame> in=<0|1> u=<0|1> v=<value> lo=<lo> hi=<hi> at=<file>:<line>  -stateTraceCalls A-B: every logic draw
+//   K f=<frame> in=<0|1> n=<client draw number since the last F> v=<value> lo=<lo> hi=<hi> at=<file>:<line>
+//     ret=<module offset of the caller> ret2=<module offset of the caller's caller, 0 when the stack walk cannot tell>
+//                                                                          -stateTraceCalls A-B: every client draw
 //   I f=<frame> seed=<seed> from=<time|value> caller=<module offset>       InitRandom
 // 'f' is the logic frame at the start of the update for F, and TheGameLogic->getFrame() for the others.
 
@@ -90,6 +93,13 @@ namespace StateTrace
 	static Real s_cloudX = 0.0f, s_cloudY = 0.0f;
 
 	static UnsignedInt frameNow() { return TheGameLogic ? TheGameLogic->getFrame() : 0; }
+
+	static unsigned long long moduleOffset(const void *address)
+	{
+		const uintptr_t base = (uintptr_t)::GetModuleHandleA(nullptr);
+		const uintptr_t at = (uintptr_t)address;
+		return (unsigned long long)(at >= base ? at - base : at);
+	}
 
 	static const char *baseName(const char *file)
 	{
@@ -192,18 +202,38 @@ namespace StateTrace
 		}
 	}
 
-	void clientDraw()
+	void clientDraw(const char *file, Int line, double lo, double hi, double value, void *caller)
 	{
 		++s_clientDraws;
+		const UnsignedInt frame = frameNow();
+		if (frame < s_callsFirst || frame > s_callsLast) {
+			return;
+		}
+		// The caller's caller names the code behind draws that come through a helper (GameClientRandomVariable::getValue,
+		// whose file and line are its own). The stack walk finds the caller's frame and takes the next one; it is exact on
+		// x64 (unwind data) and best effort on x86, where frames without a frame pointer can end the walk (then ret2=0).
+		void *frames[12] = {};
+		const USHORT got = ::RtlCaptureStackBackTrace(0, 12, frames, nullptr);
+		void *caller2 = nullptr;
+		for (USHORT i = 0; i + 1 < got; ++i)
+		{
+			if (frames[i] == caller) {
+				caller2 = frames[i + 1];
+				break;
+			}
+		}
+		char buf[448];
+		snprintf(buf, sizeof(buf), "K f=%u in=%d n=%u v=%.9g lo=%.9g hi=%.9g at=%s:%d ret=0x%llx ret2=0x%llx\n", frame,
+			(int)(s_depth > 0), s_clientDraws, value, lo, hi, baseName(file), (int)line, moduleOffset(caller),
+			caller2 ? moduleOffset(caller2) : 0ull);
+		writeLine(buf, FALSE);
 	}
 
 	void initRandom(UnsignedInt seed, Bool fromTime, void *caller)
 	{
-		const uintptr_t base = (uintptr_t)::GetModuleHandleA(nullptr);
-		const uintptr_t at = (uintptr_t)caller;
 		char buf[192];
 		snprintf(buf, sizeof(buf), "I f=%u seed=%u from=%s caller=0x%llx\n", frameNow(), seed, fromTime ? "time" : "value",
-			(unsigned long long)(at >= base ? at - base : at));
+			moduleOffset(caller));
 		writeLine(buf, TRUE);
 	}
 
