@@ -170,6 +170,11 @@ struct LANMessage
 		MSG_INACTIVE,						///< I've alt-tabbed out.  Unaccept me cause I'm a poo-flinging monkey.
 
 		MSG_REQUEST_GAME_INFO,	///< For direct connect, get the game info from a specific IP Address
+
+		// TheSuperHackers @feature O26 (row 26) Sent after every lobby or game announce: the sender's files fingerprint
+		// (Fingerprint.h), for the "files match" mark of the LAN screen. Appended, so the values above are unchanged; a
+		// build without it ignores it (an unknown type).
+		MSG_FILES_INFO,
 	} messageType;
 
 	WideChar name[g_lanPlayerNameLength+1]; ///< My name, for convenience
@@ -263,6 +268,15 @@ struct LANMessage
 		{
 			char options[m_lanMaxOptionsLength+1];
 		} GameOptions;
+
+		// FilesInfo is sent with FILES_INFO (O26)
+		struct
+		{
+			UnsignedInt magic;        ///< LANFilesInfoMagic
+			UnsignedInt fingerprint;  ///< Fingerprint::overall(), 0: not known
+			UnsignedInt exeCRC;
+			UnsignedInt iniCRC;
+		} FilesInfo;
 		static_assert(ARRAY_SIZE(GameOptions.options) > m_lanMaxOptionsLength, "GameOptions.options buffer must be larger than m_lanMaxOptionsLength");
 
 	};
@@ -270,6 +284,27 @@ struct LANMessage
 #pragma pack(pop)
 
 static_assert(sizeof(LANMessage) <= MAX_LANAPI_PACKET_SIZE, "LANMessage struct cannot be larger than the max packet size");
+
+// TheSuperHackers @feature O26 (row 26) What the LAN screen needs beyond the original messages.
+static const UnsignedInt LANFilesInfoMagic = 0x46494C31;   ///< "FIL1"
+namespace LanFiles
+{
+	/// The files fingerprint a lobby player or a game host sent (MSG_FILES_INFO); FALSE when none came yet.
+	Bool fingerprintOf(UnsignedInt ip, UnsignedInt *fingerprint);
+	/// This computer's fingerprint (0 when not computed).
+	UnsignedInt own();
+}
+/// Test switches of the LAN screen (command line): -lanLoopback N binds the lobby to 127.0.0.(10+N) and sends its
+/// broadcasts to 127.0.0.10 ... 127.0.0.17 one by one (no other address, no firewall question; two instances on one PC
+/// find each other); -lanSample fills the screen's lists with sample games and players (pictures without a network).
+namespace LanTest
+{
+	void setLoopbackSlot(Int slot);
+	Int loopbackSlot();          ///< -1: off
+	UnsignedInt loopbackIP();    ///< 0: off
+	void setSampleData(Bool on);
+	Bool sampleData();
+}
 
 
 /**
@@ -387,6 +422,7 @@ protected:
 
 protected:
 	void sendMessage(LANMessage *msg, UnsignedInt ip = 0); // Convenience function
+	void sendMessageOnly(LANMessage *msg, UnsignedInt ip); ///< O26: sendMessage without the files info after an announce
 	void removePlayer(LANPlayer *player);
 	void removeGame(LANGameInfo *game);
 	void addPlayer(LANPlayer *player);

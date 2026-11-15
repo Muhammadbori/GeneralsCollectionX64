@@ -70,6 +70,8 @@
 #include "GameNetwork/GameSpy/MainMenuUtils.h"
 
 #include "GameClient/InGameUI.h"
+#include "GameClient/LanLobbyLook.h"
+#include "GameClient/GadgetPushButton.h"
 
 
 // PRIVATE DATA ///////////////////////////////////////////////////////////////////////////////////
@@ -453,6 +455,9 @@ void MainMenuInit( WindowLayout *layout, void *userData )
 	buttonSkirmish = TheWindowManager->winGetWindowFromId( parentMainMenu, skirmishID );
 	buttonOnline = TheWindowManager->winGetWindowFromId( parentMainMenu, onlineID );
 	buttonNetwork = TheWindowManager->winGetWindowFromId( parentMainMenu, networkID );
+	// TheSuperHackers @feature O26 (row 26) The button has the LAN screen's own name in both languages.
+	if (buttonNetwork)
+		GadgetButtonSetText(buttonNetwork, LanLobbyLook::screenName());
 	buttonOptions = TheWindowManager->winGetWindowFromId( parentMainMenu, optionsID );
 	buttonExit = TheWindowManager->winGetWindowFromId( parentMainMenu, exitID );
 	buttonMOTD = TheWindowManager->winGetWindowFromId( parentMainMenu, motdID );

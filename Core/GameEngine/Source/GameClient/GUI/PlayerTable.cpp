@@ -458,3 +458,13 @@ void PlayerTable::decorateRow(GameWindow *nameText, GameWindow *sideText, GameWi
 		setIcon(teamText, pirate, 0xFFFFFFFF, TRUE);
 	}
 }
+
+const Image *PlayerTable::colorPictureOf(Int color, Color *tint)
+{
+	return colorPicture(color, tint);
+}
+
+const Image *PlayerTable::armyPictureOf(Int playerTemplate)
+{
+	return armyPicture(playerTemplate);
+}

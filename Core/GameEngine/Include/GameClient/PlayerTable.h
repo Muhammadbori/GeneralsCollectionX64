@@ -69,4 +69,8 @@ namespace PlayerTable
 	/// The pictures of one row of the loading screen or the in-game list, by the apparent values of the slot: a spiral
 	/// before the name, the army picture before the army name, the pirate sign for no team. Any window may be nullptr.
 	void decorateRow(GameWindow *nameText, GameWindow *sideText, GameWindow *teamText, const GameSlot *slot);
+	/// O26: the colour picture of a colour index (rainbow for random, the spiral tinted with the colour through 'tint').
+	const Image *colorPictureOf(Int color, Color *tint);
+	/// O26: the army picture of a player template index (random emblem, or the general's side icon); nullptr: none.
+	const Image *armyPictureOf(Int playerTemplate);
 }

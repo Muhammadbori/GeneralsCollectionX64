@@ -25,6 +25,7 @@
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
 
 #include "Common/crc.h"
+#include "Common/Fingerprint.h"
 #include "Common/GameState.h"
 #include "Common/Registry.h"
 #include "GameNetwork/LANAPI.h"
@@ -35,6 +36,8 @@
 #include "GameClient/MapUtil.h"
 #include "Common/UserPreferences.h"
 #include "GameLogic/GameLogic.h"
+
+#include <map>
 
 
 static const UnsignedShort lobbyPort = 8086; ///< This is the UDP port used by all LANAPI communication
@@ -97,6 +100,11 @@ void LANAPI::init()
 {
 	m_gameStartTime = 0;
 	m_gameStartSeconds = 0;
+	// O26 test switch: the lobby socket on a loopback address only (else it would bind every address on the first
+	// visit, before SetLocalIP, and Windows would ask about the firewall)
+	if (LanTest::loopbackSlot() >= 0) {
+		m_localIP = LanTest::loopbackIP();
+	}
 	m_transport->reset();
 	m_transport->init(m_localIP, lobbyPort);
 	m_transport->allowBroadcasts(true);
@@ -177,7 +185,57 @@ void LANAPI::reset()
 
 }
 
+//-------------------------------------------------------------------------------------------------
+// TheSuperHackers @feature O26 (row 26) Files fingerprints of the others, and the LAN screen's test switches.
+namespace
+{
+	std::map<UnsignedInt, UnsignedInt> s_filesFingerprints;   ///< sender ip -> fingerprint
+	Int s_loopbackSlot = -1;
+	Bool s_sampleData = FALSE;
+}
+
+Bool LanFiles::fingerprintOf(UnsignedInt ip, UnsignedInt *fingerprint)
+{
+	std::map<UnsignedInt, UnsignedInt>::const_iterator it = s_filesFingerprints.find(ip);
+	if (it == s_filesFingerprints.end() || it->second == 0) {
+		return FALSE;
+	}
+	if (fingerprint != nullptr) {
+		*fingerprint = it->second;
+	}
+	return TRUE;
+}
+
+UnsignedInt LanFiles::own()
+{
+	return Fingerprint::isComputed() ? Fingerprint::overall() : 0;
+}
+
+void LanTest::setLoopbackSlot(Int slot) { s_loopbackSlot = (slot >= 0 && slot < 8) ? slot : -1; }
+Int LanTest::loopbackSlot() { return s_loopbackSlot; }
+UnsignedInt LanTest::loopbackIP() { return s_loopbackSlot >= 0 ? ((127u << 24) | (UnsignedInt)(10 + s_loopbackSlot)) : 0; }
+void LanTest::setSampleData(Bool on) { s_sampleData = on; }
+Bool LanTest::sampleData() { return s_sampleData; }
+
 void LANAPI::sendMessage(LANMessage *msg, UnsignedInt ip /* = 0 */)
+{
+	sendMessageOnly(msg, ip);
+	// O26: every announce is followed by the files fingerprint, to the same addresses
+	if (msg->messageType == LANMessage::MSG_GAME_ANNOUNCE || msg->messageType == LANMessage::MSG_LOBBY_ANNOUNCE)
+	{
+		LANMessage files;
+		memset(&files, 0, sizeof(files));
+		fillInLANMessage(&files);
+		files.messageType = LANMessage::MSG_FILES_INFO;
+		files.FilesInfo.magic = LANFilesInfoMagic;
+		files.FilesInfo.fingerprint = LanFiles::own();
+		files.FilesInfo.exeCRC = TheGlobalData != nullptr ? TheGlobalData->m_exeCRC : 0;
+		files.FilesInfo.iniCRC = TheGlobalData != nullptr ? TheGlobalData->m_iniCRC : 0;
+		sendMessageOnly(&files, ip);
+	}
+}
+
+void LANAPI::sendMessageOnly(LANMessage *msg, UnsignedInt ip)
 {
 	if (ip != 0)
 	{
@@ -193,6 +251,17 @@ void LANAPI::sendMessage(LANMessage *msg, UnsignedInt ip /* = 0 */)
 				if ((slot != nullptr) && (slot->isHuman())) {
 					m_transport->queueSend(slot->getIP(), lobbyPort, (unsigned char *)msg, sizeof(LANMessage) /*, 0, 0 */);
 				}
+			}
+		}
+	}
+	else if (LanTest::loopbackSlot() >= 0)
+	{
+		// O26 test switch: the "broadcast" goes to the other loopback instances one by one
+		for (Int k = 0; k < 8; ++k)
+		{
+			const UnsignedInt peer = (127u << 24) | (UnsignedInt)(10 + k);
+			if (peer != m_localIP) {
+				m_transport->queueSend(peer, lobbyPort, (unsigned char *)msg, sizeof(LANMessage) /*, 0, 0 */);
 			}
 		}
 	}
@@ -253,6 +322,9 @@ AsciiString GetMessageTypeString(UnsignedInt type)
 			break;
 		case LANMessage::MSG_INACTIVE:
 			returnString.format("Inactive (%d)", type);
+			break;
+		case LANMessage::MSG_FILES_INFO:
+			returnString.format("Files Info (%d)", type);
 			break;
 		default:
 			returnString.format("Unknown Message (%d)",type);
@@ -420,6 +492,11 @@ void LANAPI::update()
 				break;
 			case LANMessage::MSG_INACTIVE:		// someone is telling us that we're inactive.
 				handleInActive( msg, senderIP );
+				break;
+			case LANMessage::MSG_FILES_INFO:	// O26: the sender's files fingerprint
+				if (msg->FilesInfo.magic == LANFilesInfoMagic) {
+					s_filesFingerprints[senderIP] = msg->FilesInfo.fingerprint;
+				}
 				break;
 
 			default:
@@ -1271,7 +1348,7 @@ void LANAPI::addPlayer( LANPlayer *player )
 Bool LANAPI::SetLocalIP( UnsignedInt localIP )
 {
 	Bool retval = TRUE;
-	m_localIP = localIP;
+	m_localIP = (LanTest::loopbackSlot() >= 0) ? LanTest::loopbackIP() : localIP;   // O26 test switch
 
 	m_transport->reset();
 	retval = m_transport->init(m_localIP, lobbyPort);

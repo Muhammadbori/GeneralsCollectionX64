@@ -43,6 +43,7 @@
 #include "Common/ReplayStream.h"
 #include "Common/VoiceChat.h"
 #include "GameNetwork/NetLab.h"
+#include "GameNetwork/LANAPI.h"
 #include "GameNetwork/NetworkDefs.h"
 
 
@@ -990,6 +991,25 @@ Int parseNetLabSim(char *args[], int num)
 Int parseNetLabQuitAfter(char *args[], int num)
 {
 	if (num > 1) { NetLab::configureQuitAfter(atoi(args[1])); return 2; }
+	return 1;
+}
+
+// TheSuperHackers @feature O26 (row 26) Test switches of the LAN screen (LANAPI.h, LanTest): -lanLoopback <n> binds the
+// lobby to 127.0.0.(10+n) only and reaches the other loopback instances one by one (several instances on one PC, no
+// firewall question); -lanSample fills the screen's lists with sample games and players (pictures without a network).
+Int parseLanLoopback(char *args[], int num)
+{
+	if (num > 1)
+	{
+		LanTest::setLoopbackSlot(atoi(args[1]));
+		rts::ClientInstance::setMultiInstance(TRUE);
+		return 2;
+	}
+	return 1;
+}
+Int parseLanSample(char *args[], int num)
+{
+	LanTest::setSampleData(TRUE);
 	return 1;
 }
 
@@ -1948,6 +1968,8 @@ static CommandLineParam paramsForStartup[] =
 	{ "-netLabSeed", parseNetLabSeed },
 	{ "-netLabSim", parseNetLabSim },
 	{ "-netLabQuitAfter", parseNetLabQuitAfter },
+	{ "-lanLoopback", parseLanLoopback },
+	{ "-lanSample", parseLanSample },
 	{ "-voiceTestRoster", parseVoiceTestRoster },
 	{ "-voiceTestTone", parseVoiceTestTone },
 	{ "-voiceTestWav", parseVoiceTestWav },

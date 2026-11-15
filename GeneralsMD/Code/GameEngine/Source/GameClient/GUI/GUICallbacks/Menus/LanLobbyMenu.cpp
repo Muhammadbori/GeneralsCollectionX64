@@ -60,6 +60,7 @@
 #include "GameNetwork/IPEnumeration.h"
 #include "GameNetwork/LANAPICallbacks.h"
 #include "GameNetwork/LANGameInfo.h"
+#include "GameClient/LanLobbyLook.h"
 
 Bool LANisShuttingDown = false;
 Bool LANbuttonPushed = false;
@@ -507,6 +508,9 @@ void LanLobbyMenuInit( WindowLayout *layout, void *userData )
 		win->winHide(TRUE);
 
 
+	// TheSuperHackers @feature O26 (row 26) The screen's new look over the .wnd (LanLobbyLook.h).
+	LanLobbyLook::init( parentLanLobby );
+
 	// animate controls
 	//TheShell->registerWithAnimateManager(parentLanLobby, WIN_ANIMATION_SLIDE_TOP, TRUE);
 //	TheShell->registerWithAnimateManager(buttonHost, WIN_ANIMATION_SLIDE_LEFT, TRUE, 600);
@@ -545,6 +549,9 @@ static void shutdownComplete( WindowLayout *layout )
 //-------------------------------------------------------------------------------------------------
 void LanLobbyMenuShutdown( WindowLayout *layout, void *userData )
 {
+	// O26: what the new look made goes before the fade back (row 27)
+	LanLobbyLook::shutdown();
+
 	LANPreferences prefs;
 	prefs["UserName"] = UnicodeStringToQuotedPrintable(GadgetTextEntryGetText( textEntryPlayerName ));
 	prefs.write();
@@ -605,6 +612,9 @@ void LanLobbyMenuUpdate( WindowLayout * layout, void *userData)
 		else
 			initialGadgetDelay--;
 	}
+
+	// O26: the new look is shown once the enter fade is over
+	LanLobbyLook::update( !justEntered && !LANisShuttingDown && TheShell->isAnimFinished() && TheTransitionHandler->isFinished() );
 
 	if(LANisShuttingDown && TheShell->isAnimFinished() && TheTransitionHandler->isFinished())
 		shutdownComplete(layout);
@@ -681,6 +691,10 @@ WindowMsgHandledType LanLobbyMenuSystem( GameWindow *window, UnsignedInt msg,
 														 WindowMsgData mData1, WindowMsgData mData2 )
 {
 	UnicodeString txtInput;
+
+	// O26: the controls of the new look first
+	if (!LANbuttonPushed && LanLobbyLook::onSystem(msg, mData1, mData2))
+		return MSG_HANDLED;
 
 	switch( msg )
 	{
