@@ -375,6 +375,11 @@ public:  // ********************************************************************
 	void freeMessageResources();				///< free resources for the ui messages
 	void freeCustomUiResources();				///< free resources for custom ui elements
 	Color getMessageColor(Bool altColor) { return (altColor)?m_messageColor2:m_messageColor1; }
+	// TheSuperHackers @feature (O18, S18) The message lines' font and place, for the replay bar to keep clear of them.
+	const AsciiString &getMessageFontName() const { return m_messageFont; }
+	Int getMessagePointSize() const { return m_messagePointSize; }
+	Bool isMessageBold() const { return m_messageBold; }
+	const ICoord2D &getMessagePosition() const { return m_messagePosition; }
 
 	// interface for military style messages
 	virtual void militarySubtitle( const AsciiString& label, Int duration );			// time in milliseconds

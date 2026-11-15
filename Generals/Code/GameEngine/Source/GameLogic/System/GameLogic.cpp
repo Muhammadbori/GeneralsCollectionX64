@@ -71,6 +71,7 @@
 #include "GameClient/GameText.h"
 #include "GameClient/GUICallbacks.h"
 #include "GameClient/InGameUI.h"
+#include "GameClient/LocalizedFallback.h"
 #include "GameClient/LoadScreen.h"
 #include "GameClient/MapUtil.h"
 #include "GameClient/Mouse.h"
@@ -2136,7 +2137,7 @@ void GameLogic::tryStartNewGame( Bool loadingSaveGame )
 
   if ( isInReplayGame() && TheInGameUI && TheGameText )
   {
-		TheInGameUI->messageNoFormat( TheGameText->FETCH_OR_SUBSTITUTE( "GUI:FastForwardInstructions", L"Press F to toggle Fast Forward" ) );
+		TheInGameUI->messageNoFormat( FastForwardText::instructions() );
   }
 
 #ifdef PROFILER_ENABLED
