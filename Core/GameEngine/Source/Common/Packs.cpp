@@ -81,6 +81,8 @@ namespace
 		AsciiString exeFolder;       ///< ends with '\'
 		KindState kinds[Packs::KIND_COUNT];
 		std::vector<AsciiString> mounted;    ///< normalized full paths of the archives the packs mounted
+		std::vector<AsciiString> mountedNames;   ///< the same as found, for the log
+		std::vector<AsciiString> leftOut;    ///< list lines a pack left out, for the log
 		std::vector<ProblemEntry> problems;
 		Bool mountPrepared;
 		Bool problemsShown;
@@ -283,6 +285,7 @@ namespace
 		pack.folder.concat(name);
 		pack.folder.concat("\\");
 		pack.fullViewport = FALSE;
+		pack.empty = FALSE;
 		AsciiString preview;
 
 		AsciiString ini = pack.folder;
@@ -297,6 +300,8 @@ namespace
 			else if (keyIs(key, "Fallback")) pack.fallback = value;
 			else if (keyIs(key, "Archive", kGameFolder)) pack.archives.push_back(value);
 			else if (keyIs(key, "Exclude", kGameFolder)) pack.excludes.push_back(normalizedEntry(value));
+			else if (keyIs(key, "Require", kGameFolder)) pack.requiredFiles.push_back(value);
+			else if (keyIs(key, "Empty")) pack.empty = isYes(value);
 			else if (keyIs(key, "Games"))
 			{
 				// for example "ZeroHour" or "Generals, ZeroHour"
@@ -401,6 +406,31 @@ namespace
 			path.concat(entry);
 			out.push_back(path);
 		}
+	}
+
+	/// FALSE when a file the pack needs is missing: a Require line, or nothing at all for this game (E9: a renamed or
+	/// deleted archive must give the same message as a damaged one).
+	Bool packComplete(const Packs::Pack &pack, const std::vector<AsciiString> &archives)
+	{
+		for (size_t i = 0; i < pack.requiredFiles.size(); ++i)
+		{
+			AsciiString path = pack.folder;
+			path.concat(pack.requiredFiles[i]);
+			if (!fileExists(path.str()))
+			{
+				DEBUG_LOG(("Packs: '%s' misses %s.", pack.name.str(), path.str()));
+				return FALSE;
+			}
+		}
+		if (pack.empty || !archives.empty() || !pack.excludes.empty() || !pack.requiredFiles.empty()) {
+			return TRUE;
+		}
+		AsciiString gameData = pack.folder;
+		gameData.concat(kGameFolder);
+		gameData.concat("\\Data");
+		AsciiString data = pack.folder;
+		data.concat("Data");
+		return folderExists(gameData.str()) || folderExists(data.str());
 	}
 
 	const Packs::Pack *packAt(Packs::Kind kind, Int index)
@@ -647,6 +677,16 @@ void Packs::prepareMount(std::vector<MountStep> &steps)
 			}
 			std::vector<AsciiString> archives;
 			packArchives(k.packs[index], textLanguage, yres, st.exeFolder, archives);
+			if (!packComplete(k.packs[index], archives))
+			{
+				addProblem(kind, k.packs[index].name, PROBLEM_BROKEN);
+				if (which == 0) {
+					k.active = -1;   // the base data; its fallback is not used either
+				} else {
+					k.fallback = -1;
+				}
+				continue;
+			}
 			(which == 0 ? k.activeGroup : k.fallbackGroup) = group;
 			for (size_t i = 0; i < archives.size(); ++i)
 			{
@@ -655,6 +695,7 @@ void Packs::prepareMount(std::vector<MountStep> &steps)
 				step.group = group;
 				steps.push_back(step);
 				st.mounted.push_back(normalizedPath(archives[i].str()));
+				st.mountedNames.push_back(archives[i]);
 			}
 			++group;
 		}
@@ -709,6 +750,7 @@ Bool Packs::skipListEntry(const AsciiString &entry, const AsciiString &fullPath)
 			for (size_t i = 0; i < pack.excludes.size(); ++i) {
 				if (stricmp(pack.excludes[i].str(), line.str()) == 0) {
 					DEBUG_LOG(("Packs: the %s pack '%s' leaves out %s.", kFolders[kind], pack.name.str(), entry.str()));
+					st.leftOut.push_back(entry);
 					return TRUE;
 				}
 			}
@@ -830,6 +872,46 @@ Bool Packs::findSplash(const char *fileName, char *path, Int pathSize)
 	}
 	strlcpy(path, candidate, pathSize);
 	return TRUE;
+}
+
+//-------------------------------------------------------------------------------------------------
+void Packs::writeLog(const std::vector<AsciiString> &files, const std::vector<AsciiString> &origins)
+{
+	if (TheGlobalData == nullptr) {
+		return;
+	}
+	State &st = state();
+	AsciiString path = TheGlobalData->getPath_UserData();
+	path.concat("Packs.log");
+	FILE *fp = fopen(path.str(), "w");
+	if (fp == nullptr) {
+		return;
+	}
+	fprintf(fp, "Packs of this run (%s)\n", kGameFolder);
+	for (Int kind = 0; kind < KIND_COUNT; ++kind)
+	{
+		const KindState &k = st.kinds[kind];
+		const Pack *pack = packAt((Kind)kind, k.active);
+		const Pack *fallback = (k.active >= 0) ? packAt((Kind)kind, k.fallback) : nullptr;
+		fprintf(fp, "%s = %s%s%s\n", kKeys[kind], pack != nullptr ? pack->name.str() : "Base",
+			fallback != nullptr ? ", fallback " : "", fallback != nullptr ? fallback->name.str() : "");
+	}
+	for (size_t i = 0; i < st.mountedNames.size(); ++i) {
+		fprintf(fp, "mounted: %s\n", st.mountedNames[i].str());
+	}
+	for (size_t i = 0; i < st.leftOut.size(); ++i) {
+		fprintf(fp, "left out of the list: %s\n", st.leftOut[i].str());
+	}
+	for (size_t i = 0; i < st.problems.size(); ++i)
+	{
+		const ProblemEntry &e = st.problems[i];
+		fprintf(fp, "not used: %s %s (%s)\n", kFolders[e.kind], e.name.str(),
+			e.problem == PROBLEM_NOT_FOUND ? "not found" : (e.problem == PROBLEM_BROKEN ? "a file is missing or damaged" : "does not fit the text language"));
+	}
+	for (size_t i = 0; i < files.size() && i < origins.size(); ++i) {
+		fprintf(fp, "%s is read from %s\n", files[i].str(), origins[i].isEmpty() ? "(no archive)" : origins[i].str());
+	}
+	fclose(fp);
 }
 
 //-------------------------------------------------------------------------------------------------

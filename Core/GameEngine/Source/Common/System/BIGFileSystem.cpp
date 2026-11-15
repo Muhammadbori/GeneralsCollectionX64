@@ -99,6 +99,7 @@ void BIGFileSystem::init() {
 	{
 		if (loadArchiveFilesFromList(listFile))
 		{
+			writePacksLog();
 			return;
 		}
 		DEBUG_LOG(("BIGFileSystem::init - no archive could be loaded from %s, searching for archives instead.", listFile));
@@ -115,6 +116,29 @@ void BIGFileSystem::init() {
     if (!installPath.isEmpty())
       loadArchiveFilesFromDirectory(installPath, "*.big");
 #endif
+	writePacksLog();
+}
+
+void BIGFileSystem::writePacksLog() {
+	// TheSuperHackers @feature Packs.log names the archive each of these files is read from, so the text, hotkey (the
+	// string file), control bar and font packs in use can be seen.
+	static const char *const files[] = {
+		"Data\\English\\generals.csf", "Data\\Russian\\generals.csf", "Data\\English\\Language.ini",
+		"Data\\INI\\CommandButton.ini", "Data\\INI\\ControlBarScheme.ini", "GenTool\\fullviewport.dat",
+		"Data\\Audio\\Speech\\dxoc001.wav",
+	};
+	std::vector<AsciiString> names;
+	std::vector<AsciiString> origins;
+	for (size_t i = 0; i < ARRAY_SIZE(files); ++i)
+	{
+		ArchiveFile *archive = getArchiveFile(AsciiString(files[i]));
+		if (archive == nullptr && i > 0) {
+			continue;   // only the English string file is always listed
+		}
+		names.push_back(AsciiString(files[i]));
+		origins.push_back(archive != nullptr ? archive->getName() : AsciiString::TheEmptyString);
+	}
+	Packs::writeLog(names, origins);
 }
 
 void BIGFileSystem::reset() {

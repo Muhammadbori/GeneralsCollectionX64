@@ -42,6 +42,9 @@
 //   Archive, ArchiveZeroHour, ArchiveGenerals    archives of the exe folder to mount as part of this pack
 //   Exclude, ExcludeZeroHour, ExcludeGenerals    lines of the archive list not to mount while this pack is in use
 //   Games                          the games that offer the pack ("ZeroHour", "Generals, ZeroHour"); default: both
+//   Require, RequireZeroHour, RequireGenerals    files of the pack folder that must be there (else the pack is broken)
+//   Empty = yes                    the pack has no files on purpose. Without it, a pack that has nothing for this game
+//                                  (no archive, no Archive or Exclude line, no movie folder) counts as broken.
 // Packs\<Kind>\default.ini: Default, ShowBase (yes/no), BaseNameEnglish, BaseNameRussian, and for Text BaseTextLanguage.
 
 #pragma once
@@ -75,6 +78,8 @@ namespace Packs
 		AsciiString fallback;
 		std::vector<AsciiString> archives;   ///< Archive lines of this game, relative to the exe folder
 		std::vector<AsciiString> excludes;   ///< Exclude lines of this game, lower case, '\' separators
+		std::vector<AsciiString> requiredFiles;   ///< Require lines of this game: files of the pack folder that must be there
+		Bool empty;                          ///< "Empty = yes": a pack with no files on purpose (for example the base movies)
 	};
 
 	const char *kindKey(Kind kind);       ///< the Options.ini key: "TextPack" ...
@@ -128,6 +133,10 @@ namespace Packs
 
 	/// The splash picture of the chosen text pack (before the engine starts); FALSE when the pack has none.
 	Bool findSplash(const char *fileName, char *path, Int pathSize);
+
+	/// Writes Packs.log in the user data folder: the packs of this run, the archives they mounted, the list lines they left
+	/// out, the problems, and for some files the archive they are read from ('files' and 'origins' side by side).
+	void writeLog(const std::vector<AsciiString> &files, const std::vector<AsciiString> &origins);
 
 	/// Shows the one-time message about packs that could not be used. Call from the shell update.
 	void showProblemsOnce();
