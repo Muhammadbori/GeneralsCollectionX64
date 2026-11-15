@@ -178,11 +178,11 @@ namespace
 	// TheSuperHackers @feature The voice chat's talk key (VoiceChat.h).
 	const Choice kTalkKey[] =
 	{
-		{ "CapsLock", { "GUI:VoiceKeyCapsLock", L"Caps Lock", L"Caps Lock" } },
-		{ "Mouse4", { "GUI:VoiceKeyMouse4", L"Mouse button 4", L"\x041A\x043D\x043E\x043F\x043A\x0430 \x043C\x044B\x0448\x0438 4" } },
-		{ "Mouse5", { "GUI:VoiceKeyMouse5", L"Mouse button 5", L"\x041A\x043D\x043E\x043F\x043A\x0430 \x043C\x044B\x0448\x0438 5" } },
-		{ "Grave", { "GUI:VoiceKeyGrave", L"` (the ~ key)", L"` (\x043A\x043B\x0430\x0432\x0438\x0448\x0430 ~)" } },
-		{ "RightCtrl", { "GUI:VoiceKeyRightCtrl", L"Right Ctrl", L"\x041F\x0440\x0430\x0432\x044B\x0439 Ctrl" } },
+		{ "CapsLock", { "GUI:VoiceChatKeyCapsLock", L"Caps Lock", L"Caps Lock" } },
+		{ "Mouse4", { "GUI:VoiceChatKeyMouse4", L"Mouse button 4", L"\x041A\x043D\x043E\x043F\x043A\x0430 \x043C\x044B\x0448\x0438 4" } },
+		{ "Mouse5", { "GUI:VoiceChatKeyMouse5", L"Mouse button 5", L"\x041A\x043D\x043E\x043F\x043A\x0430 \x043C\x044B\x0448\x0438 5" } },
+		{ "Grave", { "GUI:VoiceChatKeyGrave", L"` (the ~ key)", L"` (\x043A\x043B\x0430\x0432\x0438\x0448\x0430 ~)" } },
+		{ "RightCtrl", { "GUI:VoiceChatKeyRightCtrl", L"Right Ctrl", L"\x041F\x0440\x0430\x0432\x044B\x0439 Ctrl" } },
 	};
 	const Choice kWindowed[] =
 	{
@@ -285,9 +285,9 @@ namespace
 		{ SEC_GRAPHICS, KIND_STEPS, "AnisotropyLevel", { "GUI:AnisotropyLevel", L"Anisotropy level", L"\x0423\x0440\x043E\x0432\x0435\x043D\x044C \x0430\x043D\x0438\x0437\x043E\x0442\x0440\x043E\x043F\x0438\x0438" }, STEPS(kAnisotropy), "x", "2", curAnisotropy },
 		{ SEC_GRAPHICS, KIND_STEPS, "SnowStyle", { "GUI:SnowStyle", L"Snow", L"\x0421\x043D\x0435\x0433" }, STEPS(kSnow), "", "Default", curSnow },
 		// Sound
-		{ SEC_SOUND, KIND_STEPS, "VoiceVolume", { "GUI:VoiceVolume", L"Team-mates' voice volume", L"\x0413\x0440\x043E\x043C\x043A\x043E\x0441\x0442\x044C \x0433\x043E\x043B\x043E\x0441\x0430 \x0441\x043E\x044E\x0437\x043D\x0438\x043A\x043E\x0432" }, STEPS(kPercent0To100), "%", "100", curVoiceVolume },
-		{ SEC_SOUND, KIND_STEPS, "VoicePushToTalk", { "GUI:VoicePushToTalk", L"Talk key (hold to talk)", L"\x041A\x043D\x043E\x043F\x043A\x0430 \x0440\x0430\x0446\x0438\x0438 (\x0443\x0434\x0435\x0440\x0436\x0438\x0432\x0430\x0442\x044C)" }, STEPS(kTalkKey), "", "CapsLock", curTalkKey },
-		{ SEC_SOUND, KIND_CHECK, "VoiceMicOff", { "GUI:VoiceMicOff", L"My microphone off", L"\x041C\x043E\x0439 \x043C\x0438\x043A\x0440\x043E\x0444\x043E\x043D \x0432\x044B\x043A\x043B\x044E\x0447\x0435\x043D" }, nullptr, 0, "", "no", curMicOff },
+		{ SEC_SOUND, KIND_STEPS, "VoiceVolume", { "GUI:VoiceChatVolume", L"Voice chat: volume", L"\x0413\x043E\x043B\x043E\x0441\x043E\x0432\x0430\x044F \x0441\x0432\x044F\x0437\x044C: \x0433\x0440\x043E\x043C\x043A\x043E\x0441\x0442\x044C" }, STEPS(kPercent0To100), "%", "100", curVoiceVolume },
+		{ SEC_SOUND, KIND_STEPS, "VoicePushToTalk", { "GUI:VoiceChatPushToTalk", L"Voice chat: talk key (hold)", L"\x0413\x043E\x043B\x043E\x0441\x043E\x0432\x0430\x044F \x0441\x0432\x044F\x0437\x044C: \x043A\x043D\x043E\x043F\x043A\x0430 \x0440\x0430\x0446\x0438\x0438 (\x0443\x0434\x0435\x0440\x0436\x0438\x0432\x0430\x0442\x044C)" }, STEPS(kTalkKey), "", "CapsLock", curTalkKey },
+		{ SEC_SOUND, KIND_CHECK, "VoiceMicOff", { "GUI:VoiceChatMicOff", L"Voice chat: my microphone off", L"\x0413\x043E\x043B\x043E\x0441\x043E\x0432\x0430\x044F \x0441\x0432\x044F\x0437\x044C: \x043C\x043E\x0439 \x043C\x0438\x043A\x0440\x043E\x0444\x043E\x043D \x0432\x044B\x043A\x043B\x044E\x0447\x0435\x043D" }, nullptr, 0, "", "no", curMicOff },
 		{ SEC_SOUND, KIND_STEPS, "MoneyTransactionVolume", { "GUI:MoneyTransactionVolume", L"Money sound volume", L"\x0413\x0440\x043E\x043C\x043A\x043E\x0441\x0442\x044C \x0437\x0432\x0443\x043A\x0430 \x0434\x0435\x043D\x0435\x0433" }, STEPS(kPercent0To100), "%", "50", curMoneyVolume },
 		// Controls
 		{ SEC_CONTROLS, KIND_CHECK, "UseRightMouseScrollWithAlternateMouse", { "GUI:RightMouseScrollAlternate", L"Right mouse scroll with alternate mouse", L"\x041F\x0440\x043E\x043A\x0440\x0443\x0442\x043A\x0430 \x043F\x0440\x0430\x0432\x043E\x0439 \x043A\x043D\x043E\x043F\x043A\x043E\x0439 (\x0430\x043B\x044C\x0442\x0435\x0440. \x043C\x044B\x0448\x044C)" }, nullptr, 0, "", kRightMouseDefault, curRightMouse },
@@ -1280,7 +1280,7 @@ namespace
 	//--- the microphone row (VoiceChat.h): the system default first, then the enumerated microphones -------------
 	UnicodeString micTitle()
 	{
-		return TheGameText->FETCH_OR_SUBSTITUTE("GUI:VoiceInputDevice", localizedFallback(L"Microphone", L"\x041C\x0438\x043A\x0440\x043E\x0444\x043E\x043D"));
+		return TheGameText->FETCH_OR_SUBSTITUTE("GUI:VoiceChatInputDevice", localizedFallback(L"Voice chat: microphone", L"\x0413\x043E\x043B\x043E\x0441\x043E\x0432\x0430\x044F \x0441\x0432\x044F\x0437\x044C: \x043C\x0438\x043A\x0440\x043E\x0444\x043E\x043D"));
 	}
 
 	UnicodeString micName(Int index)

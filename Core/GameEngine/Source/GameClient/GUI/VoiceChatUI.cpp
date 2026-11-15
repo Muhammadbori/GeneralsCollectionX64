@@ -110,7 +110,7 @@ namespace
 	UnicodeString volumeText(Int volume)
 	{
 		if (volume <= 0) {
-			return text("GUI:VoiceOff", L"Off", L"\x0412\x044B\x043A\x043B");
+			return text("GUI:VoiceChatOff", L"Off", L"\x0412\x044B\x043A\x043B");
 		}
 		UnicodeString s;
 		s.format(L"%d%%", volume);
@@ -125,9 +125,9 @@ namespace
 		if (VoiceChat::isActive())
 		{
 			if (VoiceChat::isLocalTalking()) {
-				line = text("GUI:VoiceYouTalk", L"You are talking", L"\x0412\x044B \x0433\x043E\x0432\x043E\x0440\x0438\x0442\x0435");
+				line = text("GUI:VoiceChatYouTalk", L"You are talking", L"\x0412\x044B \x0433\x043E\x0432\x043E\x0440\x0438\x0442\x0435");
 			} else if (VoiceChat::isLocalBlocked()) {
-				line = text("GUI:VoiceCannotTalk", L"You cannot talk (microphone off or not in play)", L"\x0412\x044B \x043D\x0435 \x043C\x043E\x0436\x0435\x0442\x0435 \x0433\x043E\x0432\x043E\x0440\x0438\x0442\x044C (\x043C\x0438\x043A\x0440\x043E\x0444\x043E\x043D \x0432\x044B\x043A\x043B\x044E\x0447\x0435\x043D \x0438\x043B\x0438 \x0432\x044B \x043D\x0435 \x0432 \x0438\x0433\x0440\x0435)");
+				line = text("GUI:VoiceChatCannotTalk", L"You cannot talk (microphone off or not in play)", L"\x0412\x044B \x043D\x0435 \x043C\x043E\x0436\x0435\x0442\x0435 \x0433\x043E\x0432\x043E\x0440\x0438\x0442\x044C (\x043C\x0438\x043A\x0440\x043E\x0444\x043E\x043D \x0432\x044B\x043A\x043B\x044E\x0447\x0435\x043D \x0438\x043B\x0438 \x0432\x044B \x043D\x0435 \x0432 \x0438\x0433\x0440\x0435)");
 			}
 			UnicodeString names;
 			for (Int i = 0; i < VoiceChat::MAX_PEERS; ++i)
@@ -139,7 +139,7 @@ namespace
 			if (!names.isEmpty())
 			{
 				if (!line.isEmpty()) line.concat(L"\n");
-				line.concat(text("GUI:VoiceSpeaking", L"Speaking: ", L"\x0413\x043E\x0432\x043E\x0440\x044F\x0442: "));
+				line.concat(text("GUI:VoiceChatSpeaking", L"Speaking: ", L"\x0413\x043E\x0432\x043E\x0440\x044F\x0442: "));
 				line.concat(names);
 			}
 		}
@@ -247,7 +247,7 @@ void VoiceChatUI::decorateDiplomacyRow(Int row, GameWindow *nameText, GameWindow
 		{
 			button->winSetWindowId(inst.m_id);
 			button->winSetOwner(statusText->winGetOwner() != nullptr ? statusText->winGetOwner() : parent);
-			button->winSetTooltip(text("GUI:VoiceVolumeTip", L"Volume of this team-mate's voice (click: 100% / 50% / 25% / off)",
+			button->winSetTooltip(text("GUI:VoiceChatVolumeTip", L"Volume of this team-mate's voice (click: 100% / 50% / 25% / off)",
 				L"\x0413\x0440\x043E\x043C\x043A\x043E\x0441\x0442\x044C \x0433\x043E\x043B\x043E\x0441\x0430 \x0441\x043E\x044E\x0437\x043D\x0438\x043A\x0430 (\x043D\x0430\x0436\x0430\x0442\x0438\x0435: 100% / 50% / 25% / \x0432\x044B\x043A\x043B)"));
 		}
 		s_rowButton[row] = button;
