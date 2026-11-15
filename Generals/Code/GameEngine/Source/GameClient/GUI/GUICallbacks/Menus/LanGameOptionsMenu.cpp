@@ -55,6 +55,7 @@
 #include "GameNetwork/LANAPICallbacks.h"
 #include "Common/MultiplayerSettings.h"
 #include "GameClient/GameText.h"
+#include "GameClient/PlayerTable.h"
 #include "GameNetwork/GUIUtil.h"
 
 
@@ -716,6 +717,10 @@ void InitLanGameGadgets()
 	}
 	if( buttonAccept[0] )
 		GadgetButtonSetEnabledColor(buttonAccept[0], acceptTrueColor );
+
+	// TheSuperHackers @feature Narrow colour and team cells with pictures, a wider army cell (PlayerTable.h).
+	// The anti-cheat shield (item 15) gets its place later; PlayerTable::picture(PICTURE_ANTICHEAT_ON/OFF) is kept for it.
+	PlayerTable::layout( "LanGameOptionsMenu.wnd:", comboBoxColor, comboBoxPlayerTemplate, comboBoxTeam, MAX_SLOTS );
 
 }
 

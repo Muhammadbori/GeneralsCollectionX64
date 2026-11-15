@@ -37,6 +37,7 @@
 #include "Common/PlayerTemplate.h"
 #include "Common/Recorder.h"
 #include "GameClient/AnimateWindowManager.h"
+#include "GameClient/PlayerTable.h"
 #include "GameClient/Diplomacy.h"
 #include "GameClient/DisconnectMenu.h"
 #include "GameClient/GameWindow.h"
@@ -527,6 +528,8 @@ void PopulateInGameDiplomacyPopup()
 					teamStr = "Team:AI";
 				GadgetStaticTextSetText(staticTextTeam[rowNum], TheGameText->fetch(teamStr) );
 			}
+			// TheSuperHackers @feature The pictures of the lobby table: what is random to this client stays random (item 9).
+			PlayerTable::decorateRow(staticTextPlayer[rowNum], staticTextSide[rowNum], staticTextTeam[rowNum], slot);
 			if (staticTextStatus[rowNum])
 			{
 				staticTextStatus[rowNum]->winHide(FALSE);

@@ -200,7 +200,11 @@ WindowMsgHandledType GadgetComboBoxInput( GameWindow *window, UnsignedInt msg,
 						}
 
 						newSize.y = ((TheWindowManager->winFontHeight( listInstData->getFont() ) ) * multiplier) + multiplier * 2 + 4;
-						window->winSetSize(winSize.x , winSize.y + newSize.y );
+						// TheSuperHackers @feature A narrow closed box can open a wider list (listMinWidth); the window
+						// takes the list's width while it is open so that the whole list takes clicks.
+						if( comboData->listMinWidth > listX )
+							listX = comboData->listMinWidth;
+						window->winSetSize(listX > winSize.x ? listX : winSize.x , winSize.y + newSize.y );
 						listBox->winSetPosition(0, winSize.y);
 
 						listBox->winSetSize(listX , newSize.y);
@@ -304,6 +308,14 @@ void HideListBox(GameWindow * window)
 		GameWindow *editBox = GadgetComboBoxGetEditBox(window);
 		editBox->winGetSize(&winSize.x, &winSize.y);
 		window->winGetSize(&newSize.x, &newSize.y);
+		// TheSuperHackers @feature Back to the closed width after a wider list (listMinWidth).
+		ComboBoxData *comboData = (ComboBoxData *)window->winGetUserData();
+		if( comboData && comboData->listMinWidth > 0 && comboData->dropDownButton )
+		{
+			ICoord2D dropDownSize;
+			comboData->dropDownButton->winGetSize( &dropDownSize.x, &dropDownSize.y );
+			newSize.x = winSize.x + dropDownSize.x;
+		}
 		window->winSetSize(newSize.x, winSize.y );
 	}
 }
@@ -545,6 +557,8 @@ WindowMsgHandledType GadgetComboBoxSystem( GameWindow *window, UnsignedInt msg,
 						listData->slider->winHide(FALSE);
 				}
 				newSize.y = ((TheWindowManager->winFontHeight( listInstData->getFont() ) ) * multiplier) + multiplier * 2 + 4;
+				if( comboData->listMinWidth > listX )
+					listX = comboData->listMinWidth;	// TheSuperHackers @feature a wider list for a narrow box
 				listBox->winSetPosition(0, editBoxSize.y);
 				listBox->winSetSize(listX , newSize.y);
 			}
@@ -571,8 +585,9 @@ WindowMsgHandledType GadgetComboBoxSystem( GameWindow *window, UnsignedInt msg,
 			GameWindow *listBox = GadgetComboBoxGetListBox(window);
 			if (listBox->winIsHidden())
 			{
+				// TheSuperHackers @feature The list keeps its wider width (listMinWidth), so its entries are laid out for it.
 				if (listBox)
-					listBox->winSetSize(width,height);
+					listBox->winSetSize(comboData->listMinWidth > width ? comboData->listMinWidth : width,height);
 
 				if( comboData->dropDownButton )
 				{
@@ -682,7 +697,11 @@ WindowMsgHandledType GadgetComboBoxSystem( GameWindow *window, UnsignedInt msg,
 						}
 
 						newSize.y = ((TheWindowManager->winFontHeight( listInstData->getFont() ) ) * multiplier) + multiplier * 2 + 4;
-						window->winSetSize(winSize.x , winSize.y + newSize.y );
+						// TheSuperHackers @feature A narrow closed box can open a wider list (listMinWidth); the window
+						// takes the list's width while it is open so that the whole list takes clicks.
+						if( comboData->listMinWidth > listX )
+							listX = comboData->listMinWidth;
+						window->winSetSize(listX > winSize.x ? listX : winSize.x , winSize.y + newSize.y );
 						listBox->winSetPosition(0, winSize.y);
 
 						listBox->winSetSize(listX , newSize.y);
@@ -927,6 +946,33 @@ Int GadgetComboBoxAddEntry( GameWindow *comboBox, UnicodeString text, Color colo
 		return -1;
 	return (Int)TheWindowManager->winSendSystemMsg( comboBox, GCM_ADD_ENTRY, (WindowMsgData)&text, color );
 }
+// GadgetComboBoxSetClosedImage ================================================
+/** TheSuperHackers @feature A picture in the closed box; drawn by the edit box's draw (W3DTextEntry.cpp). */
+//=============================================================================
+void GadgetComboBoxSetClosedImage( GameWindow *comboBox, const Image *image, Color tint, Bool imageOnly )
+{
+	if( comboBox == nullptr || (comboBox->winGetStyle() & GWS_COMBO_BOX) == 0 )
+		return;
+	ComboBoxData *comboData = (ComboBoxData *)comboBox->winGetUserData();
+	if( comboData == nullptr )
+		return;
+	comboData->closedImage = image;
+	comboData->closedImageTint = tint;
+	comboData->closedImageOnly = imageOnly && image != nullptr;
+}
+
+// GadgetComboBoxSetListMinWidth ===============================================
+/** TheSuperHackers @feature The open list is at least 'width' wide (0: as the closed box). */
+//=============================================================================
+void GadgetComboBoxSetListMinWidth( GameWindow *comboBox, Int width )
+{
+	if( comboBox == nullptr || (comboBox->winGetStyle() & GWS_COMBO_BOX) == 0 )
+		return;
+	ComboBoxData *comboData = (ComboBoxData *)comboBox->winGetUserData();
+	if( comboData )
+		comboData->listMinWidth = width;
+}
+
 // GadgetComboBoxReset =======================================================
 /** Convenience wrapper function for resetting the Combo Box entries */
 //=============================================================================

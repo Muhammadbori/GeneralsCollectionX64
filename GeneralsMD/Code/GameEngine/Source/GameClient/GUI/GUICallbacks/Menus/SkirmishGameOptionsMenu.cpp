@@ -63,6 +63,7 @@
 
 #include "Common/MultiplayerSettings.h"
 #include "GameClient/GameText.h"
+#include "GameClient/PlayerTable.h"
 #include "GameClient/ExtendedMessageBox.h"
 #include "GameClient/MessageBox.h"
 #include "GameNetwork/GameInfo.h"
@@ -1192,6 +1193,9 @@ void InitSkirmishGameGadgets()
 		buttonMapStartPosition[i] = TheWindowManager->winGetWindowFromId( parentSkirmishGameOptions, buttonMapStartPositionID[i] );
 		DEBUG_ASSERTCRASH(buttonMapStartPosition[i], ("Could not find the ButtonMapStartPosition[%d]",i ));
 	}
+
+	// TheSuperHackers @feature Narrow colour and team cells with pictures, a wider army cell (PlayerTable.h).
+	PlayerTable::layout( "SkirmishGameOptionsMenu.wnd:", comboBoxColor, comboBoxPlayerTemplate, comboBoxTeam, MAX_SLOTS );
 
 	for (i = 0; i < MAX_SLOTS; ++i)
 	{

@@ -403,6 +403,11 @@ typedef struct _ComboBoxData
 	GameWindow *dropDownButton;   // Child window for drop down button
 	GameWindow *editBox;          // Child window for edit box
 	GameWindow *listBox;					// Child window for list box
+	// TheSuperHackers @feature A picture in the closed box (GadgetComboBoxSetClosedImage); set to none on creation.
+	const Image *closedImage;			// drawn at the left of the closed box, or alone in its middle
+	Color closedImageTint;				// multiplies the picture (white: as it is)
+	Bool closedImageOnly;					// TRUE: no text in the closed box, only the picture
+	Int listMinWidth;							// the open list is at least this wide (a narrow closed box with long names); 0: as the box
 } ComboBoxData;
 
 // RadioButtonData ------------------------------------------------------------
