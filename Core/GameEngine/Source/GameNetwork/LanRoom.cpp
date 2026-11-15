@@ -80,6 +80,17 @@ namespace
 
 	void notice(const UnicodeString &t) { s_notices.push_back(t); }
 
+	/// O32 (review point 1, applied to O31): text from a packet may lack its terminator; copy at most 'size' - 1 characters
+	/// and stop at the end of the field (wcslcpy would read on to the source's terminator, past the packet).
+	void copyFromPacket(WideChar *dst, const WideChar *src, Int size)
+	{
+		Int i = 0;
+		for (; i < size - 1 && src[i] != 0; ++i) {
+			dst[i] = src[i];
+		}
+		dst[i] = 0;
+	}
+
 	LANGameInfo *hostedGame()
 	{
 		if (TheLAN == nullptr) {
@@ -238,7 +249,9 @@ void LanRoom::onMessage(const LANMessage *msg, UnsignedInt senderIP, UnsignedInt
 			}
 			Entry e;
 			e.ip = senderIP;
-			e.name = UnicodeString(msg->name);
+			WideChar sender[g_lanPlayerNameLength + 1];
+			copyFromPacket(sender, msg->name, g_lanPlayerNameLength + 1);
+			e.name = UnicodeString(sender);
 			e.lastHeard = now;
 			s_hosted.push_back(e);
 			s_listDirty = TRUE;
@@ -269,7 +282,7 @@ void LanRoom::onMessage(const LANMessage *msg, UnsignedInt senderIP, UnsignedInt
 				Observer o;
 				o.ip = msg->Room.ips[i];
 				WideChar name[g_lanPlayerNameLength + 1];
-				wcslcpy(name, msg->Room.u.names[i], g_lanPlayerNameLength + 1);
+				copyFromPacket(name, msg->Room.u.names[i], g_lanPlayerNameLength + 1);
 				o.name = UnicodeString(name);
 				k.list.push_back(o);
 				me = me || o.ip == localIP;
@@ -292,7 +305,7 @@ void LanRoom::onMessage(const LANMessage *msg, UnsignedInt senderIP, UnsignedInt
 		case KIND_CHAT:
 		{
 			WideChar text[g_lanMaxChatLength + 1];
-			wcslcpy(text, msg->Room.u.text, g_lanMaxChatLength + 1);
+			copyFromPacket(text, msg->Room.u.text, g_lanMaxChatLength + 1);
 			LANGameInfo *game = hostedGame();
 			Bool fromObserver = FALSE;
 			for (size_t i = 0; i < s_hosted.size(); ++i) {
@@ -302,7 +315,9 @@ void LanRoom::onMessage(const LANMessage *msg, UnsignedInt senderIP, UnsignedInt
 			{
 				// the host: the line with the observer's name, here and to everybody in the room
 				UnicodeString line;
-				line.format(L"%ls (%ls): %ls", msg->name, textOf(kRole).str(), text);
+				WideChar sender[g_lanPlayerNameLength + 1];
+				copyFromPacket(sender, msg->name, g_lanPlayerNameLength + 1);
+				line.format(L"%ls (%ls): %ls", sender, textOf(kRole).str(), text);
 				showLine(line);
 				LANMessage relay;
 				prepare(relay, KIND_CHAT, localIP);
