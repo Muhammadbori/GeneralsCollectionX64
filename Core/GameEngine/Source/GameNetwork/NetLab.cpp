@@ -404,6 +404,11 @@ void NetLab::update()
 
 void NetLab::shutdown()
 {
+	if (s_started && TheLAN != nullptr)
+	{
+		delete TheLAN;   // the NetLab LAN object (it owns the game object)
+		TheLAN = nullptr;
+	}
 	if (s_csv != nullptr) { fclose(s_csv); s_csv = nullptr; }
 	if (s_log != nullptr) { fclose(s_log); s_log = nullptr; }
 	delete[] s_simQueue;
