@@ -26,6 +26,7 @@
 
 #include "Common/Recorder.h"
 #include "Common/ReplayFollow.h"
+#include "Common/ReplayStream.h"
 #include "Common/MismatchReport.h"
 
 // TheSuperHackers @feature m_nextFrame while a followed replay waits for more data (ReplayFollow.h).
@@ -558,6 +559,8 @@ void RecorderClass::startRecording(GameDifficulty diff, GameMode originalGameMod
 	}
 	// TheSuperHackers @feature The side file that lets another game follow this replay while it is written.
 	ReplayFollow::writerStarted(filepath);
+	// TheSuperHackers @feature -serveReplay: viewers follow this replay over a connection (ReplayStream.h).
+	ReplayStream::serveFile(filepath);
 	// TheSuperHackers @info the null terminator needs to be ignored to maintain retail replay file layout
 	m_file->writeFormat("%s", s_genrep);
 
@@ -1121,8 +1124,20 @@ static void showQueuedReplayMapNotFound()
  */
 void RecorderClass::loadQueuedReplay()
 {
-	const AsciiString filename = TheGlobalData->m_loadReplayGame;
+	AsciiString filename = TheGlobalData->m_loadReplayGame;
 	TheWritableGlobalData->m_loadReplayGame.clear();
+
+	// TheSuperHackers @feature -watchReplay: the replay comes from a source over a connection, mirrored into a local
+	// file that is played in the follow mode (ReplayStream.h).
+	if (ReplayStream::isWatching())
+	{
+		if (!ReplayStream::startWatching(filename))
+		{
+			DEBUG_LOG(("No source of -watchReplay gave the replay"));
+			showQueuedReplayLoadFailure();
+			return;
+		}
+	}
 
 	ReplayHeader header;
 	if (!readReplayHeader(header, filename, FALSE))

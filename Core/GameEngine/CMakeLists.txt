@@ -92,6 +92,7 @@ set(GAMEENGINE_SRC
     Include/Common/MismatchReport.h
     Include/Common/Packs.h
     Include/Common/ReplayFollow.h
+    Include/Common/ReplayStream.h
 #    Include/Common/OSDisplay.h
 #    Include/Common/Overridable.h
 #    Include/Common/Override.h
@@ -651,6 +652,7 @@ set(GAMEENGINE_SRC
     Source/Common/MismatchReport.cpp
     Source/Common/Packs.cpp
     Source/Common/ReplayFollow.cpp
+    Source/Common/ReplayStream.cpp
 #    Source/Common/PartitionSolver.cpp
     Source/Common/PerfTimer.cpp
     Source/Common/RandomValue.cpp
