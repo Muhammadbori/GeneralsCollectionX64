@@ -80,13 +80,15 @@ static Int drawComboClosedImage( GameWindow *window, const ICoord2D &origin, con
 	const ComboBoxData *comboData = (const ComboBoxData *)parent->winGetUserData();
 	if( comboData == nullptr || comboData->closedImage == nullptr || comboData->editBox != window )
 		return 0;
-	const Int side = size.y - 4;
+	// TheSuperHackers @tweak A picture alone fills its cell (G5); before a text it keeps a small margin.
+	const Int side = comboData->closedImageOnly ? min( size.x, size.y ) : size.y - 4;
 	if( side <= 0 )
 		return 0;
 	Int x = origin.x + 3;
 	if( comboData->closedImageOnly )
 		x = origin.x + (size.x - side) / 2;
-	TheDisplay->drawImage( comboData->closedImage, x, origin.y + 2, x + side, origin.y + 2 + side, comboData->closedImageTint );
+	const Int y = origin.y + (size.y - side) / 2;
+	TheDisplay->drawImage( comboData->closedImage, x, y, x + side, y + side, comboData->closedImageTint );
 	return comboData->closedImageOnly ? -1 : side + 4;
 }
 

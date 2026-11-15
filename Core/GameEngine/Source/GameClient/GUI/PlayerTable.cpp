@@ -27,6 +27,9 @@
 #include "Common/NameKeyGenerator.h"
 #include "Common/PlayerTemplate.h"
 #include "GameClient/Display.h"
+#include "GameClient/DisplayString.h"
+#include "GameClient/DisplayStringManager.h"
+#include "GameClient/GameText.h"
 #include "GameClient/Gadget.h"
 #include "GameClient/GadgetComboBox.h"
 #include "GameClient/GadgetStaticText.h"
@@ -75,8 +78,9 @@ namespace
 	const Int kIconTag = 0x50544943;   ///< "PTIC": the window id of our picture windows
 
 	/// The picture window on 'text' (made on the first call), showing 'image' at the left or, with 'centred', in the
-	/// middle. nullptr hides it.
-	void setIcon(GameWindow *text, const Image *image, Color tint, Bool centred)
+	/// middle. nullptr hides it. 'growInto': the next window of the row; when it starts right after 'text' and is wide,
+	/// 'text' grows by the picture's room into it (once, when the picture is made), so the text keeps its full width.
+	void setIcon(GameWindow *text, const Image *image, Color tint, Bool centred, GameWindow *growInto = nullptr)
 	{
 		if (text == nullptr) {
 			return;
@@ -89,7 +93,7 @@ namespace
 		}
 		Int w = 0, h = 0;
 		text->winGetSize(&w, &h);
-		const Int side = h > 4 ? h - 2 : h;
+		const Int side = h;   // TheSuperHackers @tweak the whole row height (G5)
 		TextData *textData = ((text->winGetStyle() & GWS_STATIC_TEXT) != 0) ? (TextData *)text->winGetUserData() : nullptr;
 		if (image == nullptr)
 		{
@@ -111,6 +115,26 @@ namespace
 			iconWin->winSetDrawFunc(drawIcon);
 			iconWin->winSetUserData(&s_icons[s_nextIcon]);
 			s_nextIcon = (s_nextIcon + 1) % ICON_POOL;
+
+			// TheSuperHackers @tweak The picture in front of a name does not cut the name's end: the name window grows
+			// by the picture's room into the next window of the row (the in-game list: the army column, which has room).
+			const Int room = side + 4;
+			if (!centred && growInto != nullptr && growInto->winGetParent() == text->winGetParent())
+			{
+				Int tx = 0, ty = 0, gx = 0, gy = 0, gw = 0, gh = 0;
+				text->winGetPosition(&tx, &ty);
+				growInto->winGetPosition(&gx, &gy);
+				growInto->winGetSize(&gw, &gh);
+				const Bool sameRow = gy < ty + h && gy + gh > ty;
+				const Bool adjacent = gx >= tx + w - 4 && gx <= tx + w + 16;
+				if (sameRow && adjacent && gw > 4 * room)
+				{
+					text->winSetSize(w + room, h);
+					growInto->winSetPosition(gx + room, gy);
+					growInto->winSetSize(gw - room, gh);
+					w += room;
+				}
+			}
 		}
 		Icon *icon = (Icon *)iconWin->winGetUserData();
 		icon->image = image;
@@ -171,13 +195,83 @@ namespace
 		return heightOf(combo);
 	}
 
-	void centreHeader(GameWindow *header, Int cellX, Int cellW)
+	/// The header's visible text centred over its cell. With 'keepInsideRight' a text wider than the cell ends at the
+	/// cell's right edge instead (the team column: its header must not run into the next column's header, G3).
+	void centreHeader(GameWindow *header, Int cellX, Int cellW, Bool keepInsideRight)
 	{
 		if (header == nullptr) {
 			return;
 		}
 		const ICoord2D p = posOf(header);
-		header->winSetPosition(cellX + (cellW - widthOf(header)) / 2, p.y);
+		const Int headerW = widthOf(header);
+		Int textW = headerW;
+		Int textOffset = 0;   // the visible text runs from x + textOffset for textW
+		if ((header->winGetStyle() & GWS_STATIC_TEXT) != 0)
+		{
+			const TextData *data = (const TextData *)header->winGetUserData();
+			if (data != nullptr && data->text != nullptr)
+			{
+				Int tw = 0, th = 0;
+				data->text->getSize(&tw, &th);
+				if (tw > 0 && tw <= headerW)
+				{
+					textW = tw;
+					textOffset = data->centered ? (headerW - tw) / 2 : data->leftMargin;
+				}
+			}
+		}
+		Int textX = cellX + (cellW - textW) / 2;
+		if (keepInsideRight && textX + textW > cellX + cellW) {
+			textX = cellX + cellW - textW;
+		}
+		header->winSetPosition(textX - textOffset, p.y);
+	}
+
+	Int textWidth(GameFont *font, const UnicodeString &str)
+	{
+		if (font == nullptr || TheDisplayStringManager == nullptr) {
+			return (Int)str.getLength() * 8;
+		}
+		DisplayString *ds = TheDisplayStringManager->newDisplayString();
+		if (ds == nullptr) {
+			return (Int)str.getLength() * 8;
+		}
+		ds->setFont(font);
+		ds->setText(str);
+		Int w = 0, h = 0;
+		ds->getSize(&w, &h);
+		TheDisplayStringManager->freeDisplayString(ds);
+		return w;
+	}
+
+	/// The width the open colour list needs for its longest name ("Random" and the colour names), with room for the
+	/// list's margins and its scroll bar. G4: the list is no wider than that, so it covers less of the army column.
+	Int colourListWidth(GameWindow *combo, Int scrollW)
+	{
+		GameFont *font = combo->winGetFont();
+		Int widest = textWidth(font, TheGameText->fetch("GUI:Random"));
+		if (TheMultiplayerSettings != nullptr)
+		{
+			for (Int c = 0; c < TheMultiplayerSettings->getNumColors(); ++c)
+			{
+				const MultiplayerColorDefinition *def = TheMultiplayerSettings->getColor(c);
+				if (def != nullptr) {
+					widest = max(widest, textWidth(font, TheGameText->fetch(def->getTooltipName().str())));
+				}
+			}
+		}
+		return widest + 12 + scrollW;
+	}
+
+	/// The narrow cells need their pictures: without them the old texts and widths stay (G6).
+	Bool colourPicturesThere()
+	{
+		return PlayerTable::picture(PlayerTable::PICTURE_RANDOM_COLOR) != nullptr && PlayerTable::picture(PlayerTable::PICTURE_COLOR) != nullptr;
+	}
+
+	Bool teamPictureThere()
+	{
+		return PlayerTable::picture(PlayerTable::PICTURE_NO_TEAM) != nullptr;
 	}
 }
 
@@ -225,6 +319,12 @@ const Image *PlayerTable::picture(Picture which)
 void PlayerTable::layout(const char *wndPrefix, GameWindow *comboColor[], GameWindow *comboPlayerTemplate[], GameWindow *comboTeam[],
 	Int slots)
 {
+	// TheSuperHackers @bugfix Without the picture files the cells keep their old widths, so the old texts fit (G6).
+	const Bool narrowColor = colourPicturesThere();
+	const Bool narrowTeam = teamPictureThere();
+	if (!narrowColor && !narrowTeam) {
+		return;
+	}
 	Int colorX = -1, colorW = 0, armyX = 0, armyW = 0, teamX = 0, teamW = 0;
 	for (Int i = 0; i < slots; ++i)
 	{
@@ -242,8 +342,8 @@ void PlayerTable::layout(const char *wndPrefix, GameWindow *comboColor[], GameWi
 		const Int teamRight = tp.x + oldTeamW;
 
 		// colour: the picture square plus the arrow; team: one digit square plus the arrow
-		const Int newColorW = h + dropDownWidth(color);
-		const Int newTeamW = h + dropDownWidth(team);
+		const Int newColorW = narrowColor ? h + dropDownWidth(color) : oldColorW;
+		const Int newTeamW = narrowTeam ? h + dropDownWidth(team) : oldTeamW;
 		const Int newTeamX = teamRight - newTeamW;
 		const Int newArmyX = cp.x + newColorW + gapColorArmy;
 		const Int newArmyW = newTeamX - gapArmyTeam - newArmyX;
@@ -251,9 +351,14 @@ void PlayerTable::layout(const char *wndPrefix, GameWindow *comboColor[], GameWi
 			continue;   // an unknown layout (columns in another order): keep it
 		}
 
-		// the open lists keep the old widths, so the names fit there
-		GadgetComboBoxSetListMinWidth(color, oldColorW);
-		GadgetComboBoxSetListMinWidth(team, oldTeamW);
+		// the open lists are wide enough for the names: the team list keeps the old width, the colour list takes the
+		// width of its longest name (at most the old width), so it hides less of the army column under it (G4)
+		if (narrowColor) {
+			GadgetComboBoxSetListMinWidth(color, max(newColorW, min(oldColorW, colourListWidth(color, dropDownWidth(color)))));
+		}
+		if (narrowTeam) {
+			GadgetComboBoxSetListMinWidth(team, oldTeamW);
+		}
 		color->winSetSize(newColorW, h);
 		army->winSetPosition(newArmyX, ap.y);
 		army->winSetSize(newArmyW, heightOf(army));
@@ -284,7 +389,7 @@ void PlayerTable::layout(const char *wndPrefix, GameWindow *comboColor[], GameWi
 		if (header == nullptr) {
 			header = TheWindowManager->winGetWindowFromId(nullptr, (Int)TheNameKeyGenerator->nameToKey(name));
 		}
-		centreHeader(header, xs[k], ws[k]);
+		centreHeader(header, xs[k], ws[k], k == 2);
 	}
 }
 
@@ -315,7 +420,7 @@ void PlayerTable::applyLobbyRow(GameWindow *comboColor, GameWindow *comboPlayerT
 		else
 		{
 			GadgetComboBoxSetClosedImage(comboTeam, nullptr, 0xFFFFFFFF, FALSE);
-			if (slot->getTeamNumber() >= 0)
+			if (slot->getTeamNumber() >= 0 && pirate != nullptr)
 			{
 				// the narrow cell shows the digit; the open list keeps the team names
 				UnicodeString digit;
@@ -341,7 +446,7 @@ void PlayerTable::decorateRow(GameWindow *nameText, GameWindow *sideText, GameWi
 	// what this client may see: a random choice of a player who is not on its team stays random
 	Color tint = 0xFFFFFFFF;
 	const Image *colorImage = colorPicture(slot->getApparentColor(), &tint);
-	setIcon(nameText, colorImage, tint, FALSE);
+	setIcon(nameText, colorImage, tint, FALSE, sideText);
 	setIcon(sideText, armyPicture(slot->getApparentPlayerTemplate()), 0xFFFFFFFF, FALSE);
 	if (teamText != nullptr)
 	{
