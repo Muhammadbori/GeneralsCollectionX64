@@ -80,8 +80,17 @@ public:
 	void debugPrintCommands();
 #endif
 
+	time_t getRetryTime() const { return m_retryTime; }
+
 protected:
 	void doRetryMetrics();
+	void updateRetryTime(Real sampleMs);
+
+	// TheSuperHackers @tweak O23 The retry time follows the measured round trip (send of a command to its ack, smoothed,
+	// with its mean deviation) instead of a fixed 2 seconds.
+	Real m_smoothedRtt;						///< milliseconds
+	Real m_rttDeviation;					///< milliseconds
+	Bool m_haveRtt;
 
 	Bool m_isQuitting;
 	UnsignedInt m_quitTime;

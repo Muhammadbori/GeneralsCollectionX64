@@ -49,6 +49,10 @@ NetCommandRef::NetCommandRef(NetCommandMsg *msg)
 	m_prev = nullptr;
 	m_relay = 0;
 	m_timeLastSent = -1;
+	m_timeFirstSent = -1;
+	m_timeLastCopy = -1;
+	m_copiesSent = 0;
+	m_timerRetries = 0;
 
 #ifdef DEBUG_NETCOMMANDREF
 	m_id = ++refNum;

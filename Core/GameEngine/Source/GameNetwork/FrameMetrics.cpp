@@ -40,6 +40,9 @@ FrameMetrics::FrameMetrics()
 	m_fpsListIndex = 0;
 	m_lastFpsTimeThing = 0;
 	m_minimumCushion = 0;
+	m_smoothedLatency = 0.2f;
+	m_latencyDeviation = 0.0f;
+	m_haveLatency = FALSE;
 
 	m_pendingLatencies = NEW time_t[MAX_FRAMES_AHEAD];
 	for(Int i = 0; i < MAX_FRAMES_AHEAD; i++)
@@ -73,6 +76,9 @@ void FrameMetrics::init() {
 		m_latencyList[i] = (Real)0.2;
 	}
 	m_cushionIndex = 0;
+	m_smoothedLatency = (Real)0.2;
+	m_latencyDeviation = 0.0f;
+	m_haveLatency = FALSE;
 }
 
 void FrameMetrics::reset() {
@@ -101,10 +107,25 @@ void FrameMetrics::doPerFrameMetrics(UnsignedInt frame) {
 
 }
 
-void FrameMetrics::processLatencyResponse(UnsignedInt frame) {
+void FrameMetrics::processLatencyResponse(UnsignedInt frame, Bool cleanSample) {
 	time_t curTime = timeGetTime();
 	Int pendingIndex = frame % MAX_FRAMES_AHEAD;
 	time_t timeDiff = curTime - m_pendingLatencies[pendingIndex];
+
+	// O23: the ack of a frame info the retry timer sent again gives no latency (it waited for the timer, not the line)
+	if (!cleanSample || timeDiff < 0) {
+		return;
+	}
+	const Real sample = (Real)timeDiff / (Real)1000;
+	if (!m_haveLatency) {
+		m_smoothedLatency = sample;
+		m_latencyDeviation = sample / 2.0f;
+		m_haveLatency = TRUE;
+	} else {
+		const Real err = sample - m_smoothedLatency;
+		m_smoothedLatency += err / 16.0f;
+		m_latencyDeviation += (fabsf(err) - m_latencyDeviation) / 8.0f;
+	}
 
 	Int latencyListIndex = frame % TheGlobalData->m_networkLatencyHistoryLength;
 	m_latencyList[latencyListIndex] = (Real)timeDiff / (Real)1000; // convert to seconds from milliseconds.
@@ -133,6 +154,10 @@ Int FrameMetrics::getAverageFPS() {
 
 Real FrameMetrics::getAverageLatency() {
 	return m_averageLatency;
+}
+
+Real FrameMetrics::getRunAheadLatency() {
+	return m_smoothedLatency + 2.0f * m_latencyDeviation;
 }
 
 Int FrameMetrics::getMinimumCushion() {

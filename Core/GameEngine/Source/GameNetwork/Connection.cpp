@@ -32,6 +32,30 @@
 
 enum { MaxQuitFlushTime = 30000 }; // wait this many milliseconds at most to retry things before quitting
 
+// TheSuperHackers @tweak O23 (item 18) Loss handling of the game connections. A lost packet used to cost the whole
+// lockstep a stall of about the retry time, which was fixed at 2 seconds (NetLab S19: 85 to 100 % of the stalled time
+// under 80 or 200 ms delay with 1 or 3 % loss followed a dropped packet). Now
+// - every command that needs an ack and is frame-synchronised (frame info, game command, run-ahead, player leave and
+//   destroy) also rides along in the next ExtraCopies packets to that connection while it is not acked, if it fits in a
+//   packet that goes out anyway or in a new one (it is small): a single lost packet costs one packet interval;
+// - the retry timer follows the measured round trip (smoothed, plus four mean deviations, between RetryTimeMin and the
+//   old 2 seconds), and backs off (doubles once per send round that had to retry, up to 2 seconds, until the next clean
+//   round trip) so a frozen peer is not flooded and a sudden rise of the delay is learned.
+// The receiver already ignores a command it has (FrameData::addCommand, ConnectionManager::processNetCommand for an old
+// frame) and acks every copy, so the wire format and the lockstep are unchanged; only the sending side decides more.
+enum
+{
+	ExtraCopies = 2,
+	RetryTimeStart = 1000,	// until the first round trip was measured
+	RetryTimeMin = 100,
+	RetryTimeMax = 2000,
+};
+
+static Bool isCopiedCommand(const NetCommandMsg *msg)
+{
+	return CommandRequiresAck(msg) && IsCommandSynchronized(msg->getNetCommandType());
+}
+
 /**
  * The constructor.
  */
@@ -39,7 +63,12 @@ Connection::Connection() {
 	m_transport = nullptr;
 	m_user = nullptr;
 	m_netCommandList = nullptr;
-	m_retryTime = 2000; // set retry time to 2 seconds.
+	m_retryTime = RetryTimeStart; // O23: was 2 seconds for ever; now until the first round trip is measured
+	m_smoothedRtt = 0.0f;
+	m_rttDeviation = 0.0f;
+	m_haveRtt = FALSE;
+	m_numRetries = 0;
+	m_retryMetricsTime = 0;
 	m_lastTimeSent = 0;
 	m_frameGrouping = 1;
 	m_isQuitting = false;
@@ -82,6 +111,10 @@ void Connection::init() {
 	m_frameGrouping = 1;
 	m_numRetries = 0;
 	m_retryMetricsTime = 0;
+	m_retryTime = RetryTimeStart;
+	m_smoothedRtt = 0.0f;
+	m_rttDeviation = 0.0f;
+	m_haveRtt = FALSE;
 
 	for (Int i = 0; i < CONNECTION_LATENCY_HISTORY_LENGTH; ++i) {
 		m_latencies[i] = 0;
@@ -248,6 +281,7 @@ UnsignedInt Connection::doSend() {
 
 	// iterate through all the messages and put them into a packet(s).
 	NetCommandRef *msg = m_netCommandList->getFirstMessage();
+	Bool backedOff = FALSE;	// O23
 
 	while ((msg != nullptr) && couldQueue) {
 		NetPacket packet;
@@ -269,6 +303,18 @@ UnsignedInt Connection::doSend() {
 						if (timeLastSent != -1) {
 							++m_numRetries;
 							NetLab::countRetry();   // TheSuperHackers @feature NetLab measurement (a counter only)
+							msg->noteTimerRetry();
+							// O23: back-off, once per send round with a retry: the retry time doubles (up to RetryTimeMax)
+							// until a clean round trip sets it again. Without it a jump of the line's delay above the
+							// retry time would leave only retried commands, whose acks give no sample (Karn), and the
+							// retry time (and the run-ahead's latency) would never learn the new delay.
+							if (!backedOff) {
+								m_retryTime = (m_retryTime * 2 > RetryTimeMax) ? (time_t)RetryTimeMax : m_retryTime * 2;
+								backedOff = TRUE;
+								NetLab::noteRetryTime((Int)m_retryTime);
+							}
+						} else {
+							msg->setTimeFirstSent(curtime);
 						}
 						doRetryMetrics();
 						msg->setTimeLastSent(curtime);
@@ -276,6 +322,14 @@ UnsignedInt Connection::doSend() {
 						m_netCommandList->removeMessage(msg);
 						deleteInstance(msg);
 					}
+				}
+			} else if ((msg->getCopiesSent() < ExtraCopies) && (timeLastSent != curtime) && (msg->getTimeLastCopy() != curtime)
+				&& isCopiedCommand(msg->getCommand())) {
+				// O23: an extra copy of a command sent in an earlier packet and not acked yet. It never ends the packet: if it
+				// does not fit, the next commands still get their chance and the copy waits for the next packet.
+				if (packet.addCommand(msg)) {
+					msg->noteCopySent(curtime);
+					NetLab::countCopy();
 				}
 			}
 			msg = next;
@@ -344,11 +398,19 @@ NetCommandRef * Connection::processAck(UnsignedShort commandID, UnsignedByte ori
 	}
 #endif
 
+	const time_t now = timeGetTime();
 	Int index = temp->getCommand()->getID() % CONNECTION_LATENCY_HISTORY_LENGTH;
 	m_averageLatency -= ((Real)(m_latencies[index])) / CONNECTION_LATENCY_HISTORY_LENGTH;
-	Real lat = timeGetTime() - temp->getTimeLastSent();
+	Real lat = now - temp->getTimeLastSent();
 	m_averageLatency += lat / CONNECTION_LATENCY_HISTORY_LENGTH;
 	m_latencies[index] = lat;
+
+	// O23: a round trip sample for the retry time, from the first send (an extra copy that arrived instead counts with
+	// its delay, which is what a command really needs), but not from a command the retry timer sent again: its ack may
+	// belong to any of the sends (Karn).
+	if (!temp->wasRetriedByTimer() && temp->getTimeFirstSent() != -1) {
+		updateRetryTime((Real)(now - temp->getTimeFirstSent()));
+	}
 
 #if defined(RTS_DEBUG)
 	if (doDebug == TRUE) {
@@ -362,6 +424,39 @@ NetCommandRef * Connection::processAck(UnsignedShort commandID, UnsignedByte ori
 void Connection::setFrameGrouping(time_t frameGrouping) {
 	m_frameGrouping = frameGrouping;
 //	m_retryTime = frameGrouping * 4;
+}
+
+/**
+ * O23: a new round trip sample (milliseconds) for the retry time: smoothed as TCP does (1/8 of the error into the mean,
+ * 1/4 into the mean deviation), retry time = mean + 4 deviations, at least RetryTimeMin and one packet interval more than
+ * the mean, at most RetryTimeMax.
+ */
+void Connection::updateRetryTime(Real sampleMs) {
+	if (sampleMs < 0.0f) {
+		return;
+	}
+	if (!m_haveRtt) {
+		m_smoothedRtt = sampleMs;
+		m_rttDeviation = sampleMs / 2.0f;
+		m_haveRtt = TRUE;
+	} else {
+		const Real err = sampleMs - m_smoothedRtt;
+		m_smoothedRtt += err / 8.0f;
+		m_rttDeviation += (fabsf(err) - m_rttDeviation) / 4.0f;
+	}
+	Real retry = m_smoothedRtt + 4.0f * m_rttDeviation;
+	Real lowest = m_smoothedRtt + (Real)m_frameGrouping;
+	if (lowest < (Real)RetryTimeMin) {
+		lowest = (Real)RetryTimeMin;
+	}
+	if (retry < lowest) {
+		retry = lowest;
+	}
+	if (retry > (Real)RetryTimeMax) {
+		retry = (Real)RetryTimeMax;
+	}
+	m_retryTime = (time_t)retry;
+	NetLab::noteRetryTime((Int)m_retryTime);
 }
 
 void Connection::doRetryMetrics() {
