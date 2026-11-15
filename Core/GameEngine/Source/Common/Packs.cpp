@@ -896,6 +896,29 @@ void Packs::writeLog(const std::vector<AsciiString> &files, const std::vector<As
 		fprintf(fp, "%s = %s%s%s\n", kKeys[kind], pack != nullptr ? pack->name.str() : "Base",
 			fallback != nullptr ? ", fallback " : "", fallback != nullptr ? fallback->name.str() : "");
 	}
+	// TheSuperHackers @feature What the options offer for each kind (H5): "Base" when the base data is shown, then every
+	// pack of this game; a pack whose Require file is missing says which (it is offered, and reported when chosen).
+	for (Int kind = 0; kind < KIND_COUNT; ++kind)
+	{
+		const KindState &k = st.kinds[kind];
+		fprintf(fp, "choices %s:%s", kKeys[kind], k.showBase ? " Base" : "");
+		for (size_t i = 0; i < k.packs.size(); ++i)
+		{
+			const Pack &pack = k.packs[i];
+			fprintf(fp, " %s", pack.name.str());
+			for (size_t r = 0; r < pack.requiredFiles.size(); ++r)
+			{
+				AsciiString required = pack.folder;
+				required.concat(pack.requiredFiles[r]);
+				if (!fileExists(required.str()))
+				{
+					fprintf(fp, " (missing %s)", pack.requiredFiles[r].str());
+					break;
+				}
+			}
+		}
+		fprintf(fp, "\n");
+	}
 	for (size_t i = 0; i < st.mountedNames.size(); ++i) {
 		fprintf(fp, "mounted: %s\n", st.mountedNames[i].str());
 	}

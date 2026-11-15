@@ -29,9 +29,14 @@
 
 #include <vector>
 
+// Each listing writes AudioDevices.log in the user data folder: whether a lister is there, how it listed (for miniaudio:
+// the backend of the context, or why the context failed) and the names. Listing only enumerates: no device is opened, so
+// the real list can be checked in a run with -audio miniaudio-null (the options' Sound page lists them).
+
 namespace AudioOutputDevices
 {
-	typedef void (*Lister)(std::vector<AsciiString> &names);
+	/// Fills 'names'; 'how' says how they were listed (a backend name, or what failed).
+	typedef void (*Lister)(std::vector<AsciiString> &names, AsciiString &how);
 
 	void setLister(Lister lister);
 	/// FALSE when the audio device in use cannot list its outputs.

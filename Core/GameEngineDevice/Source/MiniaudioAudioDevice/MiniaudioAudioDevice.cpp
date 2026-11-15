@@ -522,21 +522,30 @@ namespace
 		}
 	}
 
-	/// The playback device names for the options (a context of its own, opened and closed here).
-	void listOutputDevices(std::vector<AsciiString> &names)
+	/// The playback device names for the options (a context of its own, opened and closed here; the devices are only
+	/// enumerated, none is opened). 'how' tells the backend, or what failed (AudioDevices.log).
+	void listOutputDevices(std::vector<AsciiString> &names, AsciiString &how)
 	{
 		ma_context context;
 		ma_context_config cc = ma_context_config_init();
-		if (ma_context_init(nullptr, 0, &cc, &context) != MA_SUCCESS) {
+		const ma_result init = ma_context_init(nullptr, 0, &cc, &context);
+		if (init != MA_SUCCESS) {
+			how.format("miniaudio context failed: %s", ma_result_description(init));
 			return;
 		}
 		ma_device_info *infos = nullptr;
 		ma_uint32 count = 0;
-		if (ma_context_get_devices(&context, &infos, &count, nullptr, nullptr) == MA_SUCCESS)
+		const ma_result got = ma_context_get_devices(&context, &infos, &count, nullptr, nullptr);
+		if (got == MA_SUCCESS)
 		{
+			how.format("miniaudio, backend %s", ma_get_backend_name(context.backend));
 			for (ma_uint32 i = 0; i < count; ++i) {
 				names.push_back(AsciiString(infos[i].name));
 			}
+		}
+		else
+		{
+			how.format("miniaudio, backend %s: listing failed: %s", ma_get_backend_name(context.backend), ma_result_description(got));
 		}
 		ma_context_uninit(&context);
 	}
