@@ -229,6 +229,14 @@ namespace
 	AsciiString curPlayerListSize(OptionPreferences &p) { return number(p.getPlayerInfoListFontSize()); }
 	AsciiString curMoneyPerMinute(OptionPreferences &p) { return yesNo(p.getShowMoneyPerMinute()); }
 
+	// The game's own defaults (the getters' values for an absent key): Zero Hour scrolls with the right mouse button
+	// with the alternate mouse, the base game does not (GlobalData).
+#if RTS_GENERALS
+	const char *const kRightMouseDefault = "no";
+#else
+	const char *const kRightMouseDefault = "yes";
+#endif
+
 	const Setting kSettings[] =
 	{
 		// Graphics
@@ -239,19 +247,19 @@ namespace
 		// Sound
 		{ SEC_SOUND, KIND_STEPS, "MoneyTransactionVolume", { "GUI:MoneyTransactionVolume", L"Money sound volume", L"\x0413\x0440\x043E\x043C\x043A\x043E\x0441\x0442\x044C \x0437\x0432\x0443\x043A\x0430 \x0434\x0435\x043D\x0435\x0433" }, STEPS(kPercent0To100), "%", "50", curMoneyVolume },
 		// Controls
-		{ SEC_CONTROLS, KIND_CHECK, "UseRightMouseScrollWithAlternateMouse", { "GUI:RightMouseScrollAlternate", L"Right mouse scroll with alternate mouse", L"\x041F\x0440\x043E\x043A\x0440\x0443\x0442\x043A\x0430 \x043F\x0440\x0430\x0432\x043E\x0439 \x043A\x043D\x043E\x043F\x043A\x043E\x0439 (\x0430\x043B\x044C\x0442\x0435\x0440. \x043C\x044B\x0448\x044C)" }, nullptr, 0, "", "no", curRightMouse },
+		{ SEC_CONTROLS, KIND_CHECK, "UseRightMouseScrollWithAlternateMouse", { "GUI:RightMouseScrollAlternate", L"Right mouse scroll with alternate mouse", L"\x041F\x0440\x043E\x043A\x0440\x0443\x0442\x043A\x0430 \x043F\x0440\x0430\x0432\x043E\x0439 \x043A\x043D\x043E\x043F\x043A\x043E\x0439 (\x0430\x043B\x044C\x0442\x0435\x0440. \x043C\x044B\x0448\x044C)" }, nullptr, 0, "", kRightMouseDefault, curRightMouse },
 		{ SEC_CONTROLS, KIND_CHECK, "ScreenEdgeScrollEnabledInWindowedApp", { "GUI:EdgeScrollWindowed", L"Screen edge scroll in a window", L"\x041F\x0440\x043E\x043A\x0440\x0443\x0442\x043A\x0430 \x0443 \x043A\x0440\x0430\x044F \x044D\x043A\x0440\x0430\x043D\x0430 \x0432 \x043E\x043A\x043D\x0435" }, nullptr, 0, "", "no", curEdgeWindowed },
 		{ SEC_CONTROLS, KIND_CHECK, "ScreenEdgeScrollEnabledInFullscreenApp", { "GUI:EdgeScrollFullscreen", L"Screen edge scroll in full screen", L"\x041F\x0440\x043E\x043A\x0440\x0443\x0442\x043A\x0430 \x0443 \x043A\x0440\x0430\x044F \x0432 \x043F\x043E\x043B\x043D\x043E\x043C \x044D\x043A\x0440\x0430\x043D\x0435" }, nullptr, 0, "", "yes", curEdgeFullscreen },
-		{ SEC_CONTROLS, KIND_CHECK, "CursorCaptureEnabledInWindowedGame", { "GUI:CursorCaptureWindowedGame", L"Keep the cursor in the window: game", L"\x041A\x0443\x0440\x0441\x043E\x0440 \x0432 \x043E\x043A\x043D\x0435: \x0432 \x0438\x0433\x0440\x0435" }, nullptr, 0, "", "no", curCaptureWG },
+		{ SEC_CONTROLS, KIND_CHECK, "CursorCaptureEnabledInWindowedGame", { "GUI:CursorCaptureWindowedGame", L"Keep the cursor in the window: game", L"\x041A\x0443\x0440\x0441\x043E\x0440 \x0432 \x043E\x043A\x043D\x0435: \x0432 \x0438\x0433\x0440\x0435" }, nullptr, 0, "", "yes", curCaptureWG },
 		{ SEC_CONTROLS, KIND_CHECK, "CursorCaptureEnabledInWindowedMenu", { "GUI:CursorCaptureWindowedMenu", L"Keep the cursor in the window: menus", L"\x041A\x0443\x0440\x0441\x043E\x0440 \x0432 \x043E\x043A\x043D\x0435: \x0432 \x043C\x0435\x043D\x044E" }, nullptr, 0, "", "no", curCaptureWM },
 		{ SEC_CONTROLS, KIND_CHECK, "CursorCaptureEnabledInFullscreenGame", { "GUI:CursorCaptureFullscreenGame", L"Keep the cursor on screen: game", L"\x041A\x0443\x0440\x0441\x043E\x0440 \x043D\x0430 \x044D\x043A\x0440\x0430\x043D\x0435: \x0432 \x0438\x0433\x0440\x0435" }, nullptr, 0, "", "yes", curCaptureFG },
-		{ SEC_CONTROLS, KIND_CHECK, "CursorCaptureEnabledInFullscreenMenu", { "GUI:CursorCaptureFullscreenMenu", L"Keep the cursor on screen: menus", L"\x041A\x0443\x0440\x0441\x043E\x0440 \x043D\x0430 \x044D\x043A\x0440\x0430\x043D\x0435: \x0432 \x043C\x0435\x043D\x044E" }, nullptr, 0, "", "no", curCaptureFM },
+		{ SEC_CONTROLS, KIND_CHECK, "CursorCaptureEnabledInFullscreenMenu", { "GUI:CursorCaptureFullscreenMenu", L"Keep the cursor on screen: menus", L"\x041A\x0443\x0440\x0441\x043E\x0440 \x043D\x0430 \x044D\x043A\x0440\x0430\x043D\x0435: \x0432 \x043C\x0435\x043D\x044E" }, nullptr, 0, "", "yes", curCaptureFM },
 		{ SEC_CONTROLS, KIND_CHECK, "DrawEntireTerrain", { "GUI:DrawEntireTerrain", L"Draw the entire terrain", L"\x0420\x0438\x0441\x043E\x0432\x0430\x0442\x044C \x0432\x0441\x044E \x043C\x0435\x0441\x0442\x043D\x043E\x0441\x0442\x044C" }, nullptr, 0, "", "no", curEntireTerrain },
-		{ SEC_CONTROLS, KIND_STEPS, "MaxCameraHeight", { "GUI:MaxCameraHeight", L"Highest camera", L"\x0412\x044B\x0441\x043E\x0442\x0430 \x043A\x0430\x043C\x0435\x0440\x044B" }, STEPS(kCameraHeight), "", "", curCameraHeight },
+		{ SEC_CONTROLS, KIND_STEPS, "MaxCameraHeight", { "GUI:MaxCameraHeight", L"Highest camera", L"\x041C\x0430\x043A\x0441\x0438\x043C\x0430\x043B\x044C\x043D\x0430\x044F \x0432\x044B\x0441\x043E\x0442\x0430 \x043A\x0430\x043C\x0435\x0440\x044B" }, STEPS(kCameraHeight), "", "", curCameraHeight },
 		{ SEC_CONTROLS, KIND_STEPS, "CameraPitch", { "GUI:CameraPitch", L"Camera pitch", L"\x041D\x0430\x043A\x043B\x043E\x043D \x043A\x0430\x043C\x0435\x0440\x044B" }, STEPS(kCameraPitch), "", "", curCameraPitch },
 		// Game
 		{ SEC_GAME, KIND_CHECK, "ArchiveReplays", { "GUI:ArchiveReplays", L"Keep every replay", L"\x0421\x043E\x0445\x0440\x0430\x043D\x044F\x0442\x044C \x0432\x0441\x0435 \x043F\x043E\x0432\x0442\x043E\x0440\x044B" }, nullptr, 0, "", "no", curArchiveReplays },
-		{ SEC_GAME, KIND_CHECK, "PlayerObserverEnabled", { "GUI:PlayerObserverEnabled", L"Observer: see with a player's eyes", L"\x041D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x044C: \x0433\x043B\x0430\x0437\x0430\x043C\x0438 \x0438\x0433\x0440\x043E\x043A\x0430" }, nullptr, 0, "", "no", curPlayerObserver },
+		{ SEC_GAME, KIND_CHECK, "PlayerObserverEnabled", { "GUI:PlayerObserverEnabled", L"Observer: see with a player's eyes", L"\x041D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x044C: \x0433\x043B\x0430\x0437\x0430\x043C\x0438 \x0438\x0433\x0440\x043E\x043A\x0430" }, nullptr, 0, "", "yes", curPlayerObserver },
 		// Interface
 		{ SEC_INTERFACE, KIND_STEPS, "GameWindowTransitionSpeedMultiplier", { "GUI:MenuTransitionSpeed", L"Menu animation speed", L"\x0421\x043A\x043E\x0440\x043E\x0441\x0442\x044C \x0430\x043D\x0438\x043C\x0430\x0446\x0438\x0438 \x043C\x0435\x043D\x044E" }, STEPS(kTransitionSpeed), "x", "1", curTransition },
 		{ SEC_INTERFACE, KIND_STEPS, "ScreenshotFormat", { "GUI:ScreenshotFormat", L"Screenshot format", L"\x0424\x043E\x0440\x043C\x0430\x0442 \x0441\x043D\x0438\x043C\x043A\x043E\x0432 \x044D\x043A\x0440\x0430\x043D\x0430" }, STEPS(kScreenshotFormat), "", "Jpeg", curScreenshot },
@@ -347,6 +355,7 @@ namespace
 		GameWindow *label;            ///< KIND_STEPS
 		GameWindow *value;            ///< KIND_STEPS
 		Int step;
+		Bool touched;                 ///< KIND_STEPS: moved by the player or reset by Defaults; else save keeps the stored value
 	};
 
 	struct PackRowState
@@ -1172,6 +1181,7 @@ Bool OptionsSections::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgD
 					Int step = (Int)mData2;
 					step = step < 0 ? 0 : (step >= kSettings[i].choiceCount ? kSettings[i].choiceCount - 1 : step);
 					s.settings[i].step = step;
+					s.settings[i].touched = TRUE;
 					if (s.settings[i].value != nullptr) {
 						GadgetStaticTextSetText(s.settings[i].value, choiceText(kSettings[i], step));
 					}
@@ -1232,6 +1242,8 @@ void OptionsSections::save(OptionPreferences *pref)
 		}
 		if (set.kind == KIND_CHECK) {
 			(*pref)[set.key] = GadgetCheckBoxIsChecked(st.control) ? "yes" : "no";
+		} else if (!st.touched) {
+			continue;   // a hand-written value between two choices stays as it is (the slider shows the nearest)
 		} else if (set.choices[st.step].value[0] == '\0') {
 			pref->erase(set.key);
 		} else {
@@ -1264,7 +1276,7 @@ void OptionsSections::save(OptionPreferences *pref)
 		TheFramePacer->setFramesPerSecondLimit(TheGlobalData->getDefaultRenderFpsLimit());
 	}
 	TheWritableGlobalData->m_snowStyle = pref->getSnowStyle();
-	pref->applyCameraOverrides();
+	pref->applyCameraOverrides(TRUE);   // "Standard" (no key) goes back to the GameData values
 	TheWritableGlobalData->m_counterStyle = pref->getCounterStyle();
 	TheWritableGlobalData->m_screenshotFormat = pref->getScreenshotFormat();
 
@@ -1287,6 +1299,7 @@ void OptionsSections::setDefaults()
 			setChecked(i, stricmp(set.defaultValue, "yes") == 0);
 		} else {
 			s.settings[i].step = defaultStep(set);
+			s.settings[i].touched = TRUE;
 			showStep(i);
 		}
 	}

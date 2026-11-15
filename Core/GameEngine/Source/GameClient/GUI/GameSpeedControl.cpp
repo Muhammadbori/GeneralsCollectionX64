@@ -54,7 +54,8 @@ Int GameSpeed::stepToLogicFps(Int step)
 
 Int GameSpeed::logicFpsToStep(Int logicFps)
 {
-	if (logicFps >= 1000 || logicFps <= 0) {
+	// 61 is the old top slider position "UNCAP" as Skirmish.ini stored it; new values are multiples of StepLogicFps.
+	if (logicFps >= 1000 || logicFps <= 0 || logicFps == 61) {
 		return NormalStep;
 	}
 	return clampStep((logicFps + StepLogicFps / 2) / StepLogicFps);

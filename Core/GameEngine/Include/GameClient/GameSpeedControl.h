@@ -41,8 +41,8 @@ namespace GameSpeed
 	};
 
 	Int stepToLogicFps(Int step);
-	/// The nearest step of a logic time scale fps. 1000 and above (the old top slider position "UNCAP", which meant the
-	/// normal speed) is the normal step.
+	/// The nearest step of a logic time scale fps. 1000 and above, and 61 (the old top slider position "UNCAP" as
+	/// Skirmish.ini stored it, which meant the normal speed) are the normal step.
 	Int logicFpsToStep(Int logicFps);
 	/// "0.5x", "1x", "1.5x" ... "3x".
 	UnicodeString multiplierText(Int logicFps);

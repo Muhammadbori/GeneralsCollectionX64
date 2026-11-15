@@ -107,7 +107,7 @@ public:
 	/// TheSuperHackers @feature Optional keys MaxCameraHeight, CameraPitch and DrawEntireTerrain override the GameData.ini
 	/// values of the same names in TheWritableGlobalData. Keys that are absent or not valid change nothing. Client side only:
 	/// these values are read by the view and the terrain renderer, never by the game logic.
-	void applyCameraOverrides();
+	void applyCameraOverrides(Bool resetAbsentKeys = FALSE); ///< TRUE: an absent CameraPitch / MaxCameraHeight goes back to the GameData value
 	Int getTextureReduction();
 	void getResolution(Int *xres, Int *yres);
 	Bool get3DShadowsEnabled();

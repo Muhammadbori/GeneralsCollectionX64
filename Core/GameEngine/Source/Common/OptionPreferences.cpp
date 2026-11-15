@@ -816,8 +816,22 @@ static Bool parseOptionReal(const AsciiString &text, Real *value)
 	return TRUE;
 }
 
-void OptionPreferences::applyCameraOverrides()
+// The GameData.ini values, kept at the first call (at start, before any override), so that a key removed in the options
+// ("Standard") brings them back without a restart. Only the options do that: a map's GameData block keeps its own
+// values when the key is absent.
+static Bool s_cameraDefaultsKept = FALSE;
+static Real s_defaultCameraPitch = 0.0f;
+static Real s_defaultMaxCameraHeight = 0.0f;
+
+void OptionPreferences::applyCameraOverrides(Bool resetAbsentKeys)
 {
+	if (!s_cameraDefaultsKept)
+	{
+		s_cameraDefaultsKept = TRUE;
+		s_defaultCameraPitch = TheGlobalData->m_cameraPitch;
+		s_defaultMaxCameraHeight = TheGlobalData->m_maxCameraHeight;
+	}
+
 	OptionPreferences::const_iterator it = find("DrawEntireTerrain");
 	if (it != end())
 	{
@@ -836,6 +850,10 @@ void OptionPreferences::applyCameraOverrides()
 		}
 		TheWritableGlobalData->m_cameraPitch = pitch;
 	}
+	else if (resetAbsentKeys)
+	{
+		TheWritableGlobalData->m_cameraPitch = s_defaultCameraPitch;
+	}
 
 	it = find("MaxCameraHeight");
 	if (it != end() && parseOptionReal(it->second, &value))
@@ -849,6 +867,10 @@ void OptionPreferences::applyCameraOverrides()
 			DEBUG_LOG(("Options.ini MaxCameraHeight %f is outside %f..%f, using %f", value, lowest, highest, height));
 		}
 		TheWritableGlobalData->m_maxCameraHeight = height;
+	}
+	else if (resetAbsentKeys)
+	{
+		TheWritableGlobalData->m_maxCameraHeight = s_defaultMaxCameraHeight;
 	}
 }
 
