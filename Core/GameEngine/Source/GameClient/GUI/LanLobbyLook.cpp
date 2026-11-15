@@ -1776,6 +1776,10 @@ void LanLobbyLook::update(Bool screenReady)
 	if (!screenReady) {
 		return;
 	}
+	// O40: "Play again" on the score screen: the room again, with the same layout (LanRoom::applyRematchLayout)
+	if (TheLAN != nullptr && TheLAN->GetMyGame() == nullptr && !LanTest::sampleData() && LanRoom::takeRematchRequest()) {
+		TheLAN->RequestGameCreate(UnicodeString::TheEmptyString, FALSE);
+	}
 	// O31: the room's notices in the chat; the action row follows the selected game
 	{
 		UnicodeString line;

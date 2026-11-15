@@ -99,6 +99,12 @@ namespace
 	Bool s_chatHinted = FALSE;
 	const UnsignedInt kChatMagic = 0x3148434F;   ///< "OCH1"
 	Int s_upstreamDelay = 0;                     ///< O39: an outside viewer's sources' delay (the host's)
+	// O40: the room layout the host kept at Start (plain values only: nothing of it outlives the memory manager)
+	struct SlotKeep { Int state, playerTemplate, color, team, startPos; };
+	SlotKeep s_layout[MAX_SLOTS];
+	Bool s_layoutValid = FALSE;
+	Bool s_rematchRequested = FALSE;
+	Bool s_rematchApplyPending = FALSE;
 
 	/// O39: the observers' channel writes what it sends, shows and drops into ObserverChat.log (user data folder), for the
 	/// tests (a picture shows a message line only for a few seconds)
@@ -819,6 +825,13 @@ void LanRoom::hostStart(LANGameInfo *game, UnsignedInt localIP)
 
 void LanRoom::configureServing(UnsignedInt localIP)
 {
+	{
+		// O40: only the host of this match may offer "Play again" afterwards
+		LANGameInfo *mine = TheLAN != nullptr ? TheLAN->GetMyGame() : nullptr;
+		if (mine == nullptr || !mine->amIHost()) {
+			s_layoutValid = FALSE;
+		}
+	}
 	// every player serves its replay on its LAN address: live to the room's observers of the host's START, delayed by the
 	// host's delay to everybody else (outside viewers per source: 4, or -serveReplayOutsideMax)
 	LANGameInfo *game = TheLAN != nullptr ? TheLAN->GetMyGame() : nullptr;
@@ -1037,6 +1050,87 @@ void LanRoom::resetViewer()
 		setState(STATE_NONE);
 		s_roomHost = 0;
 		s_watcher = FALSE;
+	}
+}
+
+void LanRoom::rememberMatchLayout(const LANGameInfo *game)
+{
+	s_layoutValid = FALSE;
+	if (game == nullptr) {
+		return;
+	}
+	for (Int i = 0; i < MAX_SLOTS; ++i)
+	{
+		const GameSlot *slot = game->getConstSlot(i);
+		SlotKeep &k = s_layout[i];
+		k.state = slot != nullptr ? (Int)slot->getState() : (Int)SLOT_CLOSED;
+		k.playerTemplate = slot != nullptr ? slot->getPlayerTemplate() : -1;
+		k.color = slot != nullptr ? slot->getColor() : -1;
+		k.team = slot != nullptr ? slot->getTeamNumber() : -1;
+		k.startPos = slot != nullptr ? slot->getStartPos() : -1;
+	}
+	s_layoutValid = TRUE;
+}
+
+Bool LanRoom::canOfferRematch()
+{
+	return s_layoutValid && TheLAN != nullptr;
+}
+
+void LanRoom::requestRematch()
+{
+	s_rematchRequested = s_layoutValid;
+}
+
+Bool LanRoom::takeRematchRequest()
+{
+	if (!s_rematchRequested) {
+		return FALSE;
+	}
+	s_rematchRequested = FALSE;
+	s_rematchApplyPending = TRUE;
+	return TRUE;
+}
+
+void LanRoom::applyRematchLayout(LANGameInfo *game)
+{
+	if (!s_rematchApplyPending || !s_layoutValid || game == nullptr) {
+		return;
+	}
+	s_rematchApplyPending = FALSE;
+	for (Int i = 0; i < MAX_SLOTS; ++i)
+	{
+		GameSlot *slot = game->getSlot(i);
+		const SlotKeep &k = s_layout[i];
+		if (slot == nullptr) {
+			continue;
+		}
+		if (i == 0)
+		{
+			// the host itself: its team and start place (army and colour came from its preferences already)
+			slot->setTeamNumber(k.team);
+			slot->setStartPos(k.startPos);
+			continue;
+		}
+		if (slot->getState() == SLOT_CLOSED && k.state != SLOT_CLOSED) {
+			continue;   // the map does not have this place (the map changed since): leave it closed
+		}
+		if (k.state == SLOT_EASY_AI || k.state == SLOT_MED_AI || k.state == SLOT_BRUTAL_AI)
+		{
+			slot->setState((SlotState)k.state);
+			slot->setPlayerTemplate(k.playerTemplate);
+			slot->setColor(k.color);
+			slot->setTeamNumber(k.team);
+			slot->setStartPos(k.startPos);
+		}
+		else if (k.state == SLOT_CLOSED)
+		{
+			slot->setState(SLOT_CLOSED);
+		}
+		else
+		{
+			slot->setState(SLOT_OPEN);   // a human's place (or an open one): open for the players to join again
+		}
 	}
 }
 

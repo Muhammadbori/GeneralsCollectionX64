@@ -36,6 +36,7 @@
 #include "Common/QuotedPrintable.h"
 #include "GameClient/AnimateWindowManager.h"
 #include "GameClient/LanRoomLook.h"
+#include "GameNetwork/LanRoom.h"
 #include "GameClient/WindowLayout.h"
 #include "GameClient/Gadget.h"
 #include "GameClient/Shell.h"
@@ -881,6 +882,9 @@ void LanGameOptionsMenuInit( WindowLayout *layout, void *userData )
 
 			TheLAN->GetMyGame()->adjustSlotsForMap(); // BGC- adjust the slots for the selected map.
 		}
+		// TheSuperHackers @feature O40 "Play again" from the score screen: the last match's layout (computer players,
+		// closed places, teams, starts); the human places stay open for the players to join again
+		LanRoom::applyRematchLayout(TheLAN->GetMyGame());
 
 		//GadgetTextEntrySetText(comboBoxPlayer[0], TheLAN->GetMyName());
 		lanUpdateSlotList();
