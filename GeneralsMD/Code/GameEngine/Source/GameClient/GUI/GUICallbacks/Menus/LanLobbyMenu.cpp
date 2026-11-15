@@ -208,7 +208,9 @@ Int LANPreferences::getNumRemoteIPs()
 	}
 
 	ret = atoi(it->second.str());
-	return ret;
+	// TheSuperHackers @bugfix O43 Network.ini is in the user data folder: a huge count froze the lobby's Connect and
+	// flooded the direct connect list; the game never writes more than a few addresses
+	return ret < 0 ? 0 : (ret > 64 ? 64 : ret);
 }
 
 UnicodeString LANPreferences::getRemoteIPEntry(Int i)
@@ -230,7 +232,9 @@ UnicodeString LANPreferences::getRemoteIPEntry(Int i)
 	asciientry = it->second;
 
 	asciientry.nextToken(&ipstr, ":");
-	asciientry.set(asciientry.str() + 1); // skip the ':'
+	// TheSuperHackers @bugfix O43 An entry without ':' leaves nothing: do not step past its end
+	if (!asciientry.isEmpty())
+		asciientry.set(asciientry.str() + 1); // skip the ':'
 
 	ret.translate(ipstr);
 	if (!asciientry.isEmpty())

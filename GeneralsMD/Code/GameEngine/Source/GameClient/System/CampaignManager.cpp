@@ -164,6 +164,32 @@ Mission *Campaign::newMission( AsciiString name )
 }
 
 //-----------------------------------------------------------------------------
+Mission *Campaign::findMission( const AsciiString &missionName )
+{
+	if(missionName.isEmpty())
+		return nullptr;
+	for (MissionListIt it = m_missions.begin(); it != m_missions.end(); ++it)
+	{
+		if ((*it)->m_name.compareNoCase(missionName) == 0)
+			return *it;
+	}
+	return nullptr;
+}
+
+//-----------------------------------------------------------------------------
+Campaign *CampaignManager::findCampaign( const AsciiString &campaign )
+{
+	if (campaign.isEmpty())
+		return nullptr;
+	for (CampaignListIt it = m_campaignList.begin(); it != m_campaignList.end(); ++it)
+	{
+		if ((*it)->m_name.compareNoCase(campaign) == 0)
+			return *it;
+	}
+	return nullptr;
+}
+
+//-----------------------------------------------------------------------------
 Mission *Campaign::getMission( AsciiString missionName )
 {
 	if(missionName.isEmpty())

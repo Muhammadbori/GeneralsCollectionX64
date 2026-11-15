@@ -116,19 +116,40 @@ Bool ChallengeRun::load(Run &run)
 	run.campaign = prefs.getAsciiString("Campaign", AsciiString::TheEmptyString);
 	run.mission = prefs.getAsciiString("Mission", AsciiString::TheEmptyString);
 	run.general = prefs.getInt("General", -1);
-	run.difficulty = clampDifficulty(prefs.getInt("Difficulty", DIFFICULTY_NORMAL));
+	const Int difficulty = prefs.getInt("Difficulty", DIFFICULTY_NORMAL);
+	run.difficulty = clampDifficulty(difficulty);
 	run.rankPoints = prefs.getInt("RankPoints", 0);
-	if (run.campaign.isEmpty() || run.mission.isEmpty() || run.general < 0 || run.general >= NUM_GENERALS) {
+	// TheSuperHackers @bugfix O43 The file is in the user data folder and may be edited or damaged by hand: every field is
+	// checked, the names are taken in the spelling of the game's own data, and anything wrong means "no run" (Continue
+	// off), never a battle without a mission.
+	if (run.campaign.isEmpty() || run.mission.isEmpty() || run.general < 0 || run.general >= NUM_GENERALS
+		|| difficulty < DIFFICULTY_EASY || difficulty > DIFFICULTY_HARD) {
 		return FALSE;
 	}
+	run.rankPoints = run.rankPoints < 0 ? 0 : (run.rankPoints > 100000 ? 100000 : run.rankPoints);
 	// the general must still be there with the same campaign (the challenge INI may differ between installs)
-	return generalOfCampaign(run.campaign) == run.general;
+	if (generalOfCampaign(run.campaign) != run.general) {
+		return FALSE;
+	}
+#if RTS_ZEROHOUR
+	Campaign *campaign = TheCampaignManager != nullptr ? TheCampaignManager->findCampaign(run.campaign) : nullptr;
+	Mission *mission = campaign != nullptr ? campaign->findMission(run.mission) : nullptr;
+	if (campaign == nullptr || mission == nullptr || !campaign->isChallengeCampaign()) {
+		return FALSE;
+	}
+	run.campaign = campaign->m_name;
+	run.mission = mission->m_name;
+	return TRUE;
+#else
+	return FALSE;   // Generals has no generals' challenge
+#endif
 }
 
 void ChallengeRun::loadSpeed(Int &logicFps, Bool &normal)
 {
 	ChallengeRunPreferences prefs;
-	logicFps = prefs.getInt("GameSpeed", LOGICFRAMES_PER_SECOND);
+	// O43: a value from the file is taken only as one of the slider's steps (anything else: the normal speed)
+	logicFps = GameSpeed::stepToLogicFps(GameSpeed::logicFpsToStep(prefs.getInt("GameSpeed", LOGICFRAMES_PER_SECOND)));
 	normal = prefs.getBool("GameSpeedNormal", GameSpeed::logicFpsToStep(logicFps) == GameSpeed::NormalStep);
 }
 
@@ -688,6 +709,12 @@ void ChallengeExtras::applyContinue()
 		return;
 	}
 	TheCampaignManager->setCampaignAndMission(s_run.campaign, s_run.mission);
+	// O43: never a battle without a mission (load() checked the names; this is the last guard): the general's first battle
+	if (TheCampaignManager->getCurrentMission() == nullptr)
+	{
+		TheCampaignManager->setCampaign(s_run.campaign);
+		return;
+	}
 	TheCampaignManager->setRankPoints(s_run.rankPoints);
 }
 
