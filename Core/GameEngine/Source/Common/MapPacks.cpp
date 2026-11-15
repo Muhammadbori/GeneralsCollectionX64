@@ -44,6 +44,7 @@
 
 #include <algorithm>
 #include <stdio.h>
+#include <string>
 #include <vector>
 
 namespace
@@ -135,47 +136,86 @@ namespace
 	/// TheSuperHackers @bugfix (M2) A path for the file functions that is not limited to 260 characters: the full path
 	/// with the \\?\ prefix (a deep game folder plus a long map name can pass 260, and the copy failed with "path
 	/// not found").
-	AsciiString longPath(const char *path)
+	/// TheSuperHackers @bugfix (M2, S19) ... for the wide (W) file functions. The ANSI functions stay limited to 260
+	/// characters whatever the prefix (and GetFullPathNameA too), so the map's folder was made (its path is shorter) but
+	/// no file was copied into it. The path is converted from the ANSI code page as the A functions did; the full path
+	/// (GetFullPathNameW) has backslashes only and no "." or ".." parts, as the prefix requires. A network path
+	/// \\server\share becomes \\?\UNC\server\share.
+	std::wstring longPath(const char *path)
 	{
-		if (strncmp(path, "\\\\?\\", 4) == 0 || strncmp(path, "\\\\", 2) == 0) {
-			return AsciiString(path);   // already long, or a network path (left as it is)
+		const Int n = MultiByteToWideChar(CP_ACP, 0, path, -1, nullptr, 0);
+		std::wstring wide(n > 0 ? (size_t)n : 1, L'\0');
+		if (n > 0) {
+			MultiByteToWideChar(CP_ACP, 0, path, -1, &wide[0], n);
 		}
-		static char full[32768];
-		const DWORD n = GetFullPathNameA(path, sizeof(full), full, nullptr);
-		if (n == 0 || n >= sizeof(full)) {
-			return AsciiString(path);
+		wide.resize(wcslen(wide.c_str()));
+		if (wide.compare(0, 4, L"\\\\?\\") == 0) {
+			return wide;   // already long
 		}
-		AsciiString out("\\\\?\\");
-		out.concat(full);
-		return out;
+		const DWORD need = GetFullPathNameW(wide.c_str(), 0, nullptr, nullptr);
+		if (need == 0) {
+			return wide;
+		}
+		std::wstring full((size_t)need, L'\0');
+		const DWORD got = GetFullPathNameW(wide.c_str(), need, &full[0], nullptr);
+		if (got == 0 || got >= need) {
+			return wide;
+		}
+		full.resize(got);
+		if (full.compare(0, 2, L"\\\\") == 0) {
+			return L"\\\\?\\UNC\\" + full.substr(2);
+		}
+		return L"\\\\?\\" + full;
+	}
+
+	/// longPath without a trailing backslash, for the folder functions (a \\?\ path is not normalised); a drive's root
+	/// keeps it.
+	std::wstring longFolder(const char *path)
+	{
+		std::wstring p = longPath(path);
+		if (p.size() > 7 && p[p.size() - 1] == L'\\' && p[p.size() - 2] != L':') {
+			p.resize(p.size() - 1);
+		}
+		return p;
+	}
+
+	/// The ANSI form of a name the wide functions returned (the game's strings are ANSI).
+	AsciiString fromWide(const wchar_t *name)
+	{
+		char buffer[MAX_PATH * 2] = { 0 };
+		WideCharToMultiByte(CP_ACP, 0, name, -1, buffer, sizeof(buffer) - 1, nullptr, nullptr);
+		return AsciiString(buffer);
 	}
 
 	Bool isDirectory(const char *path)
 	{
-		const DWORD a = GetFileAttributesA(longPath(path).str());
+		const DWORD a = GetFileAttributesW(longFolder(path).c_str());
 		return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY) != 0;
 	}
 
 	/// The names in 'folder' (with a trailing backslash): sub folders or files, sorted.
 	void listNames(const AsciiString &folder, Bool directories, std::vector<AsciiString> &out)
 	{
-		AsciiString pattern = longPath(folder.str());
-		pattern.concat("*");
-		WIN32_FIND_DATAA data;
-		HANDLE find = FindFirstFileA(pattern.str(), &data);
+		std::wstring pattern = longPath(folder.str());
+		if (!pattern.empty() && pattern[pattern.size() - 1] != L'\\') {
+			pattern += L'\\';
+		}
+		pattern += L'*';
+		WIN32_FIND_DATAW data;
+		HANDLE find = FindFirstFileW(pattern.c_str(), &data);
 		if (find == INVALID_HANDLE_VALUE) {
 			return;
 		}
 		do
 		{
-			if (strcmp(data.cFileName, ".") == 0 || strcmp(data.cFileName, "..") == 0) {
+			if (wcscmp(data.cFileName, L".") == 0 || wcscmp(data.cFileName, L"..") == 0) {
 				continue;
 			}
 			const Bool dir = (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
 			if (dir == directories) {
-				out.push_back(AsciiString(data.cFileName));
+				out.push_back(fromWide(data.cFileName));
 			}
-		} while (FindNextFileA(find, &data));
+		} while (FindNextFileW(find, &data));
 		FindClose(find);
 		std::sort(out.begin(), out.end(), [](const AsciiString &a, const AsciiString &b) { return stricmp(a.str(), b.str()) < 0; });
 	}
@@ -193,7 +233,7 @@ namespace
 			crc.computeCRC(name.str(), name.getLength());
 			AsciiString path = folder;
 			path.concat(files[i]);
-			HANDLE file = CreateFileA(longPath(path.str()).str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+			HANDLE file = CreateFileW(longPath(path.str()).c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 			if (file != INVALID_HANDLE_VALUE)
 			{
 				static char buffer[65536];
@@ -654,7 +694,7 @@ namespace
 	/// and 'error' on the first failure.
 	Bool copyFolder(const AsciiString &from, const AsciiString &to, Bool overwrite, DWORD *error)
 	{
-		if (!isDirectory(to.str()) && !CreateDirectoryA(longPath(to.str()).str(), nullptr))
+		if (!isDirectory(to.str()) && !CreateDirectoryW(longFolder(to.str()).c_str(), nullptr))
 		{
 			*error = GetLastError();
 			return FALSE;
@@ -678,7 +718,7 @@ namespace
 			AsciiString a = from, b = to;
 			a.concat(files[i]);
 			b.concat(files[i]);
-			if (!CopyFileA(longPath(a.str()).str(), longPath(b.str()).str(), overwrite ? FALSE : TRUE))
+			if (!CopyFileW(longPath(a.str()).c_str(), longPath(b.str()).c_str(), overwrite ? FALSE : TRUE))
 			{
 				*error = GetLastError();
 				return FALSE;
@@ -792,7 +832,7 @@ namespace
 		st.phase = PHASE_INSTALLING;
 		st.next = 0;
 		st.stopRequested = FALSE;
-		CreateDirectoryA(longPath(st.userMaps.str()).str(), nullptr);
+		CreateDirectoryW(longFolder(st.userMaps.str()).c_str(), nullptr);
 	}
 
 	void onLater()
