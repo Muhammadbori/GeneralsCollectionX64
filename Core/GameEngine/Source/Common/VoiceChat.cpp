@@ -41,6 +41,7 @@
 #include "GameLogic/VictoryConditions.h"
 #include "GameNetwork/GameInfo.h"
 #include "GameNetwork/NetworkInterface.h"
+#include "GameNetwork/LanRoom.h"
 
 #include <math.h>
 #include <new>
@@ -877,6 +878,42 @@ namespace
 		return TRUE;
 	}
 
+	/// O34: a LAN room observer watching its stream: voice among the room's observers only (the host's list at Start,
+	/// the players left out), in the same order on every observer (by address); at most MAX_PEERS of them. A player is
+	/// never in this roster, so nothing is sent to a player and nothing from a player's address is played; an outside
+	/// viewer never gets a roster (no voice at all).
+	Bool buildObserverRoster(Roster &r)
+	{
+		memset(&r, 0, sizeof(r));
+		if (TheGameLogic == nullptr || !TheGameLogic->isInReplayGame()) {
+			return FALSE;
+		}
+		UnsignedInt ips[MAX_PEERS];
+		UnicodeString names[MAX_PEERS];
+		Int local = -1;
+		const Int n = LanRoom::observerVoicePeers(ips, names, MAX_PEERS, &local);
+		if (n < 2 || local < 0) {
+			return FALSE;
+		}
+		for (Int i = 0; i < n; ++i)
+		{
+			r.peers[i].present = TRUE;
+			r.peers[i].ip = htonl(ips[i]);
+			r.peers[i].port = (unsigned short)REAL_PORT;
+			r.peers[i].sendTo = i != local;
+			r.peers[i].acceptFrom = i != local;
+			r.peers[i].volume = s_volumes[i];
+			s_names[i] = names[i];
+		}
+		r.real = TRUE;
+		r.localIp = r.peers[local].ip;
+		r.localSlot = local;
+		r.mayTalk = !s_micOff;
+		s_blocked = s_micOff;
+		r.active = TRUE;
+		return TRUE;
+	}
+
 	Bool buildTestRoster(Roster &r)
 	{
 		memset(&r, 0, sizeof(r));
@@ -969,7 +1006,7 @@ void VoiceChat::update()
 	if (s_testSlot >= 0) {
 		want = buildTestRoster(r);
 	} else {
-		want = buildRealRoster(r);
+		want = buildRealRoster(r) || buildObserverRoster(r);   // O34: a room observer's channel
 	}
 	if (!want)
 	{
@@ -996,12 +1033,14 @@ void VoiceChat::update()
 	}
 	// the microphone: opened only in a network match, while this player may talk (never in a test session)
 	// (and never in a NetLab test match on one PC, O19: no real microphone in tests)
-	if (r.real && r.mayTalk && !s_captureIsOpen && s_captureOpen != nullptr && !NetLab::isConfigured())
+	// O34: nor on a loopback address (the -lanLoopback tests on one PC)
+	const Bool loopbackTest = (ntohl(r.localIp) >> 24) == 127;
+	if (r.real && r.mayTalk && !s_captureIsOpen && s_captureOpen != nullptr && !NetLab::isConfigured() && !loopbackTest)
 	{
 		s_captureIsOpen = s_captureOpen(s_inputDevice.str());
 		if (s_captureIsOpen) logLine("microphone opened: %s", s_inputDevice.isEmpty() ? "(system default)" : s_inputDevice.str());
 	}
-	else if ((!r.real || !r.mayTalk) && s_captureIsOpen && s_captureClose != nullptr)
+	else if ((!r.real || !r.mayTalk || loopbackTest) && s_captureIsOpen && s_captureClose != nullptr)
 	{
 		s_captureClose();
 		s_captureIsOpen = FALSE;

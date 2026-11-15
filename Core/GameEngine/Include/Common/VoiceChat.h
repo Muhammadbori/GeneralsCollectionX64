@@ -46,6 +46,9 @@
 // voice is written to -voiceTestOut <file.wav> (8 kHz 16 bit), -voiceTestLoss <percent> drops incoming packets,
 // -voiceTestVolume <slot>:<percent> sets a sender's volume (0 mutes). Every voice session writes VoiceChat.log.
 // No real microphone is opened in a test session; the microphone is opened only in a network match.
+// O34: a LAN room observer watching its stream gets a roster of the room's observers (LanRoom::observerVoicePeers): voice
+// among them only, never to or from a player; an outside viewer gets none. No microphone is opened on a loopback address
+// (the -lanLoopback tests).
 
 #pragma once
 

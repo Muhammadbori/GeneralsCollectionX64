@@ -41,7 +41,7 @@ namespace
 	{
 		MAX_VIEWERS = 100,
 		MAX_PER_ADDRESS = 3,          ///< O33: connections one address may hold
-		MAX_SOURCES = 16,             ///< 8 players and up to 8 relays a source pointed to
+		MAX_SOURCES = 32,             ///< players, room observers and the relays sources named (O34)
 		MAX_LIVE = 16,                ///< O33: live (room observer) addresses
 		OUT_BUFFER = 256 * 1024,      ///< per viewer, allocated after its hello
 		CHUNK = 32 * 1024,            ///< the most file bytes in one DATA message
@@ -56,7 +56,9 @@ namespace
 		SILENT_HOP_MS = 5000,         ///< a source silent for this long is left
 		STUCK_HOP_MS = 8000,          ///< a source whose newest frame does not move for this long is left (live viewers)
 		HEADER_WAIT_MS = 60000,
-		NO_SOURCE_END_MS = 30000,     ///< no source has answered for this long: the stream is lost
+		NO_SOURCE_END_MS = 120000,    ///< O34: no source has given data for this long: the stream is lost ("reconnecting" before)
+		COOLDOWN_MS = 10000,          ///< O34: a source that failed or refused is not asked again for this long
+		REDIRECT_RECENT_MS = 30000,   ///< O34: coming back within this time to a source that sent us on: the last resort
 		FIRST_CONTACT_MS = 180000,    ///< before any source answered (the players still load the map): wait this long
 		HISTORY_MAX = 32768,          ///< O33: size/state samples a server keeps (one per change: 3 min of a match fit)
 		MAX_DELAY_S = 180,
@@ -92,11 +94,15 @@ namespace
 	Int s_matchLiveCount = 0;
 
 	//--- viewer settings (game thread) ---------------------------------------------------------------
-	struct Source { char host[64]; unsigned short port; };
+	/// O34: rank: 0 an outside viewer that relays, 1 a room observer that relays, 2 a player (or a -watchReplay source);
+	/// an outside viewer asks the lowest rank first, so the players carry almost nothing.
+	struct Source { char host[64]; unsigned short port; Int rank; DWORD retryAfterMs; DWORD redirectedMs; };
 	Source s_sources[MAX_SOURCES];
 	Int s_sourceCount = 0;
 	UnsignedInt s_watchFlags = 0;
 	UnsignedInt s_watchBind = 0;      ///< host order; 0: the system's choice
+	enum { NOPE_REFUSED = 0, NOPE_ELSEWHERE = 1, NOPE_NOT_ALLOWED = 2, NOPE_OTHER_GAME = 3 };   ///< O34: NOPE's reason
+	enum { HELLO_ROOM = 1, HELLO_LAST_RESORT = 2 };   ///< hello flags
 
 	//--- log -----------------------------------------------------------------------------------------
 	CRITICAL_SECTION s_logLock;
@@ -268,7 +274,9 @@ namespace
 	// Server
 	//=============================================================================================
 	volatile LONG s_serverGen = 0;
-	volatile LONG s_drainGen = 0;            ///< O33: that generation's recording is over: no new viewers, finish the ones there
+	volatile LONG s_drainGen = 0;
+	volatile LONG s_mirrorSourceIp = 0;      ///< O34: the address this game's mirror takes its data from now (host order)
+	volatile LONG s_mirrorConnected = 0;     ///< O34: the mirror gets data from a source now            ///< O33: that generation's recording is over: no new viewers, finish the ones there
 	volatile LONG s_countRoom = 0;
 	volatile LONG s_countOutside = 0;
 
@@ -279,6 +287,7 @@ namespace
 		Int port;
 		Int delayMs;               ///< for viewers that are not live
 		Bool outsideAllowed;
+		Bool preferRelays;         ///< O34: it holds live data (a player, a room observer): outside viewers go to relays first
 		UnsignedInt live[MAX_LIVE];
 		Int liveCount;
 		Int max, outsideMax, rateKB, stopAfterSec;
@@ -610,10 +619,28 @@ namespace
 					v.out = same ? (unsigned char *)HeapAlloc(GetProcessHeap(), 0, OUT_BUFFER) : nullptr;
 					if (!same || v.out == nullptr)
 					{
-						dropViewer(v, same ? "no memory" : "another game, or this source has less of it");
+						if (v.out == nullptr && same) {
+							dropViewer(v, "no memory");
+							continue;
+						}
+						// O34: say why (the viewer does not come back soon); the reply needs the buffer for a moment
+						v.out = (unsigned char *)HeapAlloc(GetProcessHeap(), 0, 64);
+						if (v.out != nullptr)
+						{
+							unsigned char reason[4];
+							put32(reason, NOPE_OTHER_GAME);
+							memcpy(v.out, "NOPE", 4);
+							put32(v.out + 4, 4);
+							memcpy(v.out + 8, reason, 4);
+							v.outLen = 12;
+							flushNow(v);
+						}
+						dropViewer(v, "another game, or this source has less of it");
 						continue;
 					}
-					v.roomFlag = version == 2 && (get32(v.hello + 20) & 1) != 0;
+					const UnsignedInt flags = version == 2 ? get32(v.hello + 20) : 0;
+					v.roomFlag = (flags & HELLO_ROOM) != 0;
+					const Bool lastResort = (flags & HELLO_LAST_RESORT) != 0;
 					v.relayPort = version == 2 ? (unsigned short)get32(v.hello + 24) : 0;
 					// O33 (review 2): live only for a listed room observer's address; everybody else is an outside viewer
 					v.live = isLive(c, v.ip);
@@ -624,31 +651,42 @@ namespace
 							++(viewers[k].live ? rooms : outs);
 						}
 					}
+					// O34: the relays this server knows (outside viewers first, then room observers), never the asker itself
+					unsigned char more[4 + MAX_REDIRECTS * 12];
+					Int n = 0;
+					for (Int pass = 0; pass < 2; ++pass)
+					{
+						for (Int k = 0; k < MAX_VIEWERS && n < MAX_REDIRECTS; ++k)
+						{
+							const Viewer &o = viewers[k];
+							if (k != i && o.socket != INVALID_SOCKET && o.ready && o.relayPort != 0 && o.ip != v.ip && (o.live ? 1 : 0) == pass)
+							{
+								put32(more + 4 + n * 12, o.ip);
+								put32(more + 8 + n * 12, o.relayPort);
+								put32(more + 12 + n * 12, o.live ? 1 : 0);
+								++n;
+							}
+						}
+					}
+					put32(more, (UnsignedInt)n);
 					const Bool refuseOutside = !v.live && !c.outsideAllowed;
 					const Bool full = rooms + outs >= c.max || (!v.live && outs >= c.outsideMax);
-					if (refuseOutside || full)
+					// O34: a server with live data sends an outside viewer to the relays first; it serves it itself only when
+					// none is known or the viewer comes back from them (last resort)
+					const Bool elsewhere = !v.live && c.preferRelays && !lastResort && n > 0;
+					// O34: never feed the source this game's own mirror reads from (a loop of two would starve both)
+					const Bool loop = !v.live && v.ip != 0 && v.ip == (UnsignedInt)InterlockedCompareExchange(&s_mirrorSourceIp, 0, 0);
+					if (refuseOutside || full || elsewhere || loop)
 					{
-						if (full && !refuseOutside)
-						{
-							// MORE: the outside viewers that relay (each serves what it has, never faster than it got it)
-							unsigned char more[4 + MAX_REDIRECTS * 8];
-							Int n = 0;
-							for (Int k = 0; k < MAX_VIEWERS && n < MAX_REDIRECTS; ++k)
-							{
-								const Viewer &o = viewers[k];
-								if (k != i && o.socket != INVALID_SOCKET && o.ready && !o.live && o.relayPort != 0)
-								{
-									put32(more + 4 + n * 8, o.ip);
-									put32(more + 8 + n * 8, o.relayPort);
-									++n;
-								}
-							}
-							put32(more, (UnsignedInt)n);
-							queue(v, "MORE", more, 4 + n * 8);
+						if (!refuseOutside && !loop && n > 0) {
+							queue(v, "MORE", more, 4 + n * 12);
 						}
-						queue(v, "NOPE", nullptr, 0);
+						unsigned char reason[4];
+						put32(reason, refuseOutside ? NOPE_NOT_ALLOWED : NOPE_ELSEWHERE);
+						queue(v, "NOPE", reason, 4);
 						flushNow(v);
-						dropViewer(v, refuseOutside ? "outside viewers are not allowed" : "full");
+						dropViewer(v, refuseOutside ? "outside viewers are not allowed" : (loop ? "it is this game's own source"
+							: (elsewhere ? "sent on to the relays" : "full")));
 						continue;
 					}
 					v.ready = TRUE;
@@ -771,13 +809,30 @@ namespace
 		LONG gen;
 		Source sources[MAX_SOURCES];
 		Int sourceCount;
-		Int initialCount;          ///< O33 (review 12): only these (the players) may name relays
 		UnsignedInt flags;
 		UnsignedInt bind;          ///< host order; 0: the system's choice
 		Int relayPort;
 		char path[_MAX_PATH];
 		char livePath[_MAX_PATH];
 	};
+
+	/// O34: the source to ask next: the lowest rank, then the list order, among those not cooling down; when all cool
+	/// down, the one that is free first.
+	Int pickSource(const MirrorConfig &m, DWORD now)
+	{
+		Int best = -1, soonest = 0;
+		for (Int i = 0; i < m.sourceCount; ++i)
+		{
+			const Source &s = m.sources[i];
+			if ((LONG)(s.retryAfterMs - now) <= 0 && (best < 0 || s.rank < m.sources[best].rank)) {
+				best = i;
+			}
+			if ((LONG)(s.retryAfterMs - m.sources[soonest].retryAfterMs) < 0) {
+				soonest = i;
+			}
+		}
+		return best >= 0 ? best : soonest;
+	}
 
 	SOCKET connectTo(const Source &src, UnsignedInt bindHost, DWORD timeoutMs)
 	{
@@ -867,7 +922,8 @@ namespace
 		}
 		for (Int i = 1; i < m.sourceCount; ++i)
 		{
-			for (Int k = i; k > 0 && cost[k] < cost[k - 1]; --k)
+			for (Int k = i; k > 0 && (m.sources[k].rank < m.sources[k - 1].rank
+				|| (m.sources[k].rank == m.sources[k - 1].rank && cost[k] < cost[k - 1])); --k)
 			{
 				const Source tmp = m.sources[k]; m.sources[k] = m.sources[k - 1]; m.sources[k - 1] = tmp;
 				const DWORD cc = cost[k]; cost[k] = cost[k - 1]; cost[k - 1] = cc;
@@ -876,14 +932,14 @@ namespace
 		for (Int i = 0; i < m.sourceCount; ++i)
 		{
 			if (cost[i] == 0xFFFFFFFFu) {
-				logLine("mirror: source %d %s:%u (no answer to the probe)", i, m.sources[i].host, (unsigned)m.sources[i].port);
+				logLine("mirror: source %d %s:%u, rank %d (no answer to the probe)", i, m.sources[i].host, (unsigned)m.sources[i].port, m.sources[i].rank);
 			} else {
-				logLine("mirror: source %d %s:%u (connect %lu ms)", i, m.sources[i].host, (unsigned)m.sources[i].port, cost[i]);
+				logLine("mirror: source %d %s:%u, rank %d (connect %lu ms)", i, m.sources[i].host, (unsigned)m.sources[i].port, m.sources[i].rank, cost[i]);
 			}
 		}
 	}
 
-	Bool addSource(Source *list, Int *count, UnsignedInt ipHost, UnsignedInt port)
+	Bool addSource(Source *list, Int *count, UnsignedInt ipHost, UnsignedInt port, Int rank)
 	{
 		char host[64];
 		snprintf(host, sizeof(host), "%u.%u.%u.%u", ipHost >> 24, (ipHost >> 16) & 255, (ipHost >> 8) & 255, ipHost & 255);
@@ -895,6 +951,9 @@ namespace
 		}
 		strlcpy(list[*count].host, host, sizeof(list[*count].host));
 		list[*count].port = (unsigned short)port;
+		list[*count].rank = rank;
+		list[*count].retryAfterMs = 0;
+		list[*count].redirectedMs = 0;
 		++*count;
 		return TRUE;
 	}
@@ -919,37 +978,47 @@ namespace
 			return 0;
 		}
 		UnsignedInt have = fileSize(file);
-		Int source = 0;
-		Int failures = 0;
 		Bool ended = FALSE;
-		DWORD lastContactMs = timeGetTime();
+		DWORD lastContactMs = timeGetTime();   // the last useful message (DATA, LIVE or HOLD)
 		Bool everContact = FALSE;
 		// O33 (review 10): what a source says about the stream only moves forward
 		UnsignedInt maxFrameSeen = 0, maxCounterSeen = 0;
-		Int refusals = 0;   // O33: NOPE in a row from every source (outside viewers not allowed, or all full): lost
+		const auto setConnected = [&](Bool on, UnsignedInt ip) {
+			if (current())
+			{
+				InterlockedExchange(&s_mirrorConnected, on ? 1 : 0);
+				InterlockedExchange(&s_mirrorSourceIp, on ? (LONG)ip : 0);
+			}
+		};
+		const auto loseStream = [&](const char *why) {
+			writeLocalLive(liveFile, maxFrameSeen, 1, maxCounterSeen + 1);
+			ended = TRUE;
+			setFlag(&s_mirrorEnded);
+			setFlag(&s_mirrorLost);
+			logLine("mirror: %s: the stream is lost; the replay plays its %u bytes (frame %u) to the end", why, have, maxFrameSeen);
+		};
 
 		while (current() && !ended && m.sourceCount > 0)
 		{
-			const Source src = m.sources[source];
+			// O34: no data for too long (a reserve bridges the first seconds; "reconnecting" shows meanwhile)
+			if (timeGetTime() - lastContactMs > (everContact ? (DWORD)NO_SOURCE_END_MS : (DWORD)FIRST_CONTACT_MS))
+			{
+				loseStream("no source has given data");
+				break;
+			}
+			const Int source = pickSource(m, timeGetTime());
+			while (current() && (LONG)(m.sources[source].retryAfterMs - timeGetTime()) > 0) {
+				Sleep(100);   // every source cools down: wait for the first free one
+			}
+			if (!current()) {
+				break;
+			}
+			Source &src = m.sources[source];
 			SOCKET s = connectTo(src, m.bind, 2000);
 			if (s == INVALID_SOCKET)
 			{
 				logLine("mirror: no answer from %s:%u", src.host, (unsigned)src.port);
-				source = (source + 1) % m.sourceCount;
-				if (timeGetTime() - lastContactMs > (everContact ? (DWORD)NO_SOURCE_END_MS : (DWORD)FIRST_CONTACT_MS))
-				{
-					writeLocalLive(liveFile, maxFrameSeen, 1, maxCounterSeen + 1);
-					ended = TRUE;
-					setFlag(&s_mirrorEnded);
-					setFlag(&s_mirrorLost);
-					logLine("mirror: no source has answered: the stream is lost; the replay plays its %u bytes (frame %u) to the end", have, maxFrameSeen);
-					break;
-				}
-				if (++failures >= m.sourceCount)
-				{
-					for (Int k = 0; k < 10 && current(); ++k) Sleep(100);   // every source tried: a moment before the next round
-					failures = 0;
-				}
+				src.retryAfterMs = timeGetTime() + COOLDOWN_MS;
 				continue;
 			}
 			// the hello: where we are, and the first bytes we have (the same game)
@@ -959,21 +1028,25 @@ namespace
 			if (have > 0) {
 				readAt(file, 0, id, min((DWORD)ID_BYTES, (DWORD)have), &idLength);
 			}
+			// O34: back at a source that sent us on not long ago: the relays did not take us
+			const Bool lastResort = src.redirectedMs != 0 && timeGetTime() - src.redirectedMs < REDIRECT_RECENT_MS;
 			memcpy(hello, "GRSV", 4);
 			put32(hello + 4, 2);
 			put32(hello + 8, have);
 			put32(hello + 12, idLength);
 			put32(hello + 16, idLength > 0 ? fnv(id, (Int)idLength) : 0);
-			put32(hello + 20, m.flags);
+			put32(hello + 20, m.flags | (lastResort ? HELLO_LAST_RESORT : 0));
 			put32(hello + 24, (UnsignedInt)m.relayPort);
 			if (!sendAll(s, hello, HELLO2_SIZE))
 			{
 				closesocket(s);
-				source = (source + 1) % m.sourceCount;
+				src.retryAfterMs = timeGetTime() + COOLDOWN_MS;
 				continue;
 			}
-			logLine("mirror: connected to %s:%u, asking from byte %u", src.host, (unsigned)src.port, have);
-			failures = 0;
+			UnsignedInt srcIp = 0;
+			parseIPv4(src.host, &srcIp);
+			logLine("mirror: connected to %s:%u (rank %d%s), asking from byte %u", src.host, (unsigned)src.port, src.rank,
+				lastResort ? ", last resort" : "", have);
 
 			Int inLen = 0;
 			DWORD lastReportMs = timeGetTime();
@@ -981,6 +1054,8 @@ namespace
 			DWORD lastFrameMoveMs = lastMessageMs;
 			UnsignedInt lastFrame = 0xFFFFFFFF;
 			Bool holding = FALSE;
+			Bool refused = FALSE;
+			Bool sentOn = FALSE;
 			const char *leaveWhy = nullptr;
 			while (current() && leaveWhy == nullptr && !ended)
 			{
@@ -1007,10 +1082,12 @@ namespace
 					const unsigned char *type = in + at;
 					const unsigned char *payload = in + at + 8;
 					lastMessageMs = timeGetTime();
-					lastContactMs = lastMessageMs;
-					everContact = TRUE;
-					if (memcmp(type, "NOPE", 4) != 0) {
-						refusals = 0;
+					const Bool useful = memcmp(type, "DATA", 4) == 0 || memcmp(type, "LIVE", 4) == 0 || memcmp(type, "HOLD", 4) == 0;
+					if (useful)
+					{
+						lastContactMs = lastMessageMs;
+						everContact = TRUE;
+						setConnected(TRUE, srcIp);
 					}
 					if (memcmp(type, "DATA", 4) == 0 && length >= 4)
 					{
@@ -1068,33 +1145,42 @@ namespace
 					}
 					else if (memcmp(type, "MORE", 4) == 0 && length >= 4)
 					{
-						// this source is full: the viewers that relay it (only a first-list source may name them)
-						if (source < m.initialCount)
+						// O34: relays (12 bytes each: address, port, kind 0 outside viewer / 1 room observer), from any source;
+						// never this game itself
+						const UnsignedInt n = get32(payload);
+						Int added = 0;
+						for (UnsignedInt k = 0; k < n && k < MAX_REDIRECTS && 4 + (k + 1) * 12 <= length; ++k)
 						{
-							const UnsignedInt n = get32(payload);
-							Int firstNew = -1;
-							for (UnsignedInt k = 0; k < n && k < MAX_REDIRECTS && 4 + (k + 1) * 8 <= length; ++k)
-							{
-								if (addSource(m.sources, &m.sourceCount, get32(payload + 4 + k * 8), get32(payload + 8 + k * 8)) && firstNew < 0) {
-									firstNew = m.sourceCount - 1;
-								}
+							const UnsignedInt ip = get32(payload + 4 + k * 12);
+							const UnsignedInt port = get32(payload + 8 + k * 12);
+							if (ip == m.bind && (Int)port == m.relayPort) {
+								continue;
 							}
-							logLine("mirror: %s:%u is full and named %u relay(s)", src.host, (unsigned)src.port, n);
-							if (firstNew >= 0) {
-								source = (firstNew + m.sourceCount - 1) % m.sourceCount;   // the hop below moves to firstNew
+							// a room observer stays with live data: an outside viewer's relay only has the delayed stream
+							if ((m.flags & HELLO_ROOM) != 0 && get32(payload + 12 + k * 12) != 1) {
+								continue;
 							}
+							added += addSource(m.sources, &m.sourceCount, ip, port, get32(payload + 12 + k * 12) == 1 ? 1 : 0) ? 1 : 0;
 						}
+						logLine("mirror: %s:%u named %u relay(s), %d new", src.host, (unsigned)src.port, n, added);
 					}
 					else if (memcmp(type, "NOPE", 4) == 0)
 					{
-						leaveWhy = "the source refused (another game, behind us, full, or outside viewers not allowed)";
-						if (++refusals >= 2 * m.sourceCount)
+						const UnsignedInt reason = length >= 4 ? get32(payload) : NOPE_REFUSED;
+						refused = TRUE;
+						if (reason == NOPE_NOT_ALLOWED)
 						{
-							writeLocalLive(liveFile, maxFrameSeen, 1, maxCounterSeen + 1);
-							ended = TRUE;
-							setFlag(&s_mirrorEnded);
-							setFlag(&s_mirrorLost);
-							logLine("mirror: every source refused twice in a row: the stream is lost");
+							loseStream("the host does not allow outside viewers");
+							leaveWhy = "outside viewers are not allowed";
+						}
+						else if (reason == NOPE_ELSEWHERE)
+						{
+							sentOn = TRUE;
+							leaveWhy = "the source sent us on (full, relays first, or it reads from us)";
+						}
+						else
+						{
+							leaveWhy = reason == NOPE_OTHER_GAME ? "another game, or the source has less of it" : "the source refused";
 						}
 					}
 					at += 8 + (Int)length;
@@ -1108,7 +1194,8 @@ namespace
 				if (now - lastReportMs >= 10000)
 				{
 					lastReportMs = now;
-					logLine("mirror: have %u bytes, frame %u%s", have, maxFrameSeen, holding ? " (held: nothing allowed yet)" : "");
+					logLine("mirror: have %u bytes, frame %u from %s:%u%s", have, maxFrameSeen, src.host, (unsigned)src.port,
+						holding ? " (held: nothing allowed yet)" : "");
 				}
 				if (leaveWhy == nullptr && now - lastMessageMs > SILENT_HOP_MS) {
 					leaveWhy = "the source is silent";
@@ -1118,14 +1205,24 @@ namespace
 				}
 			}
 			closesocket(s);
+			setConnected(FALSE, 0);
 			if (leaveWhy != nullptr)
 			{
-				const Int next = (source + 1) % m.sourceCount;
-				logLine("mirror: leaving %s:%u (%s) at byte %u, frame %u; next %s:%u", src.host, (unsigned)src.port, leaveWhy, have,
-					lastFrame, m.sources[next].host, (unsigned)m.sources[next].port);
-				source = next;
+				const DWORD now = timeGetTime();
+				if (sentOn)
+				{
+					src.redirectedMs = now;   // it may be asked again at once, as the last resort, once the relays failed
+					src.retryAfterMs = now + 500;
+				}
+				else
+				{
+					src.retryAfterMs = now + COOLDOWN_MS;
+				}
+				logLine("mirror: leaving %s:%u (%s) at byte %u, frame %u", src.host, (unsigned)src.port, leaveWhy, have, maxFrameSeen);
+				(void)refused;
 			}
 		}
+		setConnected(FALSE, 0);
 		CloseHandle(file);
 		CloseHandle(liveFile);
 		HeapFree(GetProcessHeap(), 0, in);
@@ -1137,9 +1234,9 @@ namespace
 		return 0;
 	}
 
-	Bool addWatchSource(UnsignedInt ipHost, UnsignedInt port)
+	Bool addWatchSource(UnsignedInt ipHost, UnsignedInt port, Int rank)
 	{
-		return addSource(s_sources, &s_sourceCount, ipHost, port);
+		return addSource(s_sources, &s_sourceCount, ipHost, port, rank);
 	}
 }
 
@@ -1199,7 +1296,7 @@ void ReplayStream::configureWatch(const char *sources)
 			UnsignedInt ip = 0;
 			const Int port = atoi(colon + 1);
 			if (parseIPv4(item, &ip)) {
-				addWatchSource(ip, (UnsignedInt)port);
+				addWatchSource(ip, (UnsignedInt)port, 2);
 			}
 		}
 		p = end != nullptr ? end + 1 : nullptr;
@@ -1248,11 +1345,16 @@ void ReplayStream::servingCounts(Int *roomObservers, Int *outsideViewers)
 	*outsideViewers = (Int)InterlockedCompareExchange(&s_countOutside, 0, 0);
 }
 
-void ReplayStream::configureWatchList(const UnsignedInt *ipsHostOrder, Int count, Int port, Bool roomObserver, UnsignedInt localIp)
+void ReplayStream::configureWatchList(const UnsignedInt *ipsHostOrder, Int count, Int port, Bool roomObserver, UnsignedInt localIp,
+	const UnsignedInt *observerIps, Int observerCount)
 {
 	s_sourceCount = 0;
 	for (Int i = 0; i < count && s_sourceCount < MAX_SOURCES; ++i) {
-		addWatchSource(ipsHostOrder[i], (UnsignedInt)port);
+		addWatchSource(ipsHostOrder[i], (UnsignedInt)port, 2);
+	}
+	// O34: an outside viewer asks the room's observers (their relays) before the players
+	for (Int i = 0; observerIps != nullptr && i < observerCount && s_sourceCount < MAX_SOURCES; ++i) {
+		if (observerIps[i] != localIp) addWatchSource(observerIps[i], (UnsignedInt)port, 1);
 	}
 	s_watchFlags = roomObserver ? 1 : 0;
 	s_watchBind = localIp;
@@ -1278,7 +1380,6 @@ Bool ReplayStream::beginWatching(AsciiString &localPath)
 		m->gen = InterlockedIncrement(&s_mirrorGen);
 		memcpy(m->sources, s_sources, sizeof(s_sources));
 		m->sourceCount = s_sourceCount;
-		m->initialCount = s_sourceCount;
 		m->flags = s_watchFlags;
 		m->bind = s_watchBind;
 		m->relayPort = s_matchSet ? s_matchPort : s_cmdPort;
@@ -1305,6 +1406,16 @@ Bool ReplayStream::beginWatching(AsciiString &localPath)
 	}
 	localPath = s_mirrorPath;
 	return TRUE;
+}
+
+Bool ReplayStream::mirrorTrying()
+{
+	return InterlockedCompareExchange(&s_mirrorRunning, 0, 0) != 0 && InterlockedCompareExchange(&s_mirrorEnded, 0, 0) == 0;
+}
+
+Bool ReplayStream::mirrorReconnecting()
+{
+	return mirrorTrying() && InterlockedCompareExchange(&s_mirrorConnected, 0, 0) == 0;
 }
 
 Bool ReplayStream::headerReady()
@@ -1367,6 +1478,7 @@ void ReplayStream::serveFile(const AsciiString &replayPath)
 	{
 		c->bind = s_matchBind;
 		c->delayMs = s_matchReceivesDelayed ? 0 : s_matchDelayS * 1000;   // a delayed copy is forwarded as it comes
+		c->preferRelays = !s_matchReceivesDelayed;   // O34: players and room observers send outside viewers to relays first
 		c->outsideAllowed = s_matchOutside;
 		c->liveCount = s_matchLiveCount;
 		memcpy(c->live, s_matchLive, sizeof(UnsignedInt) * s_matchLiveCount);
@@ -1381,16 +1493,20 @@ void ReplayStream::serveFile(const AsciiString &replayPath)
 	}
 	else
 	{
-		c->bind = 0;
+		c->bind = s_watchBind;   // O34: a test relay serves on the address it watches from (0: 127.0.0.1)
 		c->delayMs = s_cmdDelayS * 1000;
 		c->outsideAllowed = TRUE;
+		// O34: a source with live data (a player, or a -watchRoomObserver viewer) sends outside viewers to relays first; an
+		// outside viewer's relay serves what it has
+		c->preferRelays = s_sourceCount == 0 || (s_watchFlags & HELLO_ROOM) != 0;
 		c->liveCount = s_cmdLiveCount;
 		memcpy(c->live, s_cmdLive, sizeof(UnsignedInt) * s_cmdLiveCount);
 		if (s_cmdDelayS == 0 && s_cmdLiveCount == 0)
 		{
-			// the plain test server of before: everybody live
+			// the plain test server of before: everybody live, no relays first
 			c->liveCount = 0;
 			c->delayMs = 0;
+			c->preferRelays = FALSE;
 		}
 	}
 	strlcpy(c->path, replayPath.str(), sizeof(c->path));

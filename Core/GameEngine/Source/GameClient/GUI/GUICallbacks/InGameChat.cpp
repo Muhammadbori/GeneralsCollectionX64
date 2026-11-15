@@ -47,6 +47,7 @@
 #include "GameClient/LocalizedFallback.h"
 #include "GameNetwork/GameInfo.h"
 #include "GameNetwork/NetworkInterface.h"
+#include "GameNetwork/LanRoom.h"
 
 static GameWindow *chatWindow = nullptr;
 static GameWindow *chatTextEntry = nullptr;
@@ -58,7 +59,9 @@ static InGameChatType inGameChatType;
 // ------------------------------------------------------------------------------------------------
 void ShowInGameChat( Bool immediate )
 {
-	if (TheGameLogic->isInReplayGame())
+	// TheSuperHackers @feature O34 In a replay only a LAN room observer has a chat (to the room's other observers); an
+	// outside viewer (or any other replay) has none.
+	if (TheGameLogic->isInReplayGame() && !LanRoom::observerChannelOpen())
 		return;
 
 	if (TheInGameUI->isQuitMenuVisible())
@@ -126,6 +129,11 @@ void SetInGameChatType( InGameChatType chatType )
 	inGameChatType = chatType;
 	if (chatTypeStaticText)
 	{
+		if (TheGameLogic->isInReplayGame())
+		{
+			GadgetStaticTextSetText( chatTypeStaticText, TheGameText->fetch("Chat:Observers") );   // O34: the observers' channel
+			return;
+		}
 		switch (inGameChatType)
 		{
 		case INGAME_CHAT_EVERYONE:
@@ -198,10 +206,12 @@ void ToggleInGameChat( Bool immediate )
 		return;
 	}
 
-	if (TheGameLogic->isInReplayGame())
+	// O34: in a replay, only a LAN room observer's channel
+	const Bool observerChannel = TheGameLogic->isInReplayGame();
+	if (observerChannel && !LanRoom::observerChannelOpen())
 		return;
 
-	if (!TheGameInfo->isMultiPlayer() && TheGlobalData->m_netMinPlayers)
+	if (!observerChannel && !TheGameInfo->isMultiPlayer() && TheGlobalData->m_netMinPlayers)
 		return;
 
 	if (chatWindow)
@@ -216,7 +226,16 @@ void ToggleInGameChat( Bool immediate )
 				// Send what is there, clear it out, and hide the window
 				UnicodeString msg = GadgetTextEntryGetText( chatTextEntry );
 				msg.trim();
-				if (!msg.isEmpty() && !handleInGameSlashCommands(msg))
+				if (observerChannel)
+				{
+					// O34: to the room's other observers only; nothing goes to the match
+					if (!msg.isEmpty())
+					{
+						TheLanguageFilter->filterLine(msg);
+						LanRoom::sendObserverChat(msg);
+					}
+				}
+				else if (!msg.isEmpty() && !handleInGameSlashCommands(msg))
 				{
 					const Player *localPlayer = ThePlayerList->getLocalPlayer();
 					Int playerMask = 0;
