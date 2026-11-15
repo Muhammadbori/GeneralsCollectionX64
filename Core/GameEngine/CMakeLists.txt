@@ -88,6 +88,7 @@ set(GAMEENGINE_SRC
     Include/Common/AudioOutputDevices.h
     Include/Common/OptionPreferences.h
     Include/Common/Fingerprint.h
+    Include/Common/MapPacks.h
     Include/Common/MismatchReport.h
     Include/Common/Packs.h
     Include/Common/ReplayFollow.h
@@ -646,6 +647,7 @@ set(GAMEENGINE_SRC
     Source/Common/AudioOutputDevices.cpp
     Source/Common/OptionPreferences.cpp
     Source/Common/Fingerprint.cpp
+    Source/Common/MapPacks.cpp
     Source/Common/MismatchReport.cpp
     Source/Common/Packs.cpp
     Source/Common/ReplayFollow.cpp

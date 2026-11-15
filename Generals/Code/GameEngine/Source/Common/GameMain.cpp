@@ -31,6 +31,7 @@
 #include "Common/FramePacer.h"
 #include "Common/FrameShots.h"
 #include "Common/GameEngine.h"
+#include "Common/MapPacks.h"
 #include "Common/Packs.h"
 #include "Common/Fingerprint.h"
 #include "Common/MismatchReport.h"
@@ -69,6 +70,7 @@ Int GameMain()
 	delete TheGameEngine;
 	TheGameEngine = nullptr;
 	Packs::shutdown();
+	MapPacks::shutdown();
 	Fingerprint::shutdown();
 	MismatchReport::shutdown();
 

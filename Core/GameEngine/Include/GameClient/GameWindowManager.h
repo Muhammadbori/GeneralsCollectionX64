@@ -281,6 +281,7 @@ public:
 
 	virtual Int winSetModal( GameWindow *window );  ///< put at top of modal stack
 	virtual Int winUnsetModal( GameWindow *window );  ///< take window off the modal stack from anywhere in the stack
+	Bool winIsModalActive() const { return m_modalHead != nullptr; }  ///< TheSuperHackers @feature TRUE while a modal window (a message box) is up
 
 	//---------------------------------------------------------------------------
 	/////////////////////////////////////////////////////////////////////////////

@@ -39,6 +39,7 @@
 #include "GameClient/TerrainVisual.h" // for TERRAIN_LOD_MIN definition
 #include "GameClient/GameText.h"
 #include "GameClient/ReplayControlBar.h"
+#include "Common/MapPacks.h"
 #include "GameNetwork/NetworkDefs.h"
 
 
@@ -830,6 +831,13 @@ Int parseFollowDelay(char *args[], int num)
 			ReplayFollow::configure(s_followDelaySeconds, s_followCatchUp);
 		return 2;
 	}
+	return 1;
+}
+
+// TheSuperHackers @feature -mapPacksTest: a test run (-shotFrames, -uiScript) is asked about the map packs too.
+Int parseMapPacksTest(char *args[], int num)
+{
+	MapPacks::enableInTestRuns();
 	return 1;
 }
 
@@ -1756,6 +1764,7 @@ static CommandLineParam paramsForStartup[] =
 	{ "-followDelay", parseFollowDelay },
 	{ "-followCatchUp", parseFollowCatchUp },
 	{ "-noReplayBar", parseNoReplayBar },
+	{ "-mapPacksTest", parseMapPacksTest },
 	{ "-testPerturbFrame", parseTestPerturbFrame },
 	{ "-testReportFrame", parseTestReportFrame },
 
