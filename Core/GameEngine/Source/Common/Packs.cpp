@@ -70,6 +70,7 @@ namespace
 		UnicodeString baseEnglish;
 		UnicodeString baseRussian;
 		AsciiString baseTextLanguage;
+		AsciiString baseLanguage;    ///< O26: Voice, Movies: the spoken language of the base data (lower case)
 		Int active;                  ///< index into packs, -1: the base data
 		Int fallback;                ///< index into packs, -1: none
 		Int activeGroup;
@@ -86,6 +87,8 @@ namespace
 		std::vector<ProblemEntry> problems;
 		Bool mountPrepared;
 		Bool problemsShown;
+		Bool moviesAuto;             ///< O26: the movie choice was "Auto" (for the log)
+		Packs::Pack autoPack;        ///< O26: the movies' "Auto" choice as the options list it
 	};
 
 	State *s_state = nullptr;
@@ -297,6 +300,7 @@ namespace
 			else if (keyIs(key, "Preview")) preview = value;
 			else if (keyIs(key, "FullViewport")) pack.fullViewport = isYes(value);
 			else if (keyIs(key, "TextLanguage")) { pack.textLanguage = value; pack.textLanguage.toLower(); }
+			else if (keyIs(key, "Language")) { pack.language = value; pack.language.toLower(); }
 			else if (keyIs(key, "Fallback")) pack.fallback = value;
 			else if (keyIs(key, "Archive", kGameFolder)) pack.archives.push_back(value);
 			else if (keyIs(key, "Exclude", kGameFolder)) pack.excludes.push_back(normalizedEntry(value));
@@ -340,6 +344,29 @@ namespace
 	{
 		Packs::scan();
 		return *s_state;
+	}
+
+	/// O26: the movie pack "Auto" stands for: the pack whose Language is the spoken language of the voices in use (the
+	/// chosen voice pack, else the base voices' BaseLanguage); empty (the base movies) when that is the base movies'
+	/// language, when no movie pack has it, or when the voices' language is not known.
+	AsciiString autoMovieName()
+	{
+		State &st = state();
+		const KindState &voice = st.kinds[Packs::KIND_VOICE];
+		const KindState &movies = st.kinds[Packs::KIND_MOVIES];
+		const AsciiString language = (voice.active >= 0) ? voice.packs[voice.active].language : voice.baseLanguage;
+		if (language.isEmpty()) {
+			return AsciiString::TheEmptyString;
+		}
+		if (movies.baseLanguage.isNotEmpty() && stricmp(movies.baseLanguage.str(), language.str()) == 0) {
+			return AsciiString::TheEmptyString;
+		}
+		for (size_t i = 0; i < movies.packs.size(); ++i) {
+			if (stricmp(movies.packs[i].language.str(), language.str()) == 0) {
+				return movies.packs[i].name;
+			}
+		}
+		return AsciiString::TheEmptyString;
 	}
 
 	/// The largest Res<height> sub folder of 'folder' not above 'height' (else the smallest); empty: none.
@@ -483,6 +510,24 @@ namespace
 
 //-------------------------------------------------------------------------------------------------
 const char *const Packs::BaseValue = "Base";
+const char *const Packs::AutoValue = "Auto";
+
+const Packs::Pack *Packs::autoChoice(Kind kind)
+{
+	if (kind != KIND_MOVIES) {
+		return nullptr;
+	}
+	Pack &p = state().autoPack;
+	if (p.name.isEmpty())
+	{
+		p.name = AutoValue;
+		p.fullViewport = FALSE;
+		p.empty = TRUE;
+		p.nameEnglish = UnicodeString(L"Auto (as voices)");
+		p.nameRussian = UnicodeString(L"\x0410\x0432\x0442\x043E (\x043A\x0430\x043A \x043E\x0437\x0432\x0443\x0447\x043A\x0430)");
+	}
+	return &p;
+}
 
 const char *Packs::kindKey(Kind kind) { return kKeys[kind]; }
 const char *Packs::kindFolder(Kind kind) { return kFolders[kind]; }
@@ -496,6 +541,7 @@ void Packs::scan()
 	State &st = *s_state;
 	st.mountPrepared = FALSE;
 	st.problemsShown = FALSE;
+	st.moviesAuto = FALSE;
 	char exeFolder[_MAX_PATH];
 	exeFolderOf(exeFolder, ARRAY_SIZE(exeFolder));
 	st.exeFolder = exeFolder;
@@ -523,6 +569,7 @@ void Packs::scan()
 			else if (keyIs(key, "BaseNameEnglish")) k.baseEnglish = fromUtf8(value);
 			else if (keyIs(key, "BaseNameRussian")) k.baseRussian = fromUtf8(value);
 			else if (keyIs(key, "BaseTextLanguage")) { k.baseTextLanguage = value; k.baseTextLanguage.toLower(); }
+			else if (keyIs(key, "BaseLanguage")) { k.baseLanguage = value; k.baseLanguage.toLower(); }
 		});
 
 		std::vector<AsciiString> names;
@@ -551,7 +598,13 @@ void Packs::shutdown()
 
 Int Packs::count(Kind kind) { return (Int)state().kinds[kind].packs.size(); }
 const Packs::Pack *Packs::get(Kind kind, Int index) { return packAt(kind, index); }
-const Packs::Pack *Packs::find(Kind kind, const AsciiString &name) { return packAt(kind, indexOf(kind, name)); }
+const Packs::Pack *Packs::find(Kind kind, const AsciiString &name)
+{
+	if (kind == KIND_MOVIES && stricmp(name.str(), AutoValue) == 0) {
+		return autoChoice(kind);   // O26
+	}
+	return packAt(kind, indexOf(kind, name));
+}
 Bool Packs::baseShown(Kind kind) { return state().kinds[kind].showBase; }
 
 UnicodeString Packs::baseName(Kind kind)
@@ -603,7 +656,8 @@ Bool Packs::hotkeysFit(const Pack *hotkeyPack, const AsciiString &textLanguage)
 AsciiString Packs::chosenName(Kind kind, OptionPreferences &pref)
 {
 	OptionPreferences::const_iterator it = pref.find(kKeys[kind]);
-	AsciiString value = (it != pref.end()) ? it->second : state().kinds[kind].defaultName;
+	// O26: no MoviePack line: "Auto" (the movies follow the voices), not the kind's Default
+	AsciiString value = (it != pref.end()) ? it->second : (kind == KIND_MOVIES ? AsciiString(AutoValue) : state().kinds[kind].defaultName);
 	value.trim();
 	if (value.isEmpty() || stricmp(value.str(), BaseValue) == 0) {
 		return AsciiString::TheEmptyString;
@@ -630,11 +684,16 @@ void Packs::prepareMount(std::vector<MountStep> &steps)
 	Int xres = 0, yres = 0;
 	pref.getResolution(&xres, &yres);
 
-	// the choices
+	// the choices (in kind order: the voices are decided before the movies, which may follow them)
 	for (Int kind = 0; kind < KIND_COUNT; ++kind)
 	{
 		KindState &k = st.kinds[kind];
-		const AsciiString name = chosenName((Kind)kind, pref);
+		AsciiString name = chosenName((Kind)kind, pref);
+		if (kind == KIND_MOVIES && stricmp(name.str(), AutoValue) == 0)
+		{
+			st.moviesAuto = TRUE;
+			name = autoMovieName();
+		}
 		if (name.isEmpty()) {
 			continue;
 		}
@@ -893,7 +952,9 @@ void Packs::writeLog(const std::vector<AsciiString> &files, const std::vector<As
 		const KindState &k = st.kinds[kind];
 		const Pack *pack = packAt((Kind)kind, k.active);
 		const Pack *fallback = (k.active >= 0) ? packAt((Kind)kind, k.fallback) : nullptr;
-		fprintf(fp, "%s = %s%s%s\n", kKeys[kind], pack != nullptr ? pack->name.str() : "Base",
+		// O26: "MoviePack = Auto -> English" when the movies followed the voices
+		const Bool autoMovies = kind == KIND_MOVIES && st.moviesAuto;
+		fprintf(fp, "%s = %s%s%s%s\n", kKeys[kind], autoMovies ? "Auto -> " : "", pack != nullptr ? pack->name.str() : "Base",
 			fallback != nullptr ? ", fallback " : "", fallback != nullptr ? fallback->name.str() : "");
 	}
 	// TheSuperHackers @feature What the options offer for each kind (H5): "Base" when the base data is shown, then every

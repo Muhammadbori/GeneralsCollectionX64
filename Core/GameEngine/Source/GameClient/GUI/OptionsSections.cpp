@@ -1210,6 +1210,10 @@ namespace
 		const Packs::Kind kind = kPackRows[row].kind;
 		const AsciiString textLanguage = (kind == Packs::KIND_HOTKEYS) ? Packs::textLanguageOf(selectedPack(PACK_ROW_TEXT)) : AsciiString::TheEmptyString;
 		st.choiceCount = 0;
+		// TheSuperHackers @feature O26 (row 31) The movies' "Auto (as voices)" comes first (Packs::autoChoice)
+		if (const Packs::Pack *autoPack = Packs::autoChoice(kind)) {
+			st.choices[st.choiceCount++] = autoPack;
+		}
 		if (Packs::baseShown(kind)) {
 			st.choices[st.choiceCount++] = nullptr;
 		}

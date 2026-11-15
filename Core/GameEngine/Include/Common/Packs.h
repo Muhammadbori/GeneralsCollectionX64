@@ -38,6 +38,8 @@
 //   Preview                        a .tga picture in the pack folder (default preview.tga), shown under the chooser
 //   FullViewport = yes             the 3D view takes the whole screen height (control bars drawn over the view)
 //   TextLanguage                   Text pack: its language. Hotkey pack: the text language it fits (empty: any)
+//   Language                       Voice and Movies packs: the spoken language (English, Russian ...), for the movies'
+//                                  "Auto" choice (O26, row 31)
 //   Fallback                       another pack of the same kind, mounted after this one for what this one lacks
 //   Archive, ArchiveZeroHour, ArchiveGenerals    archives of the exe folder to mount as part of this pack
 //   Exclude, ExcludeZeroHour, ExcludeGenerals    lines of the archive list not to mount while this pack is in use
@@ -45,7 +47,13 @@
 //   Require, RequireZeroHour, RequireGenerals    files of the pack folder that must be there (else the pack is broken)
 //   Empty = yes                    the pack has no files on purpose. Without it, a pack that has nothing for this game
 //                                  (no archive, no Archive or Exclude line, no movie folder) counts as broken.
-// Packs\<Kind>\default.ini: Default, ShowBase (yes/no), BaseNameEnglish, BaseNameRussian, and for Text BaseTextLanguage.
+// Packs\<Kind>\default.ini: Default, ShowBase (yes/no), BaseNameEnglish, BaseNameRussian, and for Text BaseTextLanguage;
+// for Voice and Movies BaseLanguage (the spoken language of the base data).
+//
+// TheSuperHackers @feature O26 (row 31) Movies have one more choice, "Auto" (MoviePack = Auto), the default when
+// Options.ini has no MoviePack line: the movie pack whose Language is the Language of the voice pack in use (the base
+// voices: BaseLanguage of Packs\Voice\default.ini); the base movies when that language is the base movies' or no pack
+// has it. Packs.log says what it became ("MoviePack = Auto -> English").
 
 #pragma once
 
@@ -75,6 +83,7 @@ namespace Packs
 		AsciiString previewTexture;    ///< the bare texture name the preview is known by
 		Bool fullViewport;
 		AsciiString textLanguage;      ///< lower case, empty: any
+		AsciiString language;          ///< Voice, Movies: the spoken language, lower case; empty: unknown
 		AsciiString fallback;
 		std::vector<AsciiString> archives;   ///< Archive lines of this game, relative to the exe folder
 		std::vector<AsciiString> excludes;   ///< Exclude lines of this game, lower case, '\' separators
@@ -85,6 +94,11 @@ namespace Packs
 	const char *kindKey(Kind kind);       ///< the Options.ini key: "TextPack" ...
 	const char *kindFolder(Kind kind);    ///< "Text" ...
 	extern const char *const BaseValue;   ///< "Base"
+	extern const char *const AutoValue;   ///< "Auto" (movies only)
+
+	/// The movies' "Auto" choice as a pack the options can list (no files of its own): name "Auto", named
+	/// "Auto (as voices)" / "Avto (kak ozvuchka)". nullptr for the other kinds.
+	const Pack *autoChoice(Kind kind);
 
 	/// Reads the Packs folder (once).
 	void scan();
