@@ -19,8 +19,10 @@
 // ReplayStream.cpp /////////////////////////////////////////////////////////////////////////////////
 // TheSuperHackers @feature See ReplayStream.h.
 //
-// The two threads (server, mirror) use only fixed buffers, the process heap and Win32 calls: no game objects, no game
-// memory pools. What the game thread shares with them is set before they start or is a volatile flag.
+// The two kinds of thread (server, mirror) use only their own heap memory, the process heap and Win32 calls: no game
+// objects, no game memory pools. Each thread gets a copy of its settings when it starts and a generation number; it runs
+// while its generation is the current one, so stopping it never waits (O33). What the game thread reads from them are
+// volatile values that only the current generation writes.
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
 
@@ -38,18 +40,26 @@ namespace
 	enum
 	{
 		MAX_VIEWERS = 100,
-		MAX_SOURCES = 8,
-		OUT_BUFFER = 256 * 1024,      ///< per viewer
+		MAX_PER_ADDRESS = 3,          ///< O33: connections one address may hold
+		MAX_SOURCES = 16,             ///< 8 players and up to 8 relays a source pointed to
+		MAX_LIVE = 16,                ///< O33: live (room observer) addresses
+		OUT_BUFFER = 256 * 1024,      ///< per viewer, allocated after its hello
 		CHUNK = 32 * 1024,            ///< the most file bytes in one DATA message
 		IN_BUFFER = 2 * (CHUNK + 16),
 		ID_BYTES = 1024,
-		HELLO_SIZE = 20,
+		HELLO1_SIZE = 20,
+		HELLO2_SIZE = 28,
+		MAX_REDIRECTS = 8,            ///< relays named in one MORE
+		HELLO_MS = 3000,              ///< O33: a connection without a complete hello for this long is closed
 		DROP_MS = 10000,              ///< a viewer whose data does not drain for this long is dropped
 		LIVE_EVERY_MS = 500,
 		SILENT_HOP_MS = 5000,         ///< a source silent for this long is left
-		STUCK_HOP_MS = 8000,          ///< a source whose newest frame does not move for this long is left
+		STUCK_HOP_MS = 8000,          ///< a source whose newest frame does not move for this long is left (live viewers)
 		HEADER_WAIT_MS = 60000,
-		NO_SOURCE_END_MS = 30000,     ///< no source has answered for this long: the stream is lost, the replay plays to its end
+		NO_SOURCE_END_MS = 30000,     ///< no source has answered for this long: the stream is lost
+		FIRST_CONTACT_MS = 180000,    ///< before any source answered (the players still load the map): wait this long
+		HISTORY_MAX = 32768,          ///< O33: size/state samples a server keeps (one per change: 3 min of a match fit)
+		MAX_DELAY_S = 180,
 	};
 
 	struct LiveRecord
@@ -60,16 +70,35 @@ namespace
 		UnsignedInt counter;
 	};
 
-	//--- settings (set on the game thread before a thread starts) ---------------------------------
-	Int s_servePort = 0;
+	//--- command line settings ---------------------------------------------------------------------
+	Int s_cmdPort = 0;
+	Int s_cmdDelayS = 0;
+	Bool s_cmdDelaySet = FALSE;
+	UnsignedInt s_cmdLive[MAX_LIVE];
+	Int s_cmdLiveCount = 0;
 	Int s_serveMax = 16;
 	Int s_serveRateKB = 4096;
 	Int s_serveStopAfterSec = 0;
+	Int s_serveOutsideMax = 4;
+
+	//--- a LAN match's serving (game thread) --------------------------------------------------------
+	Bool s_matchSet = FALSE;
+	UnsignedInt s_matchBind = 0;      ///< host order
+	Int s_matchPort = 0;
+	Int s_matchDelayS = 60;
+	Bool s_matchOutside = TRUE;
+	Bool s_matchReceivesDelayed = FALSE;
+	UnsignedInt s_matchLive[MAX_LIVE];
+	Int s_matchLiveCount = 0;
+
+	//--- viewer settings (game thread) ---------------------------------------------------------------
 	struct Source { char host[64]; unsigned short port; };
 	Source s_sources[MAX_SOURCES];
 	Int s_sourceCount = 0;
+	UnsignedInt s_watchFlags = 0;
+	UnsignedInt s_watchBind = 0;      ///< host order; 0: the system's choice
 
-	//--- log ----------------------------------------------------------------------------------------
+	//--- log -----------------------------------------------------------------------------------------
 	CRITICAL_SECTION s_logLock;
 	Bool s_logLockReady = FALSE;
 	FILE *s_log = nullptr;
@@ -83,27 +112,32 @@ namespace
 			s_logLockReady = TRUE;
 			s_startMs = timeGetTime();
 		}
+		EnterCriticalSection(&s_logLock);
 		if (s_log == nullptr && TheGlobalData != nullptr)
 		{
 			char path[_MAX_PATH];
 			snprintf(path, sizeof(path), "%sReplayStream.log", TheGlobalData->getPath_UserData().str());
 			s_log = fopen(path, "w");
 		}
+		LeaveCriticalSection(&s_logLock);
 	}
 
 	void logLine(const char *format, ...)
 	{
-		if (!s_logLockReady || s_log == nullptr) {
+		if (!s_logLockReady) {
 			return;
 		}
 		EnterCriticalSection(&s_logLock);
-		fprintf(s_log, "[%8.3f] ", (timeGetTime() - s_startMs) / 1000.0);
-		va_list args;
-		va_start(args, format);
-		vfprintf(s_log, format, args);
-		va_end(args);
-		fputc('\n', s_log);
-		fflush(s_log);
+		if (s_log != nullptr)
+		{
+			fprintf(s_log, "[%8.3f] ", (timeGetTime() - s_startMs) / 1000.0);
+			va_list args;
+			va_start(args, format);
+			vfprintf(s_log, format, args);
+			va_end(args);
+			fputc('\n', s_log);
+			fflush(s_log);
+		}
 		LeaveCriticalSection(&s_logLock);
 	}
 
@@ -161,32 +195,21 @@ namespace
 		return GetFileSizeEx(file, &size) ? (UnsignedInt)size.QuadPart : 0;
 	}
 
-	/// The thread runs below normal priority and prefers the last core, so the scheduler keeps it off the game thread's
-	/// core when another is free (the game thread is not pinned; it keeps the system's choice).
-	void startThread(HANDLE *thread, LPTHREAD_START_ROUTINE main)
+	/// The thread runs below normal priority and prefers the last core. Its handle is closed at once: nobody joins it.
+	Bool startThread(LPTHREAD_START_ROUTINE main, void *param)
 	{
-		*thread = CreateThread(nullptr, 0, main, nullptr, 0, nullptr);
-		if (*thread != nullptr)
-		{
-			SetThreadPriority(*thread, THREAD_PRIORITY_BELOW_NORMAL);
-			SYSTEM_INFO si;
-			GetSystemInfo(&si);
-			if (si.dwNumberOfProcessors > 1) {
-				SetThreadIdealProcessor(*thread, si.dwNumberOfProcessors - 1);
-			}
+		HANDLE thread = CreateThread(nullptr, 0, main, param, 0, nullptr);
+		if (thread == nullptr) {
+			return FALSE;
 		}
-	}
-
-	void stopThread(HANDLE *thread, volatile LONG *stop)
-	{
-		if (*thread == nullptr) {
-			return;
+		SetThreadPriority(thread, THREAD_PRIORITY_BELOW_NORMAL);
+		SYSTEM_INFO si;
+		GetSystemInfo(&si);
+		if (si.dwNumberOfProcessors > 1) {
+			SetThreadIdealProcessor(thread, si.dwNumberOfProcessors - 1);
 		}
-		InterlockedExchange(stop, 1);
-		WaitForSingleObject(*thread, 5000);
-		CloseHandle(*thread);
-		*thread = nullptr;
-		InterlockedExchange(stop, 0);
+		CloseHandle(thread);
+		return TRUE;
 	}
 
 	Bool s_wsaReady = FALSE;
@@ -200,8 +223,8 @@ namespace
 		return s_wsaReady;
 	}
 
-	/// "a.b.c.d" to an address in network order; FALSE when it is not one.
-	Bool parseIPv4(const char *text, u_long *out)
+	/// "a.b.c.d" to an address in host order; FALSE when it is not one.
+	Bool parseIPv4(const char *text, UnsignedInt *out)
 	{
 		unsigned int part[4];
 		char tail = 0;
@@ -211,8 +234,28 @@ namespace
 		for (Int i = 0; i < 4; ++i) {
 			if (part[i] > 255) return FALSE;
 		}
-		*out = htonl((part[0] << 24) | (part[1] << 16) | (part[2] << 8) | part[3]);
+		*out = (part[0] << 24) | (part[1] << 16) | (part[2] << 8) | part[3];
 		return TRUE;
+	}
+
+	Int parseIpList(const char *text, UnsignedInt *out, Int maxCount)
+	{
+		Int n = 0;
+		const char *p = text;
+		while (p != nullptr && *p != '\0' && n < maxCount)
+		{
+			const char *end = strchr(p, ',');
+			char item[32];
+			const size_t len = end != nullptr ? (size_t)(end - p) : strlen(p);
+			const size_t k = len < sizeof(item) - 1 ? len : sizeof(item) - 1;
+			memcpy(item, p, k);
+			item[k] = '\0';
+			if (parseIPv4(item, &out[n])) {
+				++n;
+			}
+			p = end != nullptr ? end + 1 : nullptr;
+		}
+		return n;
 	}
 
 	void setNonBlocking(SOCKET s)
@@ -224,40 +267,66 @@ namespace
 	//=============================================================================================
 	// Server
 	//=============================================================================================
+	volatile LONG s_serverGen = 0;
+	volatile LONG s_drainGen = 0;            ///< O33: that generation's recording is over: no new viewers, finish the ones there
+	volatile LONG s_countRoom = 0;
+	volatile LONG s_countOutside = 0;
+
+	struct ServeConfig
+	{
+		LONG gen;
+		UnsignedInt bind;          ///< host order; 0: 127.0.0.1
+		Int port;
+		Int delayMs;               ///< for viewers that are not live
+		Bool outsideAllowed;
+		UnsignedInt live[MAX_LIVE];
+		Int liveCount;
+		Int max, outsideMax, rateKB, stopAfterSec;
+		char path[_MAX_PATH];
+		char livePath[_MAX_PATH];
+	};
+
 	struct Viewer
 	{
 		SOCKET socket;
-		unsigned char hello[HELLO_SIZE];
+		UnsignedInt ip;            ///< host order (the connection's source address)
+		unsigned char hello[HELLO2_SIZE];   ///< O33 (review 1): room for the whole version 2 hello
 		Int helloLen;
+		Int helloWant;             ///< 20, or 28 for version 2; never more than the array
 		Bool ready;
+		Bool live;                 ///< O33: a listed room observer: gets the newest data; else delayed
+		Bool roomFlag;             ///< what its hello said (counting only)
 		UnsignedInt sent;          ///< file bytes queued for this viewer so far
 		unsigned char *out;
 		Int outLen, outPos;
+		DWORD acceptMs;
 		DWORD lastDrainMs;
 		DWORD lastLiveMs;
 		LiveRecord liveSent;
 		Int number;
+		unsigned short relayPort;  ///< 0: it does not relay
 	};
 
-	HANDLE s_serverThread = nullptr;
-	volatile LONG s_serverStop = 0;
-	char s_servePath[_MAX_PATH] = { 0 };
-	char s_serveLivePath[_MAX_PATH] = { 0 };
-	Viewer s_viewers[MAX_VIEWERS];
+	struct Sample { DWORD ms; UnsignedInt size; LiveRecord live; Bool haveLive; };
 
 	void dropViewer(Viewer &v, const char *why)
 	{
 		logLine("server: viewer %d dropped (%s), it had %u bytes", v.number, why, v.sent);
 		closesocket(v.socket);
 		v.socket = INVALID_SOCKET;
-		if (v.out != nullptr) {
+		if (v.out != nullptr)
+		{
 			HeapFree(GetProcessHeap(), 0, v.out);
 			v.out = nullptr;
 		}
 	}
 
-	void queue(Viewer &v, const char *type, const unsigned char *payload, Int length)
+	/// Queues one message; FALSE (nothing queued) when it would not fit the viewer's buffer.
+	Bool queue(Viewer &v, const char *type, const unsigned char *payload, Int length)
 	{
+		if (v.out == nullptr || length < 0 || v.outLen + 8 + length > OUT_BUFFER) {
+			return FALSE;
+		}
 		unsigned char *p = v.out + v.outLen;
 		memcpy(p, type, 4);
 		put32(p + 4, (UnsignedInt)length);
@@ -265,6 +334,7 @@ namespace
 			memcpy(p + 8, payload, length);
 		}
 		v.outLen += 8 + length;
+		return TRUE;
 	}
 
 	Int roomOf(const Viewer &v)
@@ -282,105 +352,227 @@ namespace
 		}
 	}
 
-	DWORD WINAPI serverMain(LPVOID)
+	Bool isLive(const ServeConfig &c, UnsignedInt ip)
 	{
-		SOCKET listener = socket(AF_INET, SOCK_STREAM, 0);
-		if (listener == INVALID_SOCKET) {
-			logLine("server: no socket (%d)", WSAGetLastError());
+		for (Int i = 0; i < c.liveCount; ++i) {
+			if (c.live[i] == ip) return TRUE;
+		}
+		return FALSE;
+	}
+
+	/// Sends the bytes queued so far, without waiting (used only for a refusal before the drop).
+	void flushNow(Viewer &v)
+	{
+		if (v.out != nullptr && v.outLen > v.outPos) {
+			send(v.socket, (const char *)v.out + v.outPos, v.outLen - v.outPos, 0);
+		}
+	}
+
+	DWORD WINAPI serverMain(LPVOID param)
+	{
+		ServeConfig *cfg = (ServeConfig *)param;
+		const ServeConfig &c = *cfg;
+		Viewer *viewers = (Viewer *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(Viewer) * MAX_VIEWERS);
+		Sample *history = (Sample *)HeapAlloc(GetProcessHeap(), 0, sizeof(Sample) * HISTORY_MAX);
+		const auto current = [&]() { return InterlockedCompareExchange(&s_serverGen, 0, 0) == c.gen; };
+		if (viewers == nullptr || history == nullptr)
+		{
+			if (viewers) HeapFree(GetProcessHeap(), 0, viewers);
+			if (history) HeapFree(GetProcessHeap(), 0, history);
+			HeapFree(GetProcessHeap(), 0, cfg);
 			return 0;
 		}
-		sockaddr_in addr;
-		memset(&addr, 0, sizeof(addr));
-		addr.sin_family = AF_INET;
-		addr.sin_port = htons((unsigned short)s_servePort);
-		addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);   // 127.0.0.1 only (see ReplayStream.h)
-		if (bind(listener, (sockaddr *)&addr, sizeof(addr)) != 0 || listen(listener, 8) != 0)
+		for (Int i = 0; i < MAX_VIEWERS; ++i) {
+			viewers[i].socket = INVALID_SOCKET;
+		}
+
+		// the listener: the LAN address or 127.0.0.1, never every interface; an old server may still hold the port for a
+		// moment (it ends by its generation), so the bind is retried for up to 3 seconds
+		SOCKET listener = INVALID_SOCKET;
+		const UnsignedInt bindHost = c.bind != 0 ? c.bind : 0x7F000001u;
+		const DWORD bindStart = timeGetTime();
+		while (current())
 		{
-			logLine("server: cannot listen on 127.0.0.1:%d (%d)", s_servePort, WSAGetLastError());
-			closesocket(listener);
+			listener = socket(AF_INET, SOCK_STREAM, 0);
+			sockaddr_in addr;
+			memset(&addr, 0, sizeof(addr));
+			addr.sin_family = AF_INET;
+			addr.sin_port = htons((unsigned short)c.port);
+			addr.sin_addr.s_addr = htonl(bindHost);
+			if (listener != INVALID_SOCKET && bind(listener, (sockaddr *)&addr, sizeof(addr)) == 0 && listen(listener, 8) == 0) {
+				break;
+			}
+			if (listener != INVALID_SOCKET) {
+				closesocket(listener);
+			}
+			listener = INVALID_SOCKET;
+			if (timeGetTime() - bindStart > 3000) {
+				break;
+			}
+			Sleep(100);
+		}
+		if (listener == INVALID_SOCKET)
+		{
+			logLine("server: cannot listen on %u.%u.%u.%u:%d (%d)", bindHost >> 24, (bindHost >> 16) & 255, (bindHost >> 8) & 255,
+				bindHost & 255, c.port, WSAGetLastError());
+			HeapFree(GetProcessHeap(), 0, viewers);
+			HeapFree(GetProcessHeap(), 0, history);
+			HeapFree(GetProcessHeap(), 0, cfg);
 			return 0;
 		}
 		setNonBlocking(listener);
-		logLine("server: listening on 127.0.0.1:%d for %s (at most %d viewers, %d KB/s)", s_servePort, s_servePath, s_serveMax, s_serveRateKB);
+		logLine("server: listening on %u.%u.%u.%u:%d for %s (at most %d viewers, %d outside ones%s, delay %d s for viewers not listed "
+			"live, %d live address(es), %d KB/s)", bindHost >> 24, (bindHost >> 16) & 255, (bindHost >> 8) & 255, bindHost & 255, c.port,
+			c.path, c.max, c.outsideMax, c.outsideAllowed ? "" : " (none allowed)", c.delayMs / 1000, c.liveCount, c.rateKB);
 
-		for (Int i = 0; i < MAX_VIEWERS; ++i) {
-			s_viewers[i].socket = INVALID_SOCKET;
-			s_viewers[i].out = nullptr;
-		}
 		HANDLE file = INVALID_HANDLE_VALUE;
 		const DWORD startMs = timeGetTime();
 		DWORD lastTickMs = startMs;
+		Bool draining = FALSE;
+		DWORD drainStartMs = 0;
 		double tokens = 0.0;
-		const double rate = (double)s_serveRateKB * 1024.0;
+		const double rate = (double)c.rateKB * 1024.0;
 		Int nextNumber = 1;
+		Int historyFirst = 0, historyCount = 0;   // ring
+		DWORD lastReportMs = startMs;
 		unsigned char chunk[CHUNK + 4];
 
-		while (InterlockedCompareExchange(&s_serverStop, 0, 0) == 0)
+		while (current())
 		{
 			const DWORD now = timeGetTime();
-			if (s_serveStopAfterSec > 0 && now - startMs > (DWORD)s_serveStopAfterSec * 1000)
+			if (c.stopAfterSec > 0 && now - startMs > (DWORD)c.stopAfterSec * 1000)
 			{
-				logLine("server: stopping after %d seconds (-serveReplayStopAfter, a forced source loss)", s_serveStopAfterSec);
+				logLine("server: stopping after %d seconds (-serveReplayStopAfter, a forced source loss)", c.stopAfterSec);
 				break;
 			}
 			tokens = min(rate, tokens + rate * (now - lastTickMs) / 1000.0);
 			lastTickMs = now;
-
-			// new viewers
-			for (;;)
+			// O33 (review 4): the recording is over: the listener closes at once; the viewers there get the rest (a delayed
+			// one the last delayMs of the match), then the server ends
+			if (!draining && InterlockedCompareExchange(&s_drainGen, 0, 0) == c.gen)
 			{
-				SOCKET s = accept(listener, nullptr, nullptr);
+				draining = TRUE;
+				drainStartMs = now;
+				closesocket(listener);
+				listener = INVALID_SOCKET;
+				logLine("server: the recording is over: no new viewers; the ones here get the rest (at most %d s)", c.delayMs / 1000 + 5);
+			}
+			if (draining)
+			{
+				Bool anyone = FALSE;
+				for (Int i = 0; i < MAX_VIEWERS && !anyone; ++i) {
+					anyone = viewers[i].socket != INVALID_SOCKET && viewers[i].ready;
+				}
+				if (!anyone || now - drainStartMs > (DWORD)c.delayMs + 5000) {
+					break;
+				}
+			}
+
+			// new connections: only the table's room and the per-address limit here; the rest after the hello
+			while (listener != INVALID_SOCKET)
+			{
+				sockaddr_in peer;
+				int peerLen = sizeof(peer);
+				SOCKET s = accept(listener, (sockaddr *)&peer, &peerLen);
 				if (s == INVALID_SOCKET) {
 					break;
 				}
-				Int slot = -1, used = 0;
+				const UnsignedInt ip = ntohl(peer.sin_addr.s_addr);
+				Int slot = -1, sameAddress = 0;
 				for (Int i = 0; i < MAX_VIEWERS; ++i)
 				{
-					if (s_viewers[i].socket != INVALID_SOCKET) ++used;
-					else if (slot < 0) slot = i;
+					if (viewers[i].socket == INVALID_SOCKET) {
+						if (slot < 0) slot = i;
+					} else if (viewers[i].ip == ip) {
+						++sameAddress;
+					}
 				}
-				if (slot < 0 || used >= s_serveMax)
+				if (slot < 0 || sameAddress >= MAX_PER_ADDRESS)
 				{
-					unsigned char nope[8];
-					memcpy(nope, "NOPE", 4);
-					put32(nope + 4, 0);
-					send(s, (const char *)nope, 8, 0);
-					closesocket(s);
-					logLine("server: a viewer refused (full: %d)", used);
+					closesocket(s);   // O33 (review 9): the table is full, or that address has its share
 					continue;
 				}
 				setNonBlocking(s);
-				Viewer &v = s_viewers[slot];
+				Viewer &v = viewers[slot];
 				memset(&v, 0, sizeof(v));
 				v.socket = s;
-				v.out = (unsigned char *)HeapAlloc(GetProcessHeap(), 0, OUT_BUFFER);
+				v.ip = ip;
+				v.acceptMs = now;
 				v.lastDrainMs = now;
 				v.number = nextNumber++;
-				if (v.out == nullptr) {
-					dropViewer(v, "no memory");
-				} else {
-					logLine("server: viewer %d connected", v.number);
-				}
+				v.helloWant = HELLO1_SIZE;
 			}
 
 			if (file == INVALID_HANDLE_VALUE) {
-				file = openShared(s_servePath, GENERIC_READ, OPEN_EXISTING);
+				file = openShared(c.path, GENERIC_READ, OPEN_EXISTING);
 			}
 			// the side file first, then the size: the bytes of the side file's frame are all in the file
-			LiveRecord live;
-			const Bool haveLive = readLive(s_serveLivePath, &live);
-			const UnsignedInt size = (file != INVALID_HANDLE_VALUE) ? fileSize(file) : 0;
+			Sample cur;
+			cur.ms = now;
+			cur.haveLive = readLive(c.livePath, &cur.live);
+			cur.size = (file != INVALID_HANDLE_VALUE) ? fileSize(file) : 0;
+			// O33: the history of (time, size, side file), one sample per change, for the delayed viewers
+			{
+				const Sample *last = historyCount > 0 ? &history[(historyFirst + historyCount - 1) % HISTORY_MAX] : nullptr;
+				if (last == nullptr || last->size != cur.size || last->haveLive != cur.haveLive
+					|| (cur.haveLive && memcmp(&last->live, &cur.live, sizeof(cur.live)) != 0))
+				{
+					if (historyCount == HISTORY_MAX)
+					{
+						historyFirst = (historyFirst + 1) % HISTORY_MAX;
+						--historyCount;
+					}
+					history[(historyFirst + historyCount) % HISTORY_MAX] = cur;
+					++historyCount;
+				}
+				// forget what no delayed viewer can need any more (keep one older sample)
+				while (historyCount > 1)
+				{
+					const Sample &second = history[(historyFirst + 1) % HISTORY_MAX];
+					if (now - second.ms <= (DWORD)c.delayMs + 2000) break;
+					historyFirst = (historyFirst + 1) % HISTORY_MAX;
+					--historyCount;
+				}
+			}
+			// what a delayed viewer may have now: the newest sample at least delayMs old
+			Sample delayed;
+			memset(&delayed, 0, sizeof(delayed));
+			Bool haveDelayed = FALSE;
+			for (Int k = historyCount - 1; k >= 0; --k)
+			{
+				const Sample &s = history[(historyFirst + k) % HISTORY_MAX];
+				if (now - s.ms >= (DWORD)c.delayMs)
+				{
+					delayed = s;
+					haveDelayed = TRUE;
+					break;
+				}
+			}
 
+			if (now - lastReportMs >= 10000)
+			{
+				// O33: for the tests: what the live and the delayed viewers may have now
+				lastReportMs = now;
+				logLine("server: newest frame %u (%u bytes); delayed (%d s) frame %u (%u bytes)", cur.haveLive ? cur.live.frame : 0, cur.size,
+					c.delayMs / 1000, haveDelayed && delayed.haveLive ? delayed.live.frame : 0, haveDelayed ? delayed.size : 0);
+			}
+			Int roomCount = 0, outsideCount = 0;
 			for (Int i = 0; i < MAX_VIEWERS; ++i)
 			{
-				Viewer &v = s_viewers[i];
+				Viewer &v = viewers[i];
 				if (v.socket == INVALID_SOCKET) {
 					continue;
 				}
-				// the hello
+				// the hello: read only what fits the array (O33, review 1: the length is checked before the read)
 				if (!v.ready)
 				{
-					const int got = recv(v.socket, (char *)v.hello + v.helloLen, HELLO_SIZE - v.helloLen, 0);
+					const Int want = v.helloWant - v.helloLen;
+					if (want <= 0 || v.helloWant > (Int)sizeof(v.hello))
+					{
+						dropViewer(v, "a broken hello");
+						continue;
+					}
+					const int got = recv(v.socket, (char *)v.hello + v.helloLen, want, 0);
 					if (got == 0 || (got < 0 && WSAGetLastError() != WSAEWOULDBLOCK)) {
 						dropViewer(v, "closed before its hello");
 						continue;
@@ -388,39 +580,91 @@ namespace
 					if (got > 0) {
 						v.helloLen += got;
 					}
-					if (v.helloLen < HELLO_SIZE)
+					// a version 2 hello has 8 more bytes (once its version word is in)
+					if (v.helloLen >= 8 && v.helloWant == HELLO1_SIZE && memcmp(v.hello, "GRSV", 4) == 0 && get32(v.hello + 4) == 2) {
+						v.helloWant = HELLO2_SIZE;
+					}
+					if (v.helloLen >= 4 && memcmp(v.hello, "GRSV", 4) != 0)
 					{
-						if (now - v.lastDrainMs > DROP_MS) {
-							dropViewer(v, "no hello");
+						dropViewer(v, "not a viewer");
+						continue;
+					}
+					if (v.helloLen < v.helloWant)
+					{
+						if (now - v.acceptMs > HELLO_MS) {
+							dropViewer(v, "no hello within 3 seconds");
 						}
 						continue;
 					}
+					const UnsignedInt version = get32(v.hello + 4);
 					const UnsignedInt offset = get32(v.hello + 8);
 					const UnsignedInt idLength = get32(v.hello + 12);
 					const UnsignedInt idHash = get32(v.hello + 16);
-					Bool same = memcmp(v.hello, "GRSV", 4) == 0 && get32(v.hello + 4) == 1 && idLength <= ID_BYTES;
+					Bool same = (version == 1 || version == 2) && idLength <= ID_BYTES;
 					if (same && idLength > 0)
 					{
 						unsigned char id[ID_BYTES];
 						DWORD got2 = 0;
 						same = file != INVALID_HANDLE_VALUE && readAt(file, 0, id, idLength, &got2) && got2 == idLength && fnv(id, idLength) == idHash;
 					}
-					if (!same)
+					v.out = same ? (unsigned char *)HeapAlloc(GetProcessHeap(), 0, OUT_BUFFER) : nullptr;
+					if (!same || v.out == nullptr)
 					{
+						dropViewer(v, same ? "no memory" : "another game, or this source has less of it");
+						continue;
+					}
+					v.roomFlag = version == 2 && (get32(v.hello + 20) & 1) != 0;
+					v.relayPort = version == 2 ? (unsigned short)get32(v.hello + 24) : 0;
+					// O33 (review 2): live only for a listed room observer's address; everybody else is an outside viewer
+					v.live = isLive(c, v.ip);
+					Int rooms = 0, outs = 0;
+					for (Int k = 0; k < MAX_VIEWERS; ++k)
+					{
+						if (k != i && viewers[k].socket != INVALID_SOCKET && viewers[k].ready) {
+							++(viewers[k].live ? rooms : outs);
+						}
+					}
+					const Bool refuseOutside = !v.live && !c.outsideAllowed;
+					const Bool full = rooms + outs >= c.max || (!v.live && outs >= c.outsideMax);
+					if (refuseOutside || full)
+					{
+						if (full && !refuseOutside)
+						{
+							// MORE: the outside viewers that relay (each serves what it has, never faster than it got it)
+							unsigned char more[4 + MAX_REDIRECTS * 8];
+							Int n = 0;
+							for (Int k = 0; k < MAX_VIEWERS && n < MAX_REDIRECTS; ++k)
+							{
+								const Viewer &o = viewers[k];
+								if (k != i && o.socket != INVALID_SOCKET && o.ready && !o.live && o.relayPort != 0)
+								{
+									put32(more + 4 + n * 8, o.ip);
+									put32(more + 8 + n * 8, o.relayPort);
+									++n;
+								}
+							}
+							put32(more, (UnsignedInt)n);
+							queue(v, "MORE", more, 4 + n * 8);
+						}
 						queue(v, "NOPE", nullptr, 0);
-						send(v.socket, (const char *)v.out, v.outLen, 0);
-						dropViewer(v, "another game, or this source has less of it");
+						flushNow(v);
+						dropViewer(v, refuseOutside ? "outside viewers are not allowed" : "full");
 						continue;
 					}
 					v.ready = TRUE;
 					v.sent = offset;
-					logLine("server: viewer %d starts at byte %u", v.number, offset);
+					logLine("server: viewer %d (%u.%u.%u.%u, %s%s) starts at byte %u", v.number, v.ip >> 24, (v.ip >> 16) & 255,
+						(v.ip >> 8) & 255, v.ip & 255, v.live ? "live: a room observer" : "delayed", v.relayPort != 0 ? ", relays" : "", offset);
 				}
-				// file bytes, as the rate and the viewer's buffer allow
+				++(v.live ? roomCount : outsideCount);
+				// what this viewer may have: the newest state (live), or the state of delayMs ago
+				const UnsignedInt allowSize = v.live ? cur.size : (haveDelayed ? delayed.size : 0);
+				const Bool allowLive = v.live ? cur.haveLive : (haveDelayed && delayed.haveLive);
+				const LiveRecord &allowRecord = v.live ? cur.live : delayed.live;
 				compact(v);
-				while (v.sent < size && roomOf(v) >= CHUNK + 16 && tokens >= 1.0)
+				while (v.sent < allowSize && roomOf(v) >= CHUNK + 16 && tokens >= 1.0)
 				{
-					DWORD want = min((DWORD)CHUNK, (DWORD)(size - v.sent));
+					DWORD want = min((DWORD)CHUNK, (DWORD)(allowSize - v.sent));
 					want = min(want, (DWORD)tokens);
 					DWORD got = 0;
 					if (!readAt(file, v.sent, chunk + 4, want, &got) || got == 0) {
@@ -431,20 +675,24 @@ namespace
 					v.sent += got;
 					tokens -= got;
 				}
-				// the live state, once the viewer has the bytes it covers
-				if (haveLive && v.sent >= size && roomOf(v) >= 24)
+				// the side file's state, once the viewer has the bytes it covers; a delayed viewer with nothing allowed yet
+				// gets HOLD (it waits, it does not hop)
+				if (v.sent >= allowSize && roomOf(v) >= 24 && now - v.lastLiveMs >= LIVE_EVERY_MS)
 				{
-					const Bool changed = memcmp(&live, &v.liveSent, sizeof(live)) != 0;
-					if (changed || now - v.lastLiveMs >= LIVE_EVERY_MS)
+					if (allowLive)
 					{
 						unsigned char payload[12];
-						put32(payload, live.frame);
-						put32(payload + 4, live.ended);
-						put32(payload + 8, live.counter);
+						put32(payload, allowRecord.frame);
+						put32(payload + 4, allowRecord.ended);
+						put32(payload + 8, allowRecord.counter);
 						queue(v, "LIVE", payload, 12);
-						v.liveSent = live;
-						v.lastLiveMs = now;
+						v.liveSent = allowRecord;
 					}
+					else
+					{
+						queue(v, "HOLD", nullptr, 0);
+					}
+					v.lastLiveMs = now;
 				}
 				// send what can go now; never wait
 				if (v.outLen > v.outPos)
@@ -470,54 +718,90 @@ namespace
 					dropViewer(v, "too slow: nothing drained for 10 seconds");
 					continue;
 				}
-				// anything from the viewer after its hello, or its close
+				// anything from the viewer after its hello is read and dropped; its close ends it
 				char sink[64];
 				const int extra = recv(v.socket, sink, sizeof(sink), 0);
 				if (extra == 0) {
 					dropViewer(v, "it closed the connection");
 				}
 			}
+			if (current() && !draining)
+			{
+				InterlockedExchange(&s_countRoom, roomCount);
+				InterlockedExchange(&s_countOutside, outsideCount);
+			}
 			Sleep(20);
 		}
 
 		for (Int i = 0; i < MAX_VIEWERS; ++i) {
-			if (s_viewers[i].socket != INVALID_SOCKET) {
-				dropViewer(s_viewers[i], "the server stops");
+			if (viewers[i].socket != INVALID_SOCKET) {
+				dropViewer(viewers[i], "the server stops");
 			}
 		}
-		closesocket(listener);
+		if (listener != INVALID_SOCKET) {
+			closesocket(listener);
+		}
 		if (file != INVALID_HANDLE_VALUE) {
 			CloseHandle(file);
 		}
+		if (current() && !draining)
+		{
+			InterlockedExchange(&s_countRoom, 0);
+			InterlockedExchange(&s_countOutside, 0);
+		}
 		logLine("server: stopped");
+		HeapFree(GetProcessHeap(), 0, viewers);
+		HeapFree(GetProcessHeap(), 0, history);
+		HeapFree(GetProcessHeap(), 0, cfg);
 		return 0;
 	}
 
 	//=============================================================================================
 	// Mirror (viewer)
 	//=============================================================================================
-	HANDLE s_mirrorThread = nullptr;
-	volatile LONG s_mirrorStop = 0;
+	volatile LONG s_mirrorGen = 0;
+	volatile LONG s_mirrorRunning = 0;       ///< the current generation's mirror thread exists
 	volatile LONG s_mirrorHeaderReady = 0;
 	volatile LONG s_mirrorEnded = 0;
 	volatile LONG s_mirrorLost = 0;          ///< every source was gone for NO_SOURCE_END_MS (the game thread tells the watcher once)
 	char s_mirrorPath[_MAX_PATH] = { 0 };
-	char s_mirrorLivePath[_MAX_PATH] = { 0 };
 
-	SOCKET connectTo(const Source &src, DWORD timeoutMs)
+	struct MirrorConfig
+	{
+		LONG gen;
+		Source sources[MAX_SOURCES];
+		Int sourceCount;
+		Int initialCount;          ///< O33 (review 12): only these (the players) may name relays
+		UnsignedInt flags;
+		UnsignedInt bind;          ///< host order; 0: the system's choice
+		Int relayPort;
+		char path[_MAX_PATH];
+		char livePath[_MAX_PATH];
+	};
+
+	SOCKET connectTo(const Source &src, UnsignedInt bindHost, DWORD timeoutMs)
 	{
 		SOCKET s = socket(AF_INET, SOCK_STREAM, 0);
 		if (s == INVALID_SOCKET) {
 			return INVALID_SOCKET;
+		}
+		if (bindHost != 0)
+		{
+			// O33: from this game's own LAN address (a server tells room observers by their address)
+			sockaddr_in local;
+			memset(&local, 0, sizeof(local));
+			local.sin_family = AF_INET;
+			local.sin_addr.s_addr = htonl(bindHost);
+			bind(s, (sockaddr *)&local, sizeof(local));
 		}
 		setNonBlocking(s);
 		sockaddr_in addr;
 		memset(&addr, 0, sizeof(addr));
 		addr.sin_family = AF_INET;
 		addr.sin_port = htons(src.port);
-		u_long ip = 0;
+		UnsignedInt ip = 0;
 		parseIPv4(src.host, &ip);
-		addr.sin_addr.s_addr = ip;
+		addr.sin_addr.s_addr = htonl(ip);
 		connect(s, (sockaddr *)&addr, sizeof(addr));
 		fd_set w, e;
 		FD_ZERO(&w); FD_SET(s, &w);
@@ -562,85 +846,153 @@ namespace
 		WriteFile(liveFile, &r, sizeof(r), &written, &ov);
 	}
 
-	DWORD WINAPI mirrorMain(LPVOID)
+	/// The sources in the order of their connect time (unreachable ones last); stops early when the mirror is stopped.
+	void orderSourcesByConnectTime(MirrorConfig &m)
 	{
-		HANDLE file = openShared(s_mirrorPath, GENERIC_READ | GENERIC_WRITE, OPEN_ALWAYS);
-		HANDLE liveFile = openShared(s_mirrorLivePath, GENERIC_WRITE, CREATE_ALWAYS);
-		if (file == INVALID_HANDLE_VALUE || liveFile == INVALID_HANDLE_VALUE)
+		if (m.sourceCount < 2) {
+			return;
+		}
+		DWORD cost[MAX_SOURCES];
+		for (Int i = 0; i < m.sourceCount; ++i)
 		{
-			logLine("mirror: cannot create %s", s_mirrorPath);
+			if (InterlockedCompareExchange(&s_mirrorGen, 0, 0) != m.gen) {
+				return;
+			}
+			const DWORD t0 = timeGetTime();
+			SOCKET s = connectTo(m.sources[i], m.bind, 500);
+			cost[i] = s == INVALID_SOCKET ? 0xFFFFFFFFu : timeGetTime() - t0;
+			if (s != INVALID_SOCKET) {
+				closesocket(s);
+			}
+		}
+		for (Int i = 1; i < m.sourceCount; ++i)
+		{
+			for (Int k = i; k > 0 && cost[k] < cost[k - 1]; --k)
+			{
+				const Source tmp = m.sources[k]; m.sources[k] = m.sources[k - 1]; m.sources[k - 1] = tmp;
+				const DWORD cc = cost[k]; cost[k] = cost[k - 1]; cost[k - 1] = cc;
+			}
+		}
+		for (Int i = 0; i < m.sourceCount; ++i)
+		{
+			if (cost[i] == 0xFFFFFFFFu) {
+				logLine("mirror: source %d %s:%u (no answer to the probe)", i, m.sources[i].host, (unsigned)m.sources[i].port);
+			} else {
+				logLine("mirror: source %d %s:%u (connect %lu ms)", i, m.sources[i].host, (unsigned)m.sources[i].port, cost[i]);
+			}
+		}
+	}
+
+	Bool addSource(Source *list, Int *count, UnsignedInt ipHost, UnsignedInt port)
+	{
+		char host[64];
+		snprintf(host, sizeof(host), "%u.%u.%u.%u", ipHost >> 24, (ipHost >> 16) & 255, (ipHost >> 8) & 255, ipHost & 255);
+		for (Int i = 0; i < *count; ++i) {
+			if (strcmp(list[i].host, host) == 0 && list[i].port == port) return FALSE;
+		}
+		if (*count >= MAX_SOURCES || port == 0 || port > 65535 || ipHost == 0) {
+			return FALSE;
+		}
+		strlcpy(list[*count].host, host, sizeof(list[*count].host));
+		list[*count].port = (unsigned short)port;
+		++*count;
+		return TRUE;
+	}
+
+	DWORD WINAPI mirrorMain(LPVOID param)
+	{
+		MirrorConfig *cfg = (MirrorConfig *)param;
+		MirrorConfig &m = *cfg;
+		const auto current = [&]() { return InterlockedCompareExchange(&s_mirrorGen, 0, 0) == m.gen; };
+		const auto setFlag = [&](volatile LONG *flag) { if (current()) InterlockedExchange(flag, 1); };
+		orderSourcesByConnectTime(m);
+		HANDLE file = openShared(m.path, GENERIC_READ | GENERIC_WRITE, OPEN_ALWAYS);
+		HANDLE liveFile = openShared(m.livePath, GENERIC_WRITE, CREATE_ALWAYS);
+		unsigned char *in = (unsigned char *)HeapAlloc(GetProcessHeap(), 0, IN_BUFFER);
+		if (file == INVALID_HANDLE_VALUE || liveFile == INVALID_HANDLE_VALUE || in == nullptr)
+		{
+			logLine("mirror: cannot create %s", m.path);
 			if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
 			if (liveFile != INVALID_HANDLE_VALUE) CloseHandle(liveFile);
+			if (in != nullptr) HeapFree(GetProcessHeap(), 0, in);
+			HeapFree(GetProcessHeap(), 0, cfg);
 			return 0;
 		}
 		UnsignedInt have = fileSize(file);
-		static unsigned char in[IN_BUFFER];
 		Int source = 0;
 		Int failures = 0;
 		Bool ended = FALSE;
-		DWORD lastContactMs = timeGetTime();   // the last message from any source
-		UnsignedInt lastFrameSeen = 0, lastCounterSeen = 0;
+		DWORD lastContactMs = timeGetTime();
+		Bool everContact = FALSE;
+		// O33 (review 10): what a source says about the stream only moves forward
+		UnsignedInt maxFrameSeen = 0, maxCounterSeen = 0;
+		Int refusals = 0;   // O33: NOPE in a row from every source (outside viewers not allowed, or all full): lost
 
-		while (InterlockedCompareExchange(&s_mirrorStop, 0, 0) == 0 && !ended && s_sourceCount > 0)
+		while (current() && !ended && m.sourceCount > 0)
 		{
-			const Source &src = s_sources[source];
-			SOCKET s = connectTo(src, 2000);
+			const Source src = m.sources[source];
+			SOCKET s = connectTo(src, m.bind, 2000);
 			if (s == INVALID_SOCKET)
 			{
 				logLine("mirror: no answer from %s:%u", src.host, (unsigned)src.port);
-				source = (source + 1) % s_sourceCount;
-				// TheSuperHackers @bugfix (S16) Every source gone for long enough: the stream is lost. The side file says
-				// "ended", so the replay plays what it has to its end instead of waiting, and the watcher is told.
-				if (timeGetTime() - lastContactMs > NO_SOURCE_END_MS)
+				source = (source + 1) % m.sourceCount;
+				if (timeGetTime() - lastContactMs > (everContact ? (DWORD)NO_SOURCE_END_MS : (DWORD)FIRST_CONTACT_MS))
 				{
-					writeLocalLive(liveFile, lastFrameSeen, 1, lastCounterSeen + 1);
+					writeLocalLive(liveFile, maxFrameSeen, 1, maxCounterSeen + 1);
 					ended = TRUE;
-					InterlockedExchange(&s_mirrorEnded, 1);
-					InterlockedExchange(&s_mirrorLost, 1);
-					logLine("mirror: no source has answered for %d seconds: the stream is lost; the replay plays its %u bytes "
-						"(frame %u) to the end", NO_SOURCE_END_MS / 1000, have, lastFrameSeen);
+					setFlag(&s_mirrorEnded);
+					setFlag(&s_mirrorLost);
+					logLine("mirror: no source has answered: the stream is lost; the replay plays its %u bytes (frame %u) to the end", have, maxFrameSeen);
 					break;
 				}
-				if (++failures >= s_sourceCount) {
-					Sleep(1000);   // every source tried: wait a moment before the next round
+				if (++failures >= m.sourceCount)
+				{
+					for (Int k = 0; k < 10 && current(); ++k) Sleep(100);   // every source tried: a moment before the next round
 					failures = 0;
 				}
 				continue;
 			}
 			// the hello: where we are, and the first bytes we have (the same game)
-			unsigned char hello[HELLO_SIZE];
+			unsigned char hello[HELLO2_SIZE];
 			unsigned char id[ID_BYTES];
 			DWORD idLength = 0;
 			if (have > 0) {
 				readAt(file, 0, id, min((DWORD)ID_BYTES, (DWORD)have), &idLength);
 			}
 			memcpy(hello, "GRSV", 4);
-			put32(hello + 4, 1);
+			put32(hello + 4, 2);
 			put32(hello + 8, have);
 			put32(hello + 12, idLength);
 			put32(hello + 16, idLength > 0 ? fnv(id, (Int)idLength) : 0);
-			if (!sendAll(s, hello, HELLO_SIZE))
+			put32(hello + 20, m.flags);
+			put32(hello + 24, (UnsignedInt)m.relayPort);
+			if (!sendAll(s, hello, HELLO2_SIZE))
 			{
 				closesocket(s);
-				source = (source + 1) % s_sourceCount;
+				source = (source + 1) % m.sourceCount;
 				continue;
 			}
 			logLine("mirror: connected to %s:%u, asking from byte %u", src.host, (unsigned)src.port, have);
 			failures = 0;
 
 			Int inLen = 0;
+			DWORD lastReportMs = timeGetTime();
 			DWORD lastMessageMs = timeGetTime();
 			DWORD lastFrameMoveMs = lastMessageMs;
 			UnsignedInt lastFrame = 0xFFFFFFFF;
+			Bool holding = FALSE;
 			const char *leaveWhy = nullptr;
-			while (InterlockedCompareExchange(&s_mirrorStop, 0, 0) == 0 && leaveWhy == nullptr && !ended)
+			while (current() && leaveWhy == nullptr && !ended)
 			{
 				fd_set r;
 				FD_ZERO(&r); FD_SET(s, &r);
 				timeval tv = { 0, 200 * 1000 };
 				if (select(0, &r, nullptr, nullptr, &tv) > 0)
 				{
-					const int got = recv(s, (char *)in + inLen, IN_BUFFER - inLen, 0);
+					// O33: the room left in the buffer is checked before the read
+					const Int room = IN_BUFFER - inLen;
+					if (room <= 0) { leaveWhy = "a message larger than the buffer"; break; }
+					const int got = recv(s, (char *)in + inLen, room, 0);
 					if (got == 0) { leaveWhy = "the source closed the connection"; break; }
 					if (got < 0 && WSAGetLastError() != WSAEWOULDBLOCK) { leaveWhy = "the connection broke"; break; }
 					if (got > 0) inLen += got;
@@ -656,6 +1008,10 @@ namespace
 					const unsigned char *payload = in + at + 8;
 					lastMessageMs = timeGetTime();
 					lastContactMs = lastMessageMs;
+					everContact = TRUE;
+					if (memcmp(type, "NOPE", 4) != 0) {
+						refusals = 0;
+					}
 					if (memcmp(type, "DATA", 4) == 0 && length >= 4)
 					{
 						const UnsignedInt offset = get32(payload);
@@ -677,31 +1033,69 @@ namespace
 					}
 					else if (memcmp(type, "LIVE", 4) == 0 && length == 12)
 					{
-						const UnsignedInt frame = get32(payload);
+						holding = FALSE;
+						UnsignedInt frame = get32(payload);
 						const UnsignedInt endedFlag = get32(payload + 4);
-						const UnsignedInt counter = get32(payload + 8);
-						writeLocalLive(liveFile, frame, endedFlag, counter);
-						lastFrameSeen = frame;
-						lastCounterSeen = counter;
+						UnsignedInt counter = get32(payload + 8);
+						// O33 (review 10): never backwards (another source may be behind); "ended" only at or past the newest
+						// frame seen
+						frame = frame < maxFrameSeen ? maxFrameSeen : frame;
+						counter = counter < maxCounterSeen ? maxCounterSeen : counter;
+						const Bool endNow = endedFlag != 0 && get32(payload) >= maxFrameSeen;
+						maxFrameSeen = frame;
+						maxCounterSeen = counter;
+						writeLocalLive(liveFile, frame, endNow ? 1 : 0, counter);
 						if (frame != lastFrame)
 						{
 							lastFrame = frame;
 							lastFrameMoveMs = timeGetTime();
 						}
 						// the header is complete once the source wrote its first frame (the counter moved past the start)
-						if (counter >= 2 || endedFlag != 0) {
-							InterlockedExchange(&s_mirrorHeaderReady, 1);
+						if (counter >= 2 || endNow) {
+							setFlag(&s_mirrorHeaderReady);
 						}
-						if (endedFlag != 0)
+						if (endNow)
 						{
 							ended = TRUE;
-							InterlockedExchange(&s_mirrorEnded, 1);
+							setFlag(&s_mirrorEnded);
 							logLine("mirror: the source's game ended at frame %u; %u bytes", frame, have);
+						}
+					}
+					else if (memcmp(type, "HOLD", 4) == 0)
+					{
+						holding = TRUE;   // a delayed viewer waits: no data allowed yet
+						lastFrameMoveMs = timeGetTime();
+					}
+					else if (memcmp(type, "MORE", 4) == 0 && length >= 4)
+					{
+						// this source is full: the viewers that relay it (only a first-list source may name them)
+						if (source < m.initialCount)
+						{
+							const UnsignedInt n = get32(payload);
+							Int firstNew = -1;
+							for (UnsignedInt k = 0; k < n && k < MAX_REDIRECTS && 4 + (k + 1) * 8 <= length; ++k)
+							{
+								if (addSource(m.sources, &m.sourceCount, get32(payload + 4 + k * 8), get32(payload + 8 + k * 8)) && firstNew < 0) {
+									firstNew = m.sourceCount - 1;
+								}
+							}
+							logLine("mirror: %s:%u is full and named %u relay(s)", src.host, (unsigned)src.port, n);
+							if (firstNew >= 0) {
+								source = (firstNew + m.sourceCount - 1) % m.sourceCount;   // the hop below moves to firstNew
+							}
 						}
 					}
 					else if (memcmp(type, "NOPE", 4) == 0)
 					{
-						leaveWhy = "the source refused (another game, behind us, or full)";
+						leaveWhy = "the source refused (another game, behind us, full, or outside viewers not allowed)";
+						if (++refusals >= 2 * m.sourceCount)
+						{
+							writeLocalLive(liveFile, maxFrameSeen, 1, maxCounterSeen + 1);
+							ended = TRUE;
+							setFlag(&s_mirrorEnded);
+							setFlag(&s_mirrorLost);
+							logLine("mirror: every source refused twice in a row: the stream is lost");
+						}
 					}
 					at += 8 + (Int)length;
 				}
@@ -711,33 +1105,48 @@ namespace
 					inLen -= at;
 				}
 				const DWORD now = timeGetTime();
+				if (now - lastReportMs >= 10000)
+				{
+					lastReportMs = now;
+					logLine("mirror: have %u bytes, frame %u%s", have, maxFrameSeen, holding ? " (held: nothing allowed yet)" : "");
+				}
 				if (leaveWhy == nullptr && now - lastMessageMs > SILENT_HOP_MS) {
 					leaveWhy = "the source is silent";
 				}
-				if (leaveWhy == nullptr && lastFrame != 0xFFFFFFFF && now - lastFrameMoveMs > STUCK_HOP_MS) {
+				if (leaveWhy == nullptr && !holding && lastFrame != 0xFFFFFFFF && now - lastFrameMoveMs > STUCK_HOP_MS) {
 					leaveWhy = "the source's newest frame does not move";
 				}
 			}
 			closesocket(s);
 			if (leaveWhy != nullptr)
 			{
-				const Int next = (source + 1) % s_sourceCount;
+				const Int next = (source + 1) % m.sourceCount;
 				logLine("mirror: leaving %s:%u (%s) at byte %u, frame %u; next %s:%u", src.host, (unsigned)src.port, leaveWhy, have,
-					lastFrame, s_sources[next].host, (unsigned)s_sources[next].port);
+					lastFrame, m.sources[next].host, (unsigned)m.sources[next].port);
 				source = next;
 			}
 		}
 		CloseHandle(file);
 		CloseHandle(liveFile);
+		HeapFree(GetProcessHeap(), 0, in);
 		logLine("mirror: stopped with %u bytes", have);
+		if (current()) {
+			InterlockedExchange(&s_mirrorRunning, 0);
+		}
+		HeapFree(GetProcessHeap(), 0, cfg);
 		return 0;
+	}
+
+	Bool addWatchSource(UnsignedInt ipHost, UnsignedInt port)
+	{
+		return addSource(s_sources, &s_sourceCount, ipHost, port);
 	}
 }
 
 //-------------------------------------------------------------------------------------------------
 void ReplayStream::configureServe(Int port)
 {
-	s_servePort = (port > 0 && port < 65536) ? port : 0;
+	s_cmdPort = (port > 0 && port < 65536) ? port : 0;
 }
 
 void ReplayStream::configureServeMax(Int viewers)
@@ -747,12 +1156,28 @@ void ReplayStream::configureServeMax(Int viewers)
 
 void ReplayStream::configureServeRate(Int kilobytesPerSecond)
 {
-	s_serveRateKB = kilobytesPerSecond < 16 ? 16 : kilobytesPerSecond;
+	s_serveRateKB = kilobytesPerSecond < 1 ? 1 : kilobytesPerSecond;
 }
 
 void ReplayStream::configureServeStopAfter(Int seconds)
 {
 	s_serveStopAfterSec = seconds > 0 ? seconds : 0;
+}
+
+void ReplayStream::configureServeOutsideMax(Int viewers)
+{
+	s_serveOutsideMax = viewers < 0 ? 0 : (viewers > MAX_VIEWERS ? MAX_VIEWERS : viewers);
+}
+
+void ReplayStream::configureServeDelay(Int seconds)
+{
+	s_cmdDelayS = seconds < 0 ? 0 : (seconds > MAX_DELAY_S ? MAX_DELAY_S : seconds);
+	s_cmdDelaySet = TRUE;
+}
+
+void ReplayStream::configureServeLiveFor(const char *ips)
+{
+	s_cmdLiveCount = parseIpList(ips, s_cmdLive, MAX_LIVE);
 }
 
 void ReplayStream::configureWatch(const char *sources)
@@ -771,16 +1196,66 @@ void ReplayStream::configureWatch(const char *sources)
 		if (colon != nullptr)
 		{
 			*colon = '\0';
-			Source &src = s_sources[s_sourceCount];
-			strlcpy(src.host, item, sizeof(src.host));
-			src.port = (unsigned short)atoi(colon + 1);
-			u_long ip = 0;
-			if (src.port != 0 && parseIPv4(src.host, &ip)) {
-				++s_sourceCount;
+			UnsignedInt ip = 0;
+			const Int port = atoi(colon + 1);
+			if (parseIPv4(item, &ip)) {
+				addWatchSource(ip, (UnsignedInt)port);
 			}
 		}
 		p = end != nullptr ? end + 1 : nullptr;
 	}
+}
+
+void ReplayStream::configureWatchRoomObserver()
+{
+	s_watchFlags |= 1;
+}
+
+void ReplayStream::configureWatchBind(const char *ip)
+{
+	UnsignedInt v = 0;
+	s_watchBind = (ip != nullptr && parseIPv4(ip, &v)) ? v : 0;
+}
+
+void ReplayStream::configureMatchServing(UnsignedInt bindIpHostOrder, Int port, Int delaySeconds, Bool outsideAllowed,
+	const UnsignedInt *liveIps, Int liveCount, Bool receivesDelayed)
+{
+	s_matchSet = port > 0 && port < 65536;
+	s_matchBind = bindIpHostOrder;
+	s_matchPort = port;
+	s_matchDelayS = delaySeconds < 10 ? 10 : (delaySeconds > MAX_DELAY_S ? MAX_DELAY_S : delaySeconds);
+	s_matchOutside = outsideAllowed;
+	s_matchReceivesDelayed = receivesDelayed;
+	s_matchLiveCount = 0;
+	for (Int i = 0; i < liveCount && s_matchLiveCount < MAX_LIVE; ++i) {
+		if (liveIps[i] != 0) s_matchLive[s_matchLiveCount++] = liveIps[i];
+	}
+}
+
+void ReplayStream::stopServing()
+{
+	// the running server closes its listener and ends by itself once its viewers have the rest (no wait here)
+	InterlockedExchange(&s_drainGen, InterlockedCompareExchange(&s_serverGen, 0, 0));
+	s_matchSet = FALSE;
+	s_matchLiveCount = 0;
+	InterlockedExchange(&s_countRoom, 0);
+	InterlockedExchange(&s_countOutside, 0);
+}
+
+void ReplayStream::servingCounts(Int *roomObservers, Int *outsideViewers)
+{
+	*roomObservers = (Int)InterlockedCompareExchange(&s_countRoom, 0, 0);
+	*outsideViewers = (Int)InterlockedCompareExchange(&s_countOutside, 0, 0);
+}
+
+void ReplayStream::configureWatchList(const UnsignedInt *ipsHostOrder, Int count, Int port, Bool roomObserver, UnsignedInt localIp)
+{
+	s_sourceCount = 0;
+	for (Int i = 0; i < count && s_sourceCount < MAX_SOURCES; ++i) {
+		addWatchSource(ipsHostOrder[i], (UnsignedInt)port);
+	}
+	s_watchFlags = roomObserver ? 1 : 0;
+	s_watchBind = localIp;
 }
 
 Bool ReplayStream::isWatching()
@@ -788,27 +1263,72 @@ Bool ReplayStream::isWatching()
 	return s_sourceCount > 0;
 }
 
-Bool ReplayStream::startWatching(AsciiString &localPath)
+Bool ReplayStream::beginWatching(AsciiString &localPath)
 {
 	if (s_sourceCount == 0 || TheGlobalData == nullptr || !startWinsock()) {
 		return FALSE;
 	}
-	openLog();
-	AsciiString dir = TheGlobalData->getPath_UserData();
-	dir.concat("Replays\\");
-	CreateDirectoryA(dir.str(), nullptr);
-	snprintf(s_mirrorPath, sizeof(s_mirrorPath), "%sWatched_%u.rep", dir.str(), (unsigned)GetCurrentProcessId());
-	snprintf(s_mirrorLivePath, sizeof(s_mirrorLivePath), "%s.live", s_mirrorPath);
-	DeleteFileA(s_mirrorPath);
-	DeleteFileA(s_mirrorLivePath);
+	if (InterlockedCompareExchange(&s_mirrorRunning, 0, 0) == 0)
+	{
+		openLog();
+		MirrorConfig *m = (MirrorConfig *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(MirrorConfig));
+		if (m == nullptr) {
+			return FALSE;
+		}
+		m->gen = InterlockedIncrement(&s_mirrorGen);
+		memcpy(m->sources, s_sources, sizeof(s_sources));
+		m->sourceCount = s_sourceCount;
+		m->initialCount = s_sourceCount;
+		m->flags = s_watchFlags;
+		m->bind = s_watchBind;
+		m->relayPort = s_matchSet ? s_matchPort : s_cmdPort;
+		AsciiString dir = TheGlobalData->getPath_UserData();
+		dir.concat("Replays\\");
+		CreateDirectoryA(dir.str(), nullptr);
+		// O33: a file of its own per mirror (an old mirror may still close its file)
+		snprintf(m->path, sizeof(m->path), "%sWatched_%u_%ld.rep", dir.str(), (unsigned)GetCurrentProcessId(), (long)m->gen);
+		snprintf(m->livePath, sizeof(m->livePath), "%s.live", m->path);
+		DeleteFileA(m->path);
+		DeleteFileA(m->livePath);
+		strlcpy(s_mirrorPath, m->path, sizeof(s_mirrorPath));
+		InterlockedExchange(&s_mirrorHeaderReady, 0);
+		InterlockedExchange(&s_mirrorEnded, 0);
+		InterlockedExchange(&s_mirrorLost, 0);
+		logLine("mirror: watching %d source(s) into %s (flags %u)", s_sourceCount, m->path, s_watchFlags);
+		InterlockedExchange(&s_mirrorRunning, 1);
+		if (!startThread(mirrorMain, m))
+		{
+			InterlockedExchange(&s_mirrorRunning, 0);
+			HeapFree(GetProcessHeap(), 0, m);
+			return FALSE;
+		}
+	}
+	localPath = s_mirrorPath;
+	return TRUE;
+}
+
+Bool ReplayStream::headerReady()
+{
+	return InterlockedCompareExchange(&s_mirrorHeaderReady, 0, 0) != 0;
+}
+
+void ReplayStream::stopWatching()
+{
+	InterlockedIncrement(&s_mirrorGen);   // the mirror ends by itself within a fraction of a second (no wait)
+	InterlockedExchange(&s_mirrorRunning, 0);
 	InterlockedExchange(&s_mirrorHeaderReady, 0);
-	InterlockedExchange(&s_mirrorEnded, 0);
-	logLine("mirror: watching %d source(s) into %s", s_sourceCount, s_mirrorPath);
-	startThread(&s_mirrorThread, mirrorMain);
-	if (s_mirrorThread == nullptr) {
+	s_sourceCount = 0;
+	s_watchFlags = 0;
+	s_watchBind = 0;
+}
+
+Bool ReplayStream::startWatching(AsciiString &localPath)
+{
+	if (!beginWatching(localPath)) {
 		return FALSE;
 	}
-	// the viewer's own start waits for the replay's header (its game is not running yet)
+	// the command line viewer's own start waits for the replay's header (its game is not running yet); a LAN viewer comes
+	// here only once the header is there
 	const DWORD start = timeGetTime();
 	while (InterlockedCompareExchange(&s_mirrorHeaderReady, 0, 0) == 0 && InterlockedCompareExchange(&s_mirrorLost, 0, 0) == 0
 		&& timeGetTime() - start < HEADER_WAIT_MS) {
@@ -827,14 +1347,57 @@ Bool ReplayStream::startWatching(AsciiString &localPath)
 
 void ReplayStream::serveFile(const AsciiString &replayPath)
 {
-	if (s_servePort == 0 || replayPath.isEmpty() || !startWinsock()) {
+	// a LAN match's settings, or the command line's -serveReplay; nothing else serves (O33, review 4)
+	const Int port = s_matchSet ? s_matchPort : s_cmdPort;
+	if (port == 0 || replayPath.isEmpty() || !startWinsock()) {
 		return;
 	}
 	openLog();
-	stopThread(&s_serverThread, &s_serverStop);
-	strlcpy(s_servePath, replayPath.str(), sizeof(s_servePath));
-	snprintf(s_serveLivePath, sizeof(s_serveLivePath), "%s.live", s_servePath);
-	startThread(&s_serverThread, serverMain);
+	ServeConfig *c = (ServeConfig *)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(ServeConfig));
+	if (c == nullptr) {
+		return;
+	}
+	c->gen = InterlockedIncrement(&s_serverGen);   // a running server ends by itself
+	c->port = port;
+	c->max = s_serveMax;
+	c->outsideMax = s_serveOutsideMax;
+	c->rateKB = s_serveRateKB;
+	c->stopAfterSec = s_serveStopAfterSec;
+	if (s_matchSet)
+	{
+		c->bind = s_matchBind;
+		c->delayMs = s_matchReceivesDelayed ? 0 : s_matchDelayS * 1000;   // a delayed copy is forwarded as it comes
+		c->outsideAllowed = s_matchOutside;
+		c->liveCount = s_matchLiveCount;
+		memcpy(c->live, s_matchLive, sizeof(UnsignedInt) * s_matchLiveCount);
+		// test runs (NetLab has no lobby, so no START): -serveReplayLiveFor adds live addresses, -serveReplayDelay sets
+		// the delay
+		for (Int i = 0; i < s_cmdLiveCount && c->liveCount < MAX_LIVE; ++i) {
+			c->live[c->liveCount++] = s_cmdLive[i];
+		}
+		if (s_cmdDelaySet) {
+			c->delayMs = s_cmdDelayS * 1000;
+		}
+	}
+	else
+	{
+		c->bind = 0;
+		c->delayMs = s_cmdDelayS * 1000;
+		c->outsideAllowed = TRUE;
+		c->liveCount = s_cmdLiveCount;
+		memcpy(c->live, s_cmdLive, sizeof(UnsignedInt) * s_cmdLiveCount);
+		if (s_cmdDelayS == 0 && s_cmdLiveCount == 0)
+		{
+			// the plain test server of before: everybody live
+			c->liveCount = 0;
+			c->delayMs = 0;
+		}
+	}
+	strlcpy(c->path, replayPath.str(), sizeof(c->path));
+	snprintf(c->livePath, sizeof(c->livePath), "%s.live", c->path);
+	if (!startThread(serverMain, c)) {
+		HeapFree(GetProcessHeap(), 0, c);
+	}
 }
 
 Bool ReplayStream::takeLostNotice()
@@ -844,13 +1407,17 @@ Bool ReplayStream::takeLostNotice()
 
 void ReplayStream::shutdown()
 {
-	stopThread(&s_serverThread, &s_serverStop);
-	stopThread(&s_mirrorThread, &s_mirrorStop);
-	if (s_log != nullptr)
+	InterlockedIncrement(&s_serverGen);
+	InterlockedIncrement(&s_mirrorGen);
+	Sleep(300);   // at the end of the program only: the threads see their generation and close their sockets
+	if (s_logLockReady)
 	{
 		EnterCriticalSection(&s_logLock);
-		fclose(s_log);
-		s_log = nullptr;
+		if (s_log != nullptr)
+		{
+			fclose(s_log);
+			s_log = nullptr;
+		}
 		LeaveCriticalSection(&s_logLock);
 	}
 	if (s_wsaReady)

@@ -51,8 +51,12 @@ namespace LanLobbyLook
 	void init(GameWindow *parent);
 	/// Every update of the screen; 'screenReady': the enter fade is over and the screen is not shutting down.
 	void update(Bool screenReady);
-	/// First thing of the screen's shutdown: destroys what init made.
+	/// First thing of the screen's shutdown: destroys what init made (O31: and stops observing a room).
 	void shutdown();
+	/// O31: destroys what init made, nothing else (init calls it first).
+	void teardown();
+	/// O31: a player's anti-cheat shield and files mark side by side, each 'size' wide (the game room's observers list).
+	void drawMarks(Int x, Int y, Int size, UnsignedInt ip);
 	/// The screen's system messages first: TRUE when it was one of the controls made here.
 	Bool onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgData mData2);
 	/// "LAN" / "LOKALNAYA SET'" (Russian): the screen's title and the main menu button.

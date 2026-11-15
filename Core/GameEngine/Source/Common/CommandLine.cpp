@@ -44,6 +44,7 @@
 #include "Common/VoiceChat.h"
 #include "GameNetwork/NetLab.h"
 #include "GameNetwork/LANAPI.h"
+#include "Common/GuardLink.h"
 #include "GameNetwork/NetworkDefs.h"
 
 
@@ -881,6 +882,55 @@ Int parseServeReplayStopAfter(char *args[], int num)
 	return 1;
 }
 
+// TheSuperHackers @feature O31 (test switches) -serveReplayOutsideMax <n>: outside viewers a source serves itself before it
+// sends further ones to relays (default 4); -watchRoomObserver: a -watchReplay viewer says it is a room observer (served
+// up to the source's maximum, never sent on).
+Int parseServeReplayOutsideMax(char *args[], int num)
+{
+	if (num > 1)
+	{
+		ReplayStream::configureServeOutsideMax(atoi(args[1]));
+		return 2;
+	}
+	return 1;
+}
+Int parseWatchRoomObserver(char *args[], int num)
+{
+	ReplayStream::configureWatchRoomObserver();
+	return 1;
+}
+
+// TheSuperHackers @feature O33 (test switches) -serveReplayDelay <seconds>: a -serveReplay source gives every viewer not
+// named by -serveReplayLiveFor nothing newer than that (0..180); -serveReplayLiveFor <ip[,ip...]>: the addresses it serves
+// live; -watchBind <ip>: a -watchReplay viewer connects from that local address (NetLab: 127.0.0.x).
+Int parseServeReplayDelay(char *args[], int num)
+{
+	if (num > 1)
+	{
+		ReplayStream::configureServeDelay(atoi(args[1]));
+		return 2;
+	}
+	return 1;
+}
+Int parseServeReplayLiveFor(char *args[], int num)
+{
+	if (num > 1)
+	{
+		ReplayStream::configureServeLiveFor(args[1]);
+		return 2;
+	}
+	return 1;
+}
+Int parseWatchBind(char *args[], int num)
+{
+	if (num > 1)
+	{
+		ReplayStream::configureWatchBind(args[1]);
+		return 2;
+	}
+	return 1;
+}
+
 // -watchReplay <host:port>[,<host:port>...]: follow a live replay from these sources, hopping to the next one when a
 // source is lost. Like -followReplay it may run next to the source on the same PC (another instance).
 Int parseWatchReplay(char *args[], int num)
@@ -1010,6 +1060,20 @@ Int parseLanLoopback(char *args[], int num)
 Int parseLanSample(char *args[], int num)
 {
 	LanTest::setSampleData(TRUE);
+	return 1;
+}
+
+// TheSuperHackers @feature O30 (row 15) Anti-cheat test switches (GuardLink.h): -lanNoGuard starts no anti-cheat and lets
+// this game into LAN without one (it shows no shield to others); -guardTest starts the anti-cheat in its test mode (an
+// exe named *uitest*.exe passes as a test build, which only other test-mode guards accept).
+Int parseLanNoGuard(char *args[], int num)
+{
+	GuardLink::setNoGuard(TRUE);
+	return 1;
+}
+Int parseGuardTest(char *args[], int num)
+{
+	GuardLink::setTestMode(TRUE);
 	return 1;
 }
 
@@ -1961,6 +2025,11 @@ static CommandLineParam paramsForStartup[] =
 	{ "-serveReplayRate", parseServeReplayRate },
 	{ "-serveReplayStopAfter", parseServeReplayStopAfter },
 	{ "-watchReplay", parseWatchReplay },
+	{ "-serveReplayOutsideMax", parseServeReplayOutsideMax },
+	{ "-watchRoomObserver", parseWatchRoomObserver },
+	{ "-serveReplayDelay", parseServeReplayDelay },
+	{ "-serveReplayLiveFor", parseServeReplayLiveFor },
+	{ "-watchBind", parseWatchBind },
 	{ "-voiceTest", parseVoiceTest },
 	{ "-netLab", parseNetLab },
 	{ "-netLabPlayers", parseNetLabPlayers },
@@ -1970,6 +2039,8 @@ static CommandLineParam paramsForStartup[] =
 	{ "-netLabQuitAfter", parseNetLabQuitAfter },
 	{ "-lanLoopback", parseLanLoopback },
 	{ "-lanSample", parseLanSample },
+	{ "-lanNoGuard", parseLanNoGuard },
+	{ "-guardTest", parseGuardTest },
 	{ "-voiceTestRoster", parseVoiceTestRoster },
 	{ "-voiceTestTone", parseVoiceTestTone },
 	{ "-voiceTestWav", parseVoiceTestWav },

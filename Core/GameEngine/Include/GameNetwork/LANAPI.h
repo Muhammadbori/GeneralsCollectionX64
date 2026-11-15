@@ -103,6 +103,8 @@ public:
 		RET_GAME_GONE,			// OnGameJoin
 		RET_BUSY,						// OnGameCreate/Join/etc if another action is in progress
 		RET_UNKNOWN,				// Default message for oddity
+		RET_GUARD_REQUIRED,	// OnGameJoin: O30, the host accepts only players with a verified anti-cheat (appended: an older
+							// build shows its "unknown" text)
 	};
 	UnicodeString getErrorStringFromReturnType( ReturnType ret );
 
@@ -137,6 +139,9 @@ public:
 	virtual void checkMOTD() = 0;
 };
 
+
+/// TheSuperHackers @feature O30 (row 15) The largest opaque anti-cheat payload one MSG_GUARD_DATA carries (GuardLink.h).
+enum { LANGuardDataMax = 200 };
 
 /**
  * LAN message class
@@ -175,6 +180,14 @@ struct LANMessage
 		// (Fingerprint.h), for the "files match" mark of the LAN screen. Appended, so the values above are unchanged; a
 		// build without it ignores it (an unknown type).
 		MSG_FILES_INFO,
+
+		// TheSuperHackers @feature O30 (row 15) Opaque bytes from the sender's anti-cheat to this player's anti-cheat
+		// (GuardLink.h). Appended; a build without it ignores it.
+		MSG_GUARD_DATA,
+
+		// TheSuperHackers @feature O31 (row 21, step 3) The room's observers (LanRoom.h). Appended; a build without it
+		// ignores it.
+		MSG_ROOM,
 	} messageType;
 
 	WideChar name[g_lanPlayerNameLength+1]; ///< My name, for convenience
@@ -277,6 +290,34 @@ struct LANMessage
 			UnsignedInt exeCRC;
 			UnsignedInt iniCRC;
 		} FilesInfo;
+
+		// GuardData is sent with GUARD_DATA (O30)
+		struct
+		{
+			UnsignedInt magic;        ///< LANGuardDataMagic
+			UnsignedShort length;     ///< bytes used in 'data'
+			UnsignedByte data[LANGuardDataMax];
+		} GuardData;
+
+		// Room is sent with ROOM (O31; LanRoom.h)
+		struct
+		{
+			UnsignedInt magic;        ///< LANRoomMagic
+			UnsignedByte kind;        ///< LanRoom's message kind
+			UnsignedByte count;       ///< list: observers; start: players; removed: the reason
+			UnsignedShort port;       ///< start: the stream port
+			UnsignedInt gameIP;       ///< the room (its host's address)
+			UnsignedInt ips[12];      ///< list: the observers; start: the players
+			union
+			{
+				WideChar names[12][g_lanPlayerNameLength+1];   ///< list
+				WideChar text[g_lanMaxChatLength+1];           ///< chat: one ready line
+			} u;
+			UnsignedShort delaySeconds; ///< O33: list, start: the host's delay for outside viewers (10..180 s)
+			UnsignedShort flags;        ///< O33: list, start: bit 0 outside viewers allowed; start: bit 1 sent to a player
+		} Room;
+		static_assert(sizeof(Room) <= sizeof(GameInfo), "MSG_ROOM must not make LANMessage larger");
+		static_assert(sizeof(GuardData) <= sizeof(GameInfo), "MSG_GUARD_DATA must not make LANMessage larger");
 		static_assert(ARRAY_SIZE(GameOptions.options) > m_lanMaxOptionsLength, "GameOptions.options buffer must be larger than m_lanMaxOptionsLength");
 
 	};
@@ -287,6 +328,8 @@ static_assert(sizeof(LANMessage) <= MAX_LANAPI_PACKET_SIZE, "LANMessage struct c
 
 // TheSuperHackers @feature O26 (row 26) What the LAN screen needs beyond the original messages.
 static const UnsignedInt LANFilesInfoMagic = 0x46494C31;   ///< "FIL1"
+static const UnsignedInt LANGuardDataMagic = 0x31445247;   ///< "GRD1" (O30)
+static const UnsignedInt LANRoomMagic = 0x314D4F52;        ///< "ROM1" (O31)
 namespace LanFiles
 {
 	/// The files fingerprint a lobby player or a game host sent (MSG_FILES_INFO); FALSE when none came yet.
@@ -321,6 +364,16 @@ public:
 	virtual void init() override;															///< Initialize or re-initialize the instance
 	virtual void reset() override;															///< reset the logic system
 	virtual void update() override;														///< update the world
+	/// TheSuperHackers @feature O30 (row 15) During a LAN match (the lobby's update does not run then): only the anti-cheat
+	/// messages are read and passed on, everything else that arrives is dropped; the match's players are noted for
+	/// rechecks and a failed one is named in a message line.
+	void pumpGuard();
+	/// O30: opaque anti-cheat bytes to one player (GuardLink's sender).
+	void sendGuardData(UnsignedInt ip, const UnsignedByte *data, Int length);
+	/// O33: a received message's text fields end inside the message (review 7).
+	static void terminateStrings(LANMessage *msg);
+	/// O31: a MSG_ROOM message (its Room part filled) to one address, or to everybody with 0 (LanRoom.h).
+	void sendRoomMessage(LANMessage *msg, UnsignedInt ip);
 
 	virtual void setIsActive(Bool isActive) override;								///< tell TheLAN whether or not
 

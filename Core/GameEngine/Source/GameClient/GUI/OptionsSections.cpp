@@ -25,6 +25,7 @@
 
 #include "Common/AudioOutputDevices.h"
 #include "Common/FramePacer.h"
+#include "Common/FrameShots.h"
 #include "Common/FrameRateLimit.h"
 #include "Common/GameLOD.h"
 #include "Common/GlobalData.h"
@@ -207,6 +208,7 @@ namespace
 	};
 
 	#define STEPS(list) list, (Int)ARRAY_SIZE(list)
+	const Choice kWatchDelay[] = { PLAIN("10"), PLAIN("20"), PLAIN("30"), PLAIN("45"), PLAIN("60"), PLAIN("90"), PLAIN("120"), PLAIN("180") };
 
 	AsciiString yesNo(Bool b) { return b ? AsciiString("yes") : AsciiString("no"); }
 	AsciiString number(Int v) { AsciiString s; s.format("%d", v); return s; }
@@ -257,6 +259,10 @@ namespace
 	AsciiString curLatencySize(OptionPreferences &p) { return number(p.getNetworkLatencyFontSize()); }
 	AsciiString curPlayerListSize(OptionPreferences &p) { return number(p.getPlayerInfoListFontSize()); }
 	AsciiString curMoneyPerMinute(OptionPreferences &p) { return yesNo(p.getShowMoneyPerMinute()); }
+	// O33: the host's rules for outside viewers of its LAN matches (LanRoom.h)
+	AsciiString curAllowViewers(OptionPreferences &p) { return stricmp(keyOr(p, "LanAllowViewers", "yes").str(), "no") == 0 ? AsciiString("no") : AsciiString("yes"); }
+	AsciiString curWatchDelay(OptionPreferences &p) { return keyOr(p, "LanWatchDelay", "60"); }
+	AsciiString curRequireGuard(OptionPreferences &p) { return stricmp(keyOr(p, "LanRequireGuard", "yes").str(), "no") == 0 ? AsciiString("no") : AsciiString("yes"); }
 	AsciiString curWindowed(OptionPreferences &p) { const Int w = p.getWindowed(); return yesNo(w >= 0 ? w == 1 : TheGlobalData->m_windowed); }
 	AsciiString curWindowPosition(OptionPreferences &p) { return p.getWindowPosition(); }
 	AsciiString curRotateSpeed(OptionPreferences &p) { return number(p.getCameraRotateSpeedPercent()); }
@@ -321,6 +327,10 @@ namespace
 		{ SEC_DISPLAY, KIND_STEPS, "Windowed", { "GUI:DisplayMode", L"Display mode", L"\x0420\x0435\x0436\x0438\x043C \x044D\x043A\x0440\x0430\x043D\x0430" }, STEPS(kWindowed), "", "no", curWindowed },
 		{ SEC_DISPLAY, KIND_STEPS, "WindowPosition", { "GUI:WindowPosition", L"Window position", L"\x041F\x043E\x043B\x043E\x0436\x0435\x043D\x0438\x0435 \x043E\x043A\x043D\x0430" }, STEPS(kWindowPosition), "", "Center", curWindowPosition },
 		{ SEC_CONTROLS, KIND_STEPS, "CameraRotateSpeed", { "GUI:CameraRotateSpeed", L"Camera rotation speed", L"\x0421\x043A\x043E\x0440\x043E\x0441\x0442\x044C \x043F\x043E\x0432\x043E\x0440\x043E\x0442\x0430 \x043A\x0430\x043C\x0435\x0440\x044B" }, STEPS(kRotateSpeed), "%", "100", curRotateSpeed },
+		// TheSuperHackers @feature O30 (row 15) The host's anti-cheat rule (GuardLink::hostRequiresGuard), on by default
+		{ SEC_NETWORK, KIND_CHECK, "LanAllowViewers", { "GUI:LanAllowViewers", L"LAN host: outside viewers may watch the match (delayed)", L"\x0425\x043E\x0441\x0442 LAN: \x043F\x043E\x0441\x0442\x043E\x0440\x043E\x043D\x043D\x0438\x0435 \x0437\x0440\x0438\x0442\x0435\x043B\x0438 \x043C\x043E\x0433\x0443\x0442 \x0441\x043C\x043E\x0442\x0440\x0435\x0442\x044C \x043C\x0430\x0442\x0447 (\x0441 \x0437\x0430\x0434\x0435\x0440\x0436\x043A\x043E\x0439)" }, nullptr, 0, "", "yes", curAllowViewers },
+		{ SEC_NETWORK, KIND_STEPS, "LanWatchDelay", { "GUI:LanWatchDelay", L"LAN host: delay for outside viewers", L"\x0425\x043E\x0441\x0442 LAN: \x0437\x0430\x0434\x0435\x0440\x0436\x043A\x0430 \x0434\x043B\x044F \x043F\x043E\x0441\x0442\x043E\x0440\x043E\x043D\x043D\x0438\x0445 \x0437\x0440\x0438\x0442\x0435\x043B\x0435\x0439" }, STEPS(kWatchDelay), " s", "60", curWatchDelay },
+		{ SEC_NETWORK, KIND_CHECK, "LanRequireGuard", { "GUI:LanRequireGuard", L"LAN host: only players with a verified anti-cheat", L"\x0425\x043E\x0441\x0442 LAN: \x0442\x043E\x043B\x044C\x043A\x043E \x0438\x0433\x0440\x043E\x043A\x0438 \x0441 \x043F\x0440\x043E\x0432\x0435\x0440\x0435\x043D\x043D\x044B\x043C \x0430\x043D\x0442\x0438\x0447\x0438\x0442\x043E\x043C" }, nullptr, 0, "", "yes", curRequireGuard },
 		{ SEC_NETWORK, KIND_CHECK, "HideIPAddresses", { "GUI:HideIPAddresses", L"Hide IP addresses", L"\x0421\x043A\x0440\x044B\x0432\x0430\x0442\x044C IP-\x0430\x0434\x0440\x0435\x0441\x0430" }, nullptr, 0, "", "no", curHideIP },
 		{ SEC_INFO, KIND_CHECK, "ShowMoneyPerMinute", { "GUI:ShowMoneyPerMinute", L"Money per minute", L"\x0414\x0435\x043D\x044C\x0433\x0438 \x0432 \x043C\x0438\x043D\x0443\x0442\x0443" }, nullptr, 0, "", "no", curMoneyPerMinute },
 	};
@@ -361,7 +371,7 @@ namespace
 		{ SEC_SOUND, "SliderSFXVolume", "SFXVolumeLabel", nullptr, FALSE, FALSE },
 		{ SEC_SOUND, "SliderVoiceVolume", "VoiceVolumeLabel", nullptr, FALSE, FALSE },
 		{ SEC_CONTROLS, "CheckAlternateMouse", nullptr, nullptr, FALSE, FALSE },
-		{ SEC_CONTROLS, "SliderScrollSpeed", "ScrollSpeedLabel", nullptr, FALSE, FALSE },
+		{ SEC_CONTROLS, "SliderScrollSpeed", nullptr, "GUI:ScrollSpeed", FALSE, FALSE },   // O28 (item 6): own title
 		{ SEC_CONTROLS, "CheckBoxDrawAnchor", nullptr, nullptr, FALSE, FALSE },
 		{ SEC_CONTROLS, "CheckBoxMoveAnchor", nullptr, nullptr, FALSE, FALSE },
 		{ SEC_GAME, "Retaliation", nullptr, nullptr, FALSE, FALSE },
@@ -376,7 +386,7 @@ namespace
 	};
 	enum { EXISTING_COUNT = (Int)ARRAY_SIZE(kExisting) };
 
-	/// TheSuperHackers @bugfix O25 (row 29) The titles of the three old controls without a label window: our own texts in
+	/// TheSuperHackers @bugfix O25 (row 29) The titles of the old controls without a label window: our own texts in
 	/// both languages. The string file's are upper case ("TEXTURE RESOLUTION" wrapped to two lines in English).
 	UnicodeString existingTitle(const char *label)
 	{
@@ -385,8 +395,11 @@ namespace
 			{ "GUI:AntiAliasing", L"Anti-aliasing", L"\x0421\x0433\x043B\x0430\x0436\x0438\x0432\x0430\x043D\x0438\x0435" },
 			{ "GUI:LowResSlider", L"Texture resolution", L"\x0420\x0430\x0437\x0440\x0435\x0448\x0435\x043D\x0438\x0435 \x0442\x0435\x043A\x0441\x0442\x0443\x0440" },
 			{ "GUI:ParticleCap", L"Particle limit", L"\x041B\x0438\x043C\x0438\x0442 \x0447\x0430\x0441\x0442\x0438\x0446" },
+			// O28 (item 6): the Russian string file's is upper case ("SKOROST' PROKRUTKI", two lines in the column)
+			{ "GUI:ScrollSpeed", L"Scroll speed", L"\x0421\x043A\x043E\x0440\x043E\x0441\x0442\x044C \x043F\x0440\x043E\x043A\x0440\x0443\x0442\x043A\x0438" },
 		};
-		static const char *const ownLabels[] = { "GUI:OptionsAntiAliasing", "GUI:OptionsTextureResolution", "GUI:OptionsParticleLimit" };
+		static const char *const ownLabels[] = { "GUI:OptionsAntiAliasing", "GUI:OptionsTextureResolution", "GUI:OptionsParticleLimit",
+			"GUI:OptionsScrollSpeed" };
 		for (Int i = 0; i < (Int)ARRAY_SIZE(titles); ++i)
 		{
 			if (stricmp(label, titles[i].label) == 0)
@@ -784,6 +797,30 @@ namespace
 		return index == STATIC_GAME_LOD_CUSTOM;
 	}
 
+	/// O28 (item 8): a -uiScript step on a window of a hidden section or page shows that page (FrameShots::setRevealHook).
+	Bool revealWindow(GameWindow *window)
+	{
+		if (!s.active) {
+			return FALSE;
+		}
+		for (GameWindow *w = window; w != nullptr; w = w->winGetParent())
+		{
+			for (Int i = 0; i < SEC_COUNT; ++i)
+			{
+				for (Int k = 0; k < s.subPageCount[i]; ++k)
+				{
+					if (s.subPages[i][k] == w)
+					{
+						s.currentSub[i] = k;
+						showSection((Section)i);
+						return TRUE;
+					}
+				}
+			}
+		}
+		return FALSE;
+	}
+
 	/// The custom detail controls follow the detail level: usable only with "Custom", as the old panel was.
 	void updateCustomDetail()
 	{
@@ -1102,11 +1139,40 @@ namespace
 		return index;
 	}
 
+	/// O28 (item 4): the font the list's entries are drawn in (the edit box of the screen's detail list), not the label font.
+	GameFont *comboFont()
+	{
+		if (s.detailCombo != nullptr)
+		{
+			GameWindow *edit = GadgetComboBoxGetEditBox(s.detailCombo);
+			if (edit != nullptr && edit->winGetFont() != nullptr) {
+				return edit->winGetFont();
+			}
+			if (s.detailCombo->winGetFont() != nullptr) {
+				return s.detailCombo->winGetFont();
+			}
+		}
+		return labelFont();
+	}
+
+	Int comboTextWidth(const UnicodeString &text)
+	{
+		return textSize(comboFont(), text, 0).x;
+	}
+
+	/// O28 (item 4): the closed box width that shows 'longestText' whole: the edit box draws its text 5 + 2 pixels in and
+	/// keeps 5 at the right, then the arrow button, an inner margin on both sides, and 2 pixels of frame on each side.
+	Int comboNeed(Int longestText)
+	{
+		const Int margin = max(6, s.gap);
+		return longestText + (5 + 2) + 5 + arrowWidth() + margin * 2 + 4;
+	}
+
 	/// The box as wide as its longest entry needs (between half the column and the column); a longer entry opens a wider
 	/// list (up to the page's right edge, set when the row is placed).
 	Int comboWidthFor(Int longestText, Int colW)
 	{
-		const Int want = longestText + s.gap * 4 + arrowWidth() + 8;
+		const Int want = comboNeed(longestText);
 		return want < colW / 2 ? colW / 2 : (want > colW ? colW : want);
 	}
 
@@ -1126,8 +1192,8 @@ namespace
 		GameWindow *combo = makeCombo(page, 0, titleH, comboWidthFor(longestText, colW), h, id);
 		rowAdd(row, combo, 0, titleH);
 		row.height = titleH + h;
-		if (combo != nullptr && longestText + s.gap * 4 + arrowWidth() + 8 > colW) {
-			GadgetComboBoxSetListMinWidth(combo, longestText + s.gap * 4 + arrowWidth() + 8);
+		if (combo != nullptr && comboNeed(longestText) > colW) {
+			GadgetComboBoxSetListMinWidth(combo, comboNeed(longestText));
 		}
 		return combo;
 	}
@@ -1192,7 +1258,7 @@ namespace
 		for (Int c = 0; c < set.choiceCount; ++c)
 		{
 			texts.push_back(choiceText(set, c));
-			longest = max(longest, textSize(labelFont(), texts.back(), 0).x);
+			longest = max(longest, comboTextWidth(texts.back()));
 		}
 		st.combo = isListSetting(set);
 		if (st.combo)
@@ -1338,9 +1404,9 @@ namespace
 		AsciiString name("OptionsMenu.wnd:Sections.");
 		name.concat(Packs::kindKey(def.kind));
 		// the widest name of any choice of this kind (the hotkey row's list changes with the language)
-		Int longest = textSize(labelFont(), Packs::displayName(def.kind, nullptr), 0).x;
+		Int longest = comboTextWidth(Packs::displayName(def.kind, nullptr));
 		for (Int i = 0; i < Packs::count(def.kind); ++i) {
-			longest = max(longest, textSize(labelFont(), Packs::displayName(def.kind, Packs::get(def.kind, i)), 0).x);
+			longest = max(longest, comboTextWidth(Packs::displayName(def.kind, Packs::get(def.kind, i))));
 		}
 		st.combo = prepareComboRow(row, page, Packs::kindTitle(def.kind), windowId(name.str()), longest, colW, labelH, &st.label);
 		if (def.preview)
@@ -1438,7 +1504,7 @@ namespace
 	{
 		Int longest = 0;
 		for (size_t i = 0; i < names.size(); ++i) {
-			longest = max(longest, textSize(labelFont(), names[i], 0).x);
+			longest = max(longest, comboTextWidth(names[i]));
 		}
 		GameWindow *combo = prepareComboRow(row, page, title, windowId(windowName), longest, colW, labelH, label);
 		if (!names.empty())
@@ -1497,7 +1563,7 @@ namespace
 	//---------------------------------------------------------------------------------------------
 	// The existing controls of OptionsMenu.wnd
 	/// O25: the old sliders in the ticked look: which are continuous (volumes, brightness, scroll speed, particle limit;
-	/// marks at 0, 25, 50, 75 and 100 % of their range) and which have named steps (texture resolution).
+	/// marks at round points of their range, see TickSlider::attach) and which have named steps (texture resolution).
 	void attachExistingSlider(GameWindow *control, const char *name)
 	{
 		const Bool volume = stricmp(name, "SliderMusicVolume") == 0 || stricmp(name, "SliderSFXVolume") == 0 || stricmp(name, "SliderVoiceVolume") == 0;
@@ -1973,10 +2039,12 @@ void OptionsSections::init(OptionPreferences *pref)
 	s.active = TRUE;
 	updateCustomDetail();
 	showSection(SEC_DISPLAY);
+	FrameShots::setRevealHook(&revealWindow);
 }
 
 void OptionsSections::shutdown()
 {
+	FrameShots::setRevealHook(nullptr);
 	memset(&s, 0, sizeof(s));
 	s_devices.clear();
 	s_mics.clear();

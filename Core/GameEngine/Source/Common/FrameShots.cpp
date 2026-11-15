@@ -30,6 +30,7 @@
 
 #include "GameClient/Display.h"
 #include "GameClient/GameWindowManager.h"
+#include "GameClient/TickSlider.h"
 #include "GameClient/Shell.h"
 #include "GameClient/KeyDefs.h"
 #include "GameClient/LookAtXlat.h"
@@ -109,10 +110,21 @@ namespace
 	//                          update, as the real mouse sends them
 	//   dragwin NAME FX FY [MS] (O25) the same to a point of window NAME
 	//   up                     (O25) release the left button where the pointer is
+	//   downslider NAME [POS]  (O28) press on the ticked slider NAME at slider position POS (a decimal, e.g. 2.6: between
+	//                          step 2 and 3, past the middle), on the track's line; no POS: on the handle where it is
+	//   dragslider NAME POS [MS] (O28) drag the pressed pointer to slider position POS of NAME (as drag)
+	//   clickrow NAME ROW      (O29) click row ROW (0 = first) of the drawn list NAME (FrameShots::setRowHook), scrolled
+	//                          into view first; a quick click (150 ms hover, 60 ms held)
+	//   dclickrow NAME ROW     (O29) the same twice, 80 ms apart: a double click
+	//   waitwin NAME [MS]      (O29) wait until window NAME exists and is shown (default at most 20000 ms; then a log
+	//                          line and the next step)
+	// A step on a named window that is hidden (a settings section or page not shown) first asks the screen to show it
+	// (FrameShots::setRevealHook); a window still hidden is skipped with a log line, never clicked blind.
 	struct UiStep
 	{
 		enum Op { OP_SCALE, OP_TIMEOUT, OP_WAIT, OP_WAITFRAMES, OP_WAITSHELL, OP_WAITGAME, OP_MOVE, OP_CLICK, OP_RCLICK, OP_CLICKWIN, OP_KEY,
-			OP_TEXT, OP_SHOT, OP_LOADSHOT, OP_EXIT, OP_DOWN, OP_DOWNWIN, OP_DRAG, OP_DRAGWIN, OP_UP };
+			OP_TEXT, OP_SHOT, OP_LOADSHOT, OP_EXIT, OP_DOWN, OP_DOWNWIN, OP_DRAG, OP_DRAGWIN, OP_UP, OP_DOWNSLIDER, OP_DRAGSLIDER,
+			OP_CLICKROW, OP_WAITWIN };
 		Op op;
 		Int a, b, c, d;
 		AsciiString text;
@@ -173,14 +185,49 @@ namespace
 		return p;
 	}
 
-	ICoord2D s_uiDragFrom = { 0, 0 };   ///< O25: a drag step's start and end (screen pixels)
-	ICoord2D s_uiDragTo = { 0, 0 };
+	FrameShots::RevealFunc s_uiReveal = nullptr;   ///< O28: shows the hidden page of a step's window
+	FrameShots::RowFunc s_uiRow = nullptr;         ///< O29: the screen point of a row of a drawn list
 
-	/// O25: a point of a window, in thousandths of its size (as clickwin), in screen pixels; FALSE when it does not exist.
-	Bool uiWindowPoint(const AsciiString &name, Int fx, Int fy, ICoord2D &p)
+	Bool uiShownOnScreen(GameWindow *win)
+	{
+		for (GameWindow *w = win; w != nullptr; w = w->winGetParent()) {
+			if (w->winIsHidden()) {
+				return FALSE;
+			}
+		}
+		return TRUE;
+	}
+
+	/// O28 (item 8): the window a step names, shown first when it is on a hidden page; nullptr (with a log line) when it
+	/// does not exist or stays hidden.
+	GameWindow *uiFindWindow(const AsciiString &name, const char *what)
 	{
 		GameWindow *win = (TheWindowManager != nullptr && TheNameKeyGenerator != nullptr)
 			? TheWindowManager->winGetWindowFromId(nullptr, TheNameKeyGenerator->nameToKey(name)) : nullptr;
+		if (win == nullptr)
+		{
+			uiLog("%s: no window %s", what, name.str());
+			return nullptr;
+		}
+		if (!uiShownOnScreen(win) && s_uiReveal != nullptr && s_uiReveal(win)) {
+			uiLog("%s: showed the page of %s", what, name.str());
+		}
+		if (!uiShownOnScreen(win))
+		{
+			uiLog("%s: window %s is hidden, step skipped", what, name.str());
+			return nullptr;
+		}
+		return win;
+	}
+
+	ICoord2D s_uiDragFrom = { 0, 0 };   ///< O25: a drag step's start and end (screen pixels)
+	ICoord2D s_uiDragTo = { 0, 0 };
+
+	/// O25: a point of a window, in thousandths of its size (as clickwin), in screen pixels; FALSE when it does not exist
+	/// (O28: or stays hidden).
+	Bool uiWindowPoint(const AsciiString &name, Int fx, Int fy, ICoord2D &p, const char *what)
+	{
+		GameWindow *win = uiFindWindow(name, what);
 		if (win == nullptr) {
 			return FALSE;
 		}
@@ -283,6 +330,16 @@ void FrameShots::updateEnabled()
 	s_enabled = !s_frames.empty() || !s_saveFrames.empty() || !s_uiSteps.empty();
 }
 
+void FrameShots::setRevealHook(RevealFunc func)
+{
+	s_uiReveal = func;
+}
+
+void FrameShots::setRowHook(RowFunc func)
+{
+	s_uiRow = func;
+}
+
 Bool FrameShots::isUiScriptRunning()
 {
 	return !s_uiSteps.empty() && s_uiNext < s_uiSteps.size();
@@ -347,6 +404,39 @@ void FrameShots::setUiScript(const char *path)
 			ok = got >= (isDrag ? 3 : 1);
 			step.text = name;
 			a = fx; b = fy; c = ms; d = 0;
+		}
+		else if (stricmp(word, "downslider") == 0 || stricmp(word, "dragslider") == 0)
+		{
+			// O28: the position is a decimal slider position, kept in thousandths; b = 1 when it was given
+			const Bool isDrag = stricmp(word, "dragslider") == 0;
+			step.op = isDrag ? UiStep::OP_DRAGSLIDER : UiStep::OP_DOWNSLIDER;
+			char name[256] = {};
+			float pos = 0.0f;
+			Int ms = 500;
+			const Int got = sscanf(rest, " %255s %f %d", name, &pos, &ms);
+			ok = got >= (isDrag ? 2 : 1);
+			step.text = name;
+			a = (Int)floorf(pos * 1000.0f + 0.5f); b = got >= 2 ? 1 : 0; c = ms; d = 0;
+		}
+		else if (stricmp(word, "clickrow") == 0 || stricmp(word, "dclickrow") == 0)
+		{
+			step.op = UiStep::OP_CLICKROW;
+			char name[256] = {};
+			Int row = 0;
+			const Int got = sscanf(rest, " %255s %d", name, &row);
+			ok = got >= 2;
+			step.text = name;
+			a = row; b = 0; c = 0; d = stricmp(word, "dclickrow") == 0 ? 2 : 1;
+		}
+		else if (stricmp(word, "waitwin") == 0)
+		{
+			step.op = UiStep::OP_WAITWIN;
+			char name[256] = {};
+			Int ms = 20000;
+			const Int got = sscanf(rest, " %255s %d", name, &ms);
+			ok = got >= 1;
+			step.text = name;
+			a = got >= 2 ? ms : 20000; b = 0; c = 0; d = 0;
 		}
 		else if (stricmp(word, "loadshot") == 0)
 		{
@@ -466,6 +556,65 @@ void FrameShots::runUiScript()
 		case UiStep::OP_WAITGAME:
 			done = TheGameLogic != nullptr && TheGameLogic->isInGame() && !TheGameLogic->isInShellGame();
 			break;
+		case UiStep::OP_WAITWIN:
+		{
+			// O29: the window exists and nothing above it is hidden (no reveal: the script waits for the screen)
+			GameWindow *win = (TheWindowManager != nullptr && TheNameKeyGenerator != nullptr)
+				? TheWindowManager->winGetWindowFromId(nullptr, TheNameKeyGenerator->nameToKey(step.text)) : nullptr;
+			done = win != nullptr && uiShownOnScreen(win);
+			if (done) {
+				uiLog("waitwin: %s shown after %u ms", step.text.str(), elapsed);
+			} else if (elapsed >= (UnsignedInt)step.a) {
+				uiLog("waitwin: %s not shown after %u ms, going on", step.text.str(), elapsed);
+				done = TRUE;
+			}
+			break;
+		}
+		// O29: a click (or two) on a row of a drawn list
+		case UiStep::OP_CLICKROW:
+		{
+			done = FALSE;
+			if (s_uiPhase == 0)
+			{
+				GameWindow *win = uiFindWindow(step.text, "clickrow");
+				Int x = 0, y = 0;
+				if (win == nullptr || s_uiRow == nullptr || !s_uiRow(win, step.a, &x, &y))
+				{
+					if (win != nullptr) {
+						uiLog("clickrow: no row %d in %s", step.a, step.text.str());
+					}
+					done = TRUE;
+					break;
+				}
+				s_uiPointer.x = x;
+				s_uiPointer.y = y;
+				uiMouse(GameMessage::MSG_RAW_MOUSE_POSITION);
+				step.b = 0;
+				s_uiPhase = 1;
+				s_uiStepStartMs = now;
+			}
+			else if ((s_uiPhase == 1 && elapsed >= 150) || (s_uiPhase == 3 && elapsed >= 80))
+			{
+				uiMouse(GameMessage::MSG_RAW_MOUSE_LEFT_BUTTON_DOWN);
+				s_uiPhase = 2;
+				s_uiStepStartMs = now;
+			}
+			else if (s_uiPhase == 2 && elapsed >= 60)
+			{
+				uiMouse(GameMessage::MSG_RAW_MOUSE_LEFT_BUTTON_UP);
+				if (++step.b >= step.d)
+				{
+					uiLog("%s row %d of %s at %d %d", step.d == 2 ? "dclickrow" : "clickrow", step.a, step.text.str(), s_uiPointer.x, s_uiPointer.y);
+					done = TRUE;
+				}
+				else
+				{
+					s_uiPhase = 3;
+					s_uiStepStartMs = now;
+				}
+			}
+			break;
+		}
 		case UiStep::OP_MOVE:
 			s_uiPointer = uiPoint(step.a, step.b);
 			uiMouse(GameMessage::MSG_RAW_MOUSE_POSITION);
@@ -480,12 +629,11 @@ void FrameShots::runUiScript()
 			{
 				if (step.op == UiStep::OP_CLICKWIN)
 				{
-					// the window's own place on the screen, in real client coordinates (no scale)
-					GameWindow *win = (TheWindowManager != nullptr && TheNameKeyGenerator != nullptr)
-						? TheWindowManager->winGetWindowFromId(nullptr, TheNameKeyGenerator->nameToKey(step.text)) : nullptr;
+					// the window's own place on the screen, in real client coordinates (no scale); O28: its hidden page is
+					// shown first
+					GameWindow *win = uiFindWindow(step.text, "clickwin");
 					if (win == nullptr)
 					{
-						uiLog("clickwin: no window %s", step.text.str());
 						done = TRUE;
 						break;
 					}
@@ -522,16 +670,33 @@ void FrameShots::runUiScript()
 		// O25: a held left button and drags (the ticked slider's held state and drag)
 		case UiStep::OP_DOWN:
 		case UiStep::OP_DOWNWIN:
+		case UiStep::OP_DOWNSLIDER:
 		{
 			if (step.op == UiStep::OP_DOWNWIN)
 			{
 				ICoord2D p;
-				if (!uiWindowPoint(step.text, step.a, step.b, p))
-				{
-					uiLog("downwin: no window %s", step.text.str());
+				if (!uiWindowPoint(step.text, step.a, step.b, p, "downwin")) {
 					break;
 				}
 				s_uiPointer = p;
+			}
+			else if (step.op == UiStep::OP_DOWNSLIDER)
+			{
+				// O28: on the track at the slider position (the handle's own place when none was given)
+				GameWindow *win = uiFindWindow(step.text, "downslider");
+				if (win == nullptr) {
+					break;
+				}
+				const Real pos = step.b != 0 ? (Real)step.a / 1000.0f : TickSlider::position(win);
+				Int x = 0, y = 0;
+				if (!TickSlider::screenPoint(win, pos, &x, &y))
+				{
+					uiLog("downslider: %s is not a ticked slider", step.text.str());
+					break;
+				}
+				s_uiPointer.x = x;
+				s_uiPointer.y = y;
+				uiLog("downslider: %s at position %.3f", step.text.str(), pos);
 			}
 			else
 			{
@@ -544,6 +709,7 @@ void FrameShots::runUiScript()
 		}
 		case UiStep::OP_DRAG:
 		case UiStep::OP_DRAGWIN:
+		case UiStep::OP_DRAGSLIDER:
 		{
 			done = FALSE;
 			if (s_uiPhase == 0)
@@ -551,12 +717,28 @@ void FrameShots::runUiScript()
 				ICoord2D target;
 				if (step.op == UiStep::OP_DRAGWIN)
 				{
-					if (!uiWindowPoint(step.text, step.a, step.b, target))
+					if (!uiWindowPoint(step.text, step.a, step.b, target, "dragwin"))
 					{
-						uiLog("dragwin: no window %s", step.text.str());
 						done = TRUE;
 						break;
 					}
+				}
+				else if (step.op == UiStep::OP_DRAGSLIDER)
+				{
+					// O28: to the slider position on the track (the same pixel the slider maps back to that position)
+					GameWindow *win = uiFindWindow(step.text, "dragslider");
+					Int x = 0, y = 0;
+					if (win == nullptr || !TickSlider::screenPoint(win, (Real)step.a / 1000.0f, &x, &y))
+					{
+						if (win != nullptr) {
+							uiLog("dragslider: %s is not a ticked slider", step.text.str());
+						}
+						done = TRUE;
+						break;
+					}
+					target.x = x;
+					target.y = y;
+					uiLog("dragslider: %s to position %.3f", step.text.str(), (Real)step.a / 1000.0f);
 				}
 				else
 				{

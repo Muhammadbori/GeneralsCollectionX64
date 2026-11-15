@@ -182,6 +182,41 @@ const WideChar *GameSpeed::localized(const WideChar *english, const WideChar *ru
 	return localizedFallback(english, russian);
 }
 
+void GameSpeed::placeOnScreen(GameWindow *w, Int x, Int y, Int width, Int height)
+{
+	if (w == nullptr) {
+		return;
+	}
+	Int px = 0, py = 0;
+	if (GameWindow *parent = w->winGetParent()) {
+		parent->winGetScreenPosition(&px, &py);
+	}
+	w->winSetPosition(x - px, y - py);
+	w->winSetSize(width, height);
+}
+
+Int GameSpeed::textWidthOf(GameWindow *staticText)
+{
+	if (staticText == nullptr) {
+		return 0;
+	}
+	return measureText(staticText->winGetFont(), GadgetStaticTextGetText(staticText));
+}
+
+GameWindow *GameSpeed::findStaticText(GameWindow *root, const UnicodeString &text)
+{
+	for (GameWindow *c = root != nullptr ? root->winGetChild() : nullptr; c != nullptr; c = c->winGetNext())
+	{
+		if ((c->winGetStyle() & GWS_STATIC_TEXT) != 0 && GadgetStaticTextGetText(c).compare(text) == 0) {
+			return c;
+		}
+		if (GameWindow *found = findStaticText(c, text)) {
+			return found;
+		}
+	}
+	return nullptr;
+}
+
 Int GameSpeed::stepToLogicFps(Int step)
 {
 	return clampStep(step) * StepLogicFps;

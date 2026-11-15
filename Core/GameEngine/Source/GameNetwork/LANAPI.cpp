@@ -36,6 +36,10 @@
 #include "GameClient/MapUtil.h"
 #include "Common/UserPreferences.h"
 #include "GameLogic/GameLogic.h"
+#include "Common/GuardLink.h"
+#include "GameNetwork/LanRoom.h"
+#include "GameNetwork/LANAPICallbacks.h"
+#include "GameClient/InGameUI.h"
 
 #include <map>
 
@@ -96,8 +100,20 @@ LANAPI::~LANAPI()
 	delete m_transport;
 }
 
+namespace
+{
+	// O30: GuardLink's way out to another player
+	void sendGuardBytes(UnsignedInt ip, const UnsignedByte *data, Int length)
+	{
+		if (TheLAN != nullptr) {
+			TheLAN->sendGuardData(ip, data, length);
+		}
+	}
+}
+
 void LANAPI::init()
 {
+	GuardLink::setSender(&sendGuardBytes);
 	m_gameStartTime = 0;
 	m_gameStartSeconds = 0;
 	// O26 test switch: the lobby socket on a loopback address only (else it would bind every address on the first
@@ -424,6 +440,8 @@ void LANAPI::update()
 			}
 
 			LANMessage *msg = (LANMessage *)(m_transport->m_inBuffer[i].data);
+			terminateStrings(msg);   // O33 (review 7): every text field of the message ends inside the message
+			GuardLink::notePeer(senderIP, m_localIP);   // O30: every player heard from is checked now and then
 			//DEBUG_LOG(("LAN message type %s from %ls (%s@%s)", GetMessageTypeString(msg->messageType).str(),
 			//	msg->name, msg->userName, msg->hostName));
 			switch (msg->messageType)
@@ -499,6 +517,17 @@ void LANAPI::update()
 					s_filesFingerprints[senderIP] = msg->FilesInfo.fingerprint;
 				}
 				break;
+			case LANMessage::MSG_ROOM:	// O31: the room's observers
+				if (m_transport->m_inBuffer[i].length >= (Int)sizeof(LANMessage) && msg->Room.magic == LANRoomMagic) {
+					LanRoom::onMessage(msg, senderIP, m_localIP);
+				}
+				break;
+			case LANMessage::MSG_GUARD_DATA:	// O30: for this player's anti-cheat, passed on unread
+				if (m_transport->m_inBuffer[i].length >= (Int)sizeof(LANMessage) && msg->GuardData.magic == LANGuardDataMagic
+					&& msg->GuardData.length > 0 && msg->GuardData.length <= LANGuardDataMax) {
+					GuardLink::onLanData(senderIP, m_localIP, msg->GuardData.data, msg->GuardData.length);
+				}
+				break;
 
 			default:
 				DEBUG_LOG(("Unknown LAN message type %d", msg->messageType));
@@ -514,6 +543,28 @@ void LANAPI::update()
 	}
 	if(LANbuttonPushed)
 		return;
+	{
+		// O32: in the lobby the red mark, and one chat line with the player's name and the kind of failure (never a path)
+		UnsignedInt failedIP = 0;
+		while (GuardLink::takeNewFailure(&failedIP))
+		{
+			UnicodeString name;
+			if (LANPlayer *player = LookupPlayer(failedIP)) {
+				name = player->getName();
+			}
+			for (Int k = 0; name.isEmpty() && m_currentGame != nullptr && k < MAX_SLOTS; ++k)
+			{
+				const LANGameSlot *slot = m_currentGame->getLANSlot(k);
+				if (slot != nullptr && slot->isHuman() && slot->getIP() == failedIP) {
+					name = slot->getName();
+				}
+			}
+			if (!name.isEmpty()) {
+				OnChat(UnicodeString::TheEmptyString, 0, GuardLink::failedInLobbyText(name, failedIP), LANAPIInterface::LANCHAT_SYSTEM);
+			}
+		}
+	}
+	LanRoom::update(m_localIP);   // O31: observers (heartbeats, the host's list, the stream start)
 	// Send out periodic I'm Here messages
 	if (now > s_resendDelta + m_lastResendTime)
 	{
@@ -879,6 +930,9 @@ void LANAPI::RequestGameStart()
 {
 	if (m_inLobby || !m_currentGame || m_currentGame->getIP(0) != m_localIP)
 		return;
+
+	// O31: the room's observers get the players' addresses and follow the stream; nobody waits for them
+	LanRoom::hostStart(m_currentGame, m_localIP);
 
 	LANMessage msg;
 	msg.messageType = LANMessage::MSG_GAME_START;
@@ -1384,4 +1438,152 @@ void LANAPI::setIsActive(Bool isActive) {
 		}
 	}
 	m_isActive = isActive;
+}
+
+//-------------------------------------------------------------------------------------------------
+// TheSuperHackers @feature O30 (row 15) The anti-cheat's messages (GuardLink.h)
+void LANAPI::sendGuardData(UnsignedInt ip, const UnsignedByte *data, Int length)
+{
+	if (ip == 0 || data == nullptr || length <= 0 || length > LANGuardDataMax) {
+		return;
+	}
+	LANMessage msg;
+	memset(&msg, 0, sizeof(msg));
+	fillInLANMessage(&msg);
+	msg.messageType = LANMessage::MSG_GUARD_DATA;
+	msg.GuardData.magic = LANGuardDataMagic;
+	msg.GuardData.length = (UnsignedShort)length;
+	memcpy(msg.GuardData.data, data, length);
+	sendMessageOnly(&msg, ip);
+}
+
+/// TheSuperHackers @bugfix O33 (review 7) A text field of a received message may lack its terminator; the handlers copy
+/// them with wcslcpy/strlcpy or build strings from them, which read up to the terminator. Each field of the message's
+/// type gets one at its last character (the message buffer holds a whole LANMessage). The Room fields are copied with
+/// bounded copies (LanRoom.cpp) and are left as they are.
+void LANAPI::terminateStrings(LANMessage *msg)
+{
+	msg->name[ARRAY_SIZE(msg->name) - 1] = 0;
+	msg->userName[ARRAY_SIZE(msg->userName) - 1] = 0;
+	msg->hostName[ARRAY_SIZE(msg->hostName) - 1] = 0;
+	switch (msg->messageType)
+	{
+		case LANMessage::MSG_GAME_ANNOUNCE:
+			msg->GameInfo.gameName[ARRAY_SIZE(msg->GameInfo.gameName) - 1] = 0;
+			msg->GameInfo.options[ARRAY_SIZE(msg->GameInfo.options) - 1] = 0;
+			break;
+		case LANMessage::MSG_REQUEST_GAME_LEAVE:
+			msg->GameToLeave.gameName[ARRAY_SIZE(msg->GameToLeave.gameName) - 1] = 0;
+			break;
+		case LANMessage::MSG_REQUEST_GAME_INFO:
+			msg->PlayerInfo.playerName[ARRAY_SIZE(msg->PlayerInfo.playerName) - 1] = 0;
+			break;
+		case LANMessage::MSG_REQUEST_JOIN:
+			msg->GameToJoin.serial[ARRAY_SIZE(msg->GameToJoin.serial) - 1] = 0;
+			break;
+		case LANMessage::MSG_JOIN_ACCEPT:
+			msg->GameJoined.gameName[ARRAY_SIZE(msg->GameJoined.gameName) - 1] = 0;
+			break;
+		case LANMessage::MSG_JOIN_DENY:
+			msg->GameNotJoined.gameName[ARRAY_SIZE(msg->GameNotJoined.gameName) - 1] = 0;
+			break;
+		case LANMessage::MSG_SET_ACCEPT:
+			msg->Accept.gameName[ARRAY_SIZE(msg->Accept.gameName) - 1] = 0;
+			break;
+		case LANMessage::MSG_MAP_AVAILABILITY:
+			msg->MapStatus.gameName[ARRAY_SIZE(msg->MapStatus.gameName) - 1] = 0;
+			break;
+		case LANMessage::MSG_CHAT:
+			msg->Chat.gameName[ARRAY_SIZE(msg->Chat.gameName) - 1] = 0;
+			msg->Chat.message[ARRAY_SIZE(msg->Chat.message) - 1] = 0;
+			break;
+		case LANMessage::MSG_GAME_OPTIONS:
+			msg->GameOptions.options[ARRAY_SIZE(msg->GameOptions.options) - 1] = 0;
+			break;
+		default:
+			break;
+	}
+}
+
+void LANAPI::pumpGuard()
+{
+	static UnsignedInt s_lastPump = 0;
+	const UnsignedInt now = timeGetTime();
+	if (now - s_lastPump < 200) {
+		return;
+	}
+	s_lastPump = now;
+	m_transport->update();   // sends what is queued, reads what came
+	for (size_t i = 0; i < ARRAY_SIZE(m_transport->m_inBuffer); ++i)
+	{
+		if (m_transport->m_inBuffer[i].length <= 0) {
+			continue;
+		}
+		const UnsignedInt senderIP = m_transport->m_inBuffer[i].addr;
+		const LANMessage *msg = (const LANMessage *)(m_transport->m_inBuffer[i].data);
+		// O33 (review 5): during the match only the match's players are heard here (an observer or anybody else is not)
+		Bool fromPlayer = FALSE;
+		for (Int k = 0; m_currentGame != nullptr && k < MAX_SLOTS && !fromPlayer; ++k)
+		{
+			const LANGameSlot *slot = m_currentGame->getLANSlot(k);
+			fromPlayer = slot != nullptr && slot->isHuman() && slot->getIP() == senderIP;
+		}
+		if (fromPlayer && senderIP != m_localIP && m_transport->m_inBuffer[i].length >= (Int)sizeof(LANMessage)
+			&& msg->messageType == LANMessage::MSG_GUARD_DATA && msg->GuardData.magic == LANGuardDataMagic
+			&& msg->GuardData.length > 0 && msg->GuardData.length <= LANGuardDataMax)
+		{
+			GuardLink::onLanData(senderIP, m_localIP, msg->GuardData.data, msg->GuardData.length);
+		}
+		if (fromPlayer && senderIP != m_localIP && m_transport->m_inBuffer[i].length >= (Int)sizeof(LANMessage)
+			&& msg->messageType == LANMessage::MSG_ROOM && msg->Room.magic == LANRoomMagic)
+		{
+			LanRoom::onMatchMessage(msg, senderIP);   // O33: the other players' viewer counts (for the HUD)
+		}
+		m_transport->m_inBuffer[i].length = 0;   // lobby traffic during a match is stale: the lobby asks again later
+	}
+	// the match's players stay checked; one that fails is named for everyone who checks it
+	if (m_currentGame != nullptr)
+	{
+		for (Int k = 0; k < MAX_SLOTS; ++k)
+		{
+			const LANGameSlot *slot = m_currentGame->getLANSlot(k);
+			if (slot != nullptr && slot->isHuman() && slot->getIP() != m_localIP) {
+				GuardLink::notePeer(slot->getIP(), m_localIP);
+			}
+		}
+	}
+	LanRoom::matchUpdate(m_localIP);   // O33: this player's viewer count to the other players
+	// O32: this player's own new finding, named, during the match too
+	{
+		UnicodeString own;
+		if (GuardLink::takeOwnFailureNotice(&own) && TheInGameUI != nullptr) {
+			TheInGameUI->messageNoFormat(own);
+		}
+	}
+	UnsignedInt failedIP = 0;
+	while (GuardLink::takeNewFailure(&failedIP))
+	{
+		UnicodeString name;
+		for (Int k = 0; m_currentGame != nullptr && k < MAX_SLOTS; ++k)
+		{
+			const LANGameSlot *slot = m_currentGame->getLANSlot(k);
+			if (slot != nullptr && slot->isHuman() && slot->getIP() == failedIP) {
+				name = slot->getName();
+			}
+		}
+		if (!name.isEmpty() && TheInGameUI != nullptr) {
+			TheInGameUI->messageNoFormat(GuardLink::failedInMatchText(name, failedIP));
+		}
+	}
+}
+
+// TheSuperHackers @feature O31 (row 21, step 3) LanRoom's messages
+void LANAPI::sendRoomMessage(LANMessage *msg, UnsignedInt ip)
+{
+	if (msg == nullptr) {
+		return;
+	}
+	fillInLANMessage(msg);
+	msg->messageType = LANMessage::MSG_ROOM;
+	sendMessageOnly(msg, ip);
 }

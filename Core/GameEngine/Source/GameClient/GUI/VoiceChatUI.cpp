@@ -37,6 +37,7 @@
 #include "GameClient/GameWindowManager.h"
 #include "GameClient/GlobalLanguage.h"
 #include "GameClient/LocalizedFallback.h"
+#include "GameNetwork/LanRoom.h"
 
 namespace
 {
@@ -143,6 +144,21 @@ namespace
 				line.concat(names);
 			}
 		}
+		// O33 (review 2d): a LAN match's players see who watches: the room's observers admitted at Start (live) and the
+		// outside viewers the players serve now (delayed by the host's delay)
+		Int lines = line.isEmpty() ? 0 : 1;
+		for (const WideChar *c = line.str(); *c != 0; ++c) lines += *c == L'\n' ? 1 : 0;
+		{
+			Int room = 0, outside = 0;
+			if (LanRoom::matchWatchers(&room, &outside) && (room > 0 || outside > 0))
+			{
+				UnicodeString w;
+				w.format(text("GUI:LanWatchersHud", L"Watching: %d room observer(s), %d outside viewer(s) (delayed)", L"\x0421\x043C\x043E\x0442\x0440\x044F\x0442: \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x0435\x0439 \x043A\x043E\x043C\x043D\x0430\x0442\x044B %d, \x043F\x043E\x0441\x0442\x043E\x0440\x043E\x043D\x043D\x0438\x0445 \x0437\x0440\x0438\x0442\x0435\x043B\x0435\x0439 %d (\x0441 \x0437\x0430\x0434\x0435\x0440\x0436\x043A\x043E\x0439)").str(), room, outside);
+				if (!line.isEmpty()) line.concat(L"\n");
+				line.concat(w);
+				++lines;
+			}
+		}
 		if (line.isEmpty())
 		{
 			if (hud != nullptr) hud->winHide(TRUE);
@@ -166,6 +182,15 @@ namespace
 		}
 		if (hud == nullptr) return;
 		hud->winHide(FALSE);
+		if (TheDisplay != nullptr)
+		{
+			// two lines fit the first size; a third (the watchers) makes it taller
+			const Real scale = min((Real)TheDisplay->getWidth() / 800.0f, (Real)TheDisplay->getHeight() / 600.0f);
+			const Int want = REAL_TO_INT((lines > 2 ? 50 : 34) * scale);
+			Int curW = 0, curH = 0;
+			hud->winGetSize(&curW, &curH);
+			if (curH != want) hud->winSetSize(curW, want);
+		}
 		const UnsignedInt h = hashOf(line);
 		if (h != s_hudShown)
 		{

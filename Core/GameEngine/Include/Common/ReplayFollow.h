@@ -48,6 +48,7 @@ namespace ReplayFollow
 
 	//--- follower -----------------------------------------------------------------------------------
 	void configure(Int delaySeconds, Real catchUpFactor);   ///< from the command line; turns following on
+	void turnOff();                                          ///< O31: a LAN viewer's replay is over: later replays play normally
 	Bool isOn();
 	void readerStarted(const AsciiString &replayPath, Int normalLogicFps);
 	void readerEnded();

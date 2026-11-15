@@ -38,6 +38,8 @@
 #include "Common/UserPreferences.h"
 #include "GameNetwork/LANAPI.h"
 #include "GameNetwork/LANAPICallbacks.h"
+#include "Common/GuardLink.h"
+#include "GameNetwork/LanRoom.h"
 #include "GameClient/MapUtil.h"
 
 void LANAPI::handleRequestLocations( LANMessage *msg, UnsignedInt senderIP )
@@ -305,6 +307,18 @@ void LANAPI::handleRequestJoin( LANMessage *msg, UnsignedInt senderIP )
 			}
 #endif
 
+			// TheSuperHackers @feature O30 (row 15) The host's anti-cheat rule (on by default): only a player whose
+			// anti-cheat this host's anti-cheat has verified gets in; the player is checked at once for the next try.
+			if (canJoin && GuardLink::hostRequiresGuard() && GuardLink::verdictOf(senderIP) != GuardLink::VERDICT_VERIFIED)
+			{
+				DEBUG_LOG(("LANAPI::handleRequestJoin - join denied: no verified anti-cheat"));
+				reply.messageType = LANMessage::MSG_JOIN_DENY;
+				reply.GameNotJoined.reason = LANAPIInterface::RET_GUARD_REQUIRED;
+				reply.GameNotJoined.gameIP = m_localIP;
+				reply.GameNotJoined.playerIP = senderIP;
+				canJoin = false;
+			}
+
 // TheSuperHackers @tweak Disables the duplicate serial check
 #if 0
 			// check for a duplicate serial
@@ -402,6 +416,7 @@ void LANAPI::handleRequestJoin( LANMessage *msg, UnsignedInt senderIP )
 					DEBUG_LOG(("LANAPI::handleRequestJoin - added player %ls at ip 0x%08x to the game", msg->name, senderIP));
 
 					OnPlayerJoin(player, UnicodeString(msg->name));
+					LanRoom::hostDropJoined(senderIP);   // O31: an observer who took a slot leaves the list
 					responseIP = 0;
 
 					break;

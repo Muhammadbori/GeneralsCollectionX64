@@ -525,70 +525,63 @@ void ChallengeExtras::init(GameWindow *parentMenu, GameWindow *buttonPlay, GameW
 		}
 	}
 
-	// difficulty: the buttons as wide as their texts; one row with the title when they fit, else the title on a row of
-	// its own above them
+	// TheSuperHackers @tweak O28 (row 28, Challenge) The difficulty is a column of its own at the bottom left: the title
+	// over the three buttons (x 46..196 of the frame, left of the general's bio box, which starts at x 199; only the
+	// backdrop's art lies there). So the speed gets the whole bottom strip inside the frame (y 499..559): its title over
+	// the Normal box on the left, the slider in the full look (value above the handle, tick labels under it) from after
+	// them up to x 376, before the Continue / Play / Back row, which stays where it is.
 	const char *const labels[DIFFICULTY_BUTTONS] = { "GUI:EasyCaps", "GUI:MediumDifficultyCaps", "GUI:HardCaps" };
 	const WideChar *const english[DIFFICULTY_BUTTONS] = { L"EASY", L"NORMAL", L"HARD" };
 	const WideChar *const russian[DIFFICULTY_BUTTONS] = {
 		L"\x041B\x0415\x0413\x041A\x041E", L"\x041D\x041E\x0420\x041C\x0410\x041B\x042C\x041D\x041E", L"\x0421\x041B\x041E\x0416\x041D\x041E" };
-	UnicodeString names[DIFFICULTY_BUTTONS];
-	Int widths[DIFFICULTY_BUTTONS];
-	const Int buttonGap = sx(4);
-	Int buttonsTotal = 0;
-	for (Int i = 0; i < DIFFICULTY_BUTTONS; ++i)
-	{
-		names[i] = text(labels[i], english[i], russian[i]);
-		widths[i] = textWidth(smallFont, names[i]) + sx(14);
-		buttonsTotal += widths[i] + (i > 0 ? buttonGap : 0);
-	}
-	const Int room = sx(right) - sx(left);
-	const Bool oneRow = diffTitleW + buttonsTotal <= room;
-	Int y = oneRow ? 499 : 497;
-	const Int rowH = oneRow ? 20 : 18;
-	s.difficultyLabel = makeLabel(smallFont, sx(left), sy(y), diffTitleW, sy(rowH), diffTitle);
-	Int buttonsX = oneRow ? sx(left) + diffTitleW : sx(left);
-	if (!oneRow) {
-		y += rowH;
-	}
-	if (buttonsTotal > room)
-	{
-		// even a row of its own is short: the buttons share it equally
-		const Int w = (room - buttonGap * (DIFFICULTY_BUTTONS - 1)) / DIFFICULTY_BUTTONS;
-		for (Int i = 0; i < DIFFICULTY_BUTTONS; ++i) {
-			widths[i] = w;
-		}
-	}
+	const Int colX = sx(left);
+	const Int colW = sx(150);
+	s.difficultyLabel = makeLabel(smallFont, colX, sy(405), max(colW, diffTitleW), sy(20), diffTitle);   // one line
 	for (Int i = 0; i < DIFFICULTY_BUTTONS; ++i)
 	{
 		AsciiString name;
 		name.format("ChallengeMenu.wnd:ButtonDifficulty%d", i);
-		s.difficulty[i] = makeButton(buttonBack, smallFont, buttonsX, sy(y), widths[i], sy(rowH), names[i], name.str());
-		buttonsX += widths[i] + buttonGap;
+		s.difficulty[i] = makeButton(buttonBack, smallFont, colX, sy(427 + 22 * i), colW, sy(20),
+			text(labels[i], english[i], russian[i]), name.str());
 	}
-	y += rowH + (oneRow ? 4 : 2);
 
-	// speed row: the skirmish control (slider, "1x" text, Normal box)
-	s.speedLabel = makeLabel(smallFont, sx(left), sy(y), speedTitleW, sy(rowH), speedTitle);
-	const Int sliderX = sx(left) + speedTitleW;
-	s.speedSlider = makeSpeedSlider(sliderX, sy(y), sx(84), sy(rowH));
-	s.speedText = makeLabel(smallFont, sliderX + sx(88), sy(y), sx(32), sy(rowH), UnicodeString::TheEmptyString);
+	// the speed strip
+	const UnicodeString normalText = text("GUI:GameSpeedNormal", L"Normal", L"\x041E\x0431\x044B\x0447\x043D\x0430\x044F");
+	const Int leftW = max(speedTitleW, textWidth(smallFont, normalText) + sy(20) + 10);
+	const Int stripTop = sy(499), stripBottom = sy(559);
+	const Int sliderX = colX + leftW + sx(8);
+	const Int sliderH = min(TickSlider::fullHeight(smallFont), stripBottom - stripTop);
+	s.speedLabel = makeLabel(smallFont, colX, stripTop, leftW, sy(20), speedTitle);
+	s.speedSlider = makeSpeedSlider(sliderX, stripTop + (stripBottom - stripTop - sliderH) / 2, sx(right) - sliderX, sliderH);
+	s.speedText = makeLabel(smallFont, colX, stripTop, sx(2), sy(20), UnicodeString::TheEmptyString);   // the Normal box's anchor
 	s.checkTemplate = makeCheckTemplate(smallFont);
 	Int fps = LOGICFRAMES_PER_SECOND;
 	Bool normal = TRUE;
 	ChallengeRun::loadSpeed(fps, normal);
-	const Int boxRight = sx(right);
-	const Int boxLeft = sliderX + sx(88) + sx(32) + sx(10);
 	s_speed.init(s.parent, s.speedSlider, s.speedText, s.checkTemplate, "ChallengeMenu.wnd:CheckBoxGameSpeedNormal", fps, normal,
-		boxRight - boxLeft);
+		leftW);
 
-	// O25: the slider took the free rows round it (TickSlider look): its title goes on the track's line
-	if (s.speedLabel != nullptr && s.speedSlider != nullptr)
+	// the title just above the track's line and the Normal box just under it, in the left column
+	if (s.speedSlider != nullptr)
 	{
-		Int lx = 0, ly = 0, lw = 0, lh = 0, sx0 = 0, sy0 = 0;
-		s.speedLabel->winGetPosition(&lx, &ly);
-		s.speedLabel->winGetSize(&lw, &lh);
+		Int sx0 = 0, sy0 = 0;
 		s.speedSlider->winGetPosition(&sx0, &sy0);
-		s.speedLabel->winSetPosition(lx, sy0 + TickSlider::trackCenter(s.speedSlider) - lh / 2);
+		const Int line = sy0 + TickSlider::trackCenter(s.speedSlider);
+		if (s.speedLabel != nullptr)
+		{
+			Int lw = 0, lh = 0;
+			s.speedLabel->winGetSize(&lw, &lh);
+			s.speedLabel->winSetPosition(colX, line - lh - 1);
+		}
+		if (GameWindow *box = s_speed.getCheckBox())
+		{
+			Int bw = 0, bh = 0;
+			box->winGetSize(&bw, &bh);
+			box->winSetPosition(colX, line + 2);
+		}
+		if (s.speedText != nullptr && !s_speed.isTextHidden()) {
+			s.speedText->winSetPosition(colX + leftW - sx(32), line + 2);   // a low window: the value stays as a text
+		}
 	}
 
 	showDifficulty();

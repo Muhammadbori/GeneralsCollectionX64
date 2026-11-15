@@ -59,6 +59,7 @@
 #include "GameClient/Mouse.h"
 #include "GameClient/GameWindowTransitions.h"
 #include "GameClient/GameSpeedControl.h"
+#include "GameClient/TickSlider.h"
 #include "GameNetwork/GameSpy/LobbyUtils.h"
 
 #include "Common/MultiplayerSettings.h"
@@ -153,6 +154,103 @@ void skirmishUpdateSlotList();
 static void populateSkirmishBattleHonors();
 // TheSuperHackers @feature The game speed slider, its text and the Normal check box (GameSpeedControl.h).
 static GameSpeedControl s_gameSpeed;
+
+// TheSuperHackers @tweak O28 (item 28) The speed row of Zero Hour's skirmish screen in the full slider look: the speed on a
+// line of its own (title, a slider from after the title to x 470 of the 800 x 600 frame, about a third of the screen,
+// with the value above the handle and the tick labels under it, the Normal box right of it), Starting cash and Limit
+// superweapons on the next line, and the statistics and medal panels starting that much lower (their bottom stays,
+// their four rows share the shorter height). Everything is placed from the .wnd frame each time, so a second init after
+// a game gives the same places. The speed text "1x" is only the anchor of the Normal box (hidden: the value is above the
+// handle).
+static void layoutSkirmishSpeedRows(GameWindow *parent, GameWindow *slider, GameWindow *speedText)
+{
+	if (parent == nullptr || slider == nullptr) {
+		return;
+	}
+	Int W = 800, H = 600;
+	parent->winGetSize(&W, &H);
+	#define SX(v) ((v) * W / 800)
+	#define SY(v) ((v) * H / 600)
+	GameFont *font = speedText != nullptr ? speedText->winGetFont() : slider->winGetFont();
+	const Int fullH = TickSlider::fullHeight(font);
+	const Int top = SY(310);
+
+	GameWindow *title = TheWindowManager->winGetWindowFromId(parent, TheNameKeyGenerator->nameToKey("SkirmishGameOptionsMenu.wnd:StaticTextBattleHonors1"));
+	const Int titleW = GameSpeed::textWidthOf(title) + 14;
+	GameSpeed::placeOnScreen(title, SX(42), top, titleW, SY(24));
+	const Int sliderX = SX(42) + titleW + SX(8);
+	GameSpeed::placeOnScreen(slider, sliderX, top, SX(470) - sliderX, fullH);
+	GameSpeed::placeOnScreen(speedText, SX(470) + SX(2), top, SX(4), SY(22));
+
+	// Starting cash and Limit superweapons, one line under the speed
+	const Int y2 = top + fullH + SY(4);
+	const Int rowH = SY(24);
+	GameWindow *moneyLabel = GameSpeed::findStaticText(parent, TheGameText->fetch("GUI:StartingMoney"));
+	const Int moneyW = GameSpeed::textWidthOf(moneyLabel) + 14;   // one line: a static text wraps at its width - 10
+	GameSpeed::placeOnScreen(moneyLabel, SX(42), y2, moneyW, rowH);
+	GameSpeed::placeOnScreen(comboBoxStartingCash, SX(42) + moneyW + SX(6), y2, SX(104), rowH);
+	GameSpeed::placeOnScreen(checkBoxLimitSuperweapons, SX(593), y2, SX(152), rowH);
+
+	// the statistics and medal panels: from under that line to their old bottom
+	const Int pTop = y2 + rowH + SY(6);
+	const Int pBottom = SY(499);
+	const char *const statNames[8] = { "StaticTextBestStreak", "StaticTextBestStreakValue", "StaticTextStreak", "StaticTextStreakValue",
+		"StaticTextWins", "StaticTextWinsValue", "StaticTextLosses", "StaticTextLossesValue" };
+	GameWindow *stat[8];
+	for (Int i = 0; i < 8; ++i)
+	{
+		AsciiString name("SkirmishGameOptionsMenu.wnd:");
+		name.concat(statNames[i]);
+		stat[i] = TheWindowManager->winGetWindowFromId(parent, TheNameKeyGenerator->nameToKey(name));
+	}
+	GameWindow *statsFrame = stat[0] != nullptr ? stat[0]->winGetParent() : nullptr;
+	GameWindow *medals = TheWindowManager->winGetWindowFromId(parent, TheNameKeyGenerator->nameToKey("SkirmishGameOptionsMenu.wnd:ListboxInfo"));
+	if (statsFrame != nullptr && statsFrame != parent)
+	{
+		GameSpeed::placeOnScreen(statsFrame, SX(58), pTop, SX(233), pBottom - pTop);
+		const Int step = (pBottom - pTop - SY(6)) / 4;
+		for (Int i = 0; i < 8; ++i)
+		{
+			if (stat[i] == nullptr || stat[i]->winGetParent() != statsFrame) {
+				continue;
+			}
+			Int x = 0, y = 0, w = 0, h = 0;
+			stat[i]->winGetPosition(&x, &y);
+			stat[i]->winGetSize(&w, &h);
+			stat[i]->winSetPosition(x, SY(3) + (i / 2) * step);
+			stat[i]->winSetSize(w, min(SY(26), step));
+		}
+		// the medal panel: the frame beside the statistics frame (an unnamed window of the same parent) and its list
+		for (GameWindow *c = statsFrame->winGetParent() != nullptr ? statsFrame->winGetParent()->winGetChild() : nullptr; c != nullptr; c = c->winGetNext())
+		{
+			if (c == statsFrame || c == medals || (c->winGetStyle() & GWS_USER_WINDOW) == 0) {
+				continue;
+			}
+			Int cx = 0, cy = 0, cw = 0, ch = 0;
+			c->winGetScreenPosition(&cx, &cy);
+			c->winGetSize(&cw, &ch);
+			if (cx >= SX(290) && cx <= SX(310) && cw >= SX(400) && cw <= SX(460)) {
+				GameSpeed::placeOnScreen(c, SX(300), pTop, SX(446), pBottom - pTop);
+			}
+		}
+	}
+	GameSpeed::placeOnScreen(medals, SX(303), pTop, SX(442), pBottom - pTop);
+	#undef SX
+	#undef SY
+}
+
+/// O28: the speed title on the slider's track line (after the slider took its look).
+static void centerOnTrack(GameWindow *w, GameWindow *slider)
+{
+	if (w == nullptr || slider == nullptr) {
+		return;
+	}
+	Int sx = 0, sy = 0, wx = 0, wy = 0, ww = 0, wh = 0;
+	slider->winGetScreenPosition(&sx, &sy);
+	w->winGetScreenPosition(&wx, &wy);
+	w->winGetSize(&ww, &wh);
+	GameSpeed::placeOnScreen(w, wx, sy + TickSlider::trackCenter(slider) - wh / 2, ww, wh);
+}
 Bool doUpdateSlotList = TRUE;
 
 static Int getNextSelectablePlayer(Int start)
@@ -1419,8 +1517,11 @@ void SkirmishGameOptionsMenuInit( WindowLayout *layout, void *userData )
 	{
 		const Int storedFps = prefs.getInt("FPS", LOGICFRAMES_PER_SECOND);
 		const Bool normal = prefs.getBool("GameSpeedNormal", GameSpeed::logicFpsToStep(storedFps) == GameSpeed::NormalStep);
+		layoutSkirmishSpeedRows(parentSkirmishGameOptions, sliderGameSpeed, staticTextGameSpeed);   // O28
 		s_gameSpeed.init(parentSkirmishGameOptions, sliderGameSpeed, staticTextGameSpeed, checkBoxLimitSuperweapons,
-			"SkirmishGameOptionsMenu.wnd:CheckBoxGameSpeedNormal", storedFps, normal, 160, comboBoxStartingCash);
+			"SkirmishGameOptionsMenu.wnd:CheckBoxGameSpeedNormal", storedFps, normal, 160);
+		centerOnTrack(TheWindowManager->winGetWindowFromId(parentSkirmishGameOptions,
+			TheNameKeyGenerator->nameToKey("SkirmishGameOptionsMenu.wnd:StaticTextBattleHonors1")), sliderGameSpeed);
 	}
 	buttonStart->winSetText(TheGameText->fetch("GUI:Start"));
 	/* hey, for now we're also going to disable the map select button until it doesn't crash */

@@ -175,15 +175,35 @@ namespace
 		return t;
 	}
 
-	/// The marks: every step of a stepped slider, five of a continuous one.
+	/// O28 (item 7): a round step between marks: 1, 2, 2.5 (as 25, 250, ...), 5 times a power of ten.
+	Bool isRoundStep(Int n)
+	{
+		if (n <= 0) {
+			return FALSE;
+		}
+		while (n % 10 == 0 && n > 10) {
+			n /= 10;
+		}
+		return n == 1 || n == 2 || n == 5 || n == 10 || n == 25;
+	}
+
+	/// The marks: every step of a stepped slider; of a continuous one (or a long range) the 0, 25, 50, 75 and 100 % points
+	/// when the quarter is a round number, else the 0, 50 and 100 % points when the half is, else only the two ends
+	/// (O28, item 7: never a mark at an odd value).
 	void buildMarks(Info *in, const SliderData *sd)
 	{
 		freeStrings(in);
 		const Int range = sd->maxVal - sd->minVal;
 		if (in->continuous || range > 40)
 		{
-			for (Int k = 0; k <= 4; ++k) {
-				in->markPositions.push_back(sd->minVal + (range * k + 2) / 4);
+			Int parts = 1;
+			if (range % 4 == 0 && isRoundStep(range / 4)) {
+				parts = 4;
+			} else if (range % 2 == 0 && isRoundStep(range / 2)) {
+				parts = 2;
+			}
+			for (Int k = 0; k <= parts; ++k) {
+				in->markPositions.push_back(sd->minVal + range * k / parts);
 			}
 		}
 		else
@@ -458,6 +478,35 @@ namespace
 		return GadgetHorizontalSliderSystem(window, msg, mData1, mData2);
 	}
 
+	/// O28 (item 7): the step k of the shown labels (see tickDraw): 1 when all fit, count - 1 for the two ends alone.
+	Int labelEvery(const Geo &g, const Info *in, const SliderData *sd)
+	{
+		const Int count = (Int)in->markPositions.size();
+		if (count <= 2) {
+			return 1;
+		}
+		const Int gap = max(4, in->fontH / 2);
+		for (Int k = 1; k < count - 1; ++k)
+		{
+			if ((count - 1) % k != 0) {
+				continue;
+			}
+			Bool fits = TRUE;
+			Int lastRight = -100000;
+			for (Int i = 0; i < count && fits; i += k)
+			{
+				const Int mx = (Int)positionToX(g, sd, (Real)in->markPositions[i]);
+				const Int w = stringWidth(in->markStrings[i]);
+				fits = mx - w / 2 >= lastRight + gap;
+				lastRight = mx + w / 2;
+			}
+			if (fits) {
+				return k;
+			}
+		}
+		return count - 1;
+	}
+
 	void tickDraw(GameWindow *window, WinInstanceData *instData)
 	{
 		Info *in = infoOf(window);
@@ -486,45 +535,19 @@ namespace
 		}
 		fillCircle((Real)g.trackL, (Real)g.trackY + 0.5f, (Real)g.thick / 2.0f, fill);
 
-		// the ticks and their labels (labels that would touch the one before are left out; the last is always shown)
+		// the ticks and their labels. O28 (item 7): when not all labels fit, an even subset: every k-th label from the first,
+		// with the smallest k that divides the gaps evenly (so the last is one of them) and lets no two labels touch; when
+		// no such k fits, only the first and the last.
 		const Int count = (Int)in->markPositions.size();
 		const Int tickTop = g.trackY + g.thick / 2 + 2;
 		std::vector<Bool> shown(count, FALSE);
 		if (g.showLabels && count > 0)
 		{
-			const Int gap = max(4, in->fontH / 2);
-			Int lastRight = -100000;
-			Int lastShown = -1;
-			for (Int i = 0; i < count; ++i)
-			{
-				const Int mx = (Int)positionToX(g, sd, (Real)in->markPositions[i]);
-				const Int w = stringWidth(in->markStrings[i]);
-				if (mx - w / 2 >= lastRight + gap)
-				{
-					shown[i] = TRUE;
-					lastRight = mx + w / 2;
-					lastShown = i;
-				}
+			const Int every = labelEvery(g, in, sd);
+			for (Int i = 0; i < count; i += every) {
+				shown[i] = TRUE;
 			}
-			if (count > 1 && !shown[count - 1])
-			{
-				// the last label replaces the shown ones it would touch
-				const Int mx = (Int)positionToX(g, sd, (Real)in->markPositions[count - 1]);
-				const Int left = mx - stringWidth(in->markStrings[count - 1]) / 2;
-				for (Int i = lastShown; i > 0; --i)
-				{
-					if (!shown[i]) {
-						continue;
-					}
-					const Int ix = (Int)positionToX(g, sd, (Real)in->markPositions[i]);
-					if (ix + stringWidth(in->markStrings[i]) / 2 + gap > left) {
-						shown[i] = FALSE;
-					} else {
-						break;
-					}
-				}
-				shown[count - 1] = TRUE;
-			}
+			shown[count - 1] = TRUE;
 		}
 		for (Int i = 0; i < count; ++i)
 		{
@@ -659,6 +682,26 @@ Int TickSlider::fullHeight(GameFont *font)
 Int TickSlider::handleHeight(GameFont *font)
 {
 	return 2 * bestRadius(fontHeightOf(font)) + 2;
+}
+
+Bool TickSlider::screenPoint(GameWindow *slider, Real pos, Int *x, Int *y)
+{
+	Info *in = infoOf(slider);
+	const SliderData *sd = slider != nullptr ? (const SliderData *)slider->winGetUserData() : nullptr;
+	if (in == nullptr || sd == nullptr) {
+		return FALSE;
+	}
+	ensureBuilt(in, sd);
+	const Geo g = geometry(slider, in, sd);
+	*x = (Int)floorf(positionToX(g, sd, pos) + 0.5f);
+	*y = g.trackY;
+	return TRUE;
+}
+
+Real TickSlider::position(GameWindow *slider)
+{
+	const SliderData *sd = slider != nullptr ? (const SliderData *)slider->winGetUserData() : nullptr;
+	return sd != nullptr ? (Real)sd->position : 0.0f;
 }
 
 Int TickSlider::trackCenter(GameWindow *slider)

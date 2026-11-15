@@ -720,6 +720,9 @@ void RecorderClass::startRecording(GameDifficulty diff, GameMode originalGameMod
 void RecorderClass::stopRecording() {
 	logGameEnd();
 	ReplayFollow::writerEnded();
+	// TheSuperHackers @bugfix O33 (review 4) The match is over: no new viewers; the ones there get the rest, then the
+	// server ends. A later game serves only when it is again a LAN match that allows viewers, or with -serveReplay.
+	ReplayStream::stopServing();
 	if (TheNetwork)
 	{
 		//if (TheLAN)

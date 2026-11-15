@@ -35,6 +35,8 @@
 #include "Common/PerfTimer.h"
 
 #include "GameNetwork/LANAPICallbacks.h"
+#include "Common/GuardLink.h"
+#include "GameNetwork/LanRoom.h"
 
 extern DWORD TheMessageTime;
 
@@ -52,6 +54,8 @@ Win32GameEngine::Win32GameEngine()
 //-------------------------------------------------------------------------------------------------
 Win32GameEngine::~Win32GameEngine()
 {
+	GuardLink::shutdown();   // O30: the anti-cheat ends with the game
+
 	// restore it (this isn't really necessary, but feels good.)
 	SetErrorMode( m_previousErrorMode );
 }
@@ -65,6 +69,9 @@ void Win32GameEngine::init()
 
 	// extending functionality
 	GameEngine::init();
+
+	// TheSuperHackers @feature O30 (row 15) The anti-cheat starts with the game (GuardLink.h)
+	GuardLink::start();
 
 }
 
@@ -89,6 +96,14 @@ void Win32GameEngine::update()
 
 	// call the engine normal update
 	GameEngine::update();
+
+	// O30: the anti-cheat's pipe, and during a LAN match its LAN messages (the lobby's update does not run then)
+	GuardLink::update();
+	if (TheLAN != nullptr && TheGameLogic != nullptr && TheGameLogic->isInLanGame()) {
+		TheLAN->pumpGuard();
+	}
+	// O33 (review 8): an observer's stream replay starts here, outside the LAN screen's update
+	LanRoom::pollStart();
 
 	extern HWND ApplicationHWnd;
 	if (ApplicationHWnd && ::IsIconic(ApplicationHWnd)) {

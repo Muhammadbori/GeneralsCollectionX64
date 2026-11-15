@@ -58,6 +58,7 @@
 #include "GameClient/Mouse.h"
 #include "GameClient/GameWindowTransitions.h"
 #include "GameClient/GameSpeedControl.h"
+#include "GameClient/TickSlider.h"
 
 #include "Common/MultiplayerSettings.h"
 #include "GameClient/GameText.h"
@@ -145,6 +146,80 @@ void skirmishUpdateSlotList();
 static void populateSkirmishBattleHonors();
 // TheSuperHackers @feature The game speed slider, its text and the Normal check box (GameSpeedControl.h).
 static GameSpeedControl s_gameSpeed;
+
+// TheSuperHackers @tweak O28 (item 28) The speed of the base game's skirmish screen in the full slider look, in its
+// left column: the title with the Normal box beside it on one line, the slider under them over the whole column (from
+// x 57 to 291 of the 800 x 600 frame), with the value above the handle and the tick labels under it (the old "Slower" /
+// "Faster" texts go), and the statistics panel starting that much lower (its bottom stays, its four rows share the
+// shorter height). Placed from the .wnd frame each time (a second init after a game gives the same places).
+static void layoutSkirmishSpeedRows(GameWindow *parent, GameWindow *slider, GameWindow *speedText)
+{
+	if (parent == nullptr || slider == nullptr) {
+		return;
+	}
+	Int W = 800, H = 600;
+	parent->winGetSize(&W, &H);
+	#define SX(v) ((v) * W / 800)
+	#define SY(v) ((v) * H / 600)
+	GameFont *font = speedText != nullptr ? speedText->winGetFont() : slider->winGetFont();
+	const Int fullH = TickSlider::fullHeight(font);
+
+	GameWindow *title = TheWindowManager->winGetWindowFromId(parent, TheNameKeyGenerator->nameToKey("SkirmishGameOptionsMenu.wnd:StaticTextBattleHonors1"));
+	const Int titleW = GameSpeed::textWidthOf(title) + 14;
+	GameSpeed::placeOnScreen(title, SX(57), SY(315), titleW, SY(24));
+	GameSpeed::placeOnScreen(speedText, SX(57) + titleW, SY(316), SX(2), SY(22));   // the Normal box's anchor
+	GameSpeed::placeOnScreen(slider, SX(57), SY(341), SX(234), fullH);
+	const UnicodeString words[2] = { TheGameText->fetch("GUI:Slower"), TheGameText->fetch("GUI:Faster") };
+	for (Int i = 0; i < 2; ++i) {
+		if (GameWindow *old = GameSpeed::findStaticText(parent, words[i])) {
+			old->winHide(TRUE);
+		}
+	}
+
+	const Int pTop = SY(341) + fullH + SY(6);
+	const Int pBottom = SY(493);
+	const char *const statNames[8] = { "StaticTextBestStreak", "StaticTextBestStreakValue", "StaticTextStreak", "StaticTextStreakValue",
+		"StaticTextWins", "StaticTextWinsValue", "StaticTextLosses", "StaticTextLossesValue" };
+	GameWindow *stat[8];
+	for (Int i = 0; i < 8; ++i)
+	{
+		AsciiString name("SkirmishGameOptionsMenu.wnd:");
+		name.concat(statNames[i]);
+		stat[i] = TheWindowManager->winGetWindowFromId(parent, TheNameKeyGenerator->nameToKey(name));
+	}
+	GameWindow *statsFrame = stat[0] != nullptr ? stat[0]->winGetParent() : nullptr;
+	if (statsFrame != nullptr && statsFrame != parent)
+	{
+		GameSpeed::placeOnScreen(statsFrame, SX(58), pTop, SX(233), pBottom - pTop);
+		const Int step = (pBottom - pTop - SY(6)) / 4;
+		for (Int i = 0; i < 8; ++i)
+		{
+			if (stat[i] == nullptr || stat[i]->winGetParent() != statsFrame) {
+				continue;
+			}
+			Int x = 0, y = 0, w = 0, h = 0;
+			stat[i]->winGetPosition(&x, &y);
+			stat[i]->winGetSize(&w, &h);
+			stat[i]->winSetPosition(x, SY(3) + (i / 2) * step);
+			stat[i]->winSetSize(w, min(SY(26), step));
+		}
+	}
+	#undef SX
+	#undef SY
+}
+
+/// O28: the Normal box beside the title on the title's line (the speed control put it on the track's line).
+static void placeNormalBoxBesideTitle(GameWindow *box, GameWindow *title)
+{
+	if (box == nullptr || title == nullptr) {
+		return;
+	}
+	Int tx = 0, ty = 0, tw = 0, th = 0, bw = 0, bh = 0;
+	title->winGetScreenPosition(&tx, &ty);
+	title->winGetSize(&tw, &th);
+	box->winGetSize(&bw, &bh);
+	GameSpeed::placeOnScreen(box, tx + tw + 4, ty + (th - bh) / 2, bw, bh);
+}
 Bool doUpdateSlotList = TRUE;
 
 static Int getNextSelectablePlayer(Int start)
@@ -1340,8 +1415,11 @@ void SkirmishGameOptionsMenuInit( WindowLayout *layout, void *userData )
 	{
 		const Int storedFps = prefs.getInt("FPS", LOGICFRAMES_PER_SECOND);
 		const Bool normal = prefs.getBool("GameSpeedNormal", GameSpeed::logicFpsToStep(storedFps) == GameSpeed::NormalStep);
+		layoutSkirmishSpeedRows(parentSkirmishGameOptions, sliderGameSpeed, staticTextGameSpeed);   // O28
 		s_gameSpeed.init(parentSkirmishGameOptions, sliderGameSpeed, staticTextGameSpeed, nullptr,
 			"SkirmishGameOptionsMenu.wnd:CheckBoxGameSpeedNormal", storedFps, normal);
+		placeNormalBoxBesideTitle(s_gameSpeed.getCheckBox(), TheWindowManager->winGetWindowFromId(parentSkirmishGameOptions,
+			TheNameKeyGenerator->nameToKey("SkirmishGameOptionsMenu.wnd:StaticTextBattleHonors1")));
 	}
 	buttonStart->winSetText(TheGameText->fetch("GUI:Start"));
 	/* hey, for now we're also going to disable the map select button until it doesn't crash */

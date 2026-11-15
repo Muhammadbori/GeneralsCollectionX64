@@ -44,12 +44,15 @@ namespace TickSlider
 	typedef UnicodeString (*ValueTextFunc)(Int position, void *context);
 
 	/// Turns a horizontal slider gadget into the ticked slider. 'continuous': a range of many values (a volume) that stays
-	/// where it is dropped, with tick marks at 0, 25, 50, 75 and 100 % of the range; else a mark at every step.
+	/// where it is dropped, with tick marks at 0, 25, 50, 75 and 100 % of the range when a quarter is a round number
+	/// (1, 2, 2.5, 5 times a power of ten), else at 0, 50 and 100 % when a half is, else at the two ends; else a mark at
+	/// every step.
 	void attach(GameWindow *slider, GameFont *font, Bool continuous);
 	Bool isAttached(GameWindow *slider);
 
-	/// The labels of the marks: one per step from the minimum (stepped), or one per mark (continuous, five marks). Labels
-	/// that would touch their neighbours are left out (the first and the last are kept); no labels: numbers.
+	/// The labels of the marks: one per step from the minimum (stepped), or one per mark. When not all fit, every k-th is
+	/// shown from the first (k divides the gaps evenly, so the last is shown too), else the first and the last alone;
+	/// no labels: numbers.
 	void setLabels(GameWindow *slider, const UnicodeString *labels, Int count);
 	/// The text above the handle; nullptr: the label of the step, or the number (with 'suffix', e.g. " %").
 	void setValueText(GameWindow *slider, ValueTextFunc func, void *context);
@@ -61,4 +64,9 @@ namespace TickSlider
 	Int handleHeight(GameFont *font);
 	/// The track's centre line, in pixels below the slider window's top (to line up a title or a check box with it).
 	Int trackCenter(GameWindow *slider);
+	/// O28 (item 8): the screen point on the track at slider 'position' (a fraction between two steps is allowed), as the
+	/// drawn handle and the drag use it; a -uiScript aims there. FALSE when the slider is not a ticked slider.
+	Bool screenPoint(GameWindow *slider, Real position, Int *x, Int *y);
+	/// The slider's current position (its step or value).
+	Real position(GameWindow *slider);
 }

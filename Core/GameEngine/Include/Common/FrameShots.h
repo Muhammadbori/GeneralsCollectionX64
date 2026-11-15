@@ -21,6 +21,8 @@
 // TheSuperHackers @feature Frame shots save the rendered image at given logic frames, so that replay runs
 // can be compared and timed without a person. Command line: -shotFrames <list> -shotDir <path> -shotExit.
 // Client side only: nothing here touches the game logic state, its random generator, the CRC or the recorder.
+class GameWindow;
+
 class FrameShots
 {
 public:
@@ -46,6 +48,14 @@ public:
 	/// FrameShots.cpp (runUiScript) for the step format. Test only.
 	static void setUiScript(const char *path);
 	static Bool isUiScriptRunning(); ///< O27: a -uiScript is playing (its mouse button states are not the real mouse's)
+	/// O28 (item 8): a screen that keeps windows on hidden pages (the settings sections) sets a function that shows the page
+	/// of a given window; a script step whose window is hidden calls it first. nullptr: none.
+	typedef Bool (*RevealFunc)(GameWindow *window);
+	static void setRevealHook(RevealFunc func);
+	/// O29: a screen with drawn lists (the LAN tables) sets a function that gives the screen point of a row of a list
+	/// window (scrolled into view first); "clickrow" / "dclickrow" use it. nullptr: none.
+	typedef Bool (*RowFunc)(GameWindow *window, Int row, Int *x, Int *y);
+	static void setRowHook(RowFunc func);
 
 	static Bool isEnabled() { return s_enabled; }
 
