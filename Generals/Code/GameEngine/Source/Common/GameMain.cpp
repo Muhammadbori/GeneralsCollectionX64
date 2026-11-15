@@ -32,6 +32,8 @@
 #include "Common/FrameShots.h"
 #include "Common/GameEngine.h"
 #include "Common/Packs.h"
+#include "Common/Fingerprint.h"
+#include "Common/MismatchReport.h"
 #include "Common/ReplaySimulation.h"
 
 
@@ -67,6 +69,8 @@ Int GameMain()
 	delete TheGameEngine;
 	TheGameEngine = nullptr;
 	Packs::shutdown();
+	Fingerprint::shutdown();
+	MismatchReport::shutdown();
 
 	return exitcode;
 }

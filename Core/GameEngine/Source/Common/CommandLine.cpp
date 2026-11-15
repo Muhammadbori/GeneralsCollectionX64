@@ -28,6 +28,7 @@
 #include "Common/ArchiveFileSystem.h"
 #include "Common/CommandLine.h"
 #include "Common/ReplayFollow.h"
+#include "Common/MismatchReport.h"
 #include "Common/CRCDebug.h"
 #include "Common/FrameRateLimit.h"
 #include "Common/FrameShots.h"
@@ -793,6 +794,27 @@ Int parseFollowReplay(char *args[], int num)
 		s_followRequested = TRUE;
 		rts::ClientInstance::setMultiInstance(TRUE);
 		rts::ClientInstance::skipPrimaryInstance();
+		return 2;
+	}
+	return 1;
+}
+
+// TheSuperHackers @feature -testPerturbFrame <frame>: test only, replay playback only (MismatchReport.h).
+Int parseTestPerturbFrame(char *args[], int num)
+{
+	if (num > 1)
+	{
+		MismatchReport::setPerturbFrame(atoi(args[1]));
+		return 2;
+	}
+	return 1;
+}
+
+Int parseTestReportFrame(char *args[], int num)
+{
+	if (num > 1)
+	{
+		MismatchReport::setReportFrame(atoi(args[1]));
 		return 2;
 	}
 	return 1;
@@ -1725,6 +1747,8 @@ static CommandLineParam paramsForStartup[] =
 	{ "-followReplay", parseFollowReplay },
 	{ "-followDelay", parseFollowDelay },
 	{ "-followCatchUp", parseFollowCatchUp },
+	{ "-testPerturbFrame", parseTestPerturbFrame },
+	{ "-testReportFrame", parseTestReportFrame },
 
 	// TheSuperHackers @feature helmutbuhler 23/05/2025
 	// Simulate each replay in a separate process and use 1..N processes at the same time.

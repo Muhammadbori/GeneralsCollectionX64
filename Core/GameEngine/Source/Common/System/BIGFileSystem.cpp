@@ -39,6 +39,7 @@
 #include "Common/GameMemory.h"
 #include "Common/LocalFileSystem.h"
 #include "Common/Packs.h"
+#include "Common/Fingerprint.h"
 
 #if RTS_ZEROHOUR
 #include "Common/Registry.h"
@@ -319,6 +320,7 @@ Bool BIGFileSystem::loadArchiveFilesFromList(const Char *listFile) {
 			DEBUG_LOG(("BIGFileSystem::loadArchiveFilesFromList - loading %s into the directory tree.", path.str()));
 			loadIntoDirectoryTree(archiveFile, FALSE);
 			m_archiveFileMap[path] = archiveFile;
+			Fingerprint::noteArchive(archiveFile);
 			actuallyAdded = TRUE;
 		}
 	}
@@ -379,6 +381,7 @@ void BIGFileSystem::mountPacks() {
 					DEBUG_LOG(("BIGFileSystem::mountPacks - loading %s into the directory tree.", path.str()));
 					loadIntoDirectoryTree(opened[i], FALSE);
 					m_archiveFileMap[path] = opened[i];
+					Fingerprint::noteArchive(opened[i]);
 				}
 			}
 			else
@@ -417,6 +420,7 @@ Bool BIGFileSystem::loadArchiveFilesFromDirectory(AsciiString dir, AsciiString f
 			DEBUG_LOG(("BIGFileSystem::loadArchiveFilesFromDirectory - loading %s into the directory tree.", (*it).str()));
 			loadIntoDirectoryTree(archiveFile, overwrite);
 			m_archiveFileMap[(*it)] = archiveFile;
+			Fingerprint::noteArchive(archiveFile);
 			DEBUG_LOG(("BIGFileSystem::loadArchiveFilesFromDirectory - %s inserted into the archive file map.", (*it).str()));
 			actuallyAdded = TRUE;
 		}
