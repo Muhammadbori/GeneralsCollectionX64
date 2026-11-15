@@ -90,6 +90,7 @@
 #include "GameNetwork/GameSpyOverlay.h"
 #include "GameNetwork/GameSpy/BuddyThread.h"
 #include "GameClient/ReplayControlBar.h"
+#include "GameNetwork/LanRoom.h"
 
 #include "WW3D2/ww3d.h"
 
@@ -3276,6 +3277,13 @@ GameMessageDisposition CommandTranslator::translateGameMessage(const GameMessage
 					ToggleInGameChat();
 					SetInGameChatType( INGAME_CHAT_EVERYONE );
 				}
+			}
+			else if (TheGameLogic->isInReplayGame() && LanRoom::observerChannelOpen())
+			{
+				// TheSuperHackers @feature O34 A LAN room observer's own chat (the room's observers only); an outside viewer
+				// has none
+				ToggleInGameChat();
+				SetInGameChatType( INGAME_CHAT_EVERYONE );
 			}
 			disp = DESTROY_MESSAGE;
 			break;

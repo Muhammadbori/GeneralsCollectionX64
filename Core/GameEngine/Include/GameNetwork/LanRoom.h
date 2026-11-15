@@ -41,6 +41,17 @@
 //   START    host -> observers  the stream port, the players' addresses, the delay and the flag
 //   START    host -> players    (flag bit 1) the frozen observer list, the delay and the flag (O33)
 //   COUNT    player -> players  during the match: the outside viewers it serves (O33, for the players' HUD)
+// O34 (the user's LAN rules):
+//   - Room observers watch live and may relay to outside viewers, delayed by the host's delay (their server keeps it as a
+//     player's does). During the match they have a channel of their own, text and voice, among the room's observers only
+//     (the host's list at Start, players left out): text over UDP OBSERVER_CHAT_PORT on their LAN addresses, voice through
+//     the voice chat with a roster of the observers. Nothing of it is sent to, or accepted from, any other address. Before
+//     Start the room chat is shared with the players (CHAT above); from Start nothing from an observer reaches a player.
+//   - Outside viewers can neither write nor speak, to anyone, at any time while watching: no chat input in their replay, no
+//     voice roster, and no socket that would take their text; every receiver takes text and voice only from listed
+//     observers. They need no anti-cheat. They take the stream from other outside viewers first, then from room observers,
+//     then from the players (ReplayStream ranks), and keep a play-out reserve of 12 s (ReplayFollow) that bridges a source
+//     change; with no source for longer they show "Reconnecting to the stream...".
 // The host forgets an observer not heard from for 15 s. A person who joins a slot leaves the list (the host drops them
 // when it accepts the join).
 
@@ -63,6 +74,8 @@ namespace LanRoom
 		MAX_OBSERVERS = 12,
 		STREAM_PORT = 8090,         ///< the replay stream on each player's LAN address (ReplayStream)
 		OUTSIDE_PER_SOURCE = 4,     ///< outside viewers a player serves itself; more go to relays
+		OBSERVER_CHAT_PORT = 8091,  ///< O34: the room observers' text during the match (UDP, LAN address)
+		VIEWER_RESERVE_SECONDS = 12,   ///< O34: an outside viewer's play-out reserve
 	};
 	enum State { STATE_NONE, STATE_ASKED, STATE_IN_ROOM, STATE_STARTING, STATE_PLAYING };
 
@@ -116,6 +129,15 @@ namespace LanRoom
 	void pollStart();
 	/// O33: the LAN screen closes: a stream that has not started yet is given up.
 	void cancelStarting();
+
+	//--- O34: the room observers' own channel during the match ------------------------------------
+	/// TRUE for a room observer whose stream started (an outside viewer: never).
+	Bool observerChannelOpen();
+	/// Sends a line to the other room observers (never to a player or an outside viewer) and shows it here.
+	void sendObserverChat(const UnicodeString &text);
+	/// The room's observers for the voice roster, this game included, in the same order on every observer (by address);
+	/// 0 when this game is not a room observer in its stream.
+	Int observerVoicePeers(UnsignedInt *ips, UnicodeString *names, Int maxCount, Int *localIndex);
 	/// The LAN screen opens again: a viewer that played its stream goes back to normal (follow mode off, no mirror).
 	void resetViewer();
 	/// A line for the screen's chat (removed, full, waiting, lost ...); FALSE when none.

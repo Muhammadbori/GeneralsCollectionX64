@@ -921,6 +921,17 @@ Int parseServeReplayLiveFor(char *args[], int num)
 	}
 	return 1;
 }
+// TheSuperHackers @feature O34 (test switch) -followReserve <seconds>: a -watchReplay viewer's play-out reserve (0..60;
+// LAN outside viewers use 12), which bridges the loss of a source while the mirror finds another.
+Int parseFollowReserve(char *args[], int num)
+{
+	if (num > 1)
+	{
+		ReplayFollow::configureReserve(atoi(args[1]));
+		return 2;
+	}
+	return 1;
+}
 Int parseWatchBind(char *args[], int num)
 {
 	if (num > 1)
@@ -2030,6 +2041,7 @@ static CommandLineParam paramsForStartup[] =
 	{ "-serveReplayDelay", parseServeReplayDelay },
 	{ "-serveReplayLiveFor", parseServeReplayLiveFor },
 	{ "-watchBind", parseWatchBind },
+	{ "-followReserve", parseFollowReserve },
 	{ "-voiceTest", parseVoiceTest },
 	{ "-netLab", parseNetLab },
 	{ "-netLabPlayers", parseNetLabPlayers },

@@ -48,6 +48,9 @@ namespace ReplayFollow
 
 	//--- follower -----------------------------------------------------------------------------------
 	void configure(Int delaySeconds, Real catchUpFactor);   ///< from the command line; turns following on
+	/// O34: a stream viewer's play-out reserve (0..60 s): it plays this far behind the allowed frame, so the loss of a source
+	/// is bridged while the mirror finds another; inside the reserve it plays 10 % slower until the reserve is full again.
+	void configureReserve(Int seconds);
 	void turnOff();                                          ///< O31: a LAN viewer's replay is over: later replays play normally
 	Bool isOn();
 	void readerStarted(const AsciiString &replayPath, Int normalLogicFps);
