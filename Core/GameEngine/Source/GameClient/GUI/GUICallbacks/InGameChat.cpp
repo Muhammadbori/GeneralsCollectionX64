@@ -43,6 +43,8 @@
 #include "GameClient/InGameUI.h"
 #include "GameClient/LanguageFilter.h"
 #include "GameLogic/GameLogic.h"
+#include "GameLogic/VictoryConditions.h"
+#include "GameClient/LocalizedFallback.h"
 #include "GameNetwork/GameInfo.h"
 #include "GameNetwork/NetworkInterface.h"
 
@@ -218,6 +220,10 @@ void ToggleInGameChat( Bool immediate )
 				{
 					const Player *localPlayer = ThePlayerList->getLocalPlayer();
 					Int playerMask = 0;
+					// TheSuperHackers @feature A defeated player (a spectator from then on) or an observer sends no text to
+					// team-mates (items 19, 20; the same rule as the voice chat): they are left out of every chat.
+					const Bool outOfPlay = localPlayer != nullptr && (localPlayer->isPlayerObserver()
+						|| (TheVictoryConditions != nullptr && TheVictoryConditions->hasSinglePlayerBeenDefeated(const_cast<Player *>(localPlayer))));
 
 					for (Int i=0; i<MAX_SLOTS; ++i)
 					{
@@ -240,6 +246,25 @@ void ToggleInGameChat( Bool immediate )
 									playerMask |= (1<<i);
 								break;
 							}
+						}
+					}
+					if (outOfPlay && localPlayer != nullptr)
+					{
+						const Int maskBefore = playerMask;
+						for (Int i=0; i<MAX_SLOTS; ++i)
+						{
+							const Player *player = ThePlayerList->getPlayerFromSlotIndex(i);
+							if (player && player != localPlayer && player->getRelationship(localPlayer->getDefaultTeam()) == ALLIES
+								&& localPlayer->getRelationship(player->getDefaultTeam()) == ALLIES)
+							{
+								playerMask &= ~(1<<i);
+							}
+						}
+						if (playerMask != maskBefore || inGameChatType == INGAME_CHAT_ALLIES)
+						{
+							TheInGameUI->message(TheGameText->FETCH_OR_SUBSTITUTE("GUI:ChatNoTeamWhenOut",
+								localizedFallback(L"You are out of play: your team-mates do not get your messages.",
+									L"\x0412\x044B \x0432\x044B\x0431\x044B\x043B\x0438 \x0438\x0437 \x0438\x0433\x0440\x044B: \x0441\x043E\x044E\x0437\x043D\x0438\x043A\x0438 \x043D\x0435 \x043F\x043E\x043B\x0443\x0447\x0430\x044E\x0442 \x0432\x0430\x0448\x0438 \x0441\x043E\x043E\x0431\x0449\x0435\x043D\x0438\x044F.")));
 						}
 					}
 					TheLanguageFilter->filterLine(msg);
