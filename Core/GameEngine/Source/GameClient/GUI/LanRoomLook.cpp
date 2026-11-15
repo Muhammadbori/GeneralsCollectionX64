@@ -28,6 +28,7 @@
 #include "GameClient/DisplayString.h"
 #include "GameClient/DisplayStringManager.h"
 #include "GameClient/GadgetPushButton.h"
+#include "GameClient/GameSpeedControl.h"
 #include "GameClient/GameText.h"
 #include "GameClient/GameWindowManager.h"
 #include "GameClient/LanLobbyLook.h"
@@ -247,6 +248,21 @@ void LanRoomLook::init(GameWindow *parent)
 	s.font = s.chatList != nullptr ? s.chatList->winGetFont() : nullptr;
 	Int pw = 800, ph = 600;
 	parent->winGetSize(&pw, &ph);
+
+	// TheSuperHackers @tweak O36 "Starting cash" on one line, as in the skirmish menu: the label as wide as its text (a
+	// static text wraps at its width - 10), ending just left of the list, on the list's line (S26: two lines, the second cut)
+	{
+		GameWindow *cash = find("ComboBoxStartingCash");
+		GameWindow *cashLabel = cash != nullptr ? GameSpeed::findStaticText(parent, TheGameText->fetch("GUI:StartingMoney")) : nullptr;
+		if (cashLabel != nullptr)
+		{
+			Int cx = 0, cy = 0, cw = 0, ch = 0;
+			cash->winGetScreenPosition(&cx, &cy);
+			cash->winGetSize(&cw, &ch);
+			const Int labelW = GameSpeed::textWidthOf(cashLabel) + 14;
+			GameSpeed::placeOnScreen(cashLabel, cx - 6 * pw / 800 - labelW, cy, labelW, ch);
+		}
+	}
 
 	// the observers list in the right part of the room chat
 	if (s.chatList != nullptr)

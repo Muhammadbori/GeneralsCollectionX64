@@ -1408,6 +1408,11 @@ namespace
 		for (Int i = 0; i < Packs::count(def.kind); ++i) {
 			longest = max(longest, comboTextWidth(Packs::displayName(def.kind, Packs::get(def.kind, i))));
 		}
+		// TheSuperHackers @bugfix O36 The movies' "Auto (as voices)" is a choice too (it was left out, so the closed box was
+		// sized for the longest pack name and cut "Auto (as voi..."; S26 o12)
+		if (const Packs::Pack *autoPack = Packs::autoChoice(def.kind)) {
+			longest = max(longest, comboTextWidth(Packs::displayName(def.kind, autoPack)));
+		}
 		st.combo = prepareComboRow(row, page, Packs::kindTitle(def.kind), windowId(name.str()), longest, colW, labelH, &st.label);
 		if (def.preview)
 		{
