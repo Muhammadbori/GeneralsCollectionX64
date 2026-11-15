@@ -115,6 +115,8 @@ int								DX8Wrapper::BitDepth										= DEFAULT_BIT_DEPTH;
 int								DX8Wrapper::TextureBitDepth							= DEFAULT_TEXTURE_BIT_DEPTH;
 bool								DX8Wrapper::IsWindowed									= false;
 int									DX8Wrapper::WindowPlacement							= 0;
+// TheSuperHackers @feature The time spent in the swap chain's Present since the start (FrameTiming.h, item 22).
+double WW3D_PresentMsTotal = 0.0;
 D3DFORMAT					DX8Wrapper::DisplayFormat	= D3DFMT_UNKNOWN;
 D3DMULTISAMPLE_TYPE DX8Wrapper::MultiSampleAntiAliasing	= DEFAULT_MSAA;
 

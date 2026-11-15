@@ -42,6 +42,7 @@
 #include "Common/GameEngine.h"
 #include "Common/ReplayFollow.h"
 #include "Common/Fingerprint.h"
+#include "Common/FrameTiming.h"
 #include "Common/INI.h"
 #include "Common/INIException.h"
 #include "Common/MessageStream.h"
@@ -775,6 +776,7 @@ DECLARE_PERF_TIMER(GameEngine_update)
 void GameEngine::update()
 {
 	USE_PERF_TIMER(GameEngine_update)
+	FrameTiming::engineBegin();   // TheSuperHackers @feature where the main thread's time goes (FrameTiming.h)
 	{
 		{
 			// VERIFY CRC needs to be in this code block.  Please to not pull TheGameLogic->update() inside this block.
@@ -785,7 +787,9 @@ void GameEngine::update()
 			/// @todo Move audio init, update, etc, into GameClient update
 
 			TheAudio->UPDATE();
+			FrameTiming::clientBegin();
 			TheGameClient->UPDATE();
+			FrameTiming::clientEnd();
 
 			// TheSuperHackers @feature Save frame shots after the client update has drawn the frame.
 			FrameShots::onClientUpdated();
@@ -817,7 +821,9 @@ void GameEngine::update()
 				break;
 			}
 
+			FrameTiming::logicBegin();
 			TheGameLogic->UPDATE();
+			FrameTiming::logicEnd();
 
 			FrameShots::onLogicUpdated();
 
@@ -827,6 +833,7 @@ void GameEngine::update()
 			}
 		}
 	}
+	FrameTiming::engineEnd();
 }
 
 // Horrible reference, but we really, really need to know if we are windowed.

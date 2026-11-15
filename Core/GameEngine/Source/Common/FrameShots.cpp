@@ -19,6 +19,7 @@
 #include "PreRTS.h"
 
 #include "Common/FrameShots.h"
+#include "Common/FrameTiming.h"
 
 #include "Common/FramePacer.h"
 #include "Common/GameEngine.h"
@@ -902,7 +903,8 @@ Bool FrameShots::prepareOutput()
 	}
 	fprintf(s_csv, "logic_frame,ms_since_game_start,engine_updates_since_game_start,render_fps_limit,"
 		"actual_update_fps_limit,logic_time_scale_fps,actual_logic_time_scale_fps,current_logic_frame,logic_frame_phase,"
-		"camera_x,camera_y,camera_z,camera_zoom,camera_angle,camera_pitch,update_time_ms,base_ratio,render_frames\n");
+		"camera_x,camera_y,camera_z,camera_zoom,camera_angle,camera_pitch,update_time_ms,base_ratio,render_frames,"
+		"engine_updates,eng_ms,logic_ms,logic_updates,client_ms,draw_ms,present_ms,other_ms\n");
 	fflush(s_csv);
 
 	s_outputReady = TRUE;
@@ -931,7 +933,9 @@ void FrameShots::capture(UnsignedInt listedFrame)
 		camAngle = TheTacticalView->getAngle();
 		camPitch = TheTacticalView->getPitch();
 	}
-	fprintf(s_csv, "%u,%.3f,%u,%d,%d,%d,%d,%u,%.3f,%.4f,%.4f,%.4f,%.5f,%.5f,%.5f,%.4f,%.5f,%u\n",
+	// TheSuperHackers @feature The means per engine update since the previous row (FrameTiming.h, item 22).
+	const FrameTiming::Means timing = FrameTiming::takeMeans();
+	fprintf(s_csv, "%u,%.3f,%u,%d,%d,%d,%d,%u,%.3f,%.4f,%.4f,%.4f,%.5f,%.5f,%.5f,%.4f,%.5f,%u,%u,%.3f,%.3f,%.2f,%.3f,%.3f,%.3f,%.3f\n",
 		listedFrame,
 		ms,
 		s_engineUpdatesSinceGameStart,
@@ -944,7 +948,9 @@ void FrameShots::capture(UnsignedInt listedFrame)
 		(double)cam.x, (double)cam.y, (double)cam.z, (double)camZoom, (double)camAngle, (double)camPitch,
 		(double)TheFramePacer->getUpdateTime() * 1000.0,
 		(double)TheFramePacer->getBaseOverUpdateFpsRatio(),
-		(unsigned)TheDisplay->getRenderedFrameCount());
+		(unsigned)TheDisplay->getRenderedFrameCount(),
+		timing.engineUpdates, timing.engineMs, timing.logicMs, timing.logicUpdates, timing.clientMs, timing.drawMs,
+		timing.presentMs, timing.otherMs);
 	fflush(s_csv);
 }
 

@@ -29,6 +29,8 @@
 
 // SYSTEM INCLUDES ////////////////////////////////////////////////////////////
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
+
+#include "Common/FrameTiming.h"
 #include "Common/FrameShots.h"
 #include "GameClient/GameClient.h"
 
@@ -721,7 +723,9 @@ void GameClient::update()
 	// redraw all views, update the GUI
 	//if(TheGameLogic->getFrame() >= 2)
 
+		FrameTiming::drawBegin();   // TheSuperHackers @feature FrameTiming.h
 		TheDisplay->DRAW();
+		FrameTiming::drawEnd();
 	}
 
 	{
