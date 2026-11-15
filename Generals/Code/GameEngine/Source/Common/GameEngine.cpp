@@ -663,7 +663,7 @@ void GameEngine::resetSubsystems()
 }
 
 /// -----------------------------------------------------------------------------------------------
-Bool GameEngine::canUpdateGameLogic(UnsignedInt logicTimeQueryFlags)
+Int GameEngine::getGameLogicUpdateCount(UnsignedInt logicTimeQueryFlags)
 {
 	// This updates the paused game status of the game logic.
 	TheGameLogic->preUpdate();
@@ -673,12 +673,25 @@ Bool GameEngine::canUpdateGameLogic(UnsignedInt logicTimeQueryFlags)
 
 	if (TheNetwork != nullptr)
 	{
-		return canUpdateNetworkGameLogic();
+		// Network games run at most one logic update per engine update, as before; their frame rate is agreed by all.
+		return canUpdateNetworkGameLogic() ? 1 : 0;
 	}
 	else
 	{
-		return canUpdateRegularGameLogic(logicTimeQueryFlags);
+		return getRegularGameLogicUpdateCount(logicTimeQueryFlags);
 	}
+}
+
+/// -----------------------------------------------------------------------------------------------
+Bool GameEngine::canContinueGameLogicUpdates(UnsignedInt logicTimeQueryFlags)
+{
+	// A logic update may have paused, halted or frozen the game, or ended it.
+	TheGameLogic->preUpdate();
+
+	TheFramePacer->setTimeFrozen(isTimeFrozen());
+	TheFramePacer->setGameHalted(isGameHalted());
+
+	return TheFramePacer->getActualLogicTimeScaleFps(logicTimeQueryFlags) > 0;
 }
 
 /// -----------------------------------------------------------------------------------------------
@@ -698,16 +711,19 @@ Bool GameEngine::canUpdateNetworkGameLogic()
 }
 
 /// -----------------------------------------------------------------------------------------------
-Bool GameEngine::canUpdateRegularGameLogic(UnsignedInt logicTimeQueryFlags)
+// TheSuperHackers @bugfix The game time no longer depends on the render rate. The engine update runs as many logic
+// updates as the wall clock time since the last one asks for at the game speed (up to MaxLogicFramesPerRenderUpdate,
+// the rest follows in the next engine updates), so N logic updates take N / (30 x speed) seconds at any render fps
+// limit and any speed. Before, at most one logic update ran per engine update, and the render fps limit was raised to
+// the game speed to reach it: the speed changed the frame rate, and a render rate below the speed slowed the game.
+Int GameEngine::getRegularGameLogicUpdateCount(UnsignedInt logicTimeQueryFlags)
 {
 	const Int logicTimeScaleFps = TheFramePacer->getActualLogicTimeScaleFps(logicTimeQueryFlags);
 
 	if (logicTimeScaleFps <= 0)
 	{
-		return false;
+		return 0;
 	}
-
-	const Int maxRenderFps = TheFramePacer->getActualFramesPerSecondLimit();
 
 #if defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
 	const Bool useFastMode = TheGlobalData->m_TiVOFastMode;
@@ -718,27 +734,31 @@ Bool GameEngine::canUpdateRegularGameLogic(UnsignedInt logicTimeQueryFlags)
 	// TheSuperHackers @info The script fast forward runs the logic on every engine update, as before.
 	const Bool useScriptFastForward = TheFramePacer->isScriptFastForward();
 
-	if (useFastMode || useScriptFastForward || logicTimeScaleFps >= maxRenderFps)
+	if (useFastMode || useScriptFastForward || (UnsignedInt)logicTimeScaleFps >= RenderFpsPreset::UncappedFpsValue)
 	{
-		// Logic time scale is uncapped or larger equal the actual update FPS limit. Update straight away.
-		// Outside of network games the update FPS limit is raised to the logic time scale FPS when that is larger.
-		return true;
-	}
-	else
-	{
-		// TheSuperHackers @tweak xezon 06/08/2025
-		// The logic time step is now decoupled from the render update.
-		const Real targetFrameTime = 1.0f / logicTimeScaleFps;
-		m_logicTimeAccumulator += min(TheFramePacer->getUpdateTime(), targetFrameTime);
-
-		if (m_logicTimeAccumulator >= targetFrameTime)
-		{
-			m_logicTimeAccumulator -= targetFrameTime;
-			return true;
-		}
+		// As fast as possible: one logic update per engine update, and the engine update does not wait (the fast forward
+		// modes switch the render fps limit off, see FramePacer::isActualFramesPerSecondLimitEnabled).
+		m_logicTimeAccumulator = 0.0f;
+		return 1;
 	}
 
-	return false;
+	// TheSuperHackers @tweak xezon 06/08/2025 The logic time step is decoupled from the render update.
+	// The time of one long engine update (a hitch, a loading screen) counts up to a quarter second; more is dropped.
+	const Real targetFrameTime = 1.0f / logicTimeScaleFps;
+	const Real maxBacklog = 0.25f;
+	m_logicTimeAccumulator += min(TheFramePacer->getUpdateTime(), maxBacklog);
+
+	Int count = 0;
+	while (m_logicTimeAccumulator >= targetFrameTime && count < FramePacer::MaxLogicFramesPerRenderUpdate)
+	{
+		m_logicTimeAccumulator -= targetFrameTime;
+		++count;
+	}
+	if (m_logicTimeAccumulator > maxBacklog)
+	{
+		m_logicTimeAccumulator = maxBacklog;
+	}
+	return count;
 }
 
 /// -----------------------------------------------------------------------------------------------
@@ -774,8 +794,17 @@ void GameEngine::update()
 		}
 
 		// TheSuperHackers @info Ignores frozen time because the script engine needs updating in the logic update regardless.
-		if (canUpdateGameLogic(FramePacer::IgnoreFrozenTime))
+		// TheSuperHackers @bugfix Several logic updates when the game speed is above the render rate (see
+		// getRegularGameLogicUpdateCount). The commands of this engine update go into the first of them, as they went into
+		// the next logic update before; the logic result for a given command stream does not change.
+		const Int logicUpdates = getGameLogicUpdateCount(FramePacer::IgnoreFrozenTime);
+		for (Int i = 0; i < logicUpdates; ++i)
 		{
+			if (i > 0 && !canContinueGameLogicUpdates(FramePacer::IgnoreFrozenTime))
+			{
+				break;
+			}
+
 			TheGameLogic->UPDATE();
 
 			FrameShots::onLogicUpdated();

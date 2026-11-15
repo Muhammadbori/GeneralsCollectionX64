@@ -842,7 +842,7 @@ void GameSpyStagingRoom::launchGame()
 	GameMessage *msg = TheMessageStream->appendMessage( GameMessage::MSG_NEW_GAME );
 	msg->appendIntegerArgument(GAME_INTERNET);
 
-	TheWritableGlobalData->m_useFpsLimit = false;
+	// TheSuperHackers @tweak The user's render fps limit applies here too, as in LAN games (LANAPICallbacks.cpp).
 
 	// Set the seeds
 	InitRandom( getSeed() );

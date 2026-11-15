@@ -7197,18 +7197,9 @@ void ScriptActions::executeAction( ScriptAction *pAction )
 			doSetStoppingDistance(pAction->getParameter(0)->getString(), pAction->getParameter(1)->getReal());
 			return;
 		case ScriptAction::SET_FPS_LIMIT:
-			if (!pAction->getParameter(0)->getInt())
-			{
-				TheFramePacer->setFramesPerSecondLimit(TheGlobalData->getDefaultRenderFpsLimit());
-			}
-			else
-			{
-				TheFramePacer->setFramesPerSecondLimit(pAction->getParameter(0)->getInt());
-			}
-			// Setting the fps limit doesn't do much good if we don't use it.  jba.
-			TheWritableGlobalData->m_useFpsLimit = true;
-			// TheSuperHackers @fix In retail the logic ran once per render frame, so this action also set the
-			// game speed. Campaign cinematics use it to run at film rate. Set the logic time scale to match.
+			// TheSuperHackers @fix In retail the logic ran once per render frame, so this action set the game speed
+			// through the render fps limit. Campaign cinematics use it to run at film rate. It now sets the logic time
+			// scale only; the render fps limit comes from the settings alone.
 			if (!pAction->getParameter(0)->getInt())
 			{
 				TheFramePacer->setLogicTimeScaleFps(LOGICFRAMES_PER_SECOND);

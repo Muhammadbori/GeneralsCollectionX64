@@ -267,7 +267,9 @@ void LANAPI::OnGameStart()
 		GameMessage *msg = TheMessageStream->appendMessage( GameMessage::MSG_NEW_GAME );
 		msg->appendIntegerArgument(GAME_LAN);
 
-		TheWritableGlobalData->m_useFpsLimit = false;
+		// TheSuperHackers @tweak The user's render fps limit applies here too (it used to be switched off for the rest of
+		// the run). It is 30 or more, and network games run at most 30 logic frames per second (ConnectionManager), so it
+		// cannot slow a game down.
 
 		// Set the seeds
 		InitRandom( m_currentGame->getSeed() );

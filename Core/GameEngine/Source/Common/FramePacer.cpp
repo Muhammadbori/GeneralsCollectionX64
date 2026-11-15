@@ -69,7 +69,8 @@ void FramePacer::update()
 
 		if (TheGameLogic->hasUpdated())
 		{
-			m_logicFramePhase = timeScale;
+			// The ratio can be above 1 when an engine update runs several logic updates; the phase stays within one frame.
+			m_logicFramePhase = min(1.0f, timeScale);
 		}
 		else
 		{
@@ -157,12 +158,13 @@ Int FramePacer::getActualFramesPerSecondLimit() const
 
 	Int fpsLimit = getFramesPerSecondLimit();
 
-	// TheSuperHackers @tweak Outside of network games the update loop is raised to the logic time scale fps
-	// when that is above the render fps limit, so that one logic update per engine update reaches the chosen
-	// game speed. The raw value is used so that frozen time and halted game do not change the loop rate.
-	if (TheNetwork == nullptr && isLogicTimeScaleEnabled())
+	// TheSuperHackers @tweak The game speed no longer raises the render fps limit: the engine update runs as many logic
+	// updates as the game speed asks for (GameEngine::getGameLogicUpdateCount), so the render rate comes from the
+	// settings only. Only "as fast as possible" (UncappedFpsValue, a restart after fast forward) lifts the limit, as it
+	// runs one logic update per engine update with no wait.
+	if (TheNetwork == nullptr && isLogicTimeScaleEnabled() && (UnsignedInt)getLogicTimeScaleFps() >= RenderFpsPreset::UncappedFpsValue)
 	{
-		fpsLimit = std::max(fpsLimit, getLogicTimeScaleFps());
+		fpsLimit = RenderFpsPreset::UncappedFpsValue;
 	}
 
 	return fpsLimit;
@@ -259,8 +261,10 @@ Real FramePacer::getActualLogicTimeScaleRatio(LogicTimeQueryFlags flags) const
 
 Real FramePacer::getActualLogicTimeScaleOverFpsRatio(LogicTimeQueryFlags flags) const
 {
-	// Clamps ratio to max 1, because at most one logic update happens per render update.
-	return min(1.0f, (Real)getActualLogicTimeScaleFps(flags) / getUpdateFps());
+	// TheSuperHackers @tweak An engine update now runs several logic updates when the game speed is above the render
+	// rate (3x on a 60 Hz display), so the client steps by more than one logic frame per render update too. Capped at
+	// MaxLogicFramesPerRenderUpdate, as many logic updates as one engine update runs at the most.
+	return min((Real)MaxLogicFramesPerRenderUpdate, (Real)getActualLogicTimeScaleFps(flags) / getUpdateFps());
 }
 
 Real FramePacer::getLogicTimeStepSeconds(LogicTimeQueryFlags flags) const
