@@ -153,7 +153,7 @@ namespace
 			if (LanRoom::matchWatchers(&room, &outside) && (room > 0 || outside > 0))
 			{
 				UnicodeString w;
-				w.format(text("GUI:LanWatchersHud", L"Watching: %d room observer(s), %d outside viewer(s) (delayed)", L"\x0421\x043C\x043E\x0442\x0440\x044F\x0442: \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x0435\x0439 \x043A\x043E\x043C\x043D\x0430\x0442\x044B %d, \x043F\x043E\x0441\x0442\x043E\x0440\x043E\x043D\x043D\x0438\x0445 \x0437\x0440\x0438\x0442\x0435\x043B\x0435\x0439 %d (\x0441 \x0437\x0430\x0434\x0435\x0440\x0436\x043A\x043E\x0439)").str(), room, outside);
+				w.format(text("GUI:LanWatchersHud2", L"Watching: %d in the room, %d outside", L"\x0421\x043C\x043E\x0442\x0440\x044F\x0442: \x0432 \x043A\x043E\x043C\x043D\x0430\x0442\x0435 %d, \x0441\x043D\x0430\x0440\x0443\x0436\x0438 %d").str(), room, outside);
 				if (!line.isEmpty()) line.concat(L"\n");
 				line.concat(w);
 				++lines;
@@ -177,7 +177,7 @@ namespace
 			memset(&textData, 0, sizeof(textData));
 			textData.centeredVertically = TRUE;
 			hud = TheWindowManager->gogoGadgetStaticText(nullptr, WIN_STATUS_ENABLED | WIN_STATUS_NO_INPUT, REAL_TO_INT(6 * scale), h * 2 / 5,
-				REAL_TO_INT(240 * scale), REAL_TO_INT(34 * scale), &inst, &textData, font, FALSE);
+				REAL_TO_INT(280 * scale), REAL_TO_INT(34 * scale), &inst, &textData, font, FALSE);   // O39: 280 (was 240)
 			if (hud != nullptr) hud->winSetWindowId(inst.m_id);
 		}
 		if (hud == nullptr) return;
