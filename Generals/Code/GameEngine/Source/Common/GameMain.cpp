@@ -33,6 +33,7 @@
 #include "Common/GameEngine.h"
 #include "Common/MapPacks.h"
 #include "Common/ReplayStream.h"
+#include "Common/VoiceChat.h"
 #include "Common/Packs.h"
 #include "Common/Fingerprint.h"
 #include "Common/MismatchReport.h"
@@ -73,6 +74,7 @@ Int GameMain()
 	Packs::shutdown();
 	MapPacks::shutdown();
 	ReplayStream::shutdown();
+	VoiceChat::shutdown();
 	Fingerprint::shutdown();
 	MismatchReport::shutdown();
 

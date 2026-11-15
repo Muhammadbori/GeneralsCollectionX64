@@ -41,6 +41,7 @@
 #include "GameClient/ReplayControlBar.h"
 #include "Common/MapPacks.h"
 #include "Common/ReplayStream.h"
+#include "Common/VoiceChat.h"
 #include "GameNetwork/NetworkDefs.h"
 
 
@@ -898,6 +899,57 @@ Int parseWatchReplay(char *args[], int num)
 	return 1;
 }
 
+// TheSuperHackers @feature The voice chat's one-PC test (VoiceChat.h): -voiceTest <slot>, -voiceTestRoster <slot:team,...>,
+// -voiceTestTone, -voiceTestWav <file>, -voiceTestTalk <start>,<seconds>, -voiceTestOut <file.wav>, -voiceTestLoss <percent>,
+// -voiceTestVolume <slot>:<percent>.
+Int parseVoiceTest(char *args[], int num)
+{
+	if (num > 1)
+	{
+		VoiceChat::configureTest(atoi(args[1]));
+		// the test runs two or three games on one PC (another instance, as -followReplay)
+		rts::ClientInstance::setMultiInstance(TRUE);
+		rts::ClientInstance::skipPrimaryInstance();
+		return 2;
+	}
+	return 1;
+}
+Int parseVoiceTestRoster(char *args[], int num)
+{
+	if (num > 1) { VoiceChat::configureTestRoster(args[1]); return 2; }
+	return 1;
+}
+Int parseVoiceTestTone(char *args[], int num)
+{
+	VoiceChat::configureTestTone();
+	return 1;
+}
+Int parseVoiceTestWav(char *args[], int num)
+{
+	if (num > 1) { VoiceChat::configureTestWav(args[1]); return 2; }
+	return 1;
+}
+Int parseVoiceTestTalk(char *args[], int num)
+{
+	if (num > 1) { VoiceChat::configureTestTalk(args[1]); return 2; }
+	return 1;
+}
+Int parseVoiceTestOut(char *args[], int num)
+{
+	if (num > 1) { VoiceChat::configureTestOut(args[1]); return 2; }
+	return 1;
+}
+Int parseVoiceTestLoss(char *args[], int num)
+{
+	if (num > 1) { VoiceChat::configureTestLoss(atoi(args[1])); return 2; }
+	return 1;
+}
+Int parseVoiceTestVolume(char *args[], int num)
+{
+	if (num > 1) { VoiceChat::configureTestVolume(args[1]); return 2; }
+	return 1;
+}
+
 // TheSuperHackers @feature -mapPacksTest: a test run (-shotFrames, -uiScript) is asked about the map packs too.
 Int parseMapPacksTest(char *args[], int num)
 {
@@ -906,6 +958,17 @@ Int parseMapPacksTest(char *args[], int num)
 }
 
 // TheSuperHackers @feature -noReplayBar: no replay control bar (the keys still work); for screenshot comparisons.
+// TheSuperHackers @feature -replaySpeed <1|2|4|8|max>: a replay plays at that speed from its first frame (test).
+Int parseReplaySpeed(char *args[], int num)
+{
+	if (num > 1)
+	{
+		ReplayControl::configureStartSpeed(stricmp(args[1], "max") == 0 ? ReplayControl::SPEED_MAX : atoi(args[1]));
+		return 2;
+	}
+	return 1;
+}
+
 Int parseNoReplayBar(char *args[], int num)
 {
 	ReplayControl::disableBar();
@@ -1828,12 +1891,21 @@ static CommandLineParam paramsForStartup[] =
 	{ "-followDelay", parseFollowDelay },
 	{ "-followCatchUp", parseFollowCatchUp },
 	{ "-noReplayBar", parseNoReplayBar },
+	{ "-replaySpeed", parseReplaySpeed },
 	{ "-mapPacksTest", parseMapPacksTest },
 	{ "-serveReplay", parseServeReplay },
 	{ "-serveReplayMax", parseServeReplayMax },
 	{ "-serveReplayRate", parseServeReplayRate },
 	{ "-serveReplayStopAfter", parseServeReplayStopAfter },
 	{ "-watchReplay", parseWatchReplay },
+	{ "-voiceTest", parseVoiceTest },
+	{ "-voiceTestRoster", parseVoiceTestRoster },
+	{ "-voiceTestTone", parseVoiceTestTone },
+	{ "-voiceTestWav", parseVoiceTestWav },
+	{ "-voiceTestTalk", parseVoiceTestTalk },
+	{ "-voiceTestOut", parseVoiceTestOut },
+	{ "-voiceTestLoss", parseVoiceTestLoss },
+	{ "-voiceTestVolume", parseVoiceTestVolume },
 	{ "-testPerturbFrame", parseTestPerturbFrame },
 	{ "-testReportFrame", parseTestReportFrame },
 

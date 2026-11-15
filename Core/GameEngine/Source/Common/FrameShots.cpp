@@ -495,6 +495,11 @@ void FrameShots::runUiScript()
 			else
 			{
 				uiKey(key, FALSE);
+				// TheSuperHackers @fix (O18, D2) A real Enter also gives Windows a character (WM_CHAR '\r') that the IME
+				// manager hands to the focused text entry as GWM_IME_CHAR; that ends an edit (GEM_EDIT_DONE). Do the same.
+				if (key == KEY_ENTER && TheWindowManager != nullptr && TheWindowManager->winGetFocus() != nullptr) {
+					TheWindowManager->winSendInputMsg(TheWindowManager->winGetFocus(), GWM_IME_CHAR, (WindowMsgData)VK_RETURN, 0);
+				}
 				uiLog("key %s", step.text.str());
 				done = TRUE;
 			}
