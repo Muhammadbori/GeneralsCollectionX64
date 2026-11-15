@@ -484,6 +484,13 @@ void ConnectionManager::doRelay() {
 				if (CommandRequiresAck(cmd->getCommand())) {
 					ackCommand(cmd, m_localSlot, senderSlot);
 				}
+				// TheSuperHackers @feature O41 NetLab "dropcmd=<slot>": this computer acks the next game command of that
+				// player and its extra copies of the next second, but never uses them (a command lost after its sender
+				// gave it up), to prove the stuck-frame request (allCommandsReady)
+				if (NetLab::dropCommand(cmd->getCommand()->getPlayerID(), cmd->getCommand()->getNetCommandType() == NETCOMMANDTYPE_GAMECOMMAND,
+					cmd->getCommand()->getID())) {
+					continue;
+				}
 				if (!processNetCommand(cmd)) {
 					sendRemoteCommand(cmd);
 				}
@@ -1259,8 +1266,18 @@ void ConnectionManager::ackCommand(NetCommandRef *ref, UnsignedInt localSlot, In
 	// resender never saw an ack and sent the whole lot again every 2 seconds for the rest of the match (S21 R5: 167
 	// commands every 2 s from 44 s to the end on slot 1, 46,285 in all; R8b run 1: 195 every 2 s on slots 1 and 3). A
 	// stage 1 ack also goes straight to the computer the packet came from when that is someone else.
-	if ((senderSlot >= 0) && (senderSlot < MAX_SLOTS) && (senderSlot != (Int)localSlot) && (senderSlot != (Int)msg->getPlayerID())
-		&& (senderSlot != m_packetRouterSlot || m_localSlot == m_packetRouterSlot) && (m_connections[senderSlot] != nullptr)) {
+	// O41 (review 2): the condition is "the usual ack above does not go to the packet's computer". Before, a resender that
+	// resent its own commands (it is their player) was skipped: the usual ack of a non-router goes to the packet router.
+	Int usualTo = -1;
+	if (CommandRequiresDirectSend(msg) && CommandRequiresAck(msg)) {
+		usualTo = (Int)msg->getPlayerID();
+	} else if (m_localSlot == m_packetRouterSlot) {
+		usualTo = (Int)msg->getPlayerID();
+	} else {
+		usualTo = m_packetRouterSlot;
+	}
+	if ((senderSlot >= 0) && (senderSlot < MAX_SLOTS) && (senderSlot != (Int)localSlot) && (senderSlot != usualTo)
+		&& (m_connections[senderSlot] != nullptr)) {
 		NetAckStage1CommandMsg *direct = newInstance(NetAckStage1CommandMsg)(msg);
 		direct->setPlayerID(localSlot);
 		m_connections[senderSlot]->sendNetCommandMsg(direct, 1 << senderSlot);
@@ -1761,6 +1778,28 @@ Bool ConnectionManager::allCommandsReady(UnsignedInt frame, Bool justTesting /* 
 			if (frameRetVal == FRAMEDATA_NOTREADY) {
 				retval = FALSE;
 				NetLab::noteWaitingFor(i);   // TheSuperHackers @feature NetLab measurement (a note only)
+				// TheSuperHackers @bugfix O41 (review 3) The second way to ask: a player whose data for this frame has been
+				// incomplete for StuckResendMs asks that player for the frame again (at most once a second, see
+				// requestFrameDataResend). The only request before needed an excess of commands; a command that never
+				// came (lost after its sender had given it up) left the frame waiting until the disconnect screen.
+				// Nothing is reset here: the resent commands that are already there are dropped as duplicates. The
+				// sender keeps its frames FRAMES_TO_KEEP (65) back, and the lockstep keeps every player within the
+				// run-ahead (at most 64) of the others, so the player who is waited for still has the frame.
+				if (justTesting == FALSE && i != (Int)m_localSlot) {
+					static UnsignedInt s_stuckFrame[MAX_SLOTS] = { 0 };
+					static UnsignedInt s_stuckSince[MAX_SLOTS] = { 0 };
+					static Bool s_stuckValid[MAX_SLOTS] = { FALSE };
+					enum { StuckResendMs = 2000 };
+					const UnsignedInt nowMs = timeGetTime();
+					if (!s_stuckValid[i] || s_stuckFrame[i] != frame) {
+						s_stuckValid[i] = TRUE;
+						s_stuckFrame[i] = frame;
+						s_stuckSince[i] = nowMs;
+					} else if ((UnsignedInt)(nowMs - s_stuckSince[i]) >= (UnsignedInt)StuckResendMs) {
+						requestFrameDataResend(i, frame);   // throttled to one a second per player
+						NetLab::countStuckResend();
+					}
+				}
 			} else if (frameRetVal == FRAMEDATA_RESEND) {
 				requestFrameDataResend(i, frame);
 				retval = FALSE;
@@ -2595,6 +2634,9 @@ void ConnectionManager::sendFrameDataToPlayer(UnsignedInt playerID, UnsignedInt 
 void ConnectionManager::sendSingleFrameToPlayer(UnsignedInt playerID, UnsignedInt frame) {
 	if ((TheGameLogic->getFrame() - FRAMES_TO_KEEP) > frame) {
 		DEBUG_LOG_LEVEL(DEBUG_LEVEL_NET, ("ConnectionManager::sendSingleFrameToPlayer - player %d requested frame %d when we are on frame %d, this is too far in the past.", playerID, frame, TheGameLogic->getFrame()));
+		// TheSuperHackers @tweak O41 Not silent: frames older than FRAMES_TO_KEEP are gone here. The asking player stays
+		// on that frame, and its disconnect screen (and the vote) handle it as for any player who cannot go on.
+		NetLab::noteResendRefused(playerID, frame, TheGameLogic->getFrame());
 		return;
 	}
 
@@ -2640,13 +2682,16 @@ UnsignedInt ConnectionManager::getNextPacketRouterSlot(UnsignedInt playerID) {
 void ConnectionManager::requestFrameDataResend(Int playerID, UnsignedInt frame) {
 	// TheSuperHackers @tweak O35 At most one request per player and second (the resent frames come in a few packets; a
 	// second request before they arrived only doubles them).
-	static time_t s_lastRequest[MAX_SLOTS] = { 0 };
-	const time_t now = timeGetTime();
+	static UnsignedInt s_lastRequest[MAX_SLOTS] = { 0 };
+	static Bool s_requested[MAX_SLOTS] = { FALSE };
+	const UnsignedInt now = timeGetTime();
 	if ((playerID >= 0) && (playerID < MAX_SLOTS)) {
-		if ((s_lastRequest[playerID] != 0) && (now - s_lastRequest[playerID] < 1000)) {
+		// O41: unsigned differences, so the 49-day wrap of timeGetTime changes nothing
+		if (s_requested[playerID] && (UnsignedInt)(now - s_lastRequest[playerID]) < 1000u) {
 			return;
 		}
 		s_lastRequest[playerID] = now;
+		s_requested[playerID] = TRUE;
 	}
 	NetFrameResendRequestCommandMsg *msg = newInstance(NetFrameResendRequestCommandMsg);
 	msg->setPlayerID(m_localSlot);

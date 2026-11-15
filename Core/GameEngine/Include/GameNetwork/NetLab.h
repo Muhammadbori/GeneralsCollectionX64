@@ -36,7 +36,9 @@
 //   delay=<ms> jitter=<ms> loss=<percent> reorder=<percent> kbps=<incoming bandwidth, 0 = no cap> freeze=<ms>
 // given by -netLabSim and changed during a run by writing <user data>\NetLabSim.txt (read twice a second when it
 // changes). freeze=<ms> makes the game thread sleep once for that long (a starved computer). O35: resend=<slot> makes
-// this computer treat that player's next frame as broken once (it resets the frame and asks for a resend). Packets keep their order
+// this computer treat that player's next frame as broken once (it resets the frame and asks for a resend). O41: dropcmd=<slot>
+// makes this computer ack the next game command of that player but never use it (a lost command): the frame waits, and the
+// stuck-frame request (after 2 s) must fetch it again. Packets keep their order
 // unless reorder is set; a packet that would wait more than a second for the bandwidth is dropped.
 //
 // Measurement: <user data>\NetLab.csv, one line per second (time, logic frame, logic frames in the second, the
@@ -79,6 +81,11 @@ namespace NetLab
 	/// O35: TRUE once after "resend=<slot>" was given (-netLabSim or NetLabSim.txt): that slot's next frame counts as broken
 	/// on this computer, so a frame resend is requested (the path of S21 R5).
 	Bool takeForcedResend(Int slot);
+	/// O41: "dropcmd=<slot>": TRUE for the next game command of that slot and for its copies (same command id) during the
+	/// next second; the command is acked but never used (a lost command, for the stuck-frame request).
+	Bool dropCommand(Int playerId, Bool isGameCommand, UnsignedShort commandId);
+	void countStuckResend();                                        ///< O41: a resend request for a stuck frame (log line)
+	void noteResendRefused(Int playerId, UnsignedInt frame, UnsignedInt now);   ///< O41: a request for a frame no longer kept
 
 	// the simulator, from the transport: TRUE when it took the packet (to be delivered later, or dropped)
 	Bool simTake(const TransportMessage &message);

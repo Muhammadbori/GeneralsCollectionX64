@@ -347,6 +347,11 @@ Bool NetPacket::isAckRepeat(NetCommandRef *msg) {
 	if (m_lastCommand->getCommand()->getNetCommandType() != msg->getCommand()->getNetCommandType()) {
 		return FALSE;
 	}
+	// TheSuperHackers @bugfix O41 A repeat is read back with the previous command's sender (the reader takes the player
+	// from the last written field), so it may only stand for an ack from the same sender, as for frame repeats (O35).
+	if (msg->getCommand()->getPlayerID() != m_lastCommand->getCommand()->getPlayerID()) {
+		return FALSE;
+	}
 	if (msg->getCommand()->getNetCommandType() == NETCOMMANDTYPE_ACKBOTH) {
 		return isAckBothRepeat(msg);
 	}
