@@ -43,7 +43,11 @@ namespace ReplayFollow
 {
 	//--- writer ------------------------------------------------------------------------------------
 	void writerStarted(const AsciiString &replayPath);
-	void writerFrame(UnsignedInt frame);     ///< call after the commands of 'frame' were written and flushed
+	/// O42: the header is written (and flushed): its end, and the match's slot list (the game key, equal on every computer
+	/// of the match). Starts the frame index "<replay>.idx" (ReplayStream.h).
+	void writerHeader(UnsignedInt headerEnd, const AsciiString &slotList);
+	/// Call after the commands of 'frame' were written and flushed; 'endOffset' (O42): the file's size then.
+	void writerFrame(UnsignedInt frame, UnsignedInt endOffset);
 	void writerEnded();
 
 	//--- follower -----------------------------------------------------------------------------------

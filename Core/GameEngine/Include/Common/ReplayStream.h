@@ -45,8 +45,13 @@
 // -followCatchUp work the same, and only add to the server's delay). With -serveReplay too it serves its mirror: a relay.
 // -watchBind <ip> (test) makes its connections from that local address (the server tells room observers by address).
 // Hop: when the source does not answer for 5 seconds, its newest frame does not move for 8 seconds (live viewers), it
-// drops the viewer or rejects it, the viewer connects to the next source of its list and asks for the bytes after those
-// it has. A source is accepted only when the first bytes of its replay are the viewer's (the same game).
+// drops the viewer or rejects it, the viewer connects to the next source of its list and asks for the frames after the
+// last one it has whole (O42). Each player's replay file has its own header (start time, local player), but the commands
+// of a frame are the same in every file of the match, so a viewer resumes by frame, never by byte: every served replay
+// has a frame index beside it ("<replay>.idx": "GIDX", game key, header end, then (frame, end offset) per frame), written
+// by the recorder (ReplayFollow) or by a mirror, and a source finds the viewer's frame in its own file. A mirror writes
+// only the header and whole frames to its file (bytes wait until the source names a frame's end), so it can always ask
+// "after frame F". The game key (FNV-1a of the match's slot list, equal on every computer) marks the same game.
 // O34 (sources of an outside viewer): each source has a rank: 0 an outside viewer that relays, 1 a room observer that
 // relays, 2 a player. The viewer asks the lowest rank first. A server with live data (a player, a room observer) sends an
 // outside viewer on to the relays it knows (MORE, then NOPE "elsewhere") and serves it itself only when it knows none or
@@ -55,13 +60,19 @@
 // stream is lost only after 120 s without data (before: "reconnecting", bridged by the viewer's play-out reserve,
 // ReplayFollow). A room observer keeps to live sources (it ignores relays of outside viewers).
 //
-// Wire (little-endian 32-bit words): the viewer sends "GRSV", version 2, offset, idLength, idHash (FNV-1a of its first
-// idLength bytes, at most 1024), flags (bit 0: it says it is a room observer; counted only, the address decides; bit 1:
-// last resort), relay port (it serves its mirror there; 0: it does not): 28 bytes (version 1: the first 20). The source
-// sends messages "DATA" length {offset, bytes}, "LIVE" 12 {frame, ended, counter} (at least every half second), "HOLD" 0
-// (a delayed viewer: no data allowed yet), "MORE" {count, count x (ip, port, kind 0 outside viewer / 1 room observer)}
-// (relays), or "NOPE" 4 {reason: 0 refused, 1 go elsewhere, 2 outside viewers not allowed, 3 another game}. The source
-// sends LIVE for a frame only after the bytes that were in its file when it read that frame's side file.
+// Wire (little-endian 32-bit words): the viewer sends "GRSV", version 3, resume frame (0xFFFFFFFF: from the start, header
+// included; else the frames after this one), game key (0: not known yet), 0, flags (bit 0: it says it is a room observer;
+// counted only, the address decides; bit 1: last resort), relay port (it serves its mirror there; 0: it does not): 28
+// bytes. Older hellos are refused ("another game"). The source sends "GKEY" 12 {game key, its header end, the offset in its
+// file where the data starts}, then "DATA" {offset, bytes} (offsets in the source's file), "FIDX" {count, count x (frame,
+// end offset)} (frames whose bytes were all sent), "LIVE" 12 {frame, ended, counter} (at least every half second, only
+// after the FIDX of that frame; once ended, after the rest of the file), "HOLD" 0 (a delayed viewer with no frame allowed
+// yet, or a viewer ahead of this source, which waits up to 30 s for the source to reach its frame), "MORE" {count, count x
+// (ip, port, kind 0 outside viewer / 1 room observer)} (relays), or "NOPE" 4 {reason: 0 refused, 1 go elsewhere, 2 outside
+// viewers not allowed, 3 another game}.
+// -serveReplayLagFor <ip>:<seconds> (test, O42): that viewer address is served that many seconds further behind (on top
+// of its delay), as over a slow link; the replay itself grows by only tens of bytes a second, so -serveReplayRate cannot
+// make a slow link.
 // -serveReplayStopAfter <seconds> (test only): the server stops after that time (its game goes on): a forced source loss.
 // Each game with a server or a mirror writes ReplayStream.log in its user data folder.
 
@@ -80,6 +91,7 @@ namespace ReplayStream
 	void configureServeOutsideMax(Int viewers);
 	void configureServeDelay(Int seconds);          ///< O33 (test): -serveReplay's delay for every viewer not listed live
 	void configureServeLiveFor(const char *ips);    ///< O33 (test): -serveReplayLiveFor a.b.c.d[,a.b.c.d...]
+	void configureServeLagFor(const char *spec);    ///< O42 (test): -serveReplayLagFor a.b.c.d:seconds
 	void configureWatch(const char *sources);
 	void configureWatchRoomObserver();              ///< -watchRoomObserver: the hello's flag (counting only)
 	void configureWatchBind(const char *ip);        ///< O33 (test): -watchBind a.b.c.d
@@ -121,6 +133,8 @@ namespace ReplayStream
 
 	/// TRUE once after every source was gone for 30 seconds (the stream is lost; the replay then plays to its end).
 	Bool takeLostNotice();
+	/// O42: the last stream was lost because the host does not allow outside viewers (the room's text says so).
+	Bool lostBecauseNotAllowed();
 
 	void shutdown();
 }

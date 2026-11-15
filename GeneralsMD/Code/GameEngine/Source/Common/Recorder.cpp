@@ -531,7 +531,7 @@ void RecorderClass::updateRecord()
 
 	// TheSuperHackers @feature The commands of this frame are in the file now (flushed): a follower may run it.
 	if (m_file != nullptr) {
-		ReplayFollow::writerFrame(TheGameLogic->getFrame());
+		ReplayFollow::writerFrame(TheGameLogic->getFrame(), (UnsignedInt)m_file->position());
 	}
 }
 
@@ -713,6 +713,9 @@ void RecorderClass::startRecording(GameDifficulty diff, GameMode originalGameMod
 
 	// TheSuperHackers @feature The header goes to the disk at once, so a follower can read it (ReplayFollow.h).
 	m_file->flush();
+	// TheSuperHackers @feature O42 The frame index starts: the header's end and the game key (the slot list, the same on
+	// every computer of the match), so a viewer can move between the players' files by frame (ReplayStream.h).
+	ReplayFollow::writerHeader((UnsignedInt)m_file->position(), theSlotList);
 }
 
 /**

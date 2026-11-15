@@ -42,6 +42,8 @@ namespace
 
 	// writer
 	HANDLE s_writer = INVALID_HANDLE_VALUE;
+	HANDLE s_index = INVALID_HANDLE_VALUE;    ///< O42: "<replay>.idx", the frame index (ReplayStream.h)
+	UnsignedInt s_indexPos = 0;               ///< 0: no header yet
 	UnsignedInt s_writeCounter = 0;
 	UnsignedInt s_writerFrame = 0;
 
@@ -160,11 +162,51 @@ void ReplayFollow::writerStarted(const AsciiString &replayPath)
 	s_writeCounter = 0;
 	s_writerFrame = 0;
 	writeRecord(0, 0);
+	char indexPath[_MAX_PATH];
+	snprintf(indexPath, ARRAY_SIZE(indexPath), "%s.idx", replayPath.str());
+	s_index = CreateFileA(indexPath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+		CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+	s_indexPos = 0;
 }
 
-void ReplayFollow::writerFrame(UnsignedInt frame)
+void ReplayFollow::writerHeader(UnsignedInt headerEnd, const AsciiString &slotList)
+{
+	if (s_index == INVALID_HANDLE_VALUE) {
+		return;
+	}
+	// the game key: FNV-1a of the slot list (never 0: 0 means "not known" on the wire)
+	UnsignedInt key = 2166136261u;
+	for (const char *p = slotList.str(); *p != '\0'; ++p)
+	{
+		key ^= (unsigned char)*p;
+		key *= 16777619u;
+	}
+	if (key == 0) {
+		key = 1;
+	}
+	UnsignedInt head[3];
+	memcpy(&head[0], "GIDX", 4);
+	head[1] = key;
+	head[2] = headerEnd;
+	SetFilePointer(s_index, 0, nullptr, FILE_BEGIN);
+	DWORD written = 0;
+	WriteFile(s_index, head, sizeof(head), &written, nullptr);
+	s_indexPos = sizeof(head);
+}
+
+void ReplayFollow::writerFrame(UnsignedInt frame, UnsignedInt endOffset)
 {
 	s_writerFrame = frame;
+	// O42: the frame's end in the index before the side file names the frame (a server reads them in the other order)
+	if (s_index != INVALID_HANDLE_VALUE && s_indexPos != 0)
+	{
+		UnsignedInt entry[2] = { frame, endOffset };
+		SetFilePointer(s_index, (LONG)s_indexPos, nullptr, FILE_BEGIN);
+		DWORD written = 0;
+		if (WriteFile(s_index, entry, sizeof(entry), &written, nullptr) && written == sizeof(entry)) {
+			s_indexPos += sizeof(entry);
+		}
+	}
 	writeRecord(frame, 0);
 }
 
@@ -176,6 +218,12 @@ void ReplayFollow::writerEnded()
 	writeRecord(s_writerFrame, 1);   // the last frame, marked ended
 	CloseHandle(s_writer);
 	s_writer = INVALID_HANDLE_VALUE;
+	if (s_index != INVALID_HANDLE_VALUE)
+	{
+		CloseHandle(s_index);
+		s_index = INVALID_HANDLE_VALUE;
+	}
+	s_indexPos = 0;
 }
 
 //-------------------------------------------------------------------------------------------------
