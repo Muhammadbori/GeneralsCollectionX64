@@ -62,6 +62,9 @@ protected:
 																														///< When a new latency value is received, the old one is subtracted out and the new
 																														///< one is added in.
 
+	// TheSuperHackers @bugfix O35 The frame each pending send time belongs to: an ack is a sample only for that frame.
+	UnsignedInt *m_pendingFrames;
+
 	// TheSuperHackers @tweak O23 A faster latency estimate for the run-ahead: smoothed mean and mean deviation of the
 	// clean samples (seconds). The average above over the last 200 frames reacts in seconds and took the samples of
 	// frame infos that the retry timer had to send again (2 s and more each), which inflated the run-ahead under loss.
