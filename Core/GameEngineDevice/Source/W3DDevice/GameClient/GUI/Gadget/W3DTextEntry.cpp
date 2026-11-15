@@ -48,6 +48,7 @@
 
 // USER INCLUDES //////////////////////////////////////////////////////////////
 #include "GameClient/GameWindowGlobal.h"
+#include "GameClient/Gadget.h"
 #include "GameClient/GadgetTextEntry.h"
 #include "GameClient/IMEManager.h"
 #include "W3DDevice/GameClient/W3DGadget.h"
@@ -67,6 +68,27 @@
 ///////////////////////////////////////////////////////////////////////////////
 // PRIVATE FUNCTIONS //////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////
+
+// TheSuperHackers @feature The picture of a combo box's closed box (GadgetComboBoxSetClosedImage) is drawn by the
+// combo's edit box. Returns the width it takes at the left (the text then starts after it), or -1 when the picture
+// stands alone (no text).
+static Int drawComboClosedImage( GameWindow *window, const ICoord2D &origin, const ICoord2D &size )
+{
+	GameWindow *parent = window->winGetParent();
+	if( parent == nullptr || (parent->winGetStyle() & GWS_COMBO_BOX) == 0 )
+		return 0;
+	const ComboBoxData *comboData = (const ComboBoxData *)parent->winGetUserData();
+	if( comboData == nullptr || comboData->closedImage == nullptr || comboData->editBox != window )
+		return 0;
+	const Int side = size.y - 4;
+	if( side <= 0 )
+		return 0;
+	Int x = origin.x + 3;
+	if( comboData->closedImageOnly )
+		x = origin.x + (size.x - side) / 2;
+	TheDisplay->drawImage( comboData->closedImage, x, origin.y + 2, x + side, origin.y + 2 + side, comboData->closedImageTint );
+	return comboData->closedImageOnly ? -1 : side + 4;
+}
 
 // drawTextEntryText ==========================================================
 //=============================================================================
@@ -295,6 +317,13 @@ void W3DGadgetTextEntryDraw( GameWindow *window, WinInstanceData *instData )
 
 	width = size.x - (2 * startOffset);
 	start.x = origin.x + startOffset;  // offset a little bit into the entry
+	{
+		const Int imageWidth = drawComboClosedImage( window, origin, size );
+		if( imageWidth < 0 )
+			return;
+		start.x += imageWidth;
+		width -= imageWidth;
+	}
 	if( BitIsSet( window->winGetStatus(), WIN_STATUS_ONE_LINE ) )
 		start.y = size.y / 2 - fontHeight / 2;
 	else
@@ -449,6 +478,13 @@ void W3DGadgetTextEntryImageDraw( GameWindow *window, WinInstanceData *instData 
 
 	width = size.x - (2 * startOffset);
 	start.x = origin.x + startOffset;  // offset a little bit into the entry
+	{
+		const Int imageWidth = drawComboClosedImage( window, origin, size );
+		if( imageWidth < 0 )
+			return;
+		start.x += imageWidth;
+		width -= imageWidth;
+	}
 		if( BitIsSet( window->winGetStatus(), WIN_STATUS_ONE_LINE ) )
 		start.y = size.y / 2 - fontHeight / 2;
 	else

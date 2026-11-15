@@ -40,6 +40,7 @@
 #include "GameClient/GadgetStaticText.h"
 #include "GameClient/GadgetPushButton.h"
 #include "GameClient/GameText.h"
+#include "GameClient/PlayerTable.h"
 #include "GameNetwork/GameInfo.h"
 #include "Common/PlayerTemplate.h"
 #include "GameNetwork/LANAPICallbacks.h" // for acceptTrueColor, etc
@@ -204,7 +205,7 @@ void PopulateColorComboBox(Int comboBox, GameWindow *comboArray[], GameInfo *myG
 
 	MultiplayerColorDefinition *def = TheMultiplayerSettings->getColor(PLAYERTEMPLATE_RANDOM);
 	Int newIndex = GadgetComboBoxAddEntry(comboArray[comboBox],
-		(isObserver)?TheGameText->fetch("GUI:None"):TheGameText->fetch("GUI:???"), def->getColor());
+		(isObserver)?TheGameText->fetch("GUI:None"):TheGameText->fetch("GUI:Random"), def->getColor());	// TheSuperHackers @tweak the word, not "???" (item 5)
 	GadgetComboBoxSetItemData(comboArray[comboBox], newIndex, (void *)-1);
 
 	if (isObserver)
@@ -454,6 +455,9 @@ void UpdateSlotList( GameInfo *myGame, GameWindow *comboPlayer[],
 					}
 				}
 			}
+
+			// TheSuperHackers @feature The pictures of the row: colour spiral, army logo, team digit or pirate sign.
+			PlayerTable::applyLobbyRow(comboColor[i], comboPlayerTemplate[i], comboTeam[i], slot);
 		}
 	}
 }

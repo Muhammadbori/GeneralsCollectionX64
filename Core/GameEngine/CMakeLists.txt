@@ -196,6 +196,7 @@ set(GAMEENGINE_SRC
     Include/GameClient/GameSpeedControl.h
     Include/GameClient/LocalizedFallback.h
     Include/GameClient/OptionsSections.h
+    Include/GameClient/PlayerTable.h
     Include/GameClient/GlobalLanguage.h
     Include/GameClient/GraphDraw.h
 #    Include/GameClient/GUICallbacks.h
@@ -775,6 +776,7 @@ set(GAMEENGINE_SRC
     Source/GameClient/GUI/GameWindowTransitionsStyles.cpp
     Source/GameClient/GUI/GameSpeedControl.cpp
     Source/GameClient/GUI/OptionsSections.cpp
+    Source/GameClient/GUI/PlayerTable.cpp
     Source/GameClient/LocalizedFallback.cpp
     Source/GameClient/GUI/GUICallbacks/ControlBarCallback.cpp
     Source/GameClient/GUI/GUICallbacks/ControlBarPopupDescription.cpp

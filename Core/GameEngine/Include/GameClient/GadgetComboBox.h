@@ -63,6 +63,11 @@ extern void GadgetComboBoxSetFont( GameWindow *comboBox, GameFont *font );
 extern UnicodeString GadgetComboBoxGetText( GameWindow *comboBox );
 extern void GadgetComboBoxSetText( GameWindow *comboBox, UnicodeString text );
 extern Int  GadgetComboBoxAddEntry( GameWindow *comboBox, UnicodeString text, Color color );
+/// TheSuperHackers @feature A picture in the closed box, multiplied by 'tint': at its left before the text, or with
+/// 'imageOnly' alone in its middle (the text is then only seen in the open list). nullptr: text only, as before.
+extern void GadgetComboBoxSetClosedImage( GameWindow *comboBox, const Image *image, Color tint, Bool imageOnly );
+/// TheSuperHackers @feature The open list is at least 'width' wide, for a narrow closed box (0: as the box).
+extern void GadgetComboBoxSetListMinWidth( GameWindow *comboBox, Int width );
 extern void GadgetComboBoxReset( GameWindow *comboBox );
 
 extern void GadgetComboBoxSetSelectedPos( GameWindow *comboBox, Int selectedIndex, Bool dontHide = FALSE );

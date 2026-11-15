@@ -75,6 +75,7 @@
 #include "GameClient/GameWindowTransitions.h"
 #include "GameClient/Keyboard.h"
 #include "GameClient/LoadScreen.h"
+#include "GameClient/PlayerTable.h"
 #include "GameClient/MapUtil.h"
 #include "GameClient/Mouse.h"
 #include "GameClient/Shell.h"
@@ -1397,6 +1398,9 @@ void MultiPlayerLoadScreen::init( GameInfo *game )
 			teamWin[netSlot]->winSetEnabledTextColors(houseColor, m_playerNames[netSlot]->winGetEnabledTextBorderColor());
 		}
 
+		// TheSuperHackers @feature The pictures of the lobby table: what is random to this client stays random (item 9).
+		PlayerTable::decorateRow(m_playerNames[netSlot], m_playerSide[netSlot], teamWin[netSlot], slot);
+
 		m_playerLookup[i] = netSlot; // save our mapping so we can update progress correctly
 
 		netSlot++;
@@ -1765,6 +1769,9 @@ GameSlot *lSlot = game->getSlot(game->getLocalSlotNum());
 			GadgetStaticTextSetText(teamWin[netSlot], TheGameText->fetch(teamStr));
 			teamWin[netSlot]->winSetEnabledTextColors(houseColor, m_playerNames[netSlot]->winGetEnabledTextBorderColor());
 		}
+
+		// TheSuperHackers @feature The pictures of the lobby table: what is random to this client stays random (item 9).
+		PlayerTable::decorateRow(m_playerNames[netSlot], m_playerSide[netSlot], teamWin[netSlot], slot);
 
 		m_playerLookup[i] = netSlot; // save our mapping so we can update progress correctly
 
