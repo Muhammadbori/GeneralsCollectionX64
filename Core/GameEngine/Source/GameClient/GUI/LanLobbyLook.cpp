@@ -894,24 +894,45 @@ namespace
 			}
 			const Color c = r.inProgress ? kTextDim : (sel ? kGreen : kText);
 			const Int ty = ry + (rh - fontHeight()) / 2;
-			UnicodeString name = r.name;
-			if (r.inProgress || r.noViewers)
+			// O44: the state in brackets is drawn whole; the host's name is cut instead ("(без з..." was cut in S42). When
+			// both marks do not fit next to a few letters of the name, "in game" goes (the row is dimmed for it already).
+			const Int gameW = cols.x[COL_MAP] - cols.x[COL_GAME] - 6;
+			UnicodeString suffix;
+			for (Int pass = 0; pass < 2; ++pass)
 			{
-				name.concat(L" (");
-				if (r.inProgress) {
-					name.concat(textOf(kInProgress));
-				}
-				if (r.noViewers)
+				const Bool withInGame = r.inProgress && (pass == 0 || !r.noViewers);
+				suffix.clear();
+				if (withInGame || r.noViewers)
 				{
-					// O42: the host allows no outside viewers
-					if (r.inProgress) {
-						name.concat(L", ");
+					suffix.concat(L" (");
+					if (withInGame) {
+						suffix.concat(textOf(kInProgress));
 					}
-					name.concat(textOf(kNoViewersTag));
+					if (r.noViewers)
+					{
+						// O42: the host allows no outside viewers
+						if (withInGame) {
+							suffix.concat(L", ");
+						}
+						suffix.concat(textOf(kNoViewersTag));
+					}
+					suffix.concat(L")");
 				}
-				name.concat(L")");
+				if (suffix.isEmpty() || textWidth(suffix) + textWidth(UnicodeString(L"W...")) <= gameW) {
+					break;
+				}
 			}
-			drawText(name, cols.x[COL_GAME] + 2, ty, cols.x[COL_MAP] - cols.x[COL_GAME] - 6, c);
+			UnicodeString name = r.name;
+			const Int suffixW = textWidth(suffix);
+			if (!suffix.isEmpty() && textWidth(name) + suffixW > gameW)
+			{
+				while (name.getLength() > 1 && textWidth(name) + textWidth(UnicodeString(L"...")) + suffixW > gameW) {
+					name.removeLastChar();
+				}
+				name.concat(L"...");
+			}
+			name.concat(suffix);
+			drawText(name, cols.x[COL_GAME] + 2, ty, gameW, c);
 			drawText(r.map, cols.x[COL_MAP] + 2, ty, cols.x[COL_PLAYERS] - cols.x[COL_MAP] - 6, c);
 			UnicodeString t;
 			t.format(L"%d/%d", r.players, r.maxPlayers);
@@ -1750,7 +1771,21 @@ void LanLobbyLook::init(GameWindow *parent)
 	// O31: Observe (a room before its start) / Watch (a running game) and the watch delay
 	{
 		const Rect &a = L.panelActions;
-		const Int mid = a.x0 + (a.x1 - a.x0) * 40 / 100;
+		// O44: the button is as wide as its longest label needs ("Без зрителей", "Не наблюдать"), at least 40 % and at
+		// most 60 % of the row; the delay slider takes the rest
+		Int widest = 0;
+		{
+			const Text *labels[] = { &kObserve, &kStopObserving, &kWatch, &kWaiting, &kNoViewersButton };
+			for (Int k = 0; k < (Int)ARRAY_SIZE(labels); ++k) {
+				widest = max(widest, textWidth(textOf(*labels[k])));
+			}
+		}
+		// the text is measured in screen pixels, the layout is in 800-wide design units
+		const Int screen800 = max(1, sx(800));
+		const Int widestDesign = (widest + 28) * 800 / screen800;
+		const Int rowW = a.x1 - a.x0;
+		const Int buttonW = min(rowW * 60 / 100, max(rowW * 40 / 100, widestDesign));
+		const Int mid = a.x0 + buttonW;
 		const Rect buttonRect = { a.x0, a.y0, mid - 4, a.y1 };
 		s.actionButton = makeButton(buttonRect, textOf(kObserve), "LanLobbyMenu.wnd:Look.Observe");
 		s.actionLabel = &kObserve;
