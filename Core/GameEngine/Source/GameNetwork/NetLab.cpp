@@ -133,8 +133,15 @@ namespace
 		fflush(s_log);
 	}
 
+	Int s_forcedResendSlot = -1;   // O35
+
 	void parseSim(const char *text, Int *freezeMs)
 	{
+		if (const char *at = strstr(text, "resend="))
+		{
+			s_forcedResendSlot = atoi(at + 7);
+			logLine("resend: the next frame of slot %d counts as broken once", s_forcedResendSlot);
+		}
 		const char *keys[6] = { "delay=", "jitter=", "loss=", "reorder=", "kbps=", "freeze=" };
 		Int *targets[6] = { &s_sim.delayMs, &s_sim.jitterMs, &s_sim.lossPct, &s_sim.reorderPct, &s_sim.kbps, freezeMs };
 		for (Int k = 0; k < 6; ++k)
@@ -451,6 +458,16 @@ void NetLab::countCopy() { ++s_copies; }
 void NetLab::noteRetryTime(Int ms) { if (ms > s_retryMsMax) s_retryMsMax = ms; }
 void NetLab::noteRunAheadLatency(Int ms) { s_latencyMs = ms; }
 void NetLab::noteStallNotice(UnsignedInt mask) { logLine("waiting-for notice shown: slots mask %u", mask); }
+Bool NetLab::takeForcedResend(Int slot)
+{
+	if (s_forcedResendSlot < 0 || s_forcedResendSlot != slot) {
+		return FALSE;
+	}
+	s_forcedResendSlot = -1;
+	logLine("resend: frame data of slot %d reset, a resend is requested", slot);
+	return TRUE;
+}
+
 void NetLab::noteWaitingFor(Int slot) { if (slot >= 0 && slot < MAX_SLOTS) s_waitingMask |= (1u << slot); }
 
 Bool NetLab::simTake(const TransportMessage &message)
