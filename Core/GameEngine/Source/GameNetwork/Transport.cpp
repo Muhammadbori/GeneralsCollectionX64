@@ -316,8 +316,23 @@ Bool Transport::doRecv()
 		}
 	}
 //	DEBUG_LOG(("Transport::doRecv - checking"));
-	while ( (len=m_udpsock->Read(buf, MAX_NETWORK_MESSAGE_LEN, &from)) > 0 )
+	// TheSuperHackers @bugfix O46 A send to an address where nothing listens (a loopback test address, a computer that
+	// left) makes Windows queue one WSAECONNRESET on this socket, which the next read reports (one per such send). The
+	// loop used to stop there, so each one cost a whole update: the LAN lobby reads every 200 ms, and with O42's room
+	// list every 2 s to six unused loopback addresses the host fell behind until it read a join request after the
+	// joiner's 5 s timeout ("Время соединения вышло" every time, the joiner in the host's slot). Such an error says
+	// nothing about the data waiting behind it: the read goes on (bounded, so a flood of them cannot hold the loop).
+	Int resetsSkipped = 0;
+	for (;;)
 	{
+		len = m_udpsock->Read(buf, MAX_NETWORK_MESSAGE_LEN, &from);
+		if (len <= 0)
+		{
+			if (len == -1 && m_udpsock->GetStatus() == (UDP::sockStat)WSAECONNRESET && ++resetsSkipped <= 1024) {
+				continue;
+			}
+			break;
+		}
 #if defined(RTS_DEBUG)
 		// Packet loss simulation
 		if (m_usePacketLoss)
