@@ -27,6 +27,7 @@
 
 #include "GameNetwork/Connection.h"
 #include "GameNetwork/networkutil.h"
+#include "GameNetwork/NetLab.h"
 #include "GameLogic/GameLogic.h"
 
 enum { MaxQuitFlushTime = 30000 }; // wait this many milliseconds at most to retry things before quitting
@@ -267,6 +268,7 @@ UnsignedInt Connection::doSend() {
 					if (CommandRequiresAck(msg->getCommand())) {
 						if (timeLastSent != -1) {
 							++m_numRetries;
+							NetLab::countRetry();   // TheSuperHackers @feature NetLab measurement (a counter only)
 						}
 						doRetryMetrics();
 						msg->setTimeLastSent(curtime);

@@ -25,6 +25,7 @@
 
 #include "Common/CRC.h"
 #include "Common/FrameShots.h"
+#include "GameNetwork/NetLab.h"
 #include "Common/GlobalData.h"
 #include "Common/NameKeyGenerator.h"
 #include "Common/OptionPreferences.h"
@@ -770,7 +771,7 @@ void MapPacks::update()
 		if (!shellIdle()) {
 			return;
 		}
-		if (FrameShots::isEnabled() && !st.testRuns)
+		if ((FrameShots::isEnabled() && !st.testRuns) || NetLab::isConfigured())
 		{
 			st.phase = PHASE_DONE;   // unattended test runs are not asked
 			return;

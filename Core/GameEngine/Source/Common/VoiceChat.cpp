@@ -30,6 +30,7 @@
 #include <winsock.h>
 
 #include "Common/VoiceChat.h"
+#include "GameNetwork/NetLab.h"
 
 #include "Common/GlobalData.h"
 #include "Common/OptionPreferences.h"
@@ -163,6 +164,7 @@ namespace
 	{
 		Bool active;
 		Bool real;          ///< a network match (the real addresses); else the loopback test
+		u_long localIp;     ///< network order: this computer's address in the match (the voice socket binds to it)
 		Int localSlot;
 		Bool mayTalk;
 		Bool talkKey;
@@ -711,8 +713,9 @@ namespace
 		addr.sin_family = AF_INET;
 		if (r.real)
 		{
-			// UNSEEN tonight: a network match listens on every interface (the Windows firewall asks once per exe)
-			addr.sin_addr.s_addr = htonl(INADDR_ANY);
+			// A network match: this computer's own address of the match (its slot's IP), never the wildcard; in a NetLab
+			// match on one PC that is a 127.0.0.x address (O19). A LAN address raises the Windows firewall question once.
+			addr.sin_addr.s_addr = r.localIp != 0 ? r.localIp : htonl(INADDR_ANY);
 			addr.sin_port = htons((unsigned short)REAL_PORT);
 		}
 		else
@@ -858,6 +861,7 @@ namespace
 			s_names[i] = slot != nullptr ? slot->getName() : UnicodeString::TheEmptyString;
 		}
 		r.real = TRUE;
+		r.localIp = r.peers[local].ip;
 		r.localSlot = local;
 		const Info &me = info[local];
 		r.mayTalk = me.human && !me.observer && !me.defeated && !s_micOff;
@@ -991,7 +995,8 @@ void VoiceChat::update()
 		}
 	}
 	// the microphone: opened only in a network match, while this player may talk (never in a test session)
-	if (r.real && r.mayTalk && !s_captureIsOpen && s_captureOpen != nullptr)
+	// (and never in a NetLab test match on one PC, O19: no real microphone in tests)
+	if (r.real && r.mayTalk && !s_captureIsOpen && s_captureOpen != nullptr && !NetLab::isConfigured())
 	{
 		s_captureIsOpen = s_captureOpen(s_inputDevice.str());
 		if (s_captureIsOpen) logLine("microphone opened: %s", s_inputDevice.isEmpty() ? "(system default)" : s_inputDevice.str());

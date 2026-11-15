@@ -53,6 +53,7 @@
 #include "GameLogic/VictoryConditions.h"
 #include "GameClient/DisconnectMenu.h"
 #include "GameClient/InGameUI.h"
+#include "GameNetwork/NetLab.h"
 #include "WWLib/TARGA.h"
 
 static Bool hasValidTransferFileExtension(const AsciiString& filePath)
@@ -1706,9 +1707,12 @@ Bool ConnectionManager::allCommandsReady(UnsignedInt frame, Bool justTesting /* 
 			frameRetVal = m_frameData[i]->allCommandsReady(frame, (frame != commandsReadyDebugSpewage) && (justTesting == FALSE));
 			if (frameRetVal == FRAMEDATA_NOTREADY) {
 				retval = FALSE;
+				NetLab::noteWaitingFor(i);   // TheSuperHackers @feature NetLab measurement (a note only)
 			} else if (frameRetVal == FRAMEDATA_RESEND) {
 				requestFrameDataResend(i, frame);
 				retval = FALSE;
+				NetLab::noteWaitingFor(i);
+				NetLab::countFrameResend();
 			}
 		}
 	}
