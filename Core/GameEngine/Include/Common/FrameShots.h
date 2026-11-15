@@ -52,6 +52,10 @@ public:
 	/// of a given window; a script step whose window is hidden calls it first. nullptr: none.
 	typedef Bool (*RevealFunc)(GameWindow *window);
 	static void setRevealHook(RevealFunc func);
+	/// O29: a screen with drawn lists (the LAN tables) sets a function that gives the screen point of a row of a list
+	/// window (scrolled into view first); "clickrow" / "dclickrow" use it. nullptr: none.
+	typedef Bool (*RowFunc)(GameWindow *window, Int row, Int *x, Int *y);
+	static void setRowHook(RowFunc func);
 
 	static Bool isEnabled() { return s_enabled; }
 

@@ -23,10 +23,12 @@
 
 #include "GameClient/LanLobbyLook.h"
 
+#include "Common/FrameShots.h"
 #include "Common/MultiplayerSettings.h"
 #include "Common/NameKeyGenerator.h"
 #include "Common/OptionPreferences.h"
 #include "Common/PlayerTemplate.h"
+#include "Common/QuotedPrintable.h"
 #include "Common/UserPreferences.h"
 #include "GameClient/Display.h"
 #include "GameClient/DisplayString.h"
@@ -35,6 +37,7 @@
 #include "GameClient/GadgetPushButton.h"
 #include "GameClient/GadgetStaticText.h"
 #include "GameClient/GadgetTextEntry.h"
+#include "GameClient/GameFont.h"
 #include "GameClient/GameInfoWindow.h"
 #include "GameClient/GameText.h"
 #include "GameClient/GameWindow.h"
@@ -61,7 +64,7 @@ namespace
 		Rect nameLabel, nameEntry;
 		Rect addrLabel, addrBox, copyButton;
 		Rect connectLabel, connectEntry, historyButton, connectButton;
-		Rect gamesLabel, gamesHint, gamesTable;
+		Rect gamesLabel, gamesTable;   ///< O29: the marks' legend is the table's last line (no separate hint label)
 		Rect panelLabel, panel;
 		Rect lobbyLabel, lobbyList;
 		Rect chatLabel, chatList, chatEntry, chatButton;
@@ -73,7 +76,7 @@ namespace
 		{ 52, 80, 208, 95 }, { 52, 96, 208, 120 },
 		{ 216, 80, 472, 95 }, { 216, 96, 386, 120 }, { 390, 96, 472, 120 },
 		{ 480, 80, 751, 95 }, { 480, 96, 636, 120 }, { 638, 96, 660, 120 }, { 664, 96, 751, 120 },
-		{ 52, 128, 290, 143 }, { 290, 128, 472, 143 }, { 52, 145, 472, 320 },
+		{ 52, 128, 472, 143 }, { 52, 145, 472, 320 },
 		{ 480, 128, 751, 143 }, { 480, 145, 751, 462 },
 		{ 52, 326, 200, 341 }, { 52, 343, 200, 462 },
 		{ 208, 326, 472, 341 }, { 208, 343, 472, 436 }, { 208, 440, 446, 462 }, { 450, 440, 472, 462 },
@@ -85,7 +88,7 @@ namespace
 		{ 52, 80, 208, 95 }, { 52, 96, 208, 120 },
 		{ 216, 80, 472, 95 }, { 216, 96, 386, 120 }, { 390, 96, 472, 120 },
 		{ 480, 80, 751, 95 }, { 480, 96, 636, 120 }, { 638, 96, 660, 120 }, { 664, 96, 751, 120 },
-		{ 52, 128, 290, 143 }, { 290, 128, 460, 143 }, { 52, 145, 460, 300 },
+		{ 52, 128, 460, 143 }, { 52, 145, 460, 300 },
 		{ 468, 128, 751, 143 }, { 468, 145, 751, 372 },
 		{ 468, 378, 751, 393 }, { 468, 395, 751, 462 },
 		{ 52, 306, 460, 321 }, { 52, 323, 460, 436 }, { 52, 440, 434, 462 }, { 438, 440, 460, 462 },
@@ -137,6 +140,17 @@ namespace
 	const Text kInLobby = { "GUI:LanInLobby", L"IN LOBBY: %d", L"\x0412 \x041B\x041E\x0411\x0411\x0418: %d" };
 	const Text kChat = { "GUI:LanChat", L"CHAT", L"\x0427\x0410\x0422" };
 	const Text kBadAddress = { "GUI:LanBadAddress", L"Type an address like 26.12.45.78.", L"\x0412\x0432\x0435\x0434\x0438\x0442\x0435 \x0430\x0434\x0440\x0435\x0441 \x0432\x0438\x0434\x0430 26.12.45.78." };
+	// O29
+	const Text kColPlayersShort = { "GUI:LanColPlayersShort", L"P", L"\x0418" };
+	const Text kColObserversShort = { "GUI:LanColObserversShort", L"O", L"\x041D" };
+	const Text kColSpeedShort = { "GUI:LanColSpeedShort", L"S", L"\x0421" };
+	const Text kColColorShort = { "GUI:LanColColorShort", L"C", L"\x0426" };
+	const Text kColArmyShort = { "GUI:LanColArmyShort", L"A", L"\x0410" };
+	const Text kColTeamShort = { "GUI:LanColTeamShort", L"T", L"\x041A" };
+	const Text kSummaryPlayers = { "GUI:LanSummaryPlayers", L"Players %d/%d   Observers %d", L"\x0418\x0433\x0440\x043E\x043A\x0438 %d/%d   \x041D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x0438 %d" };
+	const Text kSummaryMoney = { "GUI:LanSummaryMoney", L"Money $%d", L"\x0414\x0435\x043D\x044C\x0433\x0438 $%d" };
+	const Text kGameFull = { "GUI:LanGameFull", L"This game is full (%d/%d). Choose another game, or wait for a free place.", L"\x042D\x0442\x0430 \x0438\x0433\x0440\x0430 \x0437\x0430\x043F\x043E\x043B\x043D\x0435\x043D\x0430 (%d/%d). \x0412\x044B\x0431\x0435\x0440\x0438\x0442\x0435 \x0434\x0440\x0443\x0433\x0443\x044E \x0438\x0433\x0440\x0443 \x0438\x043B\x0438 \x0434\x043E\x0436\x0434\x0438\x0442\x0435\x0441\x044C \x0441\x0432\x043E\x0431\x043E\x0434\x043D\x043E\x0433\x043E \x043C\x0435\x0441\x0442\x0430." };
+	const Text kNoGamesPanel = { "GUI:LanNoGamesPanel", L"No open games on the network yet.", L"\x0412 \x0441\x0435\x0442\x0438 \x043F\x043E\x043A\x0430 \x043D\x0435\x0442 \x043E\x0442\x043A\x0440\x044B\x0442\x044B\x0445 \x0438\x0433\x0440." };
 	const Text kInProgress = { "GUI:LanInProgress", L"in game", L"\x0438\x0434\x0451\x0442 \x0438\x0433\x0440\x0430" };
 
 	//---------------------------------------------------------------------------------------------
@@ -160,6 +174,8 @@ namespace
 	};
 	const WideChar *const kSampleLobby[] = { L"Vova", L"Alisher", L"Sardor_K", L"DESKTOP-IVQ416R", L"Timur", L"Lola", L"Bek" };
 	const Int kSampleLobbyFiles[] = { 1, 1, 1, 1, 0, 1, -1 };
+	/// O29 (item 8): the address list with -lanSample when Network.ini has none (shown only, never written)
+	const WideChar *const kSampleHistory[] = { L"26.12.45.10 (Bek)", L"26.31.7.200", L"25.4.118.3 (Lola)" };
 
 	//---------------------------------------------------------------------------------------------
 	struct State
@@ -177,6 +193,7 @@ namespace
 		GameWindow *chatEntry;
 		GameWindow *chatButton;
 		GameWindow *buttonLook;
+		GameWindow *joinButton;
 		std::vector<GameWindow *> oldLabels;
 		// made here
 		std::vector<GameWindow *> made;
@@ -195,6 +212,7 @@ namespace
 		Bool shown;
 		Bool anticheat;
 		Int scroll;
+		Int lobbyScroll;           ///< O29: the first shown name of the lobby list
 		Int sampleSelected;
 		Int lastClickRow;
 		UnsignedInt lastClickMs;
@@ -296,6 +314,44 @@ namespace
 		}
 	}
 
+	/// O29 (item 4): a header is drawn whole, never with an ellipsis (the columns are made wide enough for it).
+	void drawHeader(const UnicodeString &text, Int x, Int y, Color color)
+	{
+		DisplayString *ds = text.isEmpty() ? nullptr : textString(s.font, text);
+		if (ds != nullptr) {
+			ds->draw(x, y, color, kDrop);
+		}
+	}
+
+	/// 'text' cut with an ellipsis to fit 'maxW' (for a one-line label).
+	UnicodeString fitLine(const UnicodeString &text, Int maxW)
+	{
+		UnicodeString t = text;
+		if (textWidth(t) <= maxW) {
+			return t;
+		}
+		while (t.getLength() > 1 && textWidth(t) + textWidth(UnicodeString(L"...")) > maxW) {
+			t.removeLastChar();
+		}
+		t.concat(L"...");
+		return t;
+	}
+
+	const Color kBarTrack = GameMakeColor(42, 46, 72, 255);
+	const Int kBarW = 6;
+
+	/// O29 (item 5): a thin scroll bar when not all rows are shown: the track and a thumb for the shown part.
+	void drawScrollBar(Int barX, Int top, Int height, Int first, Int visible, Int total)
+	{
+		if (total <= visible || height <= 8) {
+			return;
+		}
+		TheDisplay->drawFillRect(barX, top, kBarW, height, kBarTrack);
+		const Int thumbH = max(8, height * visible / total);
+		const Int thumbY = top + (height - thumbH) * first / max(1, total - visible);
+		TheDisplay->drawFillRect(barX, thumbY, kBarW, thumbH, kFrame);
+	}
+
 	void drawFrame(Int x, Int y, Int w, Int h)
 	{
 		TheDisplay->drawFillRect(x, y, w, h, kFill);
@@ -349,13 +405,51 @@ namespace
 	Int sx(Int x) { Int w = 800, h = 600; if (s.parent) s.parent->winGetSize(&w, &h); return x * w / 800; }
 	Int sy(Int y) { Int w = 800, h = 600; if (s.parent) s.parent->winGetSize(&w, &h); return y * h / 600; }
 
+	/// O29 (item 2): 'r' is in the frame of the screen's parent; a window inside a sub-window (the old windows are all in
+	/// LanLobbyMenu.wnd:GadgetParent, 41 pixels in) gets the place relative to its own parent.
 	void place(GameWindow *w, const Rect &r)
 	{
 		if (w == nullptr) {
 			return;
 		}
-		w->winSetPosition(sx(r.x0), sy(r.y0));
+		Int px = 0, py = 0, ox = 0, oy = 0;
+		if (s.parent != nullptr) {
+			s.parent->winGetScreenPosition(&px, &py);
+		}
+		if (GameWindow *up = w->winGetParent()) {
+			up->winGetScreenPosition(&ox, &oy);
+		}
+		w->winSetPosition(px + sx(r.x0) - ox, py + sy(r.y0) - oy);
 		w->winSetSize(sx(r.x1) - sx(r.x0), sy(r.y1) - sy(r.y0));
+	}
+
+	/// O29 (item 2): every unnamed static text under 'w', at any depth (the old labels are in a sub-window).
+	void collectUnnamedLabels(GameWindow *w, Int unnamed, std::vector<GameWindow *> &out)
+	{
+		for (GameWindow *c = w->winGetChild(); c != nullptr; c = c->winGetNext())
+		{
+			if ((c->winGetStyle() & GWS_STATIC_TEXT) != 0 && c->winGetWindowId() == unnamed) {
+				out.push_back(c);
+			}
+			collectUnnamedLabels(c, unnamed, out);
+		}
+	}
+
+	/// O29 (item 6): the tables' font at the size the screen needs: about 2 % of the screen height (12 pixels at 600, 16 at
+	/// 800, 30 at 1504), never smaller than the old list's own font.
+	GameFont *screenFont(GameFont *font)
+	{
+		if (font == nullptr || TheFontLibrary == nullptr || TheDisplay == nullptr || TheWindowManager == nullptr) {
+			return font;
+		}
+		const Int want = (Int)TheDisplay->getHeight() / 50;
+		const Int have = TheWindowManager->winFontHeight(font);
+		if (have <= 0 || have >= want - 1) {
+			return font;
+		}
+		const Int points = max(font->pointSize + 1, font->pointSize * want / have);
+		GameFont *bigger = TheFontLibrary->getFont(font->nameString, points, font->bold);
+		return bigger != nullptr ? bigger : font;
 	}
 
 	GameWindow *findChild(const char *name)
@@ -563,9 +657,11 @@ namespace
 			GameRow r;
 			r.game = game;
 			r.sample = nullptr;
-			r.name = game->getName();
+			// O29 (item 7): the game's own name is an id (host address and seed in hex, then the name cut to 16
+			// characters); the old list showed the host's name, and so does the table
+			r.name = game->getPlayerName(0);
 			if (r.name.isEmpty()) {
-				r.name = game->getPlayerName(0);
+				r.name = game->getName();
 			}
 			r.map = mapNameOf(game->getMap());
 			r.speed = UnicodeString(L"1x");   // LAN games of this build have no speed setting: they run at the normal speed
@@ -603,55 +699,108 @@ namespace
 		return row;
 	}
 
-	/// The columns of the games table: left edges as parts of 1000 of the width.
+	/// The columns of the games table.
 	enum { COL_GAME, COL_MAP, COL_PLAYERS, COL_OBS, COL_SPEED, COL_SHIELD, COL_FILES, COL_COUNT };
-	const Int kColStart[COL_COUNT + 1] = { 0, 300, 600, 720, 810, 890, 945, 1000 };
 
 	Int rowHeight() { return fontHeight() + 6; }
 
-	void drawGamesTable(GameWindow *window, WinInstanceData *)
+	/// O29 (item 4): the number columns are as wide as their header and their values (no header is cut); the name and the
+	/// map share the rest. One-letter headers only when the full ones would leave name and map less than 45 %.
+	struct GameCols { Int x[COL_COUNT + 1]; Bool shortHeads; };
+
+	const Text *gameHead(Int c, Bool shortHeads)
 	{
-		Int x = 0, y = 0, w = 0, h = 0;
-		window->winGetScreenPosition(&x, &y);
-		window->winGetSize(&w, &h);
-		drawFrame(x, y, w, h);
-		const Int pad = 4, rh = rowHeight();
-		const Int inner = w - 2 * pad;
-		Int colX[COL_COUNT + 1];
-		for (Int c = 0; c <= COL_COUNT; ++c) {
-			colX[c] = x + pad + inner * kColStart[c] / 1000;
+		switch (c)
+		{
+			case COL_GAME: return &kColGame;
+			case COL_MAP: return &kColMap;
+			case COL_PLAYERS: return shortHeads ? &kColPlayersShort : &kColPlayers;
+			case COL_OBS: return shortHeads ? &kColObserversShort : &kColObservers;
+			case COL_SPEED: return shortHeads ? &kColSpeedShort : &kColSpeed;
 		}
-		const Text *heads[COL_COUNT] = { &kColGame, &kColMap, &kColPlayers, &kColObservers, &kColSpeed, nullptr, nullptr };
-		for (Int c = 0; c < COL_COUNT; ++c) {
-			if (heads[c] != nullptr) {
-				drawText(textOf(*heads[c]), colX[c] + 2, y + 3, colX[c + 1] - colX[c] - 4, kTextHeader);
+		return nullptr;
+	}
+
+	GameCols gameColumns(Int left, Int inner, Int mark)
+	{
+		GameCols g;
+		for (Int pass = 0; pass < 2; ++pass)
+		{
+			g.shortHeads = pass == 1;
+			const Int wPlayers = max(textWidth(textOf(*gameHead(COL_PLAYERS, g.shortHeads))), textWidth(UnicodeString(L"8/8"))) + 12;
+			const Int wObs = max(textWidth(textOf(*gameHead(COL_OBS, g.shortHeads))), textWidth(UnicodeString(L"88"))) + 12;
+			const Int wSpeed = max(textWidth(textOf(*gameHead(COL_SPEED, g.shortHeads))), textWidth(UnicodeString(L"1,5x"))) + 12;
+			const Int wShield = s.anticheat ? mark + 6 : 0;
+			const Int wFiles = mark + 6;
+			const Int rest = inner - wPlayers - wObs - wSpeed - wShield - wFiles;
+			g.x[COL_GAME] = left;
+			g.x[COL_MAP] = left + rest * 55 / 100;
+			g.x[COL_PLAYERS] = left + rest;
+			g.x[COL_OBS] = g.x[COL_PLAYERS] + wPlayers;
+			g.x[COL_SPEED] = g.x[COL_OBS] + wObs;
+			g.x[COL_SHIELD] = g.x[COL_SPEED] + wSpeed;
+			g.x[COL_FILES] = g.x[COL_SHIELD] + wShield;
+			g.x[COL_COUNT] = left + inner;
+			if (rest >= inner * 45 / 100) {
+				break;
 			}
 		}
-		TheDisplay->drawLine(x + 1, y + rh + 1, x + w - 2, y + rh + 1, 1.0f, kFrame);
+		return g;
+	}
 
+	/// The table's rows: under the header line, above the legend line (the marks' meaning, item 2).
+	struct TableGeo { Int x, y, w, h, rh, top, visible, legendY, barX; };
+
+	TableGeo gamesGeo(GameWindow *window)
+	{
+		TableGeo g;
+		window->winGetScreenPosition(&g.x, &g.y);
+		window->winGetSize(&g.w, &g.h);
+		g.rh = rowHeight();
+		g.top = g.y + g.rh + 3;
+		g.legendY = g.y + g.h - g.rh - 2;
+		g.visible = max(1, (g.legendY - g.top - 2) / g.rh);
+		g.barX = g.x + g.w - kBarW - 3;
+		return g;
+	}
+
+	void drawGamesTable(GameWindow *window, WinInstanceData *)
+	{
+		const TableGeo g = gamesGeo(window);
+		const Int x = g.x, y = g.y, w = g.w, rh = g.rh, pad = 4;
+		drawFrame(x, y, w, g.h);
 		std::vector<GameRow> rows;
 		collectRows(rows);
-		const Int top = y + rh + 3;
-		const Int visible = max(1, (h - rh - 6) / rh);
-		const Int maxScroll = max(0, (Int)rows.size() - visible);
+		const Bool overflow = (Int)rows.size() > g.visible;
+		const Int inner = w - 2 * pad - (overflow ? kBarW + 4 : 0);
+		const Int mark = rh - 4;
+		const GameCols cols = gameColumns(x + pad, inner, mark);
+		for (Int c = COL_GAME; c <= COL_SPEED; ++c) {
+			drawHeader(textOf(*gameHead(c, cols.shortHeads)), cols.x[c] + 2, y + 3, kTextHeader);
+		}
+		TheDisplay->drawLine(x + 1, y + rh + 1, x + w - 2, y + rh + 1, 1.0f, kFrame);
+		// the legend of the marks, one line at the bottom (it was a label that wrapped into two cut lines)
+		TheDisplay->drawLine(x + 1, g.legendY, x + w - 2, g.legendY, 1.0f, kFrame);
+		drawText(textOf(s.anticheat ? kHintShield : kHint), x + pad * 2, g.legendY + 1 + (rh - fontHeight()) / 2, w - pad * 4, kTextDim);
+
+		const Int maxScroll = max(0, (Int)rows.size() - g.visible);
 		s.scroll = s.scroll > maxScroll ? maxScroll : (s.scroll < 0 ? 0 : s.scroll);
 		if (rows.empty())
 		{
-			drawText(textOf(kNoGames), x + pad * 2, top + rh / 2, w - pad * 4, kTextDim);
+			drawText(textOf(kNoGames), x + pad * 2, g.top + rh / 2, w - pad * 4, kTextDim);
 			return;
 		}
 		const Int selected = selectedRow();
-		const Int mark = min(rh - 4, colX[COL_FILES + 1] - colX[COL_FILES] - 2);
-		for (Int i = 0; i < visible && s.scroll + i < (Int)rows.size(); ++i)
+		for (Int i = 0; i < g.visible && s.scroll + i < (Int)rows.size(); ++i)
 		{
 			const Int index = s.scroll + i;
 			const GameRow &r = rows[index];
-			const Int ry = top + i * rh;
+			const Int ry = g.top + i * rh;
 			const Bool sel = index == selected;
 			if (sel)
 			{
-				TheDisplay->drawFillRect(x + 2, ry, w - 4, rh, kRowSelected);
-				TheDisplay->drawOpenRect(x + 2, ry, w - 4, rh, 1.0f, kFrame);
+				TheDisplay->drawFillRect(x + 2, ry, inner + pad * 2 - 4, rh, kRowSelected);
+				TheDisplay->drawOpenRect(x + 2, ry, inner + pad * 2 - 4, rh, 1.0f, kFrame);
 			}
 			const Color c = r.inProgress ? kTextDim : (sel ? kGreen : kText);
 			const Int ty = ry + (rh - fontHeight()) / 2;
@@ -662,22 +811,46 @@ namespace
 				name.concat(textOf(kInProgress));
 				name.concat(L")");
 			}
-			drawText(name, colX[COL_GAME] + 2, ty, colX[COL_MAP] - colX[COL_GAME] - 6, c);
-			drawText(r.map, colX[COL_MAP] + 2, ty, colX[COL_PLAYERS] - colX[COL_MAP] - 6, c);
+			drawText(name, cols.x[COL_GAME] + 2, ty, cols.x[COL_MAP] - cols.x[COL_GAME] - 6, c);
+			drawText(r.map, cols.x[COL_MAP] + 2, ty, cols.x[COL_PLAYERS] - cols.x[COL_MAP] - 6, c);
 			UnicodeString t;
 			t.format(L"%d/%d", r.players, r.maxPlayers);
-			drawText(t, colX[COL_PLAYERS] + 2, ty, colX[COL_OBS] - colX[COL_PLAYERS] - 4, (r.maxPlayers > 0 && r.players >= r.maxPlayers) ? kRed : c);
+			drawText(t, cols.x[COL_PLAYERS] + 2, ty, cols.x[COL_OBS] - cols.x[COL_PLAYERS] - 4, (r.maxPlayers > 0 && r.players >= r.maxPlayers) ? kRed : c);
 			t.format(L"%d", r.observers);
-			drawText(t, colX[COL_OBS] + 2, ty, colX[COL_SPEED] - colX[COL_OBS] - 4, c);
-			drawText(r.speed, colX[COL_SPEED] + 2, ty, colX[COL_SHIELD] - colX[COL_SPEED] - 4, c);
-			drawShieldPlace(colX[COL_SHIELD] + 1, ry + 2, mark);
-			drawFilesMark(colX[COL_FILES] + 1, ry + 2, mark, r.files);
+			drawText(t, cols.x[COL_OBS] + 2, ty, cols.x[COL_SPEED] - cols.x[COL_OBS] - 4, c);
+			drawText(r.speed, cols.x[COL_SPEED] + 2, ty, cols.x[COL_SHIELD] - cols.x[COL_SPEED] - 4, c);
+			if (s.anticheat) {
+				drawShieldPlace(cols.x[COL_SHIELD] + 1, ry + 2, mark);
+			}
+			drawFilesMark(cols.x[COL_FILES] + 1, ry + 2, mark, r.files);
 		}
+		drawScrollBar(g.barX, g.top, g.visible * rh, s.scroll, g.visible, (Int)rows.size());
+	}
+
+	/// O29 (item 9): a full game is not joined; the chat says why (a clear text, not the host's silent refusal).
+	Bool refuseFull(Int row)
+	{
+		std::vector<GameRow> rows;
+		collectRows(rows);
+		if (row < 0 || row >= (Int)rows.size()) {
+			return FALSE;
+		}
+		const GameRow &r = rows[row];
+		if (r.maxPlayers <= 0 || r.players < r.maxPlayers) {
+			return FALSE;
+		}
+		if (s.chatList != nullptr)
+		{
+			UnicodeString t;
+			t.format(textOf(kGameFull).str(), r.players, r.maxPlayers);
+			GadgetListBoxAddEntryText(s.chatList, t, chatSystemColor, -1, 0);
+		}
+		return TRUE;
 	}
 
 	void joinRow(Int row)
 	{
-		if (LanTest::sampleData() || TheLAN == nullptr || s.listGames == nullptr) {
+		if (refuseFull(row) || LanTest::sampleData() || TheLAN == nullptr || s.listGames == nullptr) {
 			return;
 		}
 		LANGameInfo *game = (LANGameInfo *)GadgetListBoxGetItemData(s.listGames, row, 0);
@@ -694,15 +867,20 @@ namespace
 				return MSG_HANDLED;
 			case GWM_LEFT_UP:
 			{
-				Int x = 0, y = 0;
-				window->winGetScreenPosition(&x, &y);
+				const TableGeo g = gamesGeo(window);
+				const Int mx = (Int)LOLONGTOSHORT(mData1);
 				const Int my = (Int)HILONGTOSHORT(mData1);
-				const Int rh = rowHeight();
-				const Int i = (my - (y + rh + 3)) / rh;
 				std::vector<GameRow> rows;
 				collectRows(rows);
+				// O29: a click on the scroll bar moves a page
+				if ((Int)rows.size() > g.visible && mx >= g.barX - 3 && my >= g.top && my < g.top + g.visible * g.rh)
+				{
+					s.scroll += (my < g.top + g.visible * g.rh / 2) ? -g.visible : g.visible;
+					return MSG_HANDLED;
+				}
+				const Int i = (my - g.top) / g.rh;
 				const Int row = s.scroll + i;
-				if (my < y + rh + 3 || row < 0 || row >= (Int)rows.size()) {
+				if (my < g.top || i >= g.visible || row < 0 || row >= (Int)rows.size()) {
 					return MSG_HANDLED;
 				}
 				if (LanTest::sampleData()) {
@@ -740,24 +918,84 @@ namespace
 		std::vector<GameRow> rows;
 		collectRows(rows);
 		const Int sel = selectedRow();
+		if (rows.empty())
+		{
+			// O29 (item 10): no games: the panel says so (no title, nothing left from a game that went away)
+			drawText(textOf(kNoGamesPanel), x + pad * 2, y + rh, w - pad * 4, kTextDim);
+			return;
+		}
 		if (sel < 0 || sel >= (Int)rows.size())
 		{
 			drawText(textOf(kChooseGame), x + pad * 2, y + rh, w - pad * 4, kTextDim);
 			return;
 		}
 		const GameRow &r = rows[sel];
-		// columns: name | colour | army | team | shield | files
+		// columns: name | colour | army | team | shield | files. O29 (item 4): the colour, army and team columns are as
+		// wide as their headers, drawn whole; one-letter headers when the full ones would leave the names less than 40 %.
 		const Int icon = rh - 4;
 		const Int colFiles = x + w - pad - icon;
-		const Int colShield = colFiles - icon - 4;
-		const Int colTeam = colShield - icon - 10;
-		const Int colArmy = colTeam - icon - 8;
-		const Int colColor = colArmy - icon - 6;
+		const Int colShield = colFiles - (s.anticheat ? icon + 4 : 4);
+		const Text *heads[3] = { &kColColor, &kColArmy, &kColTeam };
+		Int widths[3] = { 0, 0, 0 };
+		for (Int pass = 0; pass < 2; ++pass)
+		{
+			if (pass == 1)
+			{
+				heads[0] = &kColColorShort;
+				heads[1] = &kColArmyShort;
+				heads[2] = &kColTeamShort;
+			}
+			Int sum = 0;
+			for (Int i = 0; i < 3; ++i)
+			{
+				widths[i] = max(icon, textWidth(textOf(*heads[i]))) + 8;
+				sum += widths[i];
+			}
+			if (colShield - sum - x - pad >= w * 40 / 100) {
+				break;
+			}
+		}
+		const Int colTeam = colShield - widths[2];
+		const Int colArmy = colTeam - widths[1];
+		const Int colColor = colArmy - widths[0];
+		const Int colStart[3] = { colColor, colArmy, colTeam };
 		drawText(textOf(kColPlayers), x + pad + 2, y + 3, colColor - x - pad - 6, kTextHeader);
-		drawText(textOf(kColColor), colColor - 2, y + 3, icon + 8, kTextDim);
-		drawText(textOf(kColArmy), colArmy - 2, y + 3, icon + 8, kTextDim);
-		drawText(textOf(kColTeam), colTeam - 2, y + 3, colShield - colTeam, kTextDim);
+		for (Int i = 0; i < 3; ++i)
+		{
+			const UnicodeString head = textOf(*heads[i]);
+			drawHeader(head, colStart[i] + (widths[i] - textWidth(head)) / 2, y + 3, kTextDim);
+		}
+		// the icons centred under their headers
+		const Int iconColor = colColor + (widths[0] - icon) / 2;
+		const Int iconArmy = colArmy + (widths[1] - icon) / 2;
+		const Int iconTeam = colTeam + (widths[2] - icon) / 2;
 		TheDisplay->drawLine(x + 1, y + rh + 1, x + w - 2, y + rh + 1, 1.0f, kFrame);
+		// O29 (item 5): the summary on one line, or on two when the panel is narrow (800 x 600)
+		Int money = 0;
+		if (r.game != nullptr) {
+			money = (Int)r.game->getStartingCash().countMoney();
+		} else if (TheMultiplayerSettings != nullptr) {
+			money = (Int)TheMultiplayerSettings->getDefaultStartingMoney().countMoney();
+		}
+		Int observerCount = 0;
+		for (Int k = 0; k < MAX_SLOTS; ++k)
+		{
+			if (r.sample != nullptr) {
+				observerCount += r.sample->slots[k].state == 4 ? 1 : 0;
+			} else if (r.game != nullptr) {
+				observerCount += isObserverSlot(r.game->getConstSlot(k)) ? 1 : 0;
+			}
+		}
+		UnicodeString summary1, summary2;
+		summary1.format(textOf(kSummary).str(), r.players, r.maxPlayers, observerCount, money);
+		Int summaryLines = 1;
+		if (textWidth(summary1) > w - pad * 4)
+		{
+			summaryLines = 2;
+			summary1.format(textOf(kSummaryPlayers).str(), r.players, r.maxPlayers, observerCount);
+			summary2.format(textOf(kSummaryMoney).str(), money);
+		}
+		const Int bottom = y + h - rh * summaryLines - 2;   // the slots and observers stay above the summary
 		Int ry = y + rh + 3;
 		Int observers = 0;
 		struct Obs { UnicodeString name; Int files; };
@@ -796,7 +1034,7 @@ namespace
 				++observers;
 				continue;
 			}
-			if (ry + rh > y + h - rh * 2) {
+			if (ry + rh > bottom) {
 				break;
 			}
 			const Int ty = ry + (rh - fontHeight()) / 2;
@@ -815,21 +1053,21 @@ namespace
 			Color tint = 0xFFFFFFFF;
 			const Image *colorImage = PlayerTable::colorPictureOf(color, &tint);
 			if (colorImage != nullptr) {
-				TheDisplay->drawImage(colorImage, colColor, ry + 2, colColor + icon, ry + 2 + icon, tint);
+				TheDisplay->drawImage(colorImage, iconColor, ry + 2, iconColor + icon, ry + 2 + icon, tint);
 			}
 			const Image *armyImage = PlayerTable::armyPictureOf(army);
 			if (armyImage != nullptr) {
-				TheDisplay->drawImage(armyImage, colArmy, ry + 2, colArmy + icon, ry + 2 + icon);
+				TheDisplay->drawImage(armyImage, iconArmy, ry + 2, iconArmy + icon, ry + 2 + icon);
 			}
 			if (team >= 0)
 			{
 				UnicodeString t;
 				t.format(L"%d", team + 1);
-				drawText(t, colTeam + 2, ty, icon + 6, kText);
+				drawHeader(t, colTeam + (widths[2] - textWidth(t)) / 2, ty, kText);
 			}
 			else if (const Image *pirate = PlayerTable::picture(PlayerTable::PICTURE_NO_TEAM))
 			{
-				TheDisplay->drawImage(pirate, colTeam, ry + 2, colTeam + icon, ry + 2 + icon);
+				TheDisplay->drawImage(pirate, iconTeam, ry + 2, iconTeam + icon, ry + 2 + icon);
 			}
 			if (state == 2)
 			{
@@ -839,28 +1077,24 @@ namespace
 			ry += rh;
 		}
 		// the observers (row 21 brings real observer places)
-		if (!obs.empty() && ry + rh * 2 < y + h - rh)
+		if (!obs.empty() && ry + rh * 2 < bottom)
 		{
 			TheDisplay->drawLine(x + 1, ry + 2, x + w - 2, ry + 2, 1.0f, kFrame);
 			drawText(textOf(kObservers), x + pad + 2, ry + 4, w - pad * 4, kTextDim);
 			ry += rh + 2;
-			for (size_t i = 0; i < obs.size() && ry + rh < y + h - rh; ++i)
+			for (size_t i = 0; i < obs.size() && ry + rh < bottom; ++i)
 			{
 				drawText(obs[i].name, x + pad + 12, ry + (rh - fontHeight()) / 2, colShield - x - pad - 16, kText);
 				drawFilesMark(colFiles, ry + 2, icon, obs[i].files);
 				ry += rh;
 			}
 		}
-		// the summary line at the bottom
-		Int money = 0;
-		if (r.game != nullptr) {
-			money = (Int)r.game->getStartingCash().countMoney();
-		} else if (TheMultiplayerSettings != nullptr) {
-			money = (Int)TheMultiplayerSettings->getDefaultStartingMoney().countMoney();
+		// the summary at the bottom
+		(void)observers;
+		drawText(summary1, x + pad + 2, bottom + 2, w - pad * 4, kTextDim);
+		if (summaryLines == 2) {
+			drawText(summary2, x + pad + 2, bottom + 2 + rh, w - pad * 4, kTextDim);
 		}
-		UnicodeString summary;
-		summary.format(textOf(kSummary).str(), r.players, r.maxPlayers, observers, money);
-		drawText(summary, x + pad + 2, y + h - rh, w - pad * 4, kTextDim);
 	}
 
 	//---------------------------------------------------------------------------------------------
@@ -892,22 +1126,61 @@ namespace
 				files.push_back(filesMarkOfIP((UnsignedInt)(uintptr_t)GadgetListBoxGetItemData(s.listPlayers, i, 0)));
 			}
 		}
-		// one column, or two when the box is wide (variant B)
-		const Int columns = (w > sx(240)) ? 2 : 1;
-		const Int colW = (w - 2 * pad) / columns;
+		// one column, or two when the box is wide (variant B). O29 (item 5): more names than fit scroll (wheel, or a click
+		// on the thin bar at the right), and the bar shows that there are more.
+		const Bool twoColumns = w > sx(240);
+		const Int columns = twoColumns ? 2 : 1;
 		const Int perColumn = max(1, (h - 2 * pad) / rh);
-		for (size_t i = 0; i < names.size(); ++i)
+		const Int fit = perColumn * columns;
+		const Bool overflow = (Int)names.size() > fit;
+		const Int colW = (w - 2 * pad - (overflow ? kBarW + 4 : 0)) / columns;
+		const Int maxScroll = max(0, (Int)names.size() - fit);
+		s.lobbyScroll = s.lobbyScroll > maxScroll ? maxScroll : (s.lobbyScroll < 0 ? 0 : s.lobbyScroll);
+		for (Int k = 0; k < fit && s.lobbyScroll + k < (Int)names.size(); ++k)
 		{
-			const Int c = (Int)i / perColumn;
-			if (c >= columns) {
-				break;
-			}
+			const Int i = s.lobbyScroll + k;
+			const Int c = k / perColumn;
 			const Int cx = x + pad + c * colW;
-			const Int ry = y + pad + ((Int)i % perColumn) * rh;
+			const Int ry = y + pad + (k % perColumn) * rh;
 			drawText(names[i], cx + 2, ry + (rh - fontHeight()) / 2, colW - icon * 2 - 10, files[i] == 0 ? kYellow : kText);
 			drawShieldPlace(cx + colW - icon * 2 - 6, ry + 2, icon);
 			drawFilesMark(cx + colW - icon - 2, ry + 2, icon, files[i]);
 		}
+		drawScrollBar(x + w - kBarW - 3, y + pad, perColumn * rh, s.lobbyScroll, fit, (Int)names.size());
+	}
+
+	Int lobbyCount()
+	{
+		if (LanTest::sampleData()) {
+			return (Int)ARRAY_SIZE(kSampleLobby);
+		}
+		return s.listPlayers != nullptr ? GadgetListBoxGetNumEntries(s.listPlayers) : 0;
+	}
+
+	WindowMsgHandledType inputLobbyList(GameWindow *window, UnsignedInt msg, WindowMsgData mData1, WindowMsgData)
+	{
+		switch (msg)
+		{
+			case GWM_WHEEL_UP: --s.lobbyScroll; return MSG_HANDLED;
+			case GWM_WHEEL_DOWN: ++s.lobbyScroll; return MSG_HANDLED;
+			case GWM_LEFT_DOWN: return MSG_HANDLED;
+			case GWM_LEFT_UP:
+			{
+				Int x = 0, y = 0, w = 0, h = 0;
+				window->winGetScreenPosition(&x, &y);
+				window->winGetSize(&w, &h);
+				const Int mx = (Int)LOLONGTOSHORT(mData1);
+				const Int my = (Int)HILONGTOSHORT(mData1);
+				const Int rh = rowHeight();
+				const Int perColumn = max(1, (h - 8) / rh);
+				const Int fit = perColumn * (w > sx(240) ? 2 : 1);
+				if (lobbyCount() > fit && mx >= x + w - kBarW - 6) {
+					s.lobbyScroll += (my < y + h / 2) ? -fit : fit;
+				}
+				return MSG_HANDLED;
+			}
+		}
+		return MSG_IGNORED;
 	}
 
 	//---------------------------------------------------------------------------------------------
@@ -932,6 +1205,9 @@ namespace
 		return ((UnsignedInt)a << 24) | ((UnsignedInt)b << 16) | ((UnsignedInt)c << 8) | (UnsignedInt)d;
 	}
 
+	/// The last addresses from Network.ini ("RemoteIP<n> = a.b.c.d[:name]", as the direct connect screen keeps them).
+	/// O29: read here (getRemoteIPEntry steps past the end of an entry without ':'); with -lanSample and no entries,
+	/// three sample addresses (shown only, never written).
 	void loadHistory()
 	{
 		s.history.clear();
@@ -939,9 +1215,31 @@ namespace
 		const Int count = prefs.getNumRemoteIPs();
 		for (Int i = 0; i < count && i < 10; ++i)
 		{
-			const UnicodeString entry = prefs.getRemoteIPEntry(i);
+			AsciiString key;
+			key.format("RemoteIP%d", i);
+			LANPreferences::const_iterator it = prefs.find(key.str());
+			if (it == prefs.end()) {
+				continue;
+			}
+			AsciiString rest = it->second;
+			AsciiString ip;
+			rest.nextToken(&ip, ":");
+			UnicodeString entry;
+			entry.translate(ip);
+			if (rest.getLength() > 1)
+			{
+				entry.concat(L" (");
+				entry.concat(QuotedPrintableToUnicodeString(AsciiString(rest.str() + 1)));
+				entry.concat(L")");
+			}
 			if (parseAddress(entry) != 0) {
 				s.history.push_back(entry);
+			}
+		}
+		if (s.history.empty() && LanTest::sampleData())
+		{
+			for (Int i = 0; i < (Int)ARRAY_SIZE(kSampleHistory); ++i) {
+				s.history.push_back(UnicodeString(kSampleHistory[i]));
 			}
 		}
 	}
@@ -952,7 +1250,8 @@ namespace
 		LANPreferences prefs;
 		std::vector<AsciiString> keep;
 		AsciiString first;
-		first.format("%d.%d.%d.%d", (ip >> 24) & 0xFF, (ip >> 16) & 0xFF, (ip >> 8) & 0xFF, ip & 0xFF);
+		// "a.b.c.d:" (no name): the direct connect screen's reader expects the ':'
+		first.format("%d.%d.%d.%d:", (ip >> 24) & 0xFF, (ip >> 16) & 0xFF, (ip >> 8) & 0xFF, ip & 0xFF);
 		keep.push_back(first);
 		const Int count = prefs.getNumRemoteIPs();
 		for (Int i = 0; i < count && (Int)keep.size() < 10; ++i)
@@ -1142,6 +1441,51 @@ namespace
 	}
 }
 
+namespace
+{
+	/// O29 (item 9): the screen point of row 'row' of a drawn list, for a -uiScript (clickrow). The row is scrolled into
+	/// view first. Games table, lobby list and the open address list.
+	Bool scriptRowPoint(GameWindow *window, Int row, Int *px, Int *py)
+	{
+		if (s.parent == nullptr || window == nullptr || row < 0) {
+			return FALSE;
+		}
+		Int x = 0, y = 0, w = 0, h = 0;
+		window->winGetScreenPosition(&x, &y);
+		window->winGetSize(&w, &h);
+		const Int rh = rowHeight();
+		if (window == s.gamesTable)
+		{
+			const TableGeo g = gamesGeo(window);
+			if (row < s.scroll || row >= s.scroll + g.visible) {
+				s.scroll = row;
+			}
+			*px = x + w / 4;
+			*py = g.top + (row - s.scroll) * rh + rh / 2;
+			return TRUE;
+		}
+		if (window == s.lobbyList)
+		{
+			const Int perColumn = max(1, (h - 8) / rh);
+			const Int fit = perColumn * (w > sx(240) ? 2 : 1);
+			if (row < s.lobbyScroll || row >= s.lobbyScroll + fit) {
+				s.lobbyScroll = row;
+			}
+			const Int k = row - s.lobbyScroll;
+			*px = x + 4 + (k / perColumn) * (w / 2) + 20;
+			*py = y + 4 + (k % perColumn) * rh + rh / 2;
+			return TRUE;
+		}
+		if (window == s.historyPopup && row < (Int)s.history.size())
+		{
+			*px = x + w / 3;
+			*py = y + 2 + row * rh + rh / 2;
+			return TRUE;
+		}
+		return FALSE;
+	}
+}
+
 //-------------------------------------------------------------------------------------------------
 UnicodeString LanLobbyLook::screenName()
 {
@@ -1172,18 +1516,21 @@ void LanLobbyLook::init(GameWindow *parent)
 	s.chatEntry = findChild("TextEntryChat");
 	s.chatButton = findChild("ButtonEmote");
 	s.buttonLook = findChild("ButtonHost");
-	s.font = s.listGames != nullptr ? s.listGames->winGetFont() : (s.nameEntry != nullptr ? s.nameEntry->winGetFont() : nullptr);
+	s.joinButton = findChild("ButtonJoin");
+	s.font = screenFont(s.listGames != nullptr ? s.listGames->winGetFont() : (s.nameEntry != nullptr ? s.nameEntry->winGetFont() : nullptr));
 
-	// the old unnamed labels: the title (the highest) stays and gets the new name, the others go
+	// the old unnamed labels: the title (the highest) stays and gets the new name, the others go. O29 (items 1, 2): they
+	// are all inside LanLobbyMenu.wnd:GadgetParent, so every depth is searched (the first pass looked at the parent's
+	// own children only and found none: the old title "LAN LOBBY" and the old labels stayed)
 	const NameKeyType unnamed = TheNameKeyGenerator->nameToKey("LanLobbyMenu.wnd:");
+	std::vector<GameWindow *> labels;
+	collectUnnamedLabels(s.parent, (Int)unnamed, labels);
 	Int titleY = 1000000;
-	for (GameWindow *c = s.parent->winGetChild(); c != nullptr; c = c->winGetNext())
+	for (size_t i = 0; i < labels.size(); ++i)
 	{
-		if ((c->winGetStyle() & GWS_STATIC_TEXT) == 0 || c->winGetWindowId() != (Int)unnamed) {
-			continue;
-		}
+		GameWindow *c = labels[i];
 		Int x = 0, y = 0;
-		c->winGetPosition(&x, &y);
+		c->winGetScreenPosition(&x, &y);
 		if (y < titleY)
 		{
 			if (s.title != nullptr) {
@@ -1213,7 +1560,6 @@ void LanLobbyLook::init(GameWindow *parent)
 	makeLabel(L.addrLabel, textOf(kYourAddress), kTextDim, FALSE);
 	makeLabel(L.connectLabel, textOf(kConnectByAddress), kTextDim, FALSE);
 	makeLabel(L.gamesLabel, textOf(kOpenGames), kGreen, FALSE);
-	makeLabel(L.gamesHint, textOf(s.anticheat ? kHintShield : kHint), kTextDim, TRUE);
 	s.panelLabel = makeLabel(L.panelLabel, UnicodeString::TheEmptyString, kGreen, FALSE);
 	UnicodeString lobby;
 	lobby.format(textOf(kInLobby).str(), 0);
@@ -1240,7 +1586,7 @@ void LanLobbyLook::init(GameWindow *parent)
 	// the drawn tables
 	s.gamesTable = makeDrawn(L.gamesTable, drawGamesTable, inputGamesTable, "LanLobbyMenu.wnd:Look.Games");
 	s.panel = makeDrawn(L.panel, drawPanel, nullptr, "LanLobbyMenu.wnd:Look.Panel");
-	s.lobbyList = makeDrawn(L.lobbyList, drawLobbyList, nullptr, "LanLobbyMenu.wnd:Look.Lobby");
+	s.lobbyList = makeDrawn(L.lobbyList, drawLobbyList, inputLobbyList, "LanLobbyMenu.wnd:Look.Lobby");
 	{
 		const Rect popup = { L.connectEntry.x0, L.connectEntry.y1, L.historyButton.x1, L.connectEntry.y1 + 40 };
 		s.historyPopup = makeDrawn(popup, drawHistory, inputHistory, "LanLobbyMenu.wnd:Look.HistoryList");
@@ -1248,6 +1594,8 @@ void LanLobbyLook::init(GameWindow *parent)
 			s.historyPopup->winSetSystemFunc(systemHistory);
 		}
 	}
+
+	FrameShots::setRowHook(&scriptRowPoint);   // O29 (item 9): clickrow / dclickrow of a -uiScript
 
 	// everything made here waits for the end of the enter fade (row 27)
 	s.shown = TRUE;
@@ -1285,8 +1633,13 @@ void LanLobbyLook::update(Bool screenReady)
 		collectRows(rows);
 		const Int sel = selectedRow();
 		UnicodeString t;
-		if (sel >= 0 && sel < (Int)rows.size()) {
+		if (sel >= 0 && sel < (Int)rows.size())
+		{
 			t.format(L"%ls \x00AB%ls\x00BB   %ls   %ls", textOf(kGame).str(), rows[sel].name.str(), rows[sel].map.str(), rows[sel].speed.str());
+			// O29: one line (a static text wraps at its width - 10)
+			Int lw = 0, lh = 0;
+			s.panelLabel->winGetSize(&lw, &lh);
+			t = fitLine(t, lw - 14);
 		}
 		if (t.compare(GadgetStaticTextGetText(s.panelLabel)) != 0) {
 			GadgetStaticTextSetText(s.panelLabel, t);
@@ -1305,6 +1658,7 @@ void LanLobbyLook::update(Bool screenReady)
 
 void LanLobbyLook::shutdown()
 {
+	FrameShots::setRowHook(nullptr);
 	if (TheWindowManager != nullptr)
 	{
 		if (s.historyLone)
@@ -1323,6 +1677,8 @@ void LanLobbyLook::shutdown()
 	s.parent = nullptr;
 	s.layout = nullptr;
 	s.title = s.nameEntry = s.clearButton = s.listPlayers = s.listGames = s.gameInfo = s.chatList = s.chatEntry = s.chatButton = s.buttonLook = nullptr;
+	s.joinButton = nullptr;
+	s.lobbyScroll = 0;
 	s.addrBox = s.copyButton = s.connectEntry = s.historyButton = s.connectButton = nullptr;
 	s.gamesTable = s.panel = s.panelLabel = s.lobbyList = s.lobbyLabel = s.historyPopup = nullptr;
 	s.font = nullptr;
@@ -1345,7 +1701,8 @@ Bool LanLobbyLook::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgData
 	{
 		if (control == s.copyButton)
 		{
-			const UnsignedInt ip = TheLAN != nullptr ? TheLAN->GetLocalIP() : 0;
+			// O29: the address shown (with -lanSample the sample address, not the loopback one)
+			const UnsignedInt ip = s.shownIP != 0 ? s.shownIP : (TheLAN != nullptr ? TheLAN->GetLocalIP() : 0);
 			if (ip != 0) {
 				copyToClipboard(ipText(ip));
 			}
@@ -1363,6 +1720,9 @@ Bool LanLobbyLook::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgData
 		{
 			openHistory();
 			return TRUE;
+		}
+		if (control == s.joinButton && refuseFull(selectedRow())) {
+			return TRUE;   // O29 (item 9): the menu does not ask the host
 		}
 	}
 	if (msg == GEM_EDIT_DONE && control == s.connectEntry)
