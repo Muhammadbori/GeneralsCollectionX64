@@ -203,6 +203,10 @@ namespace
 		WinDrawData buttonHilite[MAX_DRAW_DATA];
 		Color difficultyTextColor;
 		Color difficultyTextBorder;
+		Color enabledTextColor;      ///< the button's own text colours, and its highlight ones for the chosen difficulty
+		Color enabledTextBorder;
+		Color hiliteTextColor;
+		Color hiliteTextBorder;
 		Int chosenDifficulty;
 		Bool continueMode;
 		Bool hasRun;
@@ -402,10 +406,13 @@ namespace
 			if (b == nullptr) {
 				continue;
 			}
+			// the chosen one: the button's highlight look, pictures and text (the game's look of a selected button)
 			WinInstanceData *inst = b->winGetInstanceData();
+			const Bool chosen = (i == shown && !s.continueMode);
 			for (Int d = 0; d < MAX_DRAW_DATA; ++d) {
-				inst->m_enabledDrawData[d] = (i == shown && !s.continueMode) ? s.buttonHilite[d] : s.buttonEnabled[d];
+				inst->m_enabledDrawData[d] = chosen ? s.buttonHilite[d] : s.buttonEnabled[d];
 			}
+			b->winSetEnabledTextColors(chosen ? s.hiliteTextColor : s.enabledTextColor, chosen ? s.hiliteTextBorder : s.enabledTextBorder);
 			b->winEnable(!s.continueMode);
 			if (s.continueMode && i == shown)
 			{
@@ -436,6 +443,10 @@ void ChallengeExtras::init(GameWindow *parentMenu, GameWindow *buttonPlay, GameW
 		}
 		s.difficultyTextColor = look->m_disabledText.color;
 		s.difficultyTextBorder = look->m_disabledText.borderColor;
+		s.enabledTextColor = look->m_enabledText.color;
+		s.enabledTextBorder = look->m_enabledText.borderColor;
+		s.hiliteTextColor = look->m_hiliteText.color;
+		s.hiliteTextBorder = look->m_hiliteText.borderColor;
 	}
 
 	// difficulty: what was chosen here last, else the campaign difficulty of the options
@@ -444,43 +455,99 @@ void ChallengeExtras::init(GameWindow *parentMenu, GameWindow *buttonPlay, GameW
 	s.hasRun = ChallengeRun::load(s_run);
 	s.continueMode = FALSE;
 
-	// The bottom left of the frame (ChallengeMenu.wnd: the frame is 41..760 x 40..561, the bio box starts at x 199
-	// and ends at y 493, Play starts at x 382): "Continue" left of the bio box, then a row for the difficulty and a
-	// row for the speed, both ending before Play.
+	// Placement in the frame of ChallengeMenu.wnd (800 x 600, scaled): the frame is 41..760 x 40..561, the bio box ends
+	// at y 493, Play and Back are at y 505..541 from x 382. "Continue" joins Play and Back in that row (three buttons of
+	// the same size), so it does not lie on the map art at the bottom left. Left of them, below the map art, the rows for
+	// the difficulty and the speed; all widths come from the real text widths of the small (bio) font.
 	const Int left = 46, right = 376;
 	const UnicodeString diffTitle = text("GUI:ChallengeDifficulty", L"Difficulty", L"\x0421\x043B\x043E\x0436\x043D\x043E\x0441\x0442\x044C");
 	const UnicodeString speedTitle = text("GUI:GameSpeed", L"Game speed", L"\x0421\x043A\x043E\x0440\x043E\x0441\x0442\x044C \x0438\x0433\x0440\x044B");
-	const Int titleW = max(textWidth(smallFont, diffTitle), textWidth(smallFont, speedTitle)) + sx(8);
+	// a static text wraps at its width - 10, so the titles get their text width + 14
+	const Int diffTitleW = textWidth(smallFont, diffTitle) + 14;
+	const Int speedTitleW = textWidth(smallFont, speedTitle) + 14;
 
-	s.buttonContinue = makeButton(buttonBack, nullptr, sx(left), sy(458), sx(146), sy(34),
-		text("GUI:ChallengeContinue", L"Continue", L"\x041F\x0440\x043E\x0434\x043E\x043B\x0436\x0438\x0442\x044C"),
-		"ChallengeMenu.wnd:ButtonContinue");
-	if (s.buttonContinue != nullptr) {
-		s.buttonContinue->winEnable(s.hasRun);
+	// the bottom row: Continue, Play, Back
+	{
+		const Int rowX = 382, rowRight = 748, gap = 12;
+		const Int w = (rowRight - rowX - 2 * gap) / 3;
+		GameWindow *row[3] = { nullptr, buttonPlay, buttonBack };
+		s.buttonContinue = makeButton(buttonBack, nullptr, sx(rowX), sy(505), sx(w), sy(36),
+			text("GUI:ChallengeContinue", L"Continue", L"\x041F\x0440\x043E\x0434\x043E\x043B\x0436\x0438\x0442\x044C"),
+			"ChallengeMenu.wnd:ButtonContinue");
+		row[0] = s.buttonContinue;
+		for (Int k = 0; k < 3; ++k)
+		{
+			GameWindow *b = row[k];
+			if (b == nullptr) {
+				continue;
+			}
+			// in the button's parent coordinates (the menu's windows may sit in a child of the menu)
+			Int px = 0, py = 0, mx = 0, my = 0;
+			if (b->winGetParent() != nullptr) {
+				b->winGetParent()->winGetScreenPosition(&px, &py);
+			}
+			s.parent->winGetScreenPosition(&mx, &my);
+			b->winSetPosition(mx + sx(rowX + k * (w + gap)) - px, my + sy(505) - py);
+			b->winSetSize(sx(w), sy(36));
+		}
+		if (s.buttonContinue != nullptr)
+		{
+			// a smaller font when the text does not fit the button
+			const UnicodeString t = text("GUI:ChallengeContinue", L"Continue", L"\x041F\x0440\x043E\x0434\x043E\x043B\x0436\x0438\x0442\x044C");
+			if (textWidth(s.buttonContinue->winGetFont(), t) > sx(w) - 8 && smallFont != nullptr) {
+				s.buttonContinue->winSetFont(smallFont);
+			}
+			s.buttonContinue->winEnable(s.hasRun);
+		}
 	}
 
-	// difficulty row
-	const Int rowH = sy(18);
-	s.difficultyLabel = makeLabel(smallFont, sx(left), sy(500), titleW, rowH, diffTitle);
+	// difficulty: the buttons as wide as their texts; one row with the title when they fit, else the title on a row of
+	// its own above them
 	const char *const labels[DIFFICULTY_BUTTONS] = { "GUI:EasyCaps", "GUI:MediumDifficultyCaps", "GUI:HardCaps" };
 	const WideChar *const english[DIFFICULTY_BUTTONS] = { L"EASY", L"NORMAL", L"HARD" };
 	const WideChar *const russian[DIFFICULTY_BUTTONS] = {
 		L"\x041B\x0415\x0413\x041A\x041E", L"\x041D\x041E\x0420\x041C\x0410\x041B\x042C\x041D\x041E", L"\x0421\x041B\x041E\x0416\x041D\x041E" };
-	const Int buttonsX = sx(left) + titleW;
-	const Int buttonsW = (sx(right) - buttonsX - sx(4) * (DIFFICULTY_BUTTONS - 1)) / DIFFICULTY_BUTTONS;
+	UnicodeString names[DIFFICULTY_BUTTONS];
+	Int widths[DIFFICULTY_BUTTONS];
+	const Int buttonGap = sx(4);
+	Int buttonsTotal = 0;
+	for (Int i = 0; i < DIFFICULTY_BUTTONS; ++i)
+	{
+		names[i] = text(labels[i], english[i], russian[i]);
+		widths[i] = textWidth(smallFont, names[i]) + sx(14);
+		buttonsTotal += widths[i] + (i > 0 ? buttonGap : 0);
+	}
+	const Int room = sx(right) - sx(left);
+	const Bool oneRow = diffTitleW + buttonsTotal <= room;
+	Int y = oneRow ? 499 : 497;
+	const Int rowH = oneRow ? 20 : 18;
+	s.difficultyLabel = makeLabel(smallFont, sx(left), sy(y), diffTitleW, sy(rowH), diffTitle);
+	Int buttonsX = oneRow ? sx(left) + diffTitleW : sx(left);
+	if (!oneRow) {
+		y += rowH;
+	}
+	if (buttonsTotal > room)
+	{
+		// even a row of its own is short: the buttons share it equally
+		const Int w = (room - buttonGap * (DIFFICULTY_BUTTONS - 1)) / DIFFICULTY_BUTTONS;
+		for (Int i = 0; i < DIFFICULTY_BUTTONS; ++i) {
+			widths[i] = w;
+		}
+	}
 	for (Int i = 0; i < DIFFICULTY_BUTTONS; ++i)
 	{
 		AsciiString name;
 		name.format("ChallengeMenu.wnd:ButtonDifficulty%d", i);
-		s.difficulty[i] = makeButton(buttonBack, smallFont, buttonsX + i * (buttonsW + sx(4)), sy(499), buttonsW, sy(20),
-			text(labels[i], english[i], russian[i]), name.str());
+		s.difficulty[i] = makeButton(buttonBack, smallFont, buttonsX, sy(y), widths[i], sy(rowH), names[i], name.str());
+		buttonsX += widths[i] + buttonGap;
 	}
+	y += rowH + (oneRow ? 4 : 2);
 
 	// speed row: the skirmish control (slider, "1x" text, Normal box)
-	s.speedLabel = makeLabel(smallFont, sx(left), sy(523), titleW, rowH, speedTitle);
-	const Int sliderX = sx(left) + titleW;
-	s.speedSlider = makeSpeedSlider(sliderX, sy(522), sx(84), sy(20));
-	s.speedText = makeLabel(smallFont, sliderX + sx(88), sy(522), sx(32), sy(20), UnicodeString::TheEmptyString);
+	s.speedLabel = makeLabel(smallFont, sx(left), sy(y), speedTitleW, sy(rowH), speedTitle);
+	const Int sliderX = sx(left) + speedTitleW;
+	s.speedSlider = makeSpeedSlider(sliderX, sy(y), sx(84), sy(rowH));
+	s.speedText = makeLabel(smallFont, sliderX + sx(88), sy(y), sx(32), sy(rowH), UnicodeString::TheEmptyString);
 	s.checkTemplate = makeCheckTemplate(smallFont);
 	Int fps = LOGICFRAMES_PER_SECOND;
 	Bool normal = TRUE;
