@@ -39,6 +39,7 @@
 #include "GameNetwork/LANAPI.h"
 #include "GameNetwork/LANAPICallbacks.h"
 #include "Common/GuardLink.h"
+#include "GameNetwork/LanRoom.h"
 #include "GameClient/MapUtil.h"
 
 void LANAPI::handleRequestLocations( LANMessage *msg, UnsignedInt senderIP )
@@ -415,6 +416,7 @@ void LANAPI::handleRequestJoin( LANMessage *msg, UnsignedInt senderIP )
 					DEBUG_LOG(("LANAPI::handleRequestJoin - added player %ls at ip 0x%08x to the game", msg->name, senderIP));
 
 					OnPlayerJoin(player, UnicodeString(msg->name));
+					LanRoom::hostDropJoined(senderIP);   // O31: an observer who took a slot leaves the list
 					responseIP = 0;
 
 					break;

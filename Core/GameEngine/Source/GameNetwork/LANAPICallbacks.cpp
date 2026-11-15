@@ -46,6 +46,7 @@
 #include "GameNetwork/FileTransfer.h"
 #include "GameNetwork/LANAPICallbacks.h"
 #include "Common/GuardLink.h"
+#include "GameNetwork/LanRoom.h"
 #include "GameNetwork/networkutil.h"
 
 LANAPI *TheLAN = nullptr;
@@ -221,6 +222,9 @@ void LANAPI::OnGameStart()
 		m_isInLANMenu = FALSE;
 
 		//m_currentGame->startGame(0);
+
+		// O31: every player serves its replay on its LAN address (observers and outside viewers follow it)
+		LanRoom::configureServing(m_localIP);
 
 		// Set up the game network
 		DEBUG_ASSERTCRASH(TheNetwork == nullptr, ("For some reason TheNetwork isn't null at the start of this game.  Better look into that."));

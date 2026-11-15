@@ -37,6 +37,7 @@
 #include "Common/UserPreferences.h"
 #include "GameLogic/GameLogic.h"
 #include "Common/GuardLink.h"
+#include "GameNetwork/LanRoom.h"
 #include "GameNetwork/LANAPICallbacks.h"
 #include "GameClient/InGameUI.h"
 
@@ -515,6 +516,11 @@ void LANAPI::update()
 					s_filesFingerprints[senderIP] = msg->FilesInfo.fingerprint;
 				}
 				break;
+			case LANMessage::MSG_ROOM:	// O31: the room's observers
+				if (m_transport->m_inBuffer[i].length >= (Int)sizeof(LANMessage) && msg->Room.magic == LANRoomMagic) {
+					LanRoom::onMessage(msg, senderIP, m_localIP);
+				}
+				break;
 			case LANMessage::MSG_GUARD_DATA:	// O30: for this player's anti-cheat, passed on unread
 				if (m_transport->m_inBuffer[i].length >= (Int)sizeof(LANMessage) && msg->GuardData.magic == LANGuardDataMagic
 					&& msg->GuardData.length > 0 && msg->GuardData.length <= LANGuardDataMax) {
@@ -540,6 +546,7 @@ void LANAPI::update()
 		UnsignedInt failedIP = 0;
 		while (GuardLink::takeNewFailure(&failedIP)) {}   // O30: in the lobby the red mark says it
 	}
+	LanRoom::update(m_localIP);   // O31: observers (heartbeats, the host's list, the stream start)
 	// Send out periodic I'm Here messages
 	if (now > s_resendDelta + m_lastResendTime)
 	{
@@ -905,6 +912,9 @@ void LANAPI::RequestGameStart()
 {
 	if (m_inLobby || !m_currentGame || m_currentGame->getIP(0) != m_localIP)
 		return;
+
+	// O31: the room's observers get the players' addresses and follow the stream; nobody waits for them
+	LanRoom::hostStart(m_currentGame, m_localIP);
 
 	LANMessage msg;
 	msg.messageType = LANMessage::MSG_GAME_START;
@@ -1479,4 +1489,15 @@ void LANAPI::pumpGuard()
 			TheInGameUI->messageNoFormat(GuardLink::failedInMatchText(name));
 		}
 	}
+}
+
+// TheSuperHackers @feature O31 (row 21, step 3) LanRoom's messages
+void LANAPI::sendRoomMessage(LANMessage *msg, UnsignedInt ip)
+{
+	if (msg == nullptr) {
+		return;
+	}
+	fillInLANMessage(msg);
+	msg->messageType = LANMessage::MSG_ROOM;
+	sendMessageOnly(msg, ip);
 }

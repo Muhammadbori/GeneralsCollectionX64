@@ -38,6 +38,9 @@
 #include "GameClient/GadgetPushButton.h"
 #include "GameClient/GadgetStaticText.h"
 #include "GameClient/GadgetTextEntry.h"
+#include "GameClient/GadgetSlider.h"
+#include "GameClient/TickSlider.h"
+#include "GameNetwork/LanRoom.h"
 #include "GameClient/GameFont.h"
 #include "GameClient/GameInfoWindow.h"
 #include "GameClient/GameText.h"
@@ -69,6 +72,7 @@ namespace
 		Rect panelLabel, panel;
 		Rect lobbyLabel, lobbyList;
 		Rect chatLabel, chatList, chatEntry, chatButton;
+		Rect panelActions;             ///< O31: Observe / Watch and the delay slider, under the panel
 	};
 
 	// A: games list left, the selected game's panel right, lobby and chat under the list (01_variant_A_...png)
@@ -78,9 +82,10 @@ namespace
 		{ 216, 80, 472, 95 }, { 216, 96, 386, 120 }, { 390, 96, 472, 120 },
 		{ 480, 80, 751, 95 }, { 480, 96, 636, 120 }, { 638, 96, 660, 120 }, { 664, 96, 751, 120 },
 		{ 52, 128, 472, 143 }, { 52, 145, 472, 320 },
-		{ 480, 128, 751, 143 }, { 480, 145, 751, 462 },
+		{ 480, 128, 751, 143 }, { 480, 145, 751, 436 },
 		{ 52, 326, 200, 341 }, { 52, 343, 200, 462 },
 		{ 208, 326, 472, 341 }, { 208, 343, 472, 436 }, { 208, 440, 446, 462 }, { 450, 440, 472, 462 },
+		{ 480, 440, 751, 462 },
 	};
 
 	// B: a wide games list and the chat under it on the left, the panel and the lobby (two columns) right
@@ -90,9 +95,10 @@ namespace
 		{ 216, 80, 472, 95 }, { 216, 96, 386, 120 }, { 390, 96, 472, 120 },
 		{ 480, 80, 751, 95 }, { 480, 96, 636, 120 }, { 638, 96, 660, 120 }, { 664, 96, 751, 120 },
 		{ 52, 128, 460, 143 }, { 52, 145, 460, 300 },
-		{ 468, 128, 751, 143 }, { 468, 145, 751, 372 },
+		{ 468, 128, 751, 143 }, { 468, 145, 751, 346 },
 		{ 468, 378, 751, 393 }, { 468, 395, 751, 462 },
 		{ 52, 306, 460, 321 }, { 52, 323, 460, 436 }, { 52, 440, 434, 462 }, { 438, 440, 460, 462 },
+		{ 468, 350, 751, 372 },
 	};
 
 	//---------------------------------------------------------------------------------------------
@@ -151,6 +157,11 @@ namespace
 	const Text kSummaryMoney = { "GUI:LanSummaryMoney", L"Money $%d", L"\x0414\x0435\x043D\x044C\x0433\x0438 $%d" };
 	const Text kGameFull = { "GUI:LanGameFull", L"This game is full (%d/%d). Choose another game, or wait for a free place.", L"\x042D\x0442\x0430 \x0438\x0433\x0440\x0430 \x0437\x0430\x043F\x043E\x043B\x043D\x0435\x043D\x0430 (%d/%d). \x0412\x044B\x0431\x0435\x0440\x0438\x0442\x0435 \x0434\x0440\x0443\x0433\x0443\x044E \x0438\x0433\x0440\x0443 \x0438\x043B\x0438 \x0434\x043E\x0436\x0434\x0438\x0442\x0435\x0441\x044C \x0441\x0432\x043E\x0431\x043E\x0434\x043D\x043E\x0433\x043E \x043C\x0435\x0441\x0442\x0430." };
 	const Text kNoGamesPanel = { "GUI:LanNoGamesPanel", L"No open games on the network yet.", L"\x0412 \x0441\x0435\x0442\x0438 \x043F\x043E\x043A\x0430 \x043D\x0435\x0442 \x043E\x0442\x043A\x0440\x044B\x0442\x044B\x0445 \x0438\x0433\x0440." };
+	// O31
+	const Text kObserve = { "GUI:LanObserve", L"Observe", L"\x041D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x044C" };
+	const Text kStopObserving = { "GUI:LanStopObserving", L"Stop observing", L"\x041D\x0435 \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x044C" };
+	const Text kWatch = { "GUI:LanWatch", L"Watch", L"\x0421\x043C\x043E\x0442\x0440\x0435\x0442\x044C" };
+	const Text kWaiting = { "GUI:LanWaitingStream", L"Waiting...", L"\x041E\x0436\x0438\x0434\x0430\x043D\x0438\x0435..." };
 	const Text kInProgress = { "GUI:LanInProgress", L"in game", L"\x0438\x0434\x0451\x0442 \x0438\x0433\x0440\x0430" };
 
 	//---------------------------------------------------------------------------------------------
@@ -172,6 +183,11 @@ namespace
 			{ L"A1", 2, 0, 0, 1, -1 }, { L"A2", 2, 1, 1, 1, -1 }, { L"A3", 2, 2, 2, 1, -1 }, { L"A4", 2, 3, 0, 1, -1 },
 			{ L"B1", 2, 4, 1, 2, -1 }, { L"B2", 2, 5, 2, 2, -1 }, { L"B3", 2, 6, 0, 2, -1 }, { L"B4", 2, 7, 1, 2, -1 } } },
 	};
+	/// O31: the outside viewers' delay choices (seconds) and their labels
+	const Int kDelays[8] = { 10, 20, 30, 45, 60, 90, 120, 180 };
+	const WideChar *const kDelayEnglish[8] = { L"10s", L"20s", L"30s", L"45s", L"1m", L"1.5m", L"2m", L"3m" };
+	const WideChar *const kDelayRussian[8] = { L"10\x0441", L"20\x0441", L"30\x0441", L"45\x0441", L"1\x043C", L"1,5\x043C", L"2\x043C", L"3\x043C" };
+
 	const WideChar *const kSampleLobby[] = { L"Vova", L"Alisher", L"Sardor_K", L"DESKTOP-IVQ416R", L"Timur", L"Lola", L"Bek" };
 	const Int kSampleLobbyFiles[] = { 1, 1, 1, 1, 0, 1, -1 };
 	/// O29 (item 8): the address list with -lanSample when Network.ini has none (shown only, never written)
@@ -208,6 +224,9 @@ namespace
 		GameWindow *lobbyList;
 		GameWindow *lobbyLabel;
 		GameWindow *historyPopup;
+		GameWindow *actionButton;  ///< O31: Observe / Stop observing / Watch
+		GameWindow *delaySlider;   ///< O31: the outside viewer's delay
+		const Text *actionLabel;   ///< O31: the action button's text now
 		GameFont *font;
 		Bool shown;
 		Bool anticheat;
@@ -406,11 +425,8 @@ namespace
 		}
 	}
 
-	void drawShield(Int x, Int y, Int size, Int verdict)
+	void drawShieldVerdict(Int x, Int y, Int size, Int verdict)
 	{
-		if (!s.anticheat) {
-			return;
-		}
 		if (verdict == GuardLink::VERDICT_VERIFIED)
 		{
 			drawShieldShape(x, y, size, kGreen, TRUE);
@@ -422,6 +438,13 @@ namespace
 			const Int c = size / 2, d = max(2, size / 5);
 			TheDisplay->drawLine(x + c - d, y + c - d, x + c + d, y + c + d, 2.0f, kRed);
 			TheDisplay->drawLine(x + c + d, y + c - d, x + c - d, y + c + d, 2.0f, kRed);
+		}
+	}
+
+	void drawShield(Int x, Int y, Int size, Int verdict)
+	{
+		if (s.anticheat) {
+			drawShieldVerdict(x, y, size, verdict);
 		}
 	}
 
@@ -1048,7 +1071,7 @@ namespace
 		const Int bottom = y + h - rh * summaryLines - 2;   // the slots and observers stay above the summary
 		Int ry = y + rh + 3;
 		Int observers = 0;
-		struct Obs { UnicodeString name; Int files; };
+		struct Obs { UnicodeString name; Int files; Int shield; };
 		std::vector<Obs> obs;
 		for (Int k = 0; k < MAX_SLOTS; ++k)
 		{
@@ -1083,6 +1106,7 @@ namespace
 				Obs o;
 				o.name = name;
 				o.files = files;
+				o.shield = shield;
 				obs.push_back(o);
 				++observers;
 				continue;
@@ -1129,7 +1153,20 @@ namespace
 			}
 			ry += rh;
 		}
-		// the observers (row 21 brings real observer places)
+		// O31: the room's observers (LanRoom), with their files mark and shield
+		if (r.game != nullptr)
+		{
+			const std::vector<LanRoom::Observer> room = LanRoom::observersOf(r.game->getHostIP());
+			for (size_t i = 0; i < room.size(); ++i)
+			{
+				Obs o;
+				o.name = room[i].name;
+				o.files = filesMarkOfIP(room[i].ip);
+				o.shield = shieldOfIP(room[i].ip);
+				obs.push_back(o);
+			}
+		}
+		// the observers
 		if (!obs.empty() && ry + rh * 2 < bottom)
 		{
 			TheDisplay->drawLine(x + 1, ry + 2, x + w - 2, ry + 2, 1.0f, kFrame);
@@ -1138,6 +1175,7 @@ namespace
 			for (size_t i = 0; i < obs.size() && ry + rh < bottom; ++i)
 			{
 				drawText(obs[i].name, x + pad + 12, ry + (rh - fontHeight()) / 2, colShield - x - pad - 16, kText);
+				drawShield(colShield, ry + 2, icon, obs[i].shield);
 				drawFilesMark(colFiles, ry + 2, icon, obs[i].files);
 				ry += rh;
 			}
@@ -1500,6 +1538,22 @@ namespace
 
 namespace
 {
+	/// O31: the chat line of an observer in a room goes to that room; FALSE when the line is empty.
+	Bool sendRoomChat()
+	{
+		if (s.chatEntry == nullptr) {
+			return FALSE;
+		}
+		UnicodeString text = GadgetTextEntryGetText(s.chatEntry);
+		text.trim();
+		if (text.isEmpty()) {
+			return FALSE;
+		}
+		LanRoom::sendChat(text);
+		GadgetTextEntrySetText(s.chatEntry, UnicodeString::TheEmptyString);
+		return TRUE;
+	}
+
 	/// O29 (item 9): the screen point of row 'row' of a drawn list, for a -uiScript (clickrow). The row is scrolled into
 	/// view first. Games table, lobby list and the open address list.
 	Bool scriptRowPoint(GameWindow *window, Int row, Int *px, Int *py)
@@ -1551,7 +1605,8 @@ UnicodeString LanLobbyLook::screenName()
 
 void LanLobbyLook::init(GameWindow *parent)
 {
-	shutdown();
+	teardown();
+	LanRoom::resetViewer();   // O31: back from following a stream: follow mode off, no mirror
 	s.parent = parent;
 	if (s.parent == nullptr) {
 		return;
@@ -1655,6 +1710,38 @@ void LanLobbyLook::init(GameWindow *parent)
 
 	FrameShots::setRowHook(&scriptRowPoint);   // O29 (item 9): clickrow / dclickrow of a -uiScript
 
+	// O31: Observe (a room before its start) / Watch (a running game) and the watch delay
+	{
+		const Rect &a = L.panelActions;
+		const Int mid = a.x0 + (a.x1 - a.x0) * 40 / 100;
+		const Rect buttonRect = { a.x0, a.y0, mid - 4, a.y1 };
+		s.actionButton = makeButton(buttonRect, textOf(kObserve), "LanLobbyMenu.wnd:Look.Observe");
+		s.actionLabel = &kObserve;
+		WinInstanceData inst;
+		inst.init();
+		inst.m_style = GWS_HORZ_SLIDER | GWS_MOUSE_TRACK;
+		inst.m_font = s.font;
+		inst.m_id = (Int)TheNameKeyGenerator->nameToKey(AsciiString("LanLobbyMenu.wnd:Look.WatchDelay"));
+		SliderData data;
+		memset(&data, 0, sizeof(data));
+		data.minVal = 0;
+		data.maxVal = 7;
+		s.delaySlider = TheWindowManager->gogoGadgetSlider(s.parent, WIN_STATUS_ENABLED, sx(mid + 4), sy(a.y0), sx(a.x1) - sx(mid + 4),
+			sy(a.y1) - sy(a.y0), &inst, &data, s.font, TRUE);
+		if (s.delaySlider != nullptr)
+		{
+			s.delaySlider->winSetWindowId(inst.m_id);
+			s.delaySlider->winSetOwner(s.parent);
+			TickSlider::attach(s.delaySlider, s.font, FALSE);
+			UnicodeString labels[8];
+			for (Int i = 0; i < 8; ++i) {
+				labels[i] = localizedFallback(kDelayEnglish[i], kDelayRussian[i]);
+			}
+			TickSlider::setLabels(s.delaySlider, labels, 8);
+			s.made.push_back(s.delaySlider);
+		}
+	}
+
 	// everything made here waits for the end of the enter fade (row 27)
 	s.shown = TRUE;
 	setShown(FALSE);
@@ -1671,6 +1758,36 @@ void LanLobbyLook::update(Bool screenReady)
 	setShown(screenReady);
 	if (!screenReady) {
 		return;
+	}
+	// O31: the room's notices in the chat; the action row follows the selected game
+	{
+		UnicodeString line;
+		while (LanRoom::takeNotice(&line)) {
+			if (s.chatList != nullptr) GadgetListBoxAddEntryText(s.chatList, line, chatSystemColor, -1, 0);
+		}
+		std::vector<GameRow> rows;
+		collectRows(rows);
+		const Int sel = selectedRow();
+		const Bool have = sel >= 0 && sel < (Int)rows.size();
+		const Bool running = have && rows[sel].inProgress;
+		const LanRoom::State st = LanRoom::state();
+		const Bool busy = st == LanRoom::STATE_STARTING || st == LanRoom::STATE_PLAYING;
+		const UnsignedInt host = have && rows[sel].game != nullptr ? rows[sel].game->getHostIP() : 0;
+		const Bool observingThis = host != 0 && LanRoom::observedHost() == host && (st == LanRoom::STATE_ASKED || st == LanRoom::STATE_IN_ROOM);
+		if (s.actionButton != nullptr)
+		{
+			const Text &label = busy ? kWaiting : (running ? kWatch : (observingThis ? kStopObserving : kObserve));
+			if (&label != s.actionLabel)
+			{
+				GadgetButtonSetText(s.actionButton, textOf(label));
+				s.actionLabel = &label;
+			}
+			s.actionButton->winHide(!have);
+			s.actionButton->winEnable(have && !busy);
+		}
+		if (s.delaySlider != nullptr) {
+			s.delaySlider->winHide(!running || busy);
+		}
 	}
 	// O30: this player's own anti-cheat check failed: said once in the chat (others see the red mark)
 	if (!s.ownFailureSaid && GuardLink::ownVerdict() == GuardLink::VERDICT_FAILED && s.chatList != nullptr)
@@ -1722,6 +1839,13 @@ void LanLobbyLook::update(Bool screenReady)
 
 void LanLobbyLook::shutdown()
 {
+	// O31: leaving the LAN screen (main menu, or into a slot) ends observing a room; following a started stream goes on
+	LanRoom::stopObserving();
+	teardown();
+}
+
+void LanLobbyLook::teardown()
+{
 	FrameShots::setRowHook(nullptr);
 	if (TheWindowManager != nullptr)
 	{
@@ -1746,6 +1870,8 @@ void LanLobbyLook::shutdown()
 	s.ownFailureSaid = FALSE;
 	s.addrBox = s.copyButton = s.connectEntry = s.historyButton = s.connectButton = nullptr;
 	s.gamesTable = s.panel = s.panelLabel = s.lobbyList = s.lobbyLabel = s.historyPopup = nullptr;
+	s.actionButton = s.delaySlider = nullptr;
+	s.actionLabel = nullptr;
 	s.font = nullptr;
 	s.shown = FALSE;
 	s.scroll = 0;
@@ -1789,6 +1915,39 @@ Bool LanLobbyLook::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgData
 		if (control == s.joinButton && refuseFull(selectedRow())) {
 			return TRUE;   // O29 (item 9): the menu does not ask the host
 		}
+		if (control == s.actionButton)
+		{
+			// O31: observe a room before its start, stop it, or watch a running game with the chosen delay
+			std::vector<GameRow> rows;
+			collectRows(rows);
+			const Int sel = selectedRow();
+			if (sel >= 0 && sel < (Int)rows.size() && rows[sel].game != nullptr && !LanTest::sampleData())
+			{
+				LANGameInfo *game = rows[sel].game;
+				const UnsignedInt host = game->getHostIP();
+				const LanRoom::State st = LanRoom::state();
+				if (rows[sel].inProgress)
+				{
+					const Int step = s.delaySlider != nullptr ? GadgetSliderGetPosition(s.delaySlider) : 0;
+					LanRoom::startWatching(game, kDelays[step < 0 ? 0 : (step > 7 ? 7 : step)]);
+				}
+				else if (LanRoom::observedHost() == host && (st == LanRoom::STATE_ASKED || st == LanRoom::STATE_IN_ROOM))
+				{
+					LanRoom::stopObserving();
+				}
+				else
+				{
+					LanRoom::startObserving(host);
+				}
+			}
+			return TRUE;
+		}
+		if (control == s.chatButton && LanRoom::state() == LanRoom::STATE_IN_ROOM && sendRoomChat()) {
+			return TRUE;
+		}
+	}
+	if (msg == GEM_EDIT_DONE && control == s.chatEntry && LanRoom::state() == LanRoom::STATE_IN_ROOM && sendRoomChat()) {
+		return TRUE;   // O31: an observer's chat goes to its room (the host shows it to the room)
 	}
 	if (msg == GEM_EDIT_DONE && control == s.connectEntry)
 	{
@@ -1796,4 +1955,11 @@ Bool LanLobbyLook::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgData
 		return TRUE;
 	}
 	return FALSE;
+}
+
+// O31: a player's anti-cheat shield and files mark side by side (each 'size' wide), for the game room's observers list
+void LanLobbyLook::drawMarks(Int x, Int y, Int size, UnsignedInt ip)
+{
+	drawShieldVerdict(x, y, size, shieldOfIP(ip));
+	drawFilesMark(x + size + 2, y, size, filesMarkOfIP(ip));
 }

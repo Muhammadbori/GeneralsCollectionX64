@@ -184,6 +184,10 @@ struct LANMessage
 		// TheSuperHackers @feature O30 (row 15) Opaque bytes from the sender's anti-cheat to this player's anti-cheat
 		// (GuardLink.h). Appended; a build without it ignores it.
 		MSG_GUARD_DATA,
+
+		// TheSuperHackers @feature O31 (row 21, step 3) The room's observers (LanRoom.h). Appended; a build without it
+		// ignores it.
+		MSG_ROOM,
 	} messageType;
 
 	WideChar name[g_lanPlayerNameLength+1]; ///< My name, for convenience
@@ -294,6 +298,24 @@ struct LANMessage
 			UnsignedShort length;     ///< bytes used in 'data'
 			UnsignedByte data[LANGuardDataMax];
 		} GuardData;
+
+		// Room is sent with ROOM (O31; LanRoom.h)
+		struct
+		{
+			UnsignedInt magic;        ///< LANRoomMagic
+			UnsignedByte kind;        ///< LanRoom's message kind
+			UnsignedByte count;       ///< list: observers; start: players; removed: the reason
+			UnsignedShort port;       ///< start: the stream port
+			UnsignedInt gameIP;       ///< the room (its host's address)
+			UnsignedInt ips[12];      ///< list: the observers; start: the players
+			union
+			{
+				WideChar names[12][g_lanPlayerNameLength+1];   ///< list
+				WideChar text[g_lanMaxChatLength+1];           ///< chat: one ready line
+			} u;
+		} Room;
+		static_assert(sizeof(Room) <= sizeof(GameInfo), "MSG_ROOM must not make LANMessage larger");
+		static_assert(sizeof(GuardData) <= sizeof(GameInfo), "MSG_GUARD_DATA must not make LANMessage larger");
 		static_assert(ARRAY_SIZE(GameOptions.options) > m_lanMaxOptionsLength, "GameOptions.options buffer must be larger than m_lanMaxOptionsLength");
 
 	};
@@ -305,6 +327,7 @@ static_assert(sizeof(LANMessage) <= MAX_LANAPI_PACKET_SIZE, "LANMessage struct c
 // TheSuperHackers @feature O26 (row 26) What the LAN screen needs beyond the original messages.
 static const UnsignedInt LANFilesInfoMagic = 0x46494C31;   ///< "FIL1"
 static const UnsignedInt LANGuardDataMagic = 0x31445247;   ///< "GRD1" (O30)
+static const UnsignedInt LANRoomMagic = 0x314D4F52;        ///< "ROM1" (O31)
 namespace LanFiles
 {
 	/// The files fingerprint a lobby player or a game host sent (MSG_FILES_INFO); FALSE when none came yet.
@@ -345,6 +368,8 @@ public:
 	void pumpGuard();
 	/// O30: opaque anti-cheat bytes to one player (GuardLink's sender).
 	void sendGuardData(UnsignedInt ip, const UnsignedByte *data, Int length);
+	/// O31: a MSG_ROOM message (its Room part filled) to one address, or to everybody with 0 (LanRoom.h).
+	void sendRoomMessage(LANMessage *msg, UnsignedInt ip);
 
 	virtual void setIsActive(Bool isActive) override;								///< tell TheLAN whether or not
 

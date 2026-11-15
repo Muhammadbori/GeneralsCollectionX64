@@ -35,6 +35,7 @@
 #include "Common/UserPreferences.h"
 #include "Common/QuotedPrintable.h"
 #include "GameClient/AnimateWindowManager.h"
+#include "GameClient/LanRoomLook.h"
 #include "GameClient/WindowLayout.h"
 #include "GameClient/Gadget.h"
 #include "GameClient/Shell.h"
@@ -937,6 +938,7 @@ void LanGameOptionsMenuInit( WindowLayout *layout, void *userData )
 	lanUpdateSlotList();
 	LanPositionStartSpots();
 	TheTransitionHandler->setGroup("LanGameOptionsFade");
+	LanRoomLook::init(parentLanGameOptions);   // O31: the observers list, "Become observer"
 
 	// animate controls
 	//TheShell->registerWithAnimateManager(buttonBack, WIN_ANIMATION_SLIDE_RIGHT, TRUE, 1);
@@ -1038,6 +1040,7 @@ static void shutdownComplete( WindowLayout *layout )
 //-------------------------------------------------------------------------------------------------
 void LanGameOptionsMenuShutdown( WindowLayout *layout, void *userData )
 {
+	LanRoomLook::shutdown();   // O31
 	TheMouse->setCursor(Mouse::ARROW);
 	TheMouse->setMouseText(UnicodeString::TheEmptyString,nullptr,nullptr);
 	EnableSlotListUpdates(FALSE);
@@ -1078,6 +1081,8 @@ void LanGameOptionsMenuUpdate( WindowLayout * layout, void *userData)
 	if(LANisShuttingDown && TheShell->isAnimFinished() && TheTransitionHandler->isFinished())
 		shutdownComplete(layout);
 	//TheLAN->update(); // this is handled in the lobby
+	// O31: the room's observer pieces show once the enter transition is over
+	LanRoomLook::update(!LANisShuttingDown && TheShell->isAnimFinished() && TheTransitionHandler->isFinished());
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -1128,6 +1133,9 @@ WindowMsgHandledType LanGameOptionsMenuSystem( GameWindow *window, UnsignedInt m
 														 WindowMsgData mData1, WindowMsgData mData2 )
 {
 	UnicodeString txtInput;
+	if (LanRoomLook::onSystem(msg, mData1, mData2)) {
+		return MSG_HANDLED;   // O31
+	}
 	switch( msg )
 	{
 		//-------------------------------------------------------------------------------------------------
