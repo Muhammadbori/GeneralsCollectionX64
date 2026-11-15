@@ -31,6 +31,9 @@
 #include <map>
 #include <vector>
 
+// O32: random bytes for the pipe name (advapi32's RtlGenRandom; no new library for the game)
+extern "C" BOOLEAN NTAPI SystemFunction036(PVOID buffer, ULONG length);
+
 namespace
 {
 	const UnsignedInt kMagic = 0x314C4747;   // "GGL1"
@@ -41,6 +44,9 @@ namespace
 	const UnsignedInt kForgetMs = 120000;
 	const UnsignedInt kRecheckMs = 30000;        ///< a verified or failed player is asked again
 	const UnsignedInt kRetryMs = 10000;          ///< a player without an answer is asked again
+	const UnsignedInt kSilentMs = 10000;         ///< O32: a guard that sends nothing for this long is gone (it sends every 2 s)
+	const UnsignedInt kVerdictLifeMs = 45000;    ///< O32: a verdict not renewed for this long no longer counts
+	const size_t kMaxQueuedFrames = 64;          ///< O32: frames waiting for the pipe; more are dropped
 
 #pragma pack(push, 1)
 	struct Header
@@ -58,6 +64,7 @@ namespace
 		UnsignedInt lastCheck = 0;
 		Bool asked = FALSE;
 		Int misses = 0;             ///< answers missed in a row
+		UnsignedInt verdictMs = 0;  ///< O32: when the verdict was given
 		GuardLink::Verdict verdict = GuardLink::VERDICT_NONE;
 		UnsignedInt bits = 0;
 	};
@@ -70,6 +77,18 @@ namespace
 	HANDLE s_job = nullptr;
 	HANDLE s_process = nullptr;
 	HANDLE s_pipe = INVALID_HANDLE_VALUE;
+	DWORD s_childPid = 0;                 ///< O32: the guard process this game started (the pipe's server must be it)
+	UnsignedInt s_lastFrameMs = 0;        ///< O32: the last frame from the guard
+	UnsignedInt s_lastUpdateMs = 0;       ///< O32: the last update (a minimized game does not update: no silence counted)
+	// O32 (review 3): overlapped pipe I/O, polled each update; the game never waits on the guard
+	OVERLAPPED s_readOv;
+	UnsignedByte s_readBuf[2048];
+	Bool s_reading = FALSE;
+	OVERLAPPED s_writeOv;
+	std::vector<UnsignedByte> s_writeBuf;
+	Bool s_writing = FALSE;
+	std::vector<std::vector<UnsignedByte> > s_outQueue;
+	UnsignedInt s_droppedFrames = 0;
 	std::wstring s_pipeName;
 	UnsignedInt s_startMs = 0;
 	UnsignedInt s_lastTry = 0;
@@ -90,6 +109,7 @@ namespace
 	const Text kJoinRefused = { "GUI:GuardJoinRefused",
 		L"The host accepts only players with a verified anti-cheat. Yours is not verified (yet): wait a few seconds and try again.",
 		L"\x0425\x043E\x0441\x0442 \x043F\x0440\x0438\x043D\x0438\x043C\x0430\x0435\x0442 \x0442\x043E\x043B\x044C\x043A\x043E \x0438\x0433\x0440\x043E\x043A\x043E\x0432 \x0441 \x043F\x0440\x043E\x0432\x0435\x0440\x0435\x043D\x043D\x044B\x043C \x0430\x043D\x0442\x0438\x0447\x0438\x0442\x043E\x043C. \x0412\x0430\x0448 \x0435\x0449\x0451 \x043D\x0435 \x043F\x0440\x043E\x0432\x0435\x0440\x0435\x043D: \x043F\x043E\x0434\x043E\x0436\x0434\x0438\x0442\x0435 \x043D\x0435\x0441\x043A\x043E\x043B\x044C\x043A\x043E \x0441\x0435\x043A\x0443\x043D\x0434 \x0438 \x043F\x043E\x043F\x0440\x043E\x0431\x0443\x0439\x0442\x0435 \x0441\x043D\x043E\x0432\x0430." };
+	const Text kJoinRefusedOwnFailed = { "GUI:GuardJoinRefusedOwnFailed", L"The host accepts only players with a verified anti-cheat. Yours found a problem with your game or its files: see the line about it in the chat.", L"\x0425\x043E\x0441\x0442 \x043F\x0440\x0438\x043D\x0438\x043C\x0430\x0435\x0442 \x0442\x043E\x043B\x044C\x043A\x043E \x0438\x0433\x0440\x043E\x043A\x043E\x0432 \x0441 \x043F\x0440\x043E\x0432\x0435\x0440\x0435\x043D\x043D\x044B\x043C \x0430\x043D\x0442\x0438\x0447\x0438\x0442\x043E\x043C. \x0412\x0430\x0448 \x0430\x043D\x0442\x0438\x0447\x0438\x0442 \x043D\x0430\x0448\x0451\x043B \x043F\x0440\x043E\x0431\x043B\x0435\x043C\x0443 \x0432 \x0432\x0430\x0448\x0435\x0439 \x0438\x0433\x0440\x0435 \x0438\x043B\x0438 \x0435\x0451 \x0444\x0430\x0439\x043B\x0430\x0445: \x0441\x043C. \x0441\x0442\x0440\x043E\x043A\x0443 \x043E\x0431 \x044D\x0442\x043E\x043C \x0432 \x0447\x0430\x0442\x0435." };
 	const Text kFailedInMatch = { "GUI:GuardFailedInMatch", L"Anti-cheat: %ls failed the check.",
 		L"\x0410\x043D\x0442\x0438\x0447\x0438\x0442: \x0438\x0433\x0440\x043E\x043A %ls \x043D\x0435 \x043F\x0440\x043E\x0448\x0451\x043B \x043F\x0440\x043E\x0432\x0435\x0440\x043A\x0443." };
 	const Text kOwnFailure = { "GUI:GuardOwnFailure",
@@ -100,41 +120,92 @@ namespace
 	{
 		if (s_pipe != INVALID_HANDLE_VALUE)
 		{
+			CancelIoEx(s_pipe, nullptr);
+			DWORD unused = 0;
+			if (s_reading) GetOverlappedResult(s_pipe, &s_readOv, &unused, TRUE);    // cancelled: returns at once
+			if (s_writing) GetOverlappedResult(s_pipe, &s_writeOv, &unused, TRUE);
 			CloseHandle(s_pipe);
 			s_pipe = INVALID_HANDLE_VALUE;
 		}
+		s_reading = s_writing = FALSE;
+		s_outQueue.clear();
 		s_connected = FALSE;
 		s_inbox.clear();
 	}
 
+	/// The guard is gone (ended, silent, broken, or not ours): no shield, LAN refused from now on. A guard that is alive
+	/// but silent is ended with the job (it may be hung or suspended).
 	void lost(const char *why)
 	{
 		DEBUG_LOG(("GuardLink: guard lost (%s)", why));
 		closePipe();
 		s_dead = TRUE;
-		for (std::map<UnsignedInt, Peer>::iterator it = s_peers.begin(); it != s_peers.end(); ++it) {
-			it->second.verdict = GuardLink::VERDICT_NONE;
+		if (s_job != nullptr)
+		{
+			CloseHandle(s_job);
+			s_job = nullptr;
+		}
+		s_peers.clear();
+		s_newFailures.clear();
+	}
+
+	/// O32: the frames queued for the guard, as far as the pipe takes them now; never waits.
+	void pumpWrites()
+	{
+		if (!s_connected) {
+			return;
+		}
+		if (s_writing)
+		{
+			if (!HasOverlappedIoCompleted(&s_writeOv)) {
+				return;
+			}
+			DWORD written = 0;
+			const BOOL ok = GetOverlappedResult(s_pipe, &s_writeOv, &written, FALSE);
+			s_writing = FALSE;
+			if (!ok || written != s_writeBuf.size())
+			{
+				lost("write");
+				return;
+			}
+		}
+		if (s_outQueue.empty()) {
+			return;
+		}
+		s_writeBuf = s_outQueue.front();
+		s_outQueue.erase(s_outQueue.begin());
+		memset(&s_writeOv, 0, sizeof(s_writeOv));
+		DWORD written = 0;
+		if (WriteFile(s_pipe, &s_writeBuf[0], (DWORD)s_writeBuf.size(), &written, &s_writeOv)) {
+			return;   // done at once
+		}
+		if (GetLastError() == ERROR_IO_PENDING) {
+			s_writing = TRUE;
+		} else {
+			lost("write");
 		}
 	}
 
+	/// O32 (review 3): queued, never written while the game waits; a full queue (a guard that does not read) drops it.
 	Bool writeFrame(UnsignedShort type, const void *payload, UnsignedShort length)
 	{
-		if (!s_connected) {
+		if (!s_connected || length > kMaxPayload) {
 			return FALSE;
 		}
-		UnsignedByte frame[sizeof(Header) + kMaxPayload];
-		Header h = { kMagic, type, length };
-		memcpy(frame, &h, sizeof(h));
-		if (length > 0) {
-			memcpy(frame + sizeof(h), payload, length);
-		}
-		DWORD written = 0;
-		if (!WriteFile(s_pipe, frame, (DWORD)(sizeof(h) + length), &written, nullptr) || written != sizeof(h) + length)
+		if (s_outQueue.size() >= kMaxQueuedFrames)
 		{
-			lost("write");
+			++s_droppedFrames;
 			return FALSE;
 		}
-		return TRUE;
+		std::vector<UnsignedByte> frame(sizeof(Header) + length);
+		Header h = { kMagic, type, length };
+		memcpy(&frame[0], &h, sizeof(h));
+		if (length > 0) {
+			memcpy(&frame[sizeof(h)], payload, length);
+		}
+		s_outQueue.push_back(frame);
+		pumpWrites();
+		return s_connected;
 	}
 
 	void onFrame(const Header &h, const UnsignedByte *p)
@@ -182,6 +253,7 @@ namespace
 					{
 						peer.misses = 0;
 						peer.verdict = v;
+						peer.verdictMs = timeGetTime();
 					}
 					peer.bits = bits;
 					peer.asked = TRUE;
@@ -231,10 +303,17 @@ void GuardLink::start()
 		DEBUG_LOG(("GuardLink: no GenGuard.exe beside the game"));
 		return;
 	}
-	LARGE_INTEGER qpc;
-	QueryPerformanceCounter(&qpc);
+	// O32 (review 9): a random name (the game still checks that the pipe's server is the guard it started)
+	unsigned int r[2] = { 0, 0 };
+	if (!SystemFunction036(r, sizeof(r)))
+	{
+		LARGE_INTEGER qpc;
+		QueryPerformanceCounter(&qpc);
+		r[0] = (unsigned)qpc.LowPart;
+		r[1] = (unsigned)GetTickCount();
+	}
 	wchar_t name[96];
-	swprintf(name, 96, L"\\\\.\\pipe\\GenGuard-%lu-%08X%08X", GetCurrentProcessId(), (unsigned)qpc.LowPart, (unsigned)GetTickCount());
+	swprintf(name, 96, L"\\\\.\\pipe\\GenGuard-%lu-%08X%08X", GetCurrentProcessId(), r[0], r[1]);
 	s_pipeName = name;
 	std::wstring cmd = L"\"" + guard + L"\" --pid ";
 	wchar_t pid[16];
@@ -242,7 +321,7 @@ void GuardLink::start()
 	cmd += pid;
 	cmd += L" --pipe " + s_pipeName;
 	const std::wstring userData = userDataFolder();
-	if (!userData.empty()) {
+	if (!userData.empty() && userData.find(L'"') == std::wstring::npos) {   // O32 (review 25): a quote would break the line
 		cmd += L" --userdata \"" + userData + L"\"";
 	}
 	if (s_testMode) {
@@ -276,6 +355,7 @@ void GuardLink::start()
 	ResumeThread(pi.hThread);
 	CloseHandle(pi.hThread);
 	s_process = pi.hProcess;
+	s_childPid = pi.dwProcessId;
 	s_started = TRUE;
 	s_startMs = timeGetTime();
 }
@@ -291,13 +371,18 @@ void GuardLink::update()
 		lost("the guard process ended");
 		return;
 	}
+	// a pause of the game itself (minimized, a long load) is not the guard's silence
+	if (s_lastUpdateMs != 0 && now - s_lastUpdateMs > 2000) {
+		s_lastFrameMs = now;
+	}
+	s_lastUpdateMs = now;
 	if (!s_connected)
 	{
 		if (now - s_lastTry < 100) {
 			return;
 		}
 		s_lastTry = now;
-		s_pipe = CreateFileW(s_pipeName.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+		s_pipe = CreateFileW(s_pipeName.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
 		if (s_pipe == INVALID_HANDLE_VALUE)
 		{
 			if (now - s_startMs > kConnectGiveUpMs) {
@@ -305,30 +390,68 @@ void GuardLink::update()
 			}
 			return;
 		}
+		// O32 (review 9): the pipe must be served by the guard this game started, not by another program
+		ULONG serverPid = 0;
+		if (!GetNamedPipeServerProcessId(s_pipe, &serverPid) || serverPid != s_childPid)
+		{
+			CloseHandle(s_pipe);
+			s_pipe = INVALID_HANDLE_VALUE;
+			lost("the pipe's server is not the guard this game started");
+			return;
+		}
 		s_connected = TRUE;
+		s_lastFrameMs = now;
 		const UnsignedInt hello[2] = { kProtocol, (UnsignedInt)GetCurrentProcessId() };
 		writeFrame(PIPE_HELLO, hello, sizeof(hello));
 		DEBUG_LOG(("GuardLink: connected after %u ms", now - s_startMs));
 	}
 
-	// what the guard sent
-	DWORD avail = 0;
-	if (!PeekNamedPipe(s_pipe, nullptr, 0, nullptr, &avail, nullptr))
+	// what the guard sent: overlapped reads, polled (O32)
+	for (Int round = 0; round < 8 && s_connected; ++round)
 	{
-		lost("peek");
-		return;
-	}
-	while (avail > 0 && s_connected)
-	{
-		UnsignedByte buf[2048];
+		if (!s_reading)
+		{
+			memset(&s_readOv, 0, sizeof(s_readOv));
+			DWORD got = 0;
+			if (ReadFile(s_pipe, s_readBuf, sizeof(s_readBuf), &got, &s_readOv))
+			{
+				if (got == 0) {
+					break;
+				}
+				s_inbox.insert(s_inbox.end(), s_readBuf, s_readBuf + got);
+				continue;   // more may be there
+			}
+			if (GetLastError() != ERROR_IO_PENDING)
+			{
+				lost("read");
+				return;
+			}
+			s_reading = TRUE;
+		}
+		if (!HasOverlappedIoCompleted(&s_readOv)) {
+			break;
+		}
 		DWORD got = 0;
-		if (!ReadFile(s_pipe, buf, avail < sizeof(buf) ? avail : (DWORD)sizeof(buf), &got, nullptr) || got == 0)
+		s_reading = FALSE;
+		if (!GetOverlappedResult(s_pipe, &s_readOv, &got, FALSE) || got == 0)
 		{
 			lost("read");
 			return;
 		}
-		avail -= got;
-		s_inbox.insert(s_inbox.end(), buf, buf + got);
+		s_inbox.insert(s_inbox.end(), s_readBuf, s_readBuf + got);
+	}
+	if (!s_inbox.empty()) {
+		s_lastFrameMs = now;
+	}
+	pumpWrites();
+	if (!s_connected) {
+		return;
+	}
+	// O32 (review 3): the guard sends STATUS every 2 s; silent for 10 s (hung, suspended) it counts as gone
+	if (now - s_lastFrameMs > kSilentMs)
+	{
+		lost("silent");
+		return;
 	}
 	while (s_inbox.size() >= sizeof(Header))
 	{
@@ -394,7 +517,11 @@ Bool GuardLink::connected() { return s_connected; }
 Bool GuardLink::lanEntryAllowed() { return s_noGuard || s_connected; }
 UnicodeString GuardLink::refusalTitle() { return textOf(kTitle); }
 UnicodeString GuardLink::refusalText() { return textOf(kStartFirst); }
-UnicodeString GuardLink::joinRefusedText() { return textOf(kJoinRefused); }
+UnicodeString GuardLink::joinRefusedText()
+{
+	// O32 (review 24): a player whose own check failed is not told to wait
+	return textOf(ownVerdict() == VERDICT_FAILED ? kJoinRefusedOwnFailed : kJoinRefused);
+}
 UnicodeString GuardLink::ownFailureText() { return textOf(kOwnFailure); }
 
 UnicodeString GuardLink::failedInMatchText(const UnicodeString &playerName)
@@ -420,13 +547,17 @@ GuardLink::Verdict GuardLink::verdictOf(UnsignedInt ip)
 		return VERDICT_NONE;
 	}
 	std::map<UnsignedInt, Peer>::const_iterator it = s_peers.find(ip);
-	return it != s_peers.end() ? it->second.verdict : VERDICT_NONE;
+	if (it == s_peers.end() || it->second.verdict == VERDICT_NONE) {
+		return VERDICT_NONE;
+	}
+	// O32 (review 20): a verdict counts only while it is renewed (an address another player takes later starts empty)
+	return timeGetTime() - it->second.verdictMs <= kVerdictLifeMs ? it->second.verdict : VERDICT_NONE;
 }
 
 void GuardLink::notePeer(UnsignedInt ip, UnsignedInt ownIp)
 {
-	if (!s_started || ip == 0 || ip == ownIp) {
-		return;
+	if (!s_started || s_dead || ip == 0 || ip == ownIp) {
+		return;   // O32 (review 21): nothing is collected once the guard is gone
 	}
 	Peer &p = s_peers[ip];
 	p.ownIp = ownIp;
@@ -449,7 +580,9 @@ void GuardLink::setSender(SendFunc func) { s_send = func; }
 
 Bool GuardLink::hostRequiresGuard()
 {
-	if (!s_connected) {
+	// O32 (review 19): the rule holds also when this host's own guard has gone (then nobody is verified); only a test run
+	// without a guard (-lanNoGuard) has no rule
+	if (s_noGuard) {
 		return FALSE;
 	}
 	OptionPreferences pref;
