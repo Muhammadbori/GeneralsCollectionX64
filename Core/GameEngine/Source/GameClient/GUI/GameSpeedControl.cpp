@@ -32,6 +32,67 @@
 #include "GameClient/GameText.h"
 #include "GameClient/GameWindow.h"
 #include "GameClient/GameWindowManager.h"
+#include "GameClient/DisplayString.h"
+#include "GameClient/Gadget.h"
+#include "GameClient/DisplayStringManager.h"
+
+namespace
+{
+	Int measureText(GameFont *font, const UnicodeString &text)
+	{
+		if (font == nullptr || TheDisplayStringManager == nullptr) {
+			return (Int)text.getLength() * 7;
+		}
+		DisplayString *ds = TheDisplayStringManager->newDisplayString();
+		if (ds == nullptr) {
+			return (Int)text.getLength() * 7;
+		}
+		ds->setFont(font);
+		ds->setText(text);
+		Int w = 0, h = 0;
+		ds->getSize(&w, &h);
+		TheDisplayStringManager->freeDisplayString(ds);
+		return w;
+	}
+
+	/// In 'parent' coordinates: where the visible text in front of 'neighbour' starts: the static text that ends at the
+	/// neighbour's left edge in the same row (its text centred in it, or after its margin), else the neighbour's edge.
+	Int textStartLeftOf(GameWindow *parent, GameWindow *neighbour)
+	{
+		Int px = 0, py = 0, nx = 0, ny = 0, nw = 0, nh = 0;
+		parent->winGetScreenPosition(&px, &py);
+		neighbour->winGetScreenPosition(&nx, &ny);
+		neighbour->winGetSize(&nw, &nh);
+		Int limit = nx - px;
+		GameWindow *row = neighbour->winGetParent();
+		for (GameWindow *child = row != nullptr ? row->winGetChild() : nullptr; child != nullptr; child = child->winGetNext())
+		{
+			if ((child->winGetStyle() & GWS_STATIC_TEXT) == 0 || child->winIsHidden()) {
+				continue;
+			}
+			Int cx = 0, cy = 0, cw = 0, ch = 0;
+			child->winGetScreenPosition(&cx, &cy);
+			child->winGetSize(&cw, &ch);
+			const Bool endsAtNeighbour = cx + cw >= nx - 8 && cx + cw <= nx + 8;
+			const Bool sameRow = cy < ny + nh && cy + ch > ny;
+			if (!endsAtNeighbour || !sameRow) {
+				continue;
+			}
+			const TextData *data = (const TextData *)child->winGetUserData();
+			Int textW = cw;
+			if (data != nullptr && data->text != nullptr)
+			{
+				Int tw = 0, th = 0;
+				data->text->getSize(&tw, &th);
+				textW = tw;
+			}
+			const Bool centred = data != nullptr && data->centered;
+			const Int start = centred ? cx + (cw - textW) / 2 : cx + (data != nullptr ? data->leftMargin : 0);
+			limit = min(limit, start - px);
+		}
+		return limit;
+	}
+}
 
 namespace
 {
@@ -84,7 +145,7 @@ GameSpeedControl::GameSpeedControl()
 }
 
 void GameSpeedControl::init(GameWindow *parent, GameWindow *slider, GameWindow *text, GameWindow *checkBoxTemplate,
-	const char *checkBoxName, Int logicFps, Bool normal, Int checkBoxWidth)
+	const char *checkBoxName, Int logicFps, Bool normal, Int checkBoxWidth, GameWindow *rightNeighbour)
 {
 	m_slider = slider;
 	m_text = text;
@@ -132,13 +193,38 @@ void GameSpeedControl::init(GameWindow *parent, GameWindow *slider, GameWindow *
 		}
 		instData.m_id = TheNameKeyGenerator->nameToKey(checkBoxName);
 
-		m_checkBox = TheWindowManager->gogoGadgetCheckbox(parent, status, x + width + 10, y, checkBoxWidth > 20 ? checkBoxWidth : 160, boxHeight, &instData, font,
+		const UnicodeString boxText = TheGameText->FETCH_OR_SUBSTITUTE("GUI:GameSpeedNormal",
+			GameSpeed::localized(L"Normal", L"\x041E\x0431\x044B\x0447\x043D\x0430\x044F"));   // ru: Obychnaya
+		Int boxX = x + width + 10;
+		Int boxW = checkBoxWidth > 20 ? checkBoxWidth : 160;
+		if (rightNeighbour != nullptr)
+		{
+			// TheSuperHackers @tweak The box takes the width it needs and must end before the text of the next control of
+			// the row (in skirmish: the "starting money" label, centred in its window left of the money box). If the room
+			// is short, the slider and the speed text move left, by at most a third of the slider.
+			const Int need = boxHeight + 6 + measureText(font, boxText);
+			const Int limit = textStartLeftOf(parent, rightNeighbour) - 6;
+			boxW = need;
+			if (boxX + need > limit && m_slider != nullptr)
+			{
+				Int sliderW = 0, sliderH = 0;
+				m_slider->winGetSize(&sliderW, &sliderH);
+				const Int shift = min(boxX + need - limit, sliderW / 3);
+				Int sx = 0, sy = 0;
+				m_slider->winGetPosition(&sx, &sy);
+				m_slider->winSetPosition(sx - shift, sy);
+				Int tx = 0, ty = 0;
+				m_text->winGetPosition(&tx, &ty);
+				m_text->winSetPosition(tx - shift, ty);
+				boxX -= shift;
+			}
+		}
+		m_checkBox = TheWindowManager->gogoGadgetCheckbox(parent, status, boxX, y, boxW, boxHeight, &instData, font,
 			checkBoxTemplate == nullptr);
 		if (m_checkBox != nullptr)
 		{
 			m_checkBox->winSetWindowId(instData.m_id);
-			GadgetCheckBoxSetText(m_checkBox, TheGameText->FETCH_OR_SUBSTITUTE("GUI:GameSpeedNormal",
-				GameSpeed::localized(L"Normal", L"\x041E\x0431\x044B\x0447\x043D\x0430\x044F")));   // ru: Obychnaya
+			GadgetCheckBoxSetText(m_checkBox, boxText);
 			GadgetCheckBoxSetChecked(m_checkBox, m_normal);
 		}
 	}

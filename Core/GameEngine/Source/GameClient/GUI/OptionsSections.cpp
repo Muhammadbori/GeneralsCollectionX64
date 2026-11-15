@@ -374,13 +374,20 @@ namespace
 		const Image *image;
 	};
 
+	enum { MAX_SUB_PAGES = 4 };
+
 	struct State
 	{
 		Bool active;
 		OptionPreferences *pref;
 		GameWindow *menuParent;
 		GameWindow *buttons[SEC_COUNT];
-		GameWindow *pages[SEC_COUNT];
+		GameWindow *pages[SEC_COUNT];       ///< the first page of each section
+		GameWindow *subPages[SEC_COUNT][MAX_SUB_PAGES];   ///< all pages of a section, [0] = pages[]
+		GameWindow *pagers[SEC_COUNT][MAX_SUB_PAGES];     ///< "1/2 >" on each page of a section with more than one
+		Int subPageCount[SEC_COUNT];
+		Int currentSub[SEC_COUNT];
+		Int pageX, pageY, pageW, pageH, gap, titleH;      ///< where the pages are, for the pages made while filling
 		Section current;
 		SettingState settings[SETTING_COUNT];
 		GameWindow *existing[EXISTING_COUNT];
@@ -665,8 +672,10 @@ namespace
 		s.current = section;
 		for (Int i = 0; i < SEC_COUNT; ++i)
 		{
-			if (s.pages[i] != nullptr) {
-				s.pages[i]->winHide(i != section);
+			for (Int k = 0; k < s.subPageCount[i]; ++k) {
+				if (s.subPages[i][k] != nullptr) {
+					s.subPages[i][k]->winHide(i != section || k != s.currentSub[i]);
+				}
 			}
 			if (s.buttons[i] != nullptr)
 			{
@@ -702,18 +711,25 @@ namespace
 	}
 
 	//---------------------------------------------------------------------------------------------
-	/// Places items top to bottom in two columns of a page; a new column starts when the next item does not fit.
+	GameWindow *makePage(Int sec);
+
+	/// Places items top to bottom in two columns of a page; a new column starts when the next item does not fit, and a
+	/// new page of the section when the second column is full too (the section then gets a "1/2 >" button on each page).
+	/// So nothing leaves a page at any resolution; only an item taller than a whole column could, and that is logged.
 	struct Flow
 	{
 		GameWindow *page;
+		Int sec;
 		Int x0, y0, colW, gap, bottom;
 		Int col;
 		Int y;
-		Bool overflow;   ///< an item went below the page in the second column
+		Int valueW;      ///< the width of the value texts of this section's step rows (one column of values)
+		Bool overflow;   ///< an item taller than a column
 
-		void begin(GameWindow *p, Int left, Int top, Int columnWidth, Int g, Int b)
+		void begin(Int section, GameWindow *p, Int left, Int top, Int columnWidth, Int g, Int b)
 		{
-			page = p; x0 = left; y0 = top; colW = columnWidth; gap = g; bottom = b; col = 0; y = top; overflow = FALSE;
+			sec = section; page = p; x0 = left; y0 = top; colW = columnWidth; gap = g; bottom = b; col = 0; y = top;
+			valueW = 0; overflow = FALSE;
 		}
 		/// The position of an item of 'height'.
 		ICoord2D next(Int height)
@@ -721,6 +737,16 @@ namespace
 			if (y + height > bottom && y > y0 && col == 0) {
 				col = 1;
 				y = y0;
+			}
+			else if (y + height > bottom && y > y0 && col == 1)
+			{
+				GameWindow *more = makePage(sec);
+				if (more != nullptr)
+				{
+					page = more;
+					col = 0;
+					y = y0;
+				}
 			}
 			if (y + height > bottom) {
 				overflow = TRUE;
@@ -736,28 +762,83 @@ namespace
 		return s.labelLook != nullptr ? s.labelLook->winGetFont() : nullptr;
 	}
 
+	/// "2/3 >" on every page of a section with more than one page: the next page of the section.
+	void updatePagers(Int sec)
+	{
+		const Int count = s.subPageCount[sec];
+		if (count < 2) {
+			return;
+		}
+		for (Int k = 0; k < count; ++k)
+		{
+			GameWindow *page = s.subPages[sec][k];
+			if (page == nullptr) {
+				continue;
+			}
+			UnicodeString text;
+			text.format(L"%d/%d  >", k + 1, count);
+			if (s.pagers[sec][k] == nullptr)
+			{
+				WinInstanceData inst;
+				copyLook(inst, s.buttonLook, GWS_PUSH_BUTTON | GWS_MOUSE_TRACK);
+				if (labelFont() != nullptr) {
+					inst.m_font = labelFont();
+				}
+				AsciiString name;
+				name.format("OptionsMenu.wnd:Sections.Pager%d_%d", sec, k);
+				inst.m_id = windowId(name.str());
+				const Int w = textSize(inst.m_font, UnicodeString(L"4/4  >"), 0).x + s.gap * 6;
+				GameWindow *button = TheWindowManager->gogoGadgetPushButton(page, WIN_STATUS_ENABLED | imageStatusOf(s.buttonLook),
+					s.pageW - s.gap * 3 - w, s.gap, w, s.titleH, &inst, inst.m_font, FALSE);
+				if (button != nullptr)
+				{
+					button->winSetWindowId(inst.m_id);
+					button->winSetOwner(s.menuParent);
+				}
+				s.pagers[sec][k] = button;
+			}
+			if (s.pagers[sec][k] != nullptr) {
+				GadgetButtonSetText(s.pagers[sec][k], text);
+			}
+		}
+	}
+
+	/// A (further) page of a section, framed like the old groups, with the section's title; hidden until shown.
+	GameWindow *makePage(Int sec)
+	{
+		if (s.subPageCount[sec] >= MAX_SUB_PAGES) {
+			return nullptr;
+		}
+		WinInstanceData inst;
+		copyLook(inst, s.frameLook, GWS_USER_WINDOW);
+		GameWindow *page = TheWindowManager->winCreate(s.menuParent, WIN_STATUS_ENABLED | imageStatusOf(s.frameLook), s.pageX, s.pageY,
+			s.pageW, s.pageH, PassMessagesToParentSystem, &inst);
+		if (page == nullptr) {
+			return nullptr;
+		}
+		if (s.frameLook != nullptr) {
+			page->winSetDrawFunc(s.frameLook->winGetDrawFunc());
+		}
+		makeLabel(page, s.titleLook, s.gap * 3, s.gap, s.pageW - s.gap * 6, s.titleH, textOf(kSectionNames[sec]), FALSE);
+		page->winHide(TRUE);
+		s.subPages[sec][s.subPageCount[sec]++] = page;
+		updatePagers(sec);
+		return page;
+	}
+
 	/// A row of steps: the title over the whole column on as many lines as it needs, then the slider with the value text
 	/// right of it. 'valueTextW' is the width of the widest value text; 'extraBelow' is room kept under the row.
 	/// Returns the y below the row (in the page) through 'below'.
 	void placeStepRow(Flow &flow, const UnicodeString &title, Int valueTextW, Int sliderMax, Int id, Int labelH, Int sliderH,
 		Int extraBelow, GameWindow **label, GameWindow **value, GameWindow **slider, ICoord2D *below)
 	{
+		// One rule for every row of a section: the value column has the width of the section's widest value (at most half
+		// the column); a wider value wraps to more lines in it.
 		const Int titleH = labelHeightFor(labelFont(), title, flow.colW, labelH);
-		const Int lineH = max(labelH, sliderH);
-		if (valueTextW + 14 > flow.colW / 2)
-		{
-			// long values (pack names): the value on its own line under the title, the slider over the whole column
-			const ICoord2D at = flow.next(titleH + labelH + sliderH + extraBelow);
-			*label = makeLabel(flow.page, s.labelLook, at.x, at.y, flow.colW, titleH, title, FALSE);
-			*value = makeLabel(flow.page, s.labelLook, at.x, at.y + titleH, flow.colW, labelH, UnicodeString::TheEmptyString, FALSE);
-			*slider = makeSlider(flow.page, at.x, at.y + titleH + labelH, flow.colW, sliderH, sliderMax, id);
-			if (below != nullptr) {
-				below->x = at.x;
-				below->y = at.y + titleH + labelH + sliderH;
-			}
-			return;
-		}
-		const Int valueW = max(valueTextW + 14, flow.colW / 5);
+		const Int valueW = min(max(max(valueTextW, flow.valueW) + 14, flow.colW / 5), flow.colW / 2);
+		const Int valueLines = (valueTextW + 14 + valueW - 1) / max(1, valueW - 10);
+		const Int valueH = max(labelH, labelH * max(1, valueLines) * 4 / 5);
+		const Int lineH = max(valueH, sliderH);
 		const Int sliderW = flow.colW - valueW - flow.gap;
 		const ICoord2D at = flow.next(titleH + lineH + extraBelow);
 		*label = makeLabel(flow.page, s.labelLook, at.x, at.y, flow.colW, titleH, title, FALSE);
@@ -1060,9 +1141,17 @@ namespace
 		// the buttons say what they do
 		GameWindow *yes = TheWindowManager->winGetWindowFromId(box, windowId("MessageBox.wnd:ButtonYes"));
 		GameWindow *no = TheWindowManager->winGetWindowFromId(box, windowId("MessageBox.wnd:ButtonNo"));
-		if (yes != nullptr) {
-			GadgetButtonSetText(yes, TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackRestartNow",
-				localizedFallback(L"Restart now", L"\x041F\x0435\x0440\x0435\x0437\x0430\x043F\x0443\x0441\x0442\x0438\x0442\x044C")));
+		if (yes != nullptr)
+		{
+			// The text must fit the box's button: the long text when it does, else the short one ("Restart").
+			UnicodeString text = TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackRestartNow",
+				localizedFallback(L"Restart now", L"\x041F\x0435\x0440\x0435\x0437\x0430\x043F\x0443\x0441\x0442\x0438\x0442\x044C"));
+			if (textSize(yes->winGetFont(), text, 0).x > sizeOf(yes).x - 12)
+			{
+				text = TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackRestartShort",
+					localizedFallback(L"Restart", L"\x041F\x0435\x0440\x0435\x0437\x0430\x043F\x0443\x0441\x043A"));
+			}
+			GadgetButtonSetText(yes, text);
 		}
 		if (no != nullptr) {
 			GadgetButtonSetText(no, TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackRestartLater2",
@@ -1172,22 +1261,16 @@ void OptionsSections::init(OptionPreferences *pref)
 		s.buttons[i] = button;
 	}
 
-	// the pages, framed like the old groups
+	// the pages, framed like the old groups (a section that needs more gets further pages while it is filled)
 	const Int titleH = s.titleLook != nullptr ? sizeOf(s.titleLook).y : (buttonH * 2 / 3);
-	for (Int i = 0; i < SEC_COUNT; ++i)
-	{
-		WinInstanceData inst;
-		copyLook(inst, s.frameLook, GWS_USER_WINDOW);
-		GameWindow *page = TheWindowManager->winCreate(s.menuParent, WIN_STATUS_ENABLED | imageStatusOf(s.frameLook), pageX, top,
-			pageW, height, PassMessagesToParentSystem, &inst);
-		if (page != nullptr)
-		{
-			if (s.frameLook != nullptr) {
-				page->winSetDrawFunc(s.frameLook->winGetDrawFunc());
-			}
-			makeLabel(page, s.titleLook, gap * 3, gap, pageW - gap * 6, titleH, textOf(kSectionNames[i]), FALSE);
-		}
-		s.pages[i] = page;
+	s.pageX = pageX;
+	s.pageY = top;
+	s.pageW = pageW;
+	s.pageH = height;
+	s.gap = gap;
+	s.titleH = titleH;
+	for (Int i = 0; i < SEC_COUNT; ++i) {
+		s.pages[i] = makePage(i);
 	}
 
 	// the existing controls, found before the old groups go
@@ -1229,7 +1312,28 @@ void OptionsSections::init(OptionPreferences *pref)
 			continue;
 		}
 		Flow flow;
-		flow.begin(s.pages[sec], gap * 3, contentTop, colW, gap, height - gap * 2);
+		flow.begin(sec, s.pages[sec], gap * 3, contentTop, colW, gap, height - gap * 2);
+		// one value column for the section: the widest value of its step rows
+		for (Int i = 0; i < SETTING_COUNT; ++i)
+		{
+			if (kSettings[i].section != sec || kSettings[i].kind != KIND_STEPS) {
+				continue;
+			}
+			for (Int c = 0; c < kSettings[i].choiceCount; ++c) {
+				flow.valueW = max(flow.valueW, textSize(labelFont(), choiceText(kSettings[i], c), 0).x);
+			}
+		}
+		for (Int r = 0; r < PACK_ROW_COUNT; ++r)
+		{
+			if (kPackRows[r].section != sec) {
+				continue;
+			}
+			const Packs::Kind kind = kPackRows[r].kind;
+			flow.valueW = max(flow.valueW, textSize(labelFont(), Packs::displayName(kind, nullptr), 0).x);
+			for (Int i = 0; i < Packs::count(kind); ++i) {
+				flow.valueW = max(flow.valueW, textSize(labelFont(), Packs::displayName(kind, Packs::get(kind, i)), 0).x);
+			}
+		}
 		for (Int i = 0; i < EXISTING_COUNT; ++i) {
 			if (kExisting[i].section == sec) {
 				placeExisting(flow, i);
@@ -1246,13 +1350,15 @@ void OptionsSections::init(OptionPreferences *pref)
 			}
 		}
 		if (flow.overflow) {
-			DEBUG_LOG(("OptionsSections: the items of section %d do not fit two columns of the page.", sec));
+			DEBUG_LOG(("OptionsSections: an item of section %d is taller than a column of the page.", sec));
 		}
 	}
 
 	// An open drop-down list is drawn with its combo box: the combo boxes go on top of their pages, so their lists are
 	// not covered by the controls placed after them.
-	for (Int i = 0; i < EXISTING_COUNT; ++i)
+	// The lists open downwards, so a combo box higher on a page must lie over the ones below it: the last brought to
+	// the top is drawn last, so they go from the bottom of the table up.
+	for (Int i = EXISTING_COUNT - 1; i >= 0; --i)
 	{
 		if (s.existing[i] != nullptr && (s.existing[i]->winGetStyle() & GWS_COMBO_BOX) != 0) {
 			s.existing[i]->winBringToTop();
@@ -1288,7 +1394,10 @@ void OptionsSections::init(OptionPreferences *pref)
 		{
 			Bool ours = FALSE;
 			for (Int i = 0; i < SEC_COUNT; ++i) {
-				ours = ours || child == s.buttons[i] || child == s.pages[i];
+				ours = ours || child == s.buttons[i];
+				for (Int k = 0; k < s.subPageCount[i]; ++k) {
+					ours = ours || child == s.subPages[i][k];
+				}
 			}
 			for (Int i = 0; i < 4; ++i) {
 				ours = ours || child == keep[i];
@@ -1331,6 +1440,15 @@ Bool OptionsSections::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgD
 				if (control == s.buttons[i]) {
 					showSection((Section)i);
 					return TRUE;
+				}
+				for (Int k = 0; k < s.subPageCount[i]; ++k)
+				{
+					if (control == s.pagers[i][k])
+					{
+						s.currentSub[i] = (s.currentSub[i] + 1) % s.subPageCount[i];
+						showSection((Section)i);
+						return TRUE;
+					}
 				}
 			}
 			for (Int i = 0; i < SETTING_COUNT; ++i) {
