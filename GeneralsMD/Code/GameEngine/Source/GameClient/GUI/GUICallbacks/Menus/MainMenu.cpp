@@ -74,6 +74,7 @@
 
 #include "GameClient/InGameUI.h"
 #include "GameClient/LanLobbyLook.h"
+#include "Common/GuardLink.h"
 #include "GameClient/GadgetPushButton.h"
 
 
@@ -1435,6 +1436,12 @@ WindowMsgHandledType MainMenuSystem( GameWindow *window, UnsignedInt msg,
 			{
 				if(dontAllowTransitions)
 					break;
+				// TheSuperHackers @feature O30 (row 15) No LAN without a working anti-cheat (GuardLink.h)
+				if (!GuardLink::lanEntryAllowed())
+				{
+					MessageBoxOk(GuardLink::refusalTitle(), GuardLink::refusalText(), nullptr);
+					break;
+				}
 				dontAllowTransitions = TRUE;
 				buttonPushed = TRUE;
 				dropDownWindows[DROPDOWN_MULTIPLAYER]->winHide(FALSE);

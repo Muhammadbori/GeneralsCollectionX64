@@ -36,6 +36,9 @@
 #include "GameClient/MapUtil.h"
 #include "Common/UserPreferences.h"
 #include "GameLogic/GameLogic.h"
+#include "Common/GuardLink.h"
+#include "GameNetwork/LANAPICallbacks.h"
+#include "GameClient/InGameUI.h"
 
 #include <map>
 
@@ -96,8 +99,20 @@ LANAPI::~LANAPI()
 	delete m_transport;
 }
 
+namespace
+{
+	// O30: GuardLink's way out to another player
+	void sendGuardBytes(UnsignedInt ip, const UnsignedByte *data, Int length)
+	{
+		if (TheLAN != nullptr) {
+			TheLAN->sendGuardData(ip, data, length);
+		}
+	}
+}
+
 void LANAPI::init()
 {
+	GuardLink::setSender(&sendGuardBytes);
 	m_gameStartTime = 0;
 	m_gameStartSeconds = 0;
 	// O26 test switch: the lobby socket on a loopback address only (else it would bind every address on the first
@@ -424,6 +439,7 @@ void LANAPI::update()
 			}
 
 			LANMessage *msg = (LANMessage *)(m_transport->m_inBuffer[i].data);
+			GuardLink::notePeer(senderIP, m_localIP);   // O30: every player heard from is checked now and then
 			//DEBUG_LOG(("LAN message type %s from %ls (%s@%s)", GetMessageTypeString(msg->messageType).str(),
 			//	msg->name, msg->userName, msg->hostName));
 			switch (msg->messageType)
@@ -499,6 +515,12 @@ void LANAPI::update()
 					s_filesFingerprints[senderIP] = msg->FilesInfo.fingerprint;
 				}
 				break;
+			case LANMessage::MSG_GUARD_DATA:	// O30: for this player's anti-cheat, passed on unread
+				if (m_transport->m_inBuffer[i].length >= (Int)sizeof(LANMessage) && msg->GuardData.magic == LANGuardDataMagic
+					&& msg->GuardData.length > 0 && msg->GuardData.length <= LANGuardDataMax) {
+					GuardLink::onLanData(senderIP, m_localIP, msg->GuardData.data, msg->GuardData.length);
+				}
+				break;
 
 			default:
 				DEBUG_LOG(("Unknown LAN message type %d", msg->messageType));
@@ -514,6 +536,10 @@ void LANAPI::update()
 	}
 	if(LANbuttonPushed)
 		return;
+	{
+		UnsignedInt failedIP = 0;
+		while (GuardLink::takeNewFailure(&failedIP)) {}   // O30: in the lobby the red mark says it
+	}
 	// Send out periodic I'm Here messages
 	if (now > s_resendDelta + m_lastResendTime)
 	{
@@ -1384,4 +1410,73 @@ void LANAPI::setIsActive(Bool isActive) {
 		}
 	}
 	m_isActive = isActive;
+}
+
+//-------------------------------------------------------------------------------------------------
+// TheSuperHackers @feature O30 (row 15) The anti-cheat's messages (GuardLink.h)
+void LANAPI::sendGuardData(UnsignedInt ip, const UnsignedByte *data, Int length)
+{
+	if (ip == 0 || data == nullptr || length <= 0 || length > LANGuardDataMax) {
+		return;
+	}
+	LANMessage msg;
+	memset(&msg, 0, sizeof(msg));
+	fillInLANMessage(&msg);
+	msg.messageType = LANMessage::MSG_GUARD_DATA;
+	msg.GuardData.magic = LANGuardDataMagic;
+	msg.GuardData.length = (UnsignedShort)length;
+	memcpy(msg.GuardData.data, data, length);
+	sendMessageOnly(&msg, ip);
+}
+
+void LANAPI::pumpGuard()
+{
+	static UnsignedInt s_lastPump = 0;
+	const UnsignedInt now = timeGetTime();
+	if (now - s_lastPump < 200) {
+		return;
+	}
+	s_lastPump = now;
+	m_transport->update();   // sends what is queued, reads what came
+	for (size_t i = 0; i < ARRAY_SIZE(m_transport->m_inBuffer); ++i)
+	{
+		if (m_transport->m_inBuffer[i].length <= 0) {
+			continue;
+		}
+		const UnsignedInt senderIP = m_transport->m_inBuffer[i].addr;
+		const LANMessage *msg = (const LANMessage *)(m_transport->m_inBuffer[i].data);
+		if (senderIP != m_localIP && m_transport->m_inBuffer[i].length >= (Int)sizeof(LANMessage)
+			&& msg->messageType == LANMessage::MSG_GUARD_DATA && msg->GuardData.magic == LANGuardDataMagic
+			&& msg->GuardData.length > 0 && msg->GuardData.length <= LANGuardDataMax)
+		{
+			GuardLink::onLanData(senderIP, m_localIP, msg->GuardData.data, msg->GuardData.length);
+		}
+		m_transport->m_inBuffer[i].length = 0;   // lobby traffic during a match is stale: the lobby asks again later
+	}
+	// the match's players stay checked; one that fails is named for everyone who checks it
+	if (m_currentGame != nullptr)
+	{
+		for (Int k = 0; k < MAX_SLOTS; ++k)
+		{
+			const LANGameSlot *slot = m_currentGame->getLANSlot(k);
+			if (slot != nullptr && slot->isHuman() && slot->getIP() != m_localIP) {
+				GuardLink::notePeer(slot->getIP(), m_localIP);
+			}
+		}
+	}
+	UnsignedInt failedIP = 0;
+	while (GuardLink::takeNewFailure(&failedIP))
+	{
+		UnicodeString name;
+		for (Int k = 0; m_currentGame != nullptr && k < MAX_SLOTS; ++k)
+		{
+			const LANGameSlot *slot = m_currentGame->getLANSlot(k);
+			if (slot != nullptr && slot->isHuman() && slot->getIP() == failedIP) {
+				name = slot->getName();
+			}
+		}
+		if (!name.isEmpty() && TheInGameUI != nullptr) {
+			TheInGameUI->messageNoFormat(GuardLink::failedInMatchText(name));
+		}
+	}
 }

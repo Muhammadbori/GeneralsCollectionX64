@@ -45,6 +45,7 @@
 #include "GameLogic/GameLogic.h"
 #include "GameNetwork/FileTransfer.h"
 #include "GameNetwork/LANAPICallbacks.h"
+#include "Common/GuardLink.h"
 #include "GameNetwork/networkutil.h"
 
 LANAPI *TheLAN = nullptr;
@@ -88,6 +89,8 @@ UnicodeString LANAPIInterface::getErrorStringFromReturnType( ReturnType ret )
 			return TheGameText->fetch("LAN:ErrorBusy");
 		case RET_SERIAL_DUPE:
 			return TheGameText->fetch("WOL:ChatErrorSerialDup");
+		case RET_GUARD_REQUIRED:   // O30
+			return GuardLink::joinRefusedText();
 		default:
 			return TheGameText->fetch("LAN:ErrorUnknown");
 	}

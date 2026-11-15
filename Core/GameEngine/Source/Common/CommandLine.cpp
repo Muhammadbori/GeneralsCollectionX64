@@ -44,6 +44,7 @@
 #include "Common/VoiceChat.h"
 #include "GameNetwork/NetLab.h"
 #include "GameNetwork/LANAPI.h"
+#include "Common/GuardLink.h"
 #include "GameNetwork/NetworkDefs.h"
 
 
@@ -1013,6 +1014,20 @@ Int parseLanSample(char *args[], int num)
 	return 1;
 }
 
+// TheSuperHackers @feature O30 (row 15) Anti-cheat test switches (GuardLink.h): -lanNoGuard starts no anti-cheat and lets
+// this game into LAN without one (it shows no shield to others); -guardTest starts the anti-cheat in its test mode (an
+// exe named *uitest*.exe passes as a test build, which only other test-mode guards accept).
+Int parseLanNoGuard(char *args[], int num)
+{
+	GuardLink::setNoGuard(TRUE);
+	return 1;
+}
+Int parseGuardTest(char *args[], int num)
+{
+	GuardLink::setTestMode(TRUE);
+	return 1;
+}
+
 // TheSuperHackers @feature -mapPacksTest: a test run (-shotFrames, -uiScript) is asked about the map packs too.
 Int parseMapPacksTest(char *args[], int num)
 {
@@ -1970,6 +1985,8 @@ static CommandLineParam paramsForStartup[] =
 	{ "-netLabQuitAfter", parseNetLabQuitAfter },
 	{ "-lanLoopback", parseLanLoopback },
 	{ "-lanSample", parseLanSample },
+	{ "-lanNoGuard", parseLanNoGuard },
+	{ "-guardTest", parseGuardTest },
 	{ "-voiceTestRoster", parseVoiceTestRoster },
 	{ "-voiceTestTone", parseVoiceTestTone },
 	{ "-voiceTestWav", parseVoiceTestWav },

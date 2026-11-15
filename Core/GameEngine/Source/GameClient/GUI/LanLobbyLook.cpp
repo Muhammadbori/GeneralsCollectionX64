@@ -24,6 +24,7 @@
 #include "GameClient/LanLobbyLook.h"
 
 #include "Common/FrameShots.h"
+#include "Common/GuardLink.h"
 #include "Common/MultiplayerSettings.h"
 #include "Common/NameKeyGenerator.h"
 #include "Common/OptionPreferences.h"
@@ -106,7 +107,6 @@ namespace
 	const Color kRed = GameMakeColor(255, 70, 70, 255);
 	const Color kYellow = GameMakeColor(255, 220, 60, 255);
 	const Color kDrop = GameMakeColor(0, 0, 0, 255);
-	const Color kShieldOff = GameMakeColor(110, 114, 126, 140);
 
 	struct Text { const char *label; const WideChar *english; const WideChar *russian; };
 	UnicodeString textOf(const Text &t) { return TheGameText->FETCH_OR_SUBSTITUTE(t.label, localizedFallback(t.english, t.russian)); }
@@ -220,6 +220,7 @@ namespace
 		std::vector<UnicodeString> history;
 		UnsignedInt shownIP;
 		Bool historyLone;          ///< the address list is the window manager's lone window (a click elsewhere closes it)
+		Bool ownFailureSaid;       ///< O30: the chat said once that this player's own anti-cheat check failed
 	};
 	State s;
 
@@ -374,19 +375,67 @@ namespace
 		}
 	}
 
-	/// The anti-cheat place: only with the switch on (item 15 not built yet), as a grey outline.
-	void drawShieldPlace(Int x, Int y, Int size)
+	/// TheSuperHackers @feature O30 (row 15) The anti-cheat shield, drawn (picture drafts come later): green and filled for
+	/// a player the anti-cheat verified, a red outline with a cross for one that failed, nothing without an answer.
+	void drawShieldShape(Int x, Int y, Int size, Color color, Bool filled)
+	{
+		// a shield: straight sides for the upper 55 %, then narrowing to a point at the bottom
+		const Int w = max(6, size * 3 / 4);
+		const Int left = x + (size - w) / 2;
+		const Int top = y + size / 10;
+		const Int h = size - size / 5;
+		const Int straight = h * 55 / 100;
+		Int prevL = left, prevR = left + w;
+		for (Int r = 0; r < h; ++r)
+		{
+			Int inset = 0;
+			if (r >= straight) {
+				inset = (w / 2) * (r - straight) / max(1, h - straight);
+			}
+			const Int l = left + inset, rr = left + w - inset;
+			if (filled) {
+				TheDisplay->drawFillRect(l, top + r, max(1, rr - l), 1, color);
+			} else if (r == 0) {
+				TheDisplay->drawFillRect(l, top, rr - l, 1, color);
+			} else {
+				TheDisplay->drawLine(prevL, top + r - 1, l, top + r, 1.0f, color);
+				TheDisplay->drawLine(prevR - 1, top + r - 1, rr - 1, top + r, 1.0f, color);
+			}
+			prevL = l;
+			prevR = rr;
+		}
+	}
+
+	void drawShield(Int x, Int y, Int size, Int verdict)
 	{
 		if (!s.anticheat) {
 			return;
 		}
-		const Image *off = PlayerTable::picture(PlayerTable::PICTURE_ANTICHEAT_OFF);
-		if (off != nullptr) {
-			TheDisplay->drawImage(off, x, y, x + size, y + size);
-		} else {
-			TheDisplay->drawOpenRect(x + size / 6, y + size / 8, size * 2 / 3, size * 3 / 4, 1.0f, kShieldOff);
+		if (verdict == GuardLink::VERDICT_VERIFIED)
+		{
+			drawShieldShape(x, y, size, kGreen, TRUE);
+			drawShieldShape(x, y, size, GameMakeColor(40, 90, 20, 255), FALSE);
+		}
+		else if (verdict == GuardLink::VERDICT_FAILED)
+		{
+			drawShieldShape(x, y, size, kRed, FALSE);
+			const Int c = size / 2, d = max(2, size / 5);
+			TheDisplay->drawLine(x + c - d, y + c - d, x + c + d, y + c + d, 2.0f, kRed);
+			TheDisplay->drawLine(x + c + d, y + c - d, x + c - d, y + c + d, 2.0f, kRed);
 		}
 	}
+
+	/// The anti-cheat verdict of a player: this player's own checks, or what this player's anti-cheat found about them.
+	Int shieldOfIP(UnsignedInt ip)
+	{
+		if (TheLAN != nullptr && ip == TheLAN->GetLocalIP()) {
+			return GuardLink::ownVerdict();
+		}
+		return GuardLink::verdictOf(ip);
+	}
+
+	/// -lanSample pictures: the sample's files mark stands in for the shield (tick: verified, cross: failed).
+	Int sampleShield(Int files) { return files > 0 ? GuardLink::VERDICT_VERIFIED : (files == 0 ? GuardLink::VERDICT_FAILED : GuardLink::VERDICT_NONE); }
 
 	Int filesMarkOfIP(UnsignedInt ip)
 	{
@@ -591,6 +640,7 @@ namespace
 		UnicodeString name, map, speed;
 		Int players, maxPlayers, observers;
 		Int files;
+		Int shield;                ///< O30: the host's anti-cheat verdict
 		Bool inProgress;
 		LANGameInfo *game;
 		const SampleGame *sample;
@@ -637,6 +687,7 @@ namespace
 				r.maxPlayers = g.maxPlayers;
 				r.observers = g.observers;
 				r.files = g.files;
+				r.shield = sampleShield(g.files);
 				r.inProgress = FALSE;
 				r.game = nullptr;
 				r.sample = &g;
@@ -682,6 +733,7 @@ namespace
 				}
 			}
 			r.files = filesMarkOfIP(game->getHostIP());
+			r.shield = shieldOfIP(game->getHostIP());
 			r.inProgress = game->isGameInProgress();
 			rows.push_back(r);
 		}
@@ -819,9 +871,7 @@ namespace
 			t.format(L"%d", r.observers);
 			drawText(t, cols.x[COL_OBS] + 2, ty, cols.x[COL_SPEED] - cols.x[COL_OBS] - 4, c);
 			drawText(r.speed, cols.x[COL_SPEED] + 2, ty, cols.x[COL_SHIELD] - cols.x[COL_SPEED] - 4, c);
-			if (s.anticheat) {
-				drawShieldPlace(cols.x[COL_SHIELD] + 1, ry + 2, mark);
-			}
+			drawShield(cols.x[COL_SHIELD] + 1, ry + 2, mark, r.shield);
 			drawFilesMark(cols.x[COL_FILES] + 1, ry + 2, mark, r.files);
 		}
 		drawScrollBar(g.barX, g.top, g.visible * rh, s.scroll, g.visible, (Int)rows.size());
@@ -1003,11 +1053,12 @@ namespace
 		for (Int k = 0; k < MAX_SLOTS; ++k)
 		{
 			UnicodeString name;
-			Int state = 0, color = -1, army = -1, team = -1, files = -1;
+			Int state = 0, color = -1, army = -1, team = -1, files = -1, shield = GuardLink::VERDICT_NONE;
 			if (r.sample != nullptr)
 			{
 				const SampleSlot &ss = r.sample->slots[k];
 				state = ss.state; color = ss.color; army = ss.army; team = ss.team; files = ss.files;
+				shield = sampleShield(ss.files);
 				name = ss.name != nullptr ? UnicodeString(ss.name) : UnicodeString::TheEmptyString;
 			}
 			else
@@ -1021,8 +1072,10 @@ namespace
 				army = slot->getPlayerTemplate();
 				team = slot->getTeamNumber();
 				name = slot->getName();
-				if (slot->isHuman()) {
+				if (slot->isHuman())
+				{
 					files = filesMarkOfIP(slot->getIP());
+					shield = shieldOfIP(slot->getIP());
 				}
 			}
 			if (state == 4)
@@ -1071,7 +1124,7 @@ namespace
 			}
 			if (state == 2)
 			{
-				drawShieldPlace(colShield, ry + 2, icon);
+				drawShield(colShield, ry + 2, icon, shield);
 				drawFilesMark(colFiles, ry + 2, icon, files);
 			}
 			ry += rh;
@@ -1109,12 +1162,14 @@ namespace
 		const Int icon = rh - 4;
 		std::vector<UnicodeString> names;
 		std::vector<Int> files;
+		std::vector<Int> shields;
 		if (LanTest::sampleData())
 		{
 			for (Int i = 0; i < (Int)ARRAY_SIZE(kSampleLobby); ++i)
 			{
 				names.push_back(UnicodeString(kSampleLobby[i]));
 				files.push_back(kSampleLobbyFiles[i]);
+				shields.push_back(sampleShield(kSampleLobbyFiles[i]));
 			}
 		}
 		else if (s.listPlayers != nullptr)
@@ -1122,8 +1177,10 @@ namespace
 			const Int count = GadgetListBoxGetNumEntries(s.listPlayers);
 			for (Int i = 0; i < count; ++i)
 			{
+				const UnsignedInt ip = (UnsignedInt)(uintptr_t)GadgetListBoxGetItemData(s.listPlayers, i, 0);
 				names.push_back(GadgetListBoxGetText(s.listPlayers, i, 0));
-				files.push_back(filesMarkOfIP((UnsignedInt)(uintptr_t)GadgetListBoxGetItemData(s.listPlayers, i, 0)));
+				files.push_back(filesMarkOfIP(ip));
+				shields.push_back(shieldOfIP(ip));
 			}
 		}
 		// one column, or two when the box is wide (variant B). O29 (item 5): more names than fit scroll (wheel, or a click
@@ -1143,7 +1200,7 @@ namespace
 			const Int cx = x + pad + c * colW;
 			const Int ry = y + pad + (k % perColumn) * rh;
 			drawText(names[i], cx + 2, ry + (rh - fontHeight()) / 2, colW - icon * 2 - 10, files[i] == 0 ? kYellow : kText);
-			drawShieldPlace(cx + colW - icon * 2 - 6, ry + 2, icon);
+			drawShield(cx + colW - icon * 2 - 6, ry + 2, icon, shields[i]);
 			drawFilesMark(cx + colW - icon - 2, ry + 2, icon, files[i]);
 		}
 		drawScrollBar(x + w - kBarW - 3, y + pad, perColumn * rh, s.lobbyScroll, fit, (Int)names.size());
@@ -1503,7 +1560,8 @@ void LanLobbyLook::init(GameWindow *parent)
 	OptionPreferences::const_iterator it = pref.find("LanLobbyLayout");
 	s.layout = (it != pref.end() && stricmp(it->second.str(), "B") == 0) ? &kLayoutB : &kLayoutA;
 	it = pref.find("LanShowAntiCheat");
-	s.anticheat = it != pref.end() && stricmp(it->second.str(), "yes") == 0;
+	// O30: the anti-cheat exists now: the shield column shows unless Options.ini says LanShowAntiCheat = no
+	s.anticheat = it == pref.end() || stricmp(it->second.str(), "no") != 0;
 	s.lastClickRow = -1;
 	s.sampleSelected = 0;
 
@@ -1614,6 +1672,12 @@ void LanLobbyLook::update(Bool screenReady)
 	if (!screenReady) {
 		return;
 	}
+	// O30: this player's own anti-cheat check failed: said once in the chat (others see the red mark)
+	if (!s.ownFailureSaid && GuardLink::ownVerdict() == GuardLink::VERDICT_FAILED && s.chatList != nullptr)
+	{
+		GadgetListBoxAddEntryText(s.chatList, GuardLink::ownFailureText(), chatSystemColor, -1, 0);
+		s.ownFailureSaid = TRUE;
+	}
 	// own address (copy button feedback for two seconds)
 	const UnsignedInt ip = LanTest::sampleData() ? ((26u << 24) | (12u << 16) | (45u << 8) | 78u) : (TheLAN != nullptr ? TheLAN->GetLocalIP() : 0);
 	if (s.addrBox != nullptr && ip != s.shownIP)
@@ -1679,6 +1743,7 @@ void LanLobbyLook::shutdown()
 	s.title = s.nameEntry = s.clearButton = s.listPlayers = s.listGames = s.gameInfo = s.chatList = s.chatEntry = s.chatButton = s.buttonLook = nullptr;
 	s.joinButton = nullptr;
 	s.lobbyScroll = 0;
+	s.ownFailureSaid = FALSE;
 	s.addrBox = s.copyButton = s.connectEntry = s.historyButton = s.connectButton = nullptr;
 	s.gamesTable = s.panel = s.panelLabel = s.lobbyList = s.lobbyLabel = s.historyPopup = nullptr;
 	s.font = nullptr;

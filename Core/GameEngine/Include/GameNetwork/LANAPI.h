@@ -103,6 +103,8 @@ public:
 		RET_GAME_GONE,			// OnGameJoin
 		RET_BUSY,						// OnGameCreate/Join/etc if another action is in progress
 		RET_UNKNOWN,				// Default message for oddity
+		RET_GUARD_REQUIRED,	// OnGameJoin: O30, the host accepts only players with a verified anti-cheat (appended: an older
+							// build shows its "unknown" text)
 	};
 	UnicodeString getErrorStringFromReturnType( ReturnType ret );
 
@@ -137,6 +139,9 @@ public:
 	virtual void checkMOTD() = 0;
 };
 
+
+/// TheSuperHackers @feature O30 (row 15) The largest opaque anti-cheat payload one MSG_GUARD_DATA carries (GuardLink.h).
+enum { LANGuardDataMax = 200 };
 
 /**
  * LAN message class
@@ -175,6 +180,10 @@ struct LANMessage
 		// (Fingerprint.h), for the "files match" mark of the LAN screen. Appended, so the values above are unchanged; a
 		// build without it ignores it (an unknown type).
 		MSG_FILES_INFO,
+
+		// TheSuperHackers @feature O30 (row 15) Opaque bytes from the sender's anti-cheat to this player's anti-cheat
+		// (GuardLink.h). Appended; a build without it ignores it.
+		MSG_GUARD_DATA,
 	} messageType;
 
 	WideChar name[g_lanPlayerNameLength+1]; ///< My name, for convenience
@@ -277,6 +286,14 @@ struct LANMessage
 			UnsignedInt exeCRC;
 			UnsignedInt iniCRC;
 		} FilesInfo;
+
+		// GuardData is sent with GUARD_DATA (O30)
+		struct
+		{
+			UnsignedInt magic;        ///< LANGuardDataMagic
+			UnsignedShort length;     ///< bytes used in 'data'
+			UnsignedByte data[LANGuardDataMax];
+		} GuardData;
 		static_assert(ARRAY_SIZE(GameOptions.options) > m_lanMaxOptionsLength, "GameOptions.options buffer must be larger than m_lanMaxOptionsLength");
 
 	};
@@ -287,6 +304,7 @@ static_assert(sizeof(LANMessage) <= MAX_LANAPI_PACKET_SIZE, "LANMessage struct c
 
 // TheSuperHackers @feature O26 (row 26) What the LAN screen needs beyond the original messages.
 static const UnsignedInt LANFilesInfoMagic = 0x46494C31;   ///< "FIL1"
+static const UnsignedInt LANGuardDataMagic = 0x31445247;   ///< "GRD1" (O30)
 namespace LanFiles
 {
 	/// The files fingerprint a lobby player or a game host sent (MSG_FILES_INFO); FALSE when none came yet.
@@ -321,6 +339,12 @@ public:
 	virtual void init() override;															///< Initialize or re-initialize the instance
 	virtual void reset() override;															///< reset the logic system
 	virtual void update() override;														///< update the world
+	/// TheSuperHackers @feature O30 (row 15) During a LAN match (the lobby's update does not run then): only the anti-cheat
+	/// messages are read and passed on, everything else that arrives is dropped; the match's players are noted for
+	/// rechecks and a failed one is named in a message line.
+	void pumpGuard();
+	/// O30: opaque anti-cheat bytes to one player (GuardLink's sender).
+	void sendGuardData(UnsignedInt ip, const UnsignedByte *data, Int length);
 
 	virtual void setIsActive(Bool isActive) override;								///< tell TheLAN whether or not
 

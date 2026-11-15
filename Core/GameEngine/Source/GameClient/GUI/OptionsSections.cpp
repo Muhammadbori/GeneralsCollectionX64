@@ -258,6 +258,7 @@ namespace
 	AsciiString curLatencySize(OptionPreferences &p) { return number(p.getNetworkLatencyFontSize()); }
 	AsciiString curPlayerListSize(OptionPreferences &p) { return number(p.getPlayerInfoListFontSize()); }
 	AsciiString curMoneyPerMinute(OptionPreferences &p) { return yesNo(p.getShowMoneyPerMinute()); }
+	AsciiString curRequireGuard(OptionPreferences &p) { return stricmp(keyOr(p, "LanRequireGuard", "yes").str(), "no") == 0 ? AsciiString("no") : AsciiString("yes"); }
 	AsciiString curWindowed(OptionPreferences &p) { const Int w = p.getWindowed(); return yesNo(w >= 0 ? w == 1 : TheGlobalData->m_windowed); }
 	AsciiString curWindowPosition(OptionPreferences &p) { return p.getWindowPosition(); }
 	AsciiString curRotateSpeed(OptionPreferences &p) { return number(p.getCameraRotateSpeedPercent()); }
@@ -322,6 +323,8 @@ namespace
 		{ SEC_DISPLAY, KIND_STEPS, "Windowed", { "GUI:DisplayMode", L"Display mode", L"\x0420\x0435\x0436\x0438\x043C \x044D\x043A\x0440\x0430\x043D\x0430" }, STEPS(kWindowed), "", "no", curWindowed },
 		{ SEC_DISPLAY, KIND_STEPS, "WindowPosition", { "GUI:WindowPosition", L"Window position", L"\x041F\x043E\x043B\x043E\x0436\x0435\x043D\x0438\x0435 \x043E\x043A\x043D\x0430" }, STEPS(kWindowPosition), "", "Center", curWindowPosition },
 		{ SEC_CONTROLS, KIND_STEPS, "CameraRotateSpeed", { "GUI:CameraRotateSpeed", L"Camera rotation speed", L"\x0421\x043A\x043E\x0440\x043E\x0441\x0442\x044C \x043F\x043E\x0432\x043E\x0440\x043E\x0442\x0430 \x043A\x0430\x043C\x0435\x0440\x044B" }, STEPS(kRotateSpeed), "%", "100", curRotateSpeed },
+		// TheSuperHackers @feature O30 (row 15) The host's anti-cheat rule (GuardLink::hostRequiresGuard), on by default
+		{ SEC_NETWORK, KIND_CHECK, "LanRequireGuard", { "GUI:LanRequireGuard", L"LAN host: only players with a verified anti-cheat", L"\x0425\x043E\x0441\x0442 LAN: \x0442\x043E\x043B\x044C\x043A\x043E \x0438\x0433\x0440\x043E\x043A\x0438 \x0441 \x043F\x0440\x043E\x0432\x0435\x0440\x0435\x043D\x043D\x044B\x043C \x0430\x043D\x0442\x0438\x0447\x0438\x0442\x043E\x043C" }, nullptr, 0, "", "yes", curRequireGuard },
 		{ SEC_NETWORK, KIND_CHECK, "HideIPAddresses", { "GUI:HideIPAddresses", L"Hide IP addresses", L"\x0421\x043A\x0440\x044B\x0432\x0430\x0442\x044C IP-\x0430\x0434\x0440\x0435\x0441\x0430" }, nullptr, 0, "", "no", curHideIP },
 		{ SEC_INFO, KIND_CHECK, "ShowMoneyPerMinute", { "GUI:ShowMoneyPerMinute", L"Money per minute", L"\x0414\x0435\x043D\x044C\x0433\x0438 \x0432 \x043C\x0438\x043D\x0443\x0442\x0443" }, nullptr, 0, "", "no", curMoneyPerMinute },
 	};
