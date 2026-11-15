@@ -134,9 +134,17 @@ namespace
 	}
 
 	Int s_forcedResendSlot = -1;   // O35
+	Int s_dropSlot = -1;           // O41: the next game command of this slot is dropped
+	Int s_droppedId = -1;          // ... and its copies (this command id) until s_dropUntilMs
+	UnsignedInt s_dropUntilMs = 0;
 
 	void parseSim(const char *text, Int *freezeMs)
 	{
+		if (const char *at = strstr(text, "dropcmd="))
+		{
+			s_dropSlot = atoi(at + 8);
+			logLine("dropcmd: the next game command of slot %d is acked but not used", s_dropSlot);
+		}
 		if (const char *at = strstr(text, "resend="))
 		{
 			s_forcedResendSlot = atoi(at + 7);
@@ -458,6 +466,44 @@ void NetLab::countCopy() { ++s_copies; }
 void NetLab::noteRetryTime(Int ms) { if (ms > s_retryMsMax) s_retryMsMax = ms; }
 void NetLab::noteRunAheadLatency(Int ms) { s_latencyMs = ms; }
 void NetLab::noteStallNotice(UnsignedInt mask) { logLine("waiting-for notice shown: slots mask %u", mask); }
+Bool NetLab::dropCommand(Int playerId, Bool isGameCommand, UnsignedShort commandId)
+{
+	const UnsignedInt now = timeGetTime();
+	if (s_droppedId >= 0 && playerId == s_dropSlot && (Int)commandId == s_droppedId)
+	{
+		if ((LONG)(s_dropUntilMs - now) > 0) {
+			return TRUE;   // an extra copy of the dropped command
+		}
+		s_droppedId = -1;   // the window is over: a resent copy is used
+		s_dropSlot = -1;
+		return FALSE;
+	}
+	if (s_dropSlot >= 0 && s_droppedId < 0 && playerId == s_dropSlot && isGameCommand)
+	{
+		s_droppedId = commandId;
+		s_dropUntilMs = now + 1000;
+		logLine("dropcmd: game command %u of slot %d dropped (acked, not used)", (unsigned)commandId, playerId);
+		return TRUE;
+	}
+	return FALSE;
+}
+
+void NetLab::countStuckResend()
+{
+	static UnsignedInt s_lastLog = 0;
+	const UnsignedInt now = timeGetTime();
+	if ((UnsignedInt)(now - s_lastLog) >= 1000u)
+	{
+		s_lastLog = now;
+		logLine("stuck frame: resend requested");
+	}
+}
+
+void NetLab::noteResendRefused(Int playerId, UnsignedInt frame, UnsignedInt now)
+{
+	logLine("resend refused: player %d asked for frame %u, this computer is at %u (older than FRAMES_TO_KEEP)", playerId, frame, now);
+}
+
 Bool NetLab::takeForcedResend(Int slot)
 {
 	if (s_forcedResendSlot < 0 || s_forcedResendSlot != slot) {

@@ -96,6 +96,8 @@
 #include "GameNetwork/GameSpy/GameResultsThread.h"
 #include "GameNetwork/NetworkDefs.h"
 #include "GameNetwork/LANAPICallbacks.h"
+#include "GameNetwork/LanRoom.h"
+#include "GameClient/LocalizedFallback.h"
 #include "GameNetwork/GameSpyOverlay.h"
 #include "GameNetwork/GameSpy/BuddyThread.h"
 #include "GameNetwork/GameSpy/PersistentStorageThread.h"
@@ -559,6 +561,13 @@ WindowMsgHandledType ScoreScreenSystem( GameWindow *window, UnsignedInt msg,
 					ReplaySimulation::stop();
 					TheGameEngine->setQuitting(TRUE);
 				}
+			}
+			else if ( controlID == buttonContinueID && screenType == SCORESCREEN_LAN )
+			{
+				// O40: "Play again": as OK, and the LAN screen opens the room again (LanRoom::requestRematch)
+				LanRoom::requestRematch();
+				TheShell->pop();
+				TheCampaignManager->setCampaign(AsciiString::TheEmptyString);
 			}
 			else if ( controlID == buttonContinueID )
 			{
@@ -1043,6 +1052,9 @@ void initLANMultiPlayer()
 {
 	screenType = SCORESCREEN_LAN;
 	grabMultiPlayerInfo();
+	// TheSuperHackers @feature O40 (row 25) The host of the match gets "Play again": back to a room with the same map,
+	// options and computer players in one click (also after a match ended by a mismatch); the others join it as usual.
+	const Bool offerRematch = LanRoom::canOfferRematch();
 	GadgetTextEntrySetText(textEntryChat, UnicodeString::TheEmptyString);
 	TheWindowManager->winSetFocus( textEntryChat );
 	if(staticTextGameSaved)
@@ -1052,7 +1064,12 @@ void initLANMultiPlayer()
 	if (buttonChat)
 		buttonChat->winHide(FALSE);
 	if (buttonContinue)
-		buttonContinue->winHide(TRUE);
+	{
+		buttonContinue->winHide(!offerRematch);
+		if (offerRematch) {
+			GadgetButtonSetText(buttonContinue, TheGameText->FETCH_OR_SUBSTITUTE("GUI:LanPlayAgain", localizedFallback(L"Play again", L"\x0418\x0433\x0440\x0430\x0442\x044C \x0441\x043D\x043E\x0432\x0430")));
+		}
+	}
 	if (listboxChatWindowScoreScreen)
 		listboxChatWindowScoreScreen->winHide(FALSE);
 	//No academy in LAN

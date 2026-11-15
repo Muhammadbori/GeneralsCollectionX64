@@ -46,6 +46,8 @@ FrameMetrics::FrameMetrics()
 
 	m_pendingLatencies = NEW time_t[MAX_FRAMES_AHEAD];
 	m_pendingFrames = NEW UnsignedInt[MAX_FRAMES_AHEAD];
+	m_uncleanSamples = 0;
+	m_latencyFromUnclean = FALSE;
 	for (Int i = 0; i < MAX_FRAMES_AHEAD; ++i) {
 		m_pendingFrames[i] = 0xFFFFFFFF;
 	}
@@ -85,6 +87,8 @@ void FrameMetrics::init() {
 	m_smoothedLatency = (Real)0.2;
 	m_latencyDeviation = 0.0f;
 	m_haveLatency = FALSE;
+	m_uncleanSamples = 0;
+	m_latencyFromUnclean = FALSE;
 	for (Int k = 0; k < MAX_FRAMES_AHEAD; ++k) {
 		m_pendingFrames[k] = 0xFFFFFFFF;   // O35
 	}
@@ -128,8 +132,23 @@ void FrameMetrics::processLatencyResponse(UnsignedInt frame, Bool cleanSample) {
 	// frame info for yet: the time then belonged to the frame MAX_FRAMES_AHEAD earlier (about 4 s), and the router's
 	// estimate stayed at 5 to 6 s (S21 R4: run-ahead 64 with no delay at all). A sample longer than the retry limit (2 s)
 	// is no latency either.
-	if (!cleanSample || timeDiff < 0 || timeDiff > 2000 || m_pendingFrames[pendingIndex] != frame) {
+	if (timeDiff < 0 || timeDiff > 2000 || m_pendingFrames[pendingIndex] != frame) {
 		return;
+	}
+	// O41 (review 5): a retried frame info's ack is no clean sample; but a computer that has had no clean sample yet after
+	// 20 retried ones takes those (each at most 2 s, an overestimate), so it does not keep the 0.2 s start value on a link
+	// where every first send needs the timer. The first clean sample replaces them.
+	if (!cleanSample)
+	{
+		if (m_haveLatency || ++m_uncleanSamples < 20) {
+			return;
+		}
+		m_latencyFromUnclean = TRUE;
+	}
+	else if (m_latencyFromUnclean)
+	{
+		m_haveLatency = FALSE;   // the first clean sample starts the estimate anew
+		m_latencyFromUnclean = FALSE;
 	}
 	const Real sample = (Real)timeDiff / (Real)1000;
 	if (!m_haveLatency) {

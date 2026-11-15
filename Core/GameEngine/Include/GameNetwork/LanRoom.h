@@ -138,6 +138,21 @@ namespace LanRoom
 	/// The room's observers for the voice roster, this game included, in the same order on every observer (by address);
 	/// 0 when this game is not a room observer in its stream.
 	Int observerVoicePeers(UnsignedInt *ips, UnicodeString *names, Int maxCount, Int *localIndex);
+	//--- O40 (row 25): "Play again" after a LAN match (also after one ended by a mismatch) ---------------
+	/// The host at Start: keeps the room's slot layout (computer players with their army, colour, team and start, closed
+	/// and open places; the humans' places become open places for them to join again). nullptr: forget it.
+	void rememberMatchLayout(const LANGameInfo *game);
+	/// The score screen: TRUE for the computer that hosted the LAN match that just ended.
+	Bool canOfferRematch();
+	/// The score screen's "Play again": back in the LAN screen, this computer opens a room again (TRUE once, for the
+	/// LAN screen).
+	void requestRematch();
+	Bool takeRematchRequest();
+	/// The host's new room (LanGameOptionsMenuInit, after the map's slots were set): the kept layout, once. The map,
+	/// starting cash, superweapon limit, and the host's own army and colour come from the host's preferences as for any
+	/// new room (written at every Start).
+	void applyRematchLayout(LANGameInfo *game);
+
 	/// O39: an outside viewer: the delay its sources keep (the host's), which the replay bar adds to the viewer's own lag
 	/// so it shows the whole delay behind the match; 0 for everybody else.
 	Int upstreamDelaySeconds();

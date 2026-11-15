@@ -64,6 +64,8 @@ protected:
 
 	// TheSuperHackers @bugfix O35 The frame each pending send time belongs to: an ack is a sample only for that frame.
 	UnsignedInt *m_pendingFrames;
+	Int m_uncleanSamples;   ///< O41: retried samples seen before the first clean one
+	Bool m_latencyFromUnclean;   ///< O41: the estimate so far comes from retried samples only
 
 	// TheSuperHackers @tweak O23 A faster latency estimate for the run-ahead: smoothed mean and mean deviation of the
 	// clean samples (seconds). The average above over the last 200 frames reacts in seconds and took the samples of
