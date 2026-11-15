@@ -31,6 +31,8 @@
 #include "Common/OptionPreferences.h"
 #include "Common/Packs.h"
 #include "GameClient/Display.h"
+#include "GameClient/DisplayString.h"
+#include "GameClient/DisplayStringManager.h"
 #include "GameClient/GadgetCheckBox.h"
 #include "GameClient/GadgetComboBox.h"
 #include "GameClient/GadgetPushButton.h"
@@ -434,6 +436,61 @@ namespace
 		inst.m_font = from->m_font;
 	}
 
+	/// The drawn size of 'text' in 'font', wrapped at 'wrapWidth' pixels (0: one line).
+	ICoord2D textSize(GameFont *font, const UnicodeString &text, Int wrapWidth)
+	{
+		ICoord2D size = { 0, 0 };
+		if (font == nullptr || TheDisplayStringManager == nullptr || text.isEmpty()) {
+			return size;
+		}
+		DisplayString *ds = TheDisplayStringManager->newDisplayString();
+		if (ds == nullptr) {
+			return size;
+		}
+		ds->setFont(font);
+		ds->setWordWrap(wrapWidth > 0 ? wrapWidth : 0);
+		ds->setText(text);
+		ds->getSize(&size.x, &size.y);
+		TheDisplayStringManager->freeDisplayString(ds);
+		return size;
+	}
+
+	/// A static text window of 'width' wraps its text at width - 10 (W3DStaticText): the height its text needs.
+	Int labelHeightFor(GameFont *font, const UnicodeString &text, Int width, Int minHeight)
+	{
+		const ICoord2D size = textSize(font, text, width - 10);
+		return max(minHeight, size.y + 4);
+	}
+
+	/// A check box draws its text right of the box (which is as high as the window), centred on the window's middle, with
+	/// no clip. The window gets 'width'. When the text is wider than the room right of the box it is wrapped there (the
+	/// display string keeps the wrap; the draw does not reset it) and the lines spread above and below the window's middle.
+	/// Returns the height to reserve; the window goes in the middle of it, so the box keeps its size.
+	Int fitCheckBox(GameWindow *box, Int width)
+	{
+		if (box == nullptr) {
+			return 0;
+		}
+		const ICoord2D size = sizeOf(box);
+		box->winSetSize(width, size.y);
+		WinInstanceData *inst = box->winGetInstanceData();
+		DisplayString *ds = inst != nullptr ? inst->getTextDisplayString() : nullptr;
+		if (ds == nullptr || ds->getTextLength() == 0) {
+			return size.y;
+		}
+		ds->setFont(box->winGetFont());
+		ds->setWordWrap(0);
+		Int w = 0, h = 0;
+		ds->getSize(&w, &h);
+		const Int room = width - size.y - 4;   // the text starts one window height right of the left edge
+		if (w <= room || room <= 40) {
+			return max(size.y, h);
+		}
+		ds->setWordWrap(room);
+		ds->getSize(&w, &h);
+		return max(size.y, h + 2);
+	}
+
 	UnsignedInt imageStatusOf(GameWindow *look)
 	{
 		return look != nullptr ? (look->winGetStatus() & WIN_STATUS_IMAGE) : 0;
@@ -652,10 +709,11 @@ namespace
 		Int x0, y0, colW, gap, bottom;
 		Int col;
 		Int y;
+		Bool overflow;   ///< an item went below the page in the second column
 
 		void begin(GameWindow *p, Int left, Int top, Int columnWidth, Int g, Int b)
 		{
-			page = p; x0 = left; y0 = top; colW = columnWidth; gap = g; bottom = b; col = 0; y = top;
+			page = p; x0 = left; y0 = top; colW = columnWidth; gap = g; bottom = b; col = 0; y = top; overflow = FALSE;
 		}
 		/// The position of an item of 'height'.
 		ICoord2D next(Int height)
@@ -664,11 +722,63 @@ namespace
 				col = 1;
 				y = y0;
 			}
+			if (y + height > bottom) {
+				overflow = TRUE;
+			}
 			ICoord2D p = { x0 + col * (colW + gap * 2), y };
 			y += height + gap;
 			return p;
 		}
 	};
+
+	GameFont *labelFont()
+	{
+		return s.labelLook != nullptr ? s.labelLook->winGetFont() : nullptr;
+	}
+
+	/// A row of steps: the title over the whole column on as many lines as it needs, then the slider with the value text
+	/// right of it. 'valueTextW' is the width of the widest value text; 'extraBelow' is room kept under the row.
+	/// Returns the y below the row (in the page) through 'below'.
+	void placeStepRow(Flow &flow, const UnicodeString &title, Int valueTextW, Int sliderMax, Int id, Int labelH, Int sliderH,
+		Int extraBelow, GameWindow **label, GameWindow **value, GameWindow **slider, ICoord2D *below)
+	{
+		const Int titleH = labelHeightFor(labelFont(), title, flow.colW, labelH);
+		const Int lineH = max(labelH, sliderH);
+		if (valueTextW + 14 > flow.colW / 2)
+		{
+			// long values (pack names): the value on its own line under the title, the slider over the whole column
+			const ICoord2D at = flow.next(titleH + labelH + sliderH + extraBelow);
+			*label = makeLabel(flow.page, s.labelLook, at.x, at.y, flow.colW, titleH, title, FALSE);
+			*value = makeLabel(flow.page, s.labelLook, at.x, at.y + titleH, flow.colW, labelH, UnicodeString::TheEmptyString, FALSE);
+			*slider = makeSlider(flow.page, at.x, at.y + titleH + labelH, flow.colW, sliderH, sliderMax, id);
+			if (below != nullptr) {
+				below->x = at.x;
+				below->y = at.y + titleH + labelH + sliderH;
+			}
+			return;
+		}
+		const Int valueW = max(valueTextW + 14, flow.colW / 5);
+		const Int sliderW = flow.colW - valueW - flow.gap;
+		const ICoord2D at = flow.next(titleH + lineH + extraBelow);
+		*label = makeLabel(flow.page, s.labelLook, at.x, at.y, flow.colW, titleH, title, FALSE);
+		*slider = makeSlider(flow.page, at.x, at.y + titleH + (lineH - sliderH) / 2, sliderW, sliderH, sliderMax, id);
+		*value = makeLabel(flow.page, s.labelLook, at.x + sliderW + flow.gap, at.y + titleH, valueW, lineH,
+			UnicodeString::TheEmptyString, FALSE);
+		if (below != nullptr) {
+			below->x = at.x;
+			below->y = at.y + titleH + lineH;
+		}
+	}
+
+	/// A check box: the column's width, its text wrapped when it is wider (fitCheckBox), in the middle of its room.
+	void placeCheckBox(Flow &flow, GameWindow *box)
+	{
+		const Int room = fitCheckBox(box, flow.colW);
+		const Int h = sizeOf(box).y;
+		const ICoord2D at = flow.next(room);
+		box->winSetParent(flow.page);
+		box->winSetPosition(at.x, at.y + (room - h) / 2);
+	}
 
 	void placeExisting(Flow &flow, Int index)
 	{
@@ -678,29 +788,55 @@ namespace
 		}
 		const Existing &ex = kExisting[index];
 		GameWindow *label = s.existingLabels[index];
+		if (!ex.show && control->winIsHidden())
+		{
+			// hidden by the .wnd (the scroll anchor boxes): no room on the page
+			control->winSetParent(flow.page);
+			if (label != nullptr) {
+				label->winSetParent(flow.page);
+				label->winHide(TRUE);
+			}
+			return;
+		}
 		ICoord2D cs = sizeOf(control);
 		const UnsignedInt style = control->winGetStyle();
 		const Bool isSlider = (style & GWS_HORZ_SLIDER) != 0;
 		const Bool isCheck = (style & GWS_CHECK_BOX) != 0;
-		if (isSlider || isCheck)
+		if (isCheck)
 		{
-			// sliders and check boxes take the column's width
-			Int minVal = 0, maxVal = 0;
-			if (isSlider) {
-				GadgetSliderGetMinMax(control, &minVal, &maxVal);
+			// one font and height for all check boxes of the screen (some old ones were smaller)
+			if (s.checkLook != nullptr && control != s.checkLook)
+			{
+				control->winSetFont(s.checkLook->winGetFont());
+				control->winSetSize(cs.x, sizeOf(s.checkLook).y);
 			}
-			const Int pos = isSlider ? GadgetSliderGetPosition(control) : 0;
+			if (label != nullptr) {
+				label->winHide(TRUE);
+			}
+			placeCheckBox(flow, control);
+			if (ex.show) {
+				control->winHide(FALSE);
+			}
+			return;
+		}
+		if (isSlider)
+		{
+			// sliders take the column's width
+			Int minVal = 0, maxVal = 0;
+			GadgetSliderGetMinMax(control, &minVal, &maxVal);
+			const Int pos = GadgetSliderGetPosition(control);
 			control->winSetSize(flow.colW, cs.y);
 			cs.x = flow.colW;
-			if (isSlider)
-			{
-				TheWindowManager->winSendSystemMsg(control, GSM_SET_MIN_MAX, minVal, maxVal);
-				GadgetSliderSetPosition(control, pos);
-			}
+			TheWindowManager->winSendSystemMsg(control, GSM_SET_MIN_MAX, minVal, maxVal);
+			GadgetSliderSetPosition(control, pos);
 		}
 		Int labelH = 0;
-		if (label != nullptr) {
-			labelH = sizeOf(label).y;
+		if (label != nullptr)
+		{
+			// the title over the whole column, as high as its text needs
+			const UnicodeString text = GadgetStaticTextGetText(label);
+			labelH = labelHeightFor(label->winGetFont(), text, flow.colW, sizeOf(label).y);
+			label->winSetSize(flow.colW, labelH);
 		}
 		const ICoord2D at = flow.next(labelH + cs.y);
 		if (label != nullptr)
@@ -725,15 +861,19 @@ namespace
 		const Int id = windowId(name.str());
 		if (set.kind == KIND_CHECK)
 		{
-			const ICoord2D at = flow.next(checkH);
-			st.control = makeCheckBox(flow.page, at.x, at.y, flow.colW, checkH, textOf(set.text), id);
+			st.control = makeCheckBox(flow.page, 0, 0, flow.colW, checkH, textOf(set.text), id);
+			if (st.control != nullptr) {
+				placeCheckBox(flow, st.control);
+			}
 			setChecked(index, stricmp(set.current(*s.pref).str(), "yes") == 0);
 			return;
 		}
-		const ICoord2D at = flow.next(labelH + sliderH);
-		st.label = makeLabel(flow.page, s.labelLook, at.x, at.y, flow.colW * 2 / 3, labelH, textOf(set.text), FALSE);
-		st.value = makeLabel(flow.page, s.labelLook, at.x + flow.colW / 3, at.y, flow.colW * 2 / 3, labelH, UnicodeString::TheEmptyString, TRUE);
-		st.control = makeSlider(flow.page, at.x, at.y + labelH, flow.colW, sliderH, set.choiceCount - 1, id);
+		Int valueTextW = 0;
+		for (Int c = 0; c < set.choiceCount; ++c) {
+			valueTextW = max(valueTextW, textSize(labelFont(), choiceText(set, c), 0).x);
+		}
+		placeStepRow(flow, textOf(set.text), valueTextW, set.choiceCount - 1, id, labelH, sliderH, 0,
+			&st.label, &st.value, &st.control, nullptr);
 		const Int found = findChoice(set, set.current(*s.pref));
 		st.step = found >= 0 ? found : defaultStep(set);
 		showStep(index);
@@ -860,16 +1000,21 @@ namespace
 		const PackRowDef &def = kPackRows[row];
 		PackRowState &st = s.packRows[row];
 		const Int previewH = def.preview ? flow.colW / 2 : 0;   // preview pictures are 2:1 (512 x 256)
-		const ICoord2D at = flow.next(labelH + sliderH + (def.preview ? flow.gap + previewH : 0));
 		AsciiString name("OptionsMenu.wnd:Sections.");
 		name.concat(Packs::kindKey(def.kind));
 		const Int id = windowId(name.str());
-		st.label = makeLabel(flow.page, s.labelLook, at.x, at.y, flow.colW * 2 / 3, labelH, Packs::kindTitle(def.kind), FALSE);
-		st.value = makeLabel(flow.page, s.labelLook, at.x + flow.colW / 3, at.y, flow.colW * 2 / 3, labelH, UnicodeString::TheEmptyString, TRUE);
-		st.slider = makeSlider(flow.page, at.x, at.y + labelH, flow.colW, sliderH, st.choiceCount > 1 ? st.choiceCount - 1 : 1, id);
+		// the widest name of any choice of this kind (the hotkey row's list changes with the language)
+		Int valueTextW = textSize(labelFont(), Packs::displayName(def.kind, nullptr), 0).x;
+		for (Int i = 0; i < Packs::count(def.kind); ++i) {
+			valueTextW = max(valueTextW, textSize(labelFont(), Packs::displayName(def.kind, Packs::get(def.kind, i)), 0).x);
+		}
+		ICoord2D below = { 0, 0 };
+		placeStepRow(flow, Packs::kindTitle(def.kind), valueTextW, st.choiceCount > 1 ? st.choiceCount - 1 : 1, id, labelH, sliderH,
+			def.preview ? flow.gap + previewH : 0, &st.label, &st.value, &st.slider, &below);
 		if (def.preview)
 		{
-			const Int py = at.y + labelH + sliderH + flow.gap;
+			const ICoord2D at = below;
+			const Int py = below.y + flow.gap;
 			WinInstanceData inst;
 			inst.init();
 			inst.m_style = GWS_USER_WINDOW;
@@ -1099,6 +1244,29 @@ void OptionsSections::init(OptionPreferences *pref)
 			if (kPackRows[r].section == sec) {
 				placePackRow(flow, r, labelH, sliderH);
 			}
+		}
+		if (flow.overflow) {
+			DEBUG_LOG(("OptionsSections: the items of section %d do not fit two columns of the page.", sec));
+		}
+	}
+
+	// An open drop-down list is drawn with its combo box: the combo boxes go on top of their pages, so their lists are
+	// not covered by the controls placed after them.
+	for (Int i = 0; i < EXISTING_COUNT; ++i)
+	{
+		if (s.existing[i] != nullptr && (s.existing[i]->winGetStyle() & GWS_COMBO_BOX) != 0) {
+			s.existing[i]->winBringToTop();
+		}
+	}
+
+	// "Show Props" has no Russian text in the Russian string file
+	if (GameWindow *props = findWindow("CheckShowProps"))
+	{
+		WinInstanceData *inst = props->winGetInstanceData();
+		if (isRussianText() && inst != nullptr && inst->getText().compare(L"Show Props") == 0)
+		{
+			GadgetCheckBoxSetText(props, TheGameText->FETCH_OR_SUBSTITUTE("GUI:ShowPropsFallback",
+				L"\x0414\x0435\x043A\x043E\x0440\x0430\x0442\x0438\x0432\x043D\x044B\x0435 \x043E\x0431\x044A\x0435\x043A\x0442\x044B"));
 		}
 	}
 
