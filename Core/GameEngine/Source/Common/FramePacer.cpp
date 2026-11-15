@@ -46,6 +46,7 @@ FramePacer::FramePacer()
 	m_enableLogicTimeScale = TRUE;
 	m_isTimeFrozen = FALSE;
 	m_isGameHalted = FALSE;
+	m_replaySpeedFactor = 1;
 }
 
 FramePacer::~FramePacer()
@@ -246,12 +247,24 @@ Int FramePacer::getActualLogicTimeScaleFps(LogicTimeQueryFlags flags) const
 
 	if (isLogicTimeScaleEnabled())
 	{
-		return getLogicTimeScaleFps();
+		// TheSuperHackers @feature The replay control bar's speeds above 1x (replay playback only).
+		const Int fps = getLogicTimeScaleFps();
+		if (m_replaySpeedFactor > 1 && (UnsignedInt)fps < RenderFpsPreset::UncappedFpsValue && TheGameLogic != nullptr
+			&& TheGameLogic->isInReplayGame())
+		{
+			return fps * m_replaySpeedFactor;
+		}
+		return fps;
 	}
 
 	// Returns uncapped value to align with the render update as per the original game behavior.
 	// This is only used while the time scale is temporarily disabled, for example for the single frame step.
 	return RenderFpsPreset::UncappedFpsValue;
+}
+
+void FramePacer::setReplaySpeedFactor(Int factor)
+{
+	m_replaySpeedFactor = factor > 1 ? factor : 1;
 }
 
 Real FramePacer::getActualLogicTimeScaleRatio(LogicTimeQueryFlags flags) const

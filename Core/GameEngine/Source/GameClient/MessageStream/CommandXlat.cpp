@@ -89,6 +89,7 @@
 #include "GameNetwork/GameInfo.h"
 #include "GameNetwork/GameSpyOverlay.h"
 #include "GameNetwork/GameSpy/BuddyThread.h"
+#include "GameClient/ReplayControlBar.h"
 
 #include "WW3D2/ww3d.h"
 
@@ -3523,11 +3524,8 @@ GameMessageDisposition CommandTranslator::translateGameMessage(const GameMessage
 				if (TheGameLogic->isInReplayGame())
 #endif
 				{
-					TheWritableGlobalData->m_TiVOFastMode = 1 - TheGlobalData->m_TiVOFastMode;
-					TheInGameUI->messageNoFormat( TheGlobalData->m_TiVOFastMode
-						? TheGameText->FETCH_OR_SUBSTITUTE("GUI:FF_ON", L"Fast Forward is on")
-						: TheGameText->FETCH_OR_SUBSTITUTE("GUI:FF_OFF", L"Fast Forward is off")
-					);
+					// TheSuperHackers @feature The key and the replay control bar share one speed (ReplayControlBar.h).
+					ReplayControl::toggleFastForward();
 				}
 			}
 

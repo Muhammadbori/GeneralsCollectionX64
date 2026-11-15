@@ -237,3 +237,11 @@ Bool ReplayFollow::mayRunFrame(UnsignedInt frame)
 	setCatchUp(allowed - (Int)frame > 2 * LOGICFRAMES_PER_SECOND);
 	return TRUE;
 }
+
+UnsignedInt ReplayFollow::newestFrame()
+{
+	if (!isOn() || !poll()) {
+		return 0;
+	}
+	return s_last.frame;
+}

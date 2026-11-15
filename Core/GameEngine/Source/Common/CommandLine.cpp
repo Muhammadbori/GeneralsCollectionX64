@@ -38,6 +38,7 @@
 #include "GameClient/ClientInstance.h"
 #include "GameClient/TerrainVisual.h" // for TERRAIN_LOD_MIN definition
 #include "GameClient/GameText.h"
+#include "GameClient/ReplayControlBar.h"
 #include "GameNetwork/NetworkDefs.h"
 
 
@@ -829,6 +830,13 @@ Int parseFollowDelay(char *args[], int num)
 			ReplayFollow::configure(s_followDelaySeconds, s_followCatchUp);
 		return 2;
 	}
+	return 1;
+}
+
+// TheSuperHackers @feature -noReplayBar: no replay control bar (the keys still work); for screenshot comparisons.
+Int parseNoReplayBar(char *args[], int num)
+{
+	ReplayControl::disableBar();
 	return 1;
 }
 
@@ -1747,6 +1755,7 @@ static CommandLineParam paramsForStartup[] =
 	{ "-followReplay", parseFollowReplay },
 	{ "-followDelay", parseFollowDelay },
 	{ "-followCatchUp", parseFollowCatchUp },
+	{ "-noReplayBar", parseNoReplayBar },
 	{ "-testPerturbFrame", parseTestPerturbFrame },
 	{ "-testReportFrame", parseTestReportFrame },
 
