@@ -62,3 +62,28 @@ const WideChar *localizedFallback(const WideChar *english, const WideChar *russi
 {
 	return isRussianText() ? russian : english;
 }
+
+namespace
+{
+	UnicodeString fetchedOr(const char *label, const WideChar *english, const WideChar *russian)
+	{
+		if (isRussianText())
+			return UnicodeString(russian);
+		return TheGameText != nullptr ? TheGameText->FETCH_OR_SUBSTITUTE(label, english) : UnicodeString(english);
+	}
+}
+
+UnicodeString FastForwardText::instructions()
+{
+	return fetchedOr("GUI:FastForwardInstructions", L"Press F to toggle Fast Forward", L"\x041A\x043B\x0430\x0432\x0438\x0448\x0430 F: \x0443\x0441\x043A\x043E\x0440\x0435\x043D\x043D\x0430\x044F \x043F\x0435\x0440\x0435\x043C\x043E\x0442\x043A\x0430");
+}
+
+UnicodeString FastForwardText::on()
+{
+	return fetchedOr("GUI:FF_ON", L"Fast Forward is on", L"\x0423\x0441\x043A\x043E\x0440\x0435\x043D\x043D\x0430\x044F \x043F\x0435\x0440\x0435\x043C\x043E\x0442\x043A\x0430 \x0432\x043A\x043B\x044E\x0447\x0435\x043D\x0430");
+}
+
+UnicodeString FastForwardText::off()
+{
+	return fetchedOr("GUI:FF_OFF", L"Fast Forward is off", L"\x0423\x0441\x043A\x043E\x0440\x0435\x043D\x043D\x0430\x044F \x043F\x0435\x0440\x0435\x043C\x043E\x0442\x043A\x0430 \x0432\x044B\x043A\x043B\x044E\x0447\x0435\x043D\x0430");
+}

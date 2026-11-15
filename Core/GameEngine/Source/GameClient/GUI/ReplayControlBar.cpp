@@ -315,39 +315,77 @@ namespace
 
 		Int textH = 12;
 		measure(font, UnicodeString(L"0:00"), &textH);
-		const Int pad = max(4, REAL_TO_INT(6.0f * scale));
-		const Int gap = max(2, REAL_TO_INT(3.0f * scale));
-		const Int groupGap = max(6, REAL_TO_INT(10.0f * scale));
+		Int pad = max(4, REAL_TO_INT(6.0f * scale));
+		Int gap = max(2, REAL_TO_INT(3.0f * scale));
+		Int groupGap = max(6, REAL_TO_INT(10.0f * scale));
 		const Int rowH = textH + pad;
 		const Int margin = max(2, REAL_TO_INT(3.0f * scale));
 
-		const Int pauseW = max(measure(font, pauseText()), measure(font, playText())) + 2 * pad;
+		const Int pauseTextW = max(measure(font, pauseText()), measure(font, playText()));
 		const UnicodeString stepStr = text("GUI:ReplayBarStep", L"Step", L"\x0428\x0430\x0433");
-		const Int stepW = measure(font, stepStr) + 2 * pad;
-		Int speedW[SPEED_COUNT];
-		Int speedsW = 0;
+		const Int stepTextW = measure(font, stepStr);
+		Int speedTextW[SPEED_COUNT];
 		for (Int i = 0; i < SPEED_COUNT; ++i)
-		{
-			speedW[i] = max(measure(font, speedText(kSpeeds[i])) + 2 * pad, rowH + pad);
-			speedsW += speedW[i] + (i > 0 ? gap : 0);
-		}
+			speedTextW[i] = measure(font, speedText(kSpeeds[i]));
 		const Bool follow = ReplayFollow::isOn();
 		// TheSuperHackers @tweak (O18, D4) The time box is as wide as the times need: m:ss up to an hour (the bar is made
 		// again when a time passes an hour), so the bar stays narrow at 800x600.
 		const UnsignedInt hourFrames = 3600 * LOGICFRAMES_PER_SECOND;
 		s_barHasHours = totalFrames() >= hourFrames || TheGameLogic->getFrame() >= hourFrames;
 		const UnsignedInt widest = s_barHasHours ? 10 * hourFrames - 1 : hourFrames - 1;
-		const Int timeW = measure(font, timeLine(widest, widest, follow ? 3599 : -1)) + 2 * pad;
-		const Int entryW = measure(font, UnicodeString(L"0:00:00")) + 2 * pad;
+		const Int timeTextW = measure(font, timeLine(widest, widest, follow ? 3599 : -1));
+		const Int entryTextW = measure(font, UnicodeString(L"0:00:00"));
 		const UnicodeString goStr = text("GUI:ReplayBarGoTo", L"Go to", L"\x041F\x0435\x0440\x0435\x0439\x0442\x0438");
-		const Int goW = measure(font, goStr) + 2 * pad;
+		const Int goTextW = measure(font, goStr);
 
-		const Int innerW = pauseW + gap + stepW + groupGap + speedsW + groupGap + timeW + groupGap + entryW + gap + goW;
-		const Int barW = min(innerW + 2 * margin, screenW);
-		const Int barH = rowH + 2 * margin;
 		// TheSuperHackers @bugfix (O18, D4) The top left belongs to the game's messages (the replay hints, the speed
 		// messages): the bar stays right of the left 30 % of the screen, centred when it fits there.
-		const Int keepLeft = screenW * 3 / 10;
+		// TheSuperHackers @bugfix (O18, S18) ... and right of the widest of those messages as the message font draws it
+		// (at 800x600 "Press F to toggle Fast Forward" is wider than 30 %). When the bar does not fit beside it, its
+		// paddings and gaps shrink.
+		Int keepLeft = screenW * 3 / 10;
+		if (TheInGameUI != nullptr && TheFontLibrary != nullptr && TheGlobalLanguageData != nullptr)
+		{
+			GameFont *messageFont = TheFontLibrary->getFont(TheInGameUI->getMessageFontName(),
+				TheGlobalLanguageData->adjustFontSize(TheInGameUI->getMessagePointSize()), TheInGameUI->isMessageBold());
+			Int hintW = measure(messageFont, FastForwardText::instructions());
+			hintW = max(hintW, measure(messageFont, FastForwardText::on()));
+			hintW = max(hintW, measure(messageFont, FastForwardText::off()));
+			UnicodeString speedMessage;
+			speedMessage.format(text("GUI:ReplayBarSpeed", L"Replay speed %ls",
+				L"\x0421\x043A\x043E\x0440\x043E\x0441\x0442\x044C \x0432\x043E\x0441\x043F\x0440\x043E\x0438\x0437\x0432\x0435\x0434\x0435\x043D\x0438\x044F %ls").str(),
+				speedText(ReplayControl::SPEED_MAX).str());
+			hintW = max(hintW, measure(messageFont, speedMessage));
+			keepLeft = max(keepLeft, TheInGameUI->getMessagePosition().x + hintW + groupGap);
+		}
+
+		Int pauseW = 0, stepW = 0, speedsW = 0, timeW = 0, entryW = 0, goW = 0, innerW = 0;
+		Int speedW[SPEED_COUNT];
+		for (Int attempt = 0; attempt < 2; ++attempt)
+		{
+			if (attempt == 1)
+			{
+				if (innerW + 2 * margin <= screenW - keepLeft - margin)
+					break;
+				pad = max(2, pad / 2);
+				gap = max(1, gap / 2);
+				groupGap = max(3, groupGap / 2);
+			}
+			pauseW = pauseTextW + 2 * pad;
+			stepW = stepTextW + 2 * pad;
+			speedsW = 0;
+			for (Int i = 0; i < SPEED_COUNT; ++i)
+			{
+				speedW[i] = max(speedTextW[i] + 2 * pad, rowH + pad);
+				speedsW += speedW[i] + (i > 0 ? gap : 0);
+			}
+			timeW = timeTextW + 2 * pad;
+			entryW = entryTextW + 2 * pad;
+			goW = goTextW + 2 * pad;
+			innerW = pauseW + gap + stepW + groupGap + speedsW + groupGap + timeW + groupGap + entryW + gap + goW;
+		}
+		const Int barW = min(innerW + 2 * margin, screenW);
+		const Int barH = rowH + 2 * margin;
 		Int barX = (screenW - barW) / 2;
 		if (barX < keepLeft) {
 			barX = max(0, min(keepLeft, screenW - barW - margin));
@@ -518,8 +556,8 @@ void ReplayControl::toggleFastForward()
 {
 	setSpeed(speed() == 1 ? SPEED_MAX : 1);
 	TheInGameUI->messageNoFormat(TheGlobalData->m_TiVOFastMode
-		? TheGameText->FETCH_OR_SUBSTITUTE("GUI:FF_ON", L"Fast Forward is on")
-		: TheGameText->FETCH_OR_SUBSTITUTE("GUI:FF_OFF", L"Fast Forward is off"));
+		? FastForwardText::on()
+		: FastForwardText::off());
 }
 
 Bool ReplayControl::goToFrame(UnsignedInt frame)
@@ -615,7 +653,10 @@ UnicodeString ReplayControl::timeText(UnsignedInt frame)
 void ReplayControl::update()
 {
 	const Bool inReplay = TheGameLogic != nullptr && TheGameLogic->isInReplayGame();
-	if (inReplay && s_startSpeed >= 0 && !s_startSpeedApplied)
+	// TheSuperHackers @bugfix (O18, S18) -replaySpeed waits until the replay's map is loaded: the replay mode is set one
+	// engine update before GameLogic::startNewGame runs, and that turns the fast forward (Max) off again; 2x..8x lived
+	// through it only because their factor is not reset there.
+	if (inReplay && s_startSpeed >= 0 && !s_startSpeedApplied && !TheGameLogic->isLoadingMap())
 	{
 		s_startSpeedApplied = TRUE;
 		setSpeed(s_startSpeed);

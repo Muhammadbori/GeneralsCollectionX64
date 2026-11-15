@@ -25,6 +25,17 @@
 #pragma once
 
 #include "Lib/BaseType.h"
+#include "Common/UnicodeString.h"
 
 const WideChar *localizedFallback(const WideChar *english, const WideChar *russian);
 Bool isRussianText();   ///< TRUE when the game shows Russian text (decided once)
+
+namespace FastForwardText
+{
+	// TheSuperHackers @fix (O18, S18) The replay fast forward texts. The Russian string file has these labels with the
+	// English text (GUI:FastForwardInstructions, GUI:FF_ON, GUI:FF_OFF), so a Russian game gets its Russian text here
+	// and any other game the string file's text.
+	UnicodeString instructions();
+	UnicodeString on();
+	UnicodeString off();
+}
