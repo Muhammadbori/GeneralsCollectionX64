@@ -459,9 +459,39 @@ void PopulateInGameDiplomacyPopup()
 	if (!TheGameInfo)
 		return;
 
-	Int rowNum = 0;
-	for (Int slotNum=0; slotNum<MAX_SLOTS; ++slotNum)
+	// TheSuperHackers @feature The rows are grouped by team: the local player's own team first, then the other
+	// teams by team number, players without a team last. Inside a group the slot order stays. Every row keeps the
+	// slot it shows in slotNumInRow (the mute buttons use that, never the row index).
+	Int orderedSlots[MAX_SLOTS];
+	Int orderedCount = 0;
 	{
+		const GameSlot *localSlot = TheGameInfo->getConstSlot(TheGameInfo->getLocalSlotNum() >= 0 ? TheGameInfo->getLocalSlotNum() : 0);
+		const Int localTeam = (TheGameInfo->getLocalSlotNum() >= 0 && localSlot) ? localSlot->getTeamNumber() : -1;
+		Int ranks[MAX_SLOTS];
+		for (Int slotNum = 0; slotNum < MAX_SLOTS; ++slotNum)
+		{
+			const GameSlot *slot = TheGameInfo->getConstSlot(slotNum);
+			if (!slot || !slot->isOccupied())
+				continue;
+			const Int team = slot->getTeamNumber();
+			const Int rank = (team < 0) ? 100000 : (team == localTeam ? 0 : 1 + team);
+			Int pos = orderedCount;
+			while (pos > 0 && ranks[pos - 1] > rank)	// insertion: stable, equal ranks keep the slot order
+			{
+				ranks[pos] = ranks[pos - 1];
+				orderedSlots[pos] = orderedSlots[pos - 1];
+				--pos;
+			}
+			ranks[pos] = rank;
+			orderedSlots[pos] = slotNum;
+			++orderedCount;
+		}
+	}
+
+	Int rowNum = 0;
+	for (Int orderIdx = 0; orderIdx < orderedCount; ++orderIdx)
+	{
+		const Int slotNum = orderedSlots[orderIdx];
 		const GameSlot *slot = TheGameInfo->getConstSlot(slotNum);
 		if (slot && slot->isOccupied())
 		{
