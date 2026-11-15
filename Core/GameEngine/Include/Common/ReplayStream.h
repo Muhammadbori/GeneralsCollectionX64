@@ -65,5 +65,8 @@ namespace ReplayStream
 	/// Serves this replay file (and its .live) when -serveReplay was given; a running server switches to it.
 	void serveFile(const AsciiString &replayPath);
 
+	/// TRUE once after every source was gone for 30 seconds (the stream is lost; the replay then plays to its end).
+	Bool takeLostNotice();
+
 	void shutdown();
 }

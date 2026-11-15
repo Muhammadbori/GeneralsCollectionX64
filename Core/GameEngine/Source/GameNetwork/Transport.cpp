@@ -28,6 +28,7 @@
 #include "Common/crc.h"
 #include "GameNetwork/Transport.h"
 #include "GameNetwork/NetworkInterface.h"
+#include "GameNetwork/NetLab.h"
 
 
 //--------------------------------------------------------------------------
@@ -227,6 +228,7 @@ Bool Transport::doSend() {
 				//DEBUG_LOG(("Sending %d bytes to %d.%d.%d.%d:%d", bytesToSend, PRINTF_IP_AS_4_INTS(m_outBuffer[i].addr), m_outBuffer[i].port));
 				m_outgoingPackets[m_statisticsSlot]++;
 				m_outgoingBytes[m_statisticsSlot] += m_outBuffer[i].length + sizeof(TransportMessageHeader);
+				NetLab::countSent(bytesToSend);   // TheSuperHackers @feature NetLab measurement (a counter only)
 				m_outBuffer[i].length = 0;  // Remove from queue
 				if (bytesSent != bytesToSend)
 				{
@@ -295,6 +297,19 @@ Bool Transport::doRecv()
 	unsigned char *buf = (unsigned char *)&incomingMessage;
 	int len = MAX_NETWORK_MESSAGE_LEN;
 	size_t bufferIndex = 0;
+
+	// TheSuperHackers @feature NetLab's network simulator (test only, NetLab.h): the packets it held that are due now.
+	{
+		TransportMessage due;
+		for (size_t i = 0; i < ARRAY_SIZE(m_inBuffer); ++i)
+		{
+			if (m_inBuffer[i].length > 0)
+				continue;
+			if (!NetLab::simRelease(due))
+				break;
+			memcpy(&m_inBuffer[i], &due, sizeof(TransportMessage));
+		}
+	}
 //	DEBUG_LOG(("Transport::doRecv - checking"));
 	while ( (len=m_udpsock->Read(buf, MAX_NETWORK_MESSAGE_LEN, &from)) > 0 )
 	{
@@ -332,6 +347,14 @@ Bool Transport::doRecv()
 //		DEBUG_LOG(("Saw %d bytes from %d:%d", len, ntohl(from.sin_addr.S_un.S_addr), ntohs(from.sin_port)));
 		m_incomingPackets[m_statisticsSlot]++;
 		m_incomingBytes[m_statisticsSlot] += len;
+		NetLab::countReceived(len);   // TheSuperHackers @feature NetLab measurement (a counter only)
+
+		// TheSuperHackers @feature NetLab's network simulator (test only): delay, jitter, loss, reorder, bandwidth.
+		// Inactive (and so without effect) unless a NetLab match set it up.
+		incomingMessage.addr = ntohl(from.sin_addr.S_un.S_addr);
+		incomingMessage.port = ntohs(from.sin_port);
+		if (NetLab::simTake(incomingMessage))
+			continue;
 
 		DEBUG_ASSERTCRASH(bufferIndex < MAX_MESSAGES, ("Message lost!"));
 

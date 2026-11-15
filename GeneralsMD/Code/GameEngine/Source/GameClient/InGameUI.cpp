@@ -93,6 +93,7 @@
 #include "GameClient/ReplayControlBar.h"
 #include "GameClient/VoiceChatUI.h"
 #include "Common/VoiceChat.h"
+#include "GameNetwork/NetLab.h"
 
 #include "Common/UnitTimings.h" //Contains the DO_UNIT_TIMINGS define jba.
 
@@ -1843,6 +1844,9 @@ void InGameUI::update()
 	// TheSuperHackers @feature The team voice chat and its talk indicator (VoiceChat.h, VoiceChatUI.h).
 	VoiceChat::update();
 	VoiceChatUI::update();
+
+	// TheSuperHackers @feature A network match on one PC for tests (NetLab.h).
+	NetLab::update();
 
 	/// @todo make sure this code gets called even when the UI is not being drawn
 	if ( m_videoStream && m_videoBuffer )

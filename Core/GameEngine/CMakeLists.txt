@@ -88,6 +88,7 @@ set(GAMEENGINE_SRC
     Include/Common/AudioOutputDevices.h
     Include/Common/OptionPreferences.h
     Include/Common/Fingerprint.h
+    Include/Common/FrameTiming.h
     Include/Common/MapPacks.h
     Include/Common/MismatchReport.h
     Include/Common/Packs.h
@@ -573,6 +574,7 @@ set(GAMEENGINE_SRC
     Include/GameNetwork/NAT.h
     Include/GameNetwork/NetCommandList.h
     Include/GameNetwork/NetCommandMsg.h
+    Include/GameNetwork/NetLab.h
     Include/GameNetwork/NetCommandRef.h
     Include/GameNetwork/NetCommandWrapperList.h
     Include/GameNetwork/NetPacket.h
@@ -650,6 +652,7 @@ set(GAMEENGINE_SRC
     Source/Common/AudioOutputDevices.cpp
     Source/Common/OptionPreferences.cpp
     Source/Common/Fingerprint.cpp
+    Source/Common/FrameTiming.cpp
     Source/Common/MapPacks.cpp
     Source/Common/MismatchReport.cpp
     Source/Common/Packs.cpp
@@ -1202,6 +1205,7 @@ set(GAMEENGINE_SRC
     Source/GameNetwork/NetMessageStream.cpp
     Source/GameNetwork/NetPacket.cpp
     Source/GameNetwork/NetPacketStructs.cpp
+    Source/GameNetwork/NetLab.cpp
     Source/GameNetwork/Network.cpp
     Source/GameNetwork/NetworkUtil.cpp
     Source/GameNetwork/Transport.cpp

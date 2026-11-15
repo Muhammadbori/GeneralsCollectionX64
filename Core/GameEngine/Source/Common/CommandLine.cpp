@@ -42,6 +42,7 @@
 #include "Common/MapPacks.h"
 #include "Common/ReplayStream.h"
 #include "Common/VoiceChat.h"
+#include "GameNetwork/NetLab.h"
 #include "GameNetwork/NetworkDefs.h"
 
 
@@ -947,6 +948,48 @@ Int parseVoiceTestLoss(char *args[], int num)
 Int parseVoiceTestVolume(char *args[], int num)
 {
 	if (num > 1) { VoiceChat::configureTestVolume(args[1]); return 2; }
+	return 1;
+}
+
+// TheSuperHackers @feature A network match on one PC for tests (NetLab.h): -netLab <slot>, -netLabPlayers <roster>,
+// -netLabMap <map>, -netLabSeed <n>, -netLabSim <settings>, -netLabQuitAfter <seconds>.
+Int parseNetLab(char *args[], int num)
+{
+	if (num > 1)
+	{
+		NetLab::configureSlot(atoi(args[1]));
+		TheWritableGlobalData->m_shellMapOn = FALSE;
+		TheWritableGlobalData->m_playIntro = FALSE;
+		TheWritableGlobalData->m_playSizzle = FALSE;
+		rts::ClientInstance::setMultiInstance(TRUE);
+		rts::ClientInstance::skipPrimaryInstance();
+		return 2;
+	}
+	return 1;
+}
+Int parseNetLabPlayers(char *args[], int num)
+{
+	if (num > 1) { NetLab::configurePlayers(args[1]); return 2; }
+	return 1;
+}
+Int parseNetLabMap(char *args[], int num)
+{
+	if (num > 1) { NetLab::configureMap(args[1]); return 2; }
+	return 1;
+}
+Int parseNetLabSeed(char *args[], int num)
+{
+	if (num > 1) { NetLab::configureSeed(atoi(args[1])); return 2; }
+	return 1;
+}
+Int parseNetLabSim(char *args[], int num)
+{
+	if (num > 1) { NetLab::configureSim(args[1]); return 2; }
+	return 1;
+}
+Int parseNetLabQuitAfter(char *args[], int num)
+{
+	if (num > 1) { NetLab::configureQuitAfter(atoi(args[1])); return 2; }
 	return 1;
 }
 
@@ -1899,6 +1942,12 @@ static CommandLineParam paramsForStartup[] =
 	{ "-serveReplayStopAfter", parseServeReplayStopAfter },
 	{ "-watchReplay", parseWatchReplay },
 	{ "-voiceTest", parseVoiceTest },
+	{ "-netLab", parseNetLab },
+	{ "-netLabPlayers", parseNetLabPlayers },
+	{ "-netLabMap", parseNetLabMap },
+	{ "-netLabSeed", parseNetLabSeed },
+	{ "-netLabSim", parseNetLabSim },
+	{ "-netLabQuitAfter", parseNetLabQuitAfter },
 	{ "-voiceTestRoster", parseVoiceTestRoster },
 	{ "-voiceTestTone", parseVoiceTestTone },
 	{ "-voiceTestWav", parseVoiceTestWav },

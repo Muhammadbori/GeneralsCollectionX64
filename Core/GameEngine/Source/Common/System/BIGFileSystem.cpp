@@ -100,6 +100,7 @@ void BIGFileSystem::init() {
 	{
 		if (loadArchiveFilesFromList(listFile))
 		{
+			mountMapArt();
 			writePacksLog();
 			return;
 		}
@@ -117,7 +118,72 @@ void BIGFileSystem::init() {
     if (!installPath.isEmpty())
       loadArchiveFilesFromDirectory(installPath, "*.big");
 #endif
+	mountMapArt();
 	writePacksLog();
+}
+
+void BIGFileSystem::mountMapArt() {
+	// TheSuperHackers @feature Some community maps of the map packs (MapPacks.h) use art the game does not have
+	// (terrain and object textures, W3D models). make_map_packs.py puts it into Packs\Maps\<Pack>\<Game>\*.big; it is
+	// mounted here, after every other archive and without overwriting, so it only adds names (a map pack never replaces
+	// the game's own art). Art is client-only: the fingerprint (logic INI files) does not change.
+#if RTS_GENERALS
+	const char *const gameFolder = "Generals";
+#else
+	const char *const gameFolder = "ZeroHour";
+#endif
+	char exePath[_MAX_PATH] = { 0 };
+	GetModuleFileNameA(nullptr, exePath, ARRAY_SIZE(exePath));
+	if (char *slash = strrchr(exePath, '\\')) {
+		slash[1] = '\0';
+	}
+	AsciiString packsRoot(exePath);
+	packsRoot.concat("Packs\\Maps\\");
+	AsciiString pattern = packsRoot;
+	pattern.concat("*");
+	WIN32_FIND_DATAA pack;
+	HANDLE findPack = FindFirstFileA(pattern.str(), &pack);
+	if (findPack == INVALID_HANDLE_VALUE) {
+		return;
+	}
+	do
+	{
+		if ((pack.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 || pack.cFileName[0] == '.') {
+			continue;
+		}
+		AsciiString folder = packsRoot;
+		folder.concat(pack.cFileName);
+		folder.concat("\\");
+		folder.concat(gameFolder);
+		folder.concat("\\");
+		AsciiString bigPattern = folder;
+		bigPattern.concat("*.big");
+		WIN32_FIND_DATAA big;
+		HANDLE findBig = FindFirstFileA(bigPattern.str(), &big);
+		if (findBig == INVALID_HANDLE_VALUE) {
+			continue;
+		}
+		do
+		{
+			AsciiString path = folder;
+			path.concat(big.cFileName);
+			if (m_archiveFileMap.find(path) != m_archiveFileMap.end()) {
+				continue;   // already mounted (a folder search without an archive list finds it too)
+			}
+			ArchiveFile *archiveFile = openArchiveFile(path.str());
+			if (archiveFile == nullptr)
+			{
+				DEBUG_LOG(("BIGFileSystem::mountMapArt - %s cannot be read.", path.str()));
+				continue;
+			}
+			DEBUG_LOG(("BIGFileSystem::mountMapArt - loading %s into the directory tree (adding names only).", path.str()));
+			loadIntoDirectoryTree(archiveFile, FALSE);
+			m_archiveFileMap[path] = archiveFile;
+			Fingerprint::noteArchive(archiveFile);
+		} while (FindNextFileA(findBig, &big));
+		FindClose(findBig);
+	} while (FindNextFileA(findPack, &pack));
+	FindClose(findPack);
 }
 
 void BIGFileSystem::writePacksLog() {

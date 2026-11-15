@@ -4049,6 +4049,18 @@ void DX12Device::Submit_Frame(bool present)
 			++DX12Device_Counters.UnlockedPresents;
 		}
 		DX12Device_Counters.PresentTicks += Query_Ticks() - present_start;
+		{
+			// TheSuperHackers @feature FrameTiming.h (item 22): the present's share of the main thread
+			extern double WW3D_PresentMsTotal;
+			static double s_tickMs = 0.0;
+			if (s_tickMs == 0.0)
+			{
+				LARGE_INTEGER frequency;
+				QueryPerformanceFrequency(&frequency);
+				s_tickMs = 1000.0 / (double)frequency.QuadPart;
+			}
+			WW3D_PresentMsTotal += (double)(Query_Ticks() - present_start) * s_tickMs;
+		}
 		if (FAILED(hr) && hr != last_present_error)
 		{
 			Log_Failure("Present", hr);

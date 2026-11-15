@@ -49,6 +49,7 @@ namespace
 		SILENT_HOP_MS = 5000,         ///< a source silent for this long is left
 		STUCK_HOP_MS = 8000,          ///< a source whose newest frame does not move for this long is left
 		HEADER_WAIT_MS = 60000,
+		NO_SOURCE_END_MS = 30000,     ///< no source has answered for this long: the stream is lost, the replay plays to its end
 	};
 
 	struct LiveRecord
@@ -499,6 +500,7 @@ namespace
 	volatile LONG s_mirrorStop = 0;
 	volatile LONG s_mirrorHeaderReady = 0;
 	volatile LONG s_mirrorEnded = 0;
+	volatile LONG s_mirrorLost = 0;          ///< every source was gone for NO_SOURCE_END_MS (the game thread tells the watcher once)
 	char s_mirrorPath[_MAX_PATH] = { 0 };
 	char s_mirrorLivePath[_MAX_PATH] = { 0 };
 
@@ -576,6 +578,8 @@ namespace
 		Int source = 0;
 		Int failures = 0;
 		Bool ended = FALSE;
+		DWORD lastContactMs = timeGetTime();   // the last message from any source
+		UnsignedInt lastFrameSeen = 0, lastCounterSeen = 0;
 
 		while (InterlockedCompareExchange(&s_mirrorStop, 0, 0) == 0 && !ended && s_sourceCount > 0)
 		{
@@ -585,6 +589,18 @@ namespace
 			{
 				logLine("mirror: no answer from %s:%u", src.host, (unsigned)src.port);
 				source = (source + 1) % s_sourceCount;
+				// TheSuperHackers @bugfix (S16) Every source gone for long enough: the stream is lost. The side file says
+				// "ended", so the replay plays what it has to its end instead of waiting, and the watcher is told.
+				if (timeGetTime() - lastContactMs > NO_SOURCE_END_MS)
+				{
+					writeLocalLive(liveFile, lastFrameSeen, 1, lastCounterSeen + 1);
+					ended = TRUE;
+					InterlockedExchange(&s_mirrorEnded, 1);
+					InterlockedExchange(&s_mirrorLost, 1);
+					logLine("mirror: no source has answered for %d seconds: the stream is lost; the replay plays its %u bytes "
+						"(frame %u) to the end", NO_SOURCE_END_MS / 1000, have, lastFrameSeen);
+					break;
+				}
 				if (++failures >= s_sourceCount) {
 					Sleep(1000);   // every source tried: wait a moment before the next round
 					failures = 0;
@@ -639,6 +655,7 @@ namespace
 					const unsigned char *type = in + at;
 					const unsigned char *payload = in + at + 8;
 					lastMessageMs = timeGetTime();
+					lastContactMs = lastMessageMs;
 					if (memcmp(type, "DATA", 4) == 0 && length >= 4)
 					{
 						const UnsignedInt offset = get32(payload);
@@ -664,6 +681,8 @@ namespace
 						const UnsignedInt endedFlag = get32(payload + 4);
 						const UnsignedInt counter = get32(payload + 8);
 						writeLocalLive(liveFile, frame, endedFlag, counter);
+						lastFrameSeen = frame;
+						lastCounterSeen = counter;
 						if (frame != lastFrame)
 						{
 							lastFrame = frame;
@@ -791,7 +810,8 @@ Bool ReplayStream::startWatching(AsciiString &localPath)
 	}
 	// the viewer's own start waits for the replay's header (its game is not running yet)
 	const DWORD start = timeGetTime();
-	while (InterlockedCompareExchange(&s_mirrorHeaderReady, 0, 0) == 0 && timeGetTime() - start < HEADER_WAIT_MS) {
+	while (InterlockedCompareExchange(&s_mirrorHeaderReady, 0, 0) == 0 && InterlockedCompareExchange(&s_mirrorLost, 0, 0) == 0
+		&& timeGetTime() - start < HEADER_WAIT_MS) {
 		Sleep(50);
 	}
 	if (InterlockedCompareExchange(&s_mirrorHeaderReady, 0, 0) == 0)
@@ -815,6 +835,11 @@ void ReplayStream::serveFile(const AsciiString &replayPath)
 	strlcpy(s_servePath, replayPath.str(), sizeof(s_servePath));
 	snprintf(s_serveLivePath, sizeof(s_serveLivePath), "%s.live", s_servePath);
 	startThread(&s_serverThread, serverMain);
+}
+
+Bool ReplayStream::takeLostNotice()
+{
+	return InterlockedExchange(&s_mirrorLost, 0) != 0;
 }
 
 void ReplayStream::shutdown()

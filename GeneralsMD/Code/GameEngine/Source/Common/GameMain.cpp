@@ -34,6 +34,7 @@
 #include "Common/MapPacks.h"
 #include "Common/ReplayStream.h"
 #include "Common/VoiceChat.h"
+#include "GameNetwork/NetLab.h"
 #include "Common/Packs.h"
 #include "Common/Fingerprint.h"
 #include "Common/MismatchReport.h"
@@ -75,6 +76,7 @@ Int GameMain()
 	MapPacks::shutdown();
 	ReplayStream::shutdown();
 	VoiceChat::shutdown();
+	NetLab::shutdown();
 	Fingerprint::shutdown();
 	MismatchReport::shutdown();
 
