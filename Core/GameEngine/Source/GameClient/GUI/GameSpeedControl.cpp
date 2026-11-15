@@ -84,7 +84,7 @@ GameSpeedControl::GameSpeedControl()
 }
 
 void GameSpeedControl::init(GameWindow *parent, GameWindow *slider, GameWindow *text, GameWindow *checkBoxTemplate,
-	const char *checkBoxName, Int logicFps, Bool normal)
+	const char *checkBoxName, Int logicFps, Bool normal, Int checkBoxWidth)
 {
 	m_slider = slider;
 	m_text = text;
@@ -132,7 +132,7 @@ void GameSpeedControl::init(GameWindow *parent, GameWindow *slider, GameWindow *
 		}
 		instData.m_id = TheNameKeyGenerator->nameToKey(checkBoxName);
 
-		m_checkBox = TheWindowManager->gogoGadgetCheckbox(parent, status, x + width + 10, y, 160, boxHeight, &instData, font,
+		m_checkBox = TheWindowManager->gogoGadgetCheckbox(parent, status, x + width + 10, y, checkBoxWidth > 20 ? checkBoxWidth : 160, boxHeight, &instData, font,
 			checkBoxTemplate == nullptr);
 		if (m_checkBox != nullptr)
 		{

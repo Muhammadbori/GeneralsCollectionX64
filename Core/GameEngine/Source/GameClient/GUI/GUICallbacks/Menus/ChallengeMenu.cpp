@@ -39,6 +39,7 @@
 #include "Common/Recorder.h"
 #include "Common/version.h"
 #include "GameClient/CampaignManager.h"
+#include "GameClient/ChallengeExtras.h"
 #include "GameClient/ChallengeGenerals.h"
 #include "GameClient/Gadget.h"
 #include "GameClient/GadgetCheckBox.h"
@@ -322,6 +323,22 @@ Bool updateBio(Int frames)
 
 
 //-------------------------------------------------------------------------------------------------
+// TheSuperHackers @feature "Continue" selects the run's general the way a click does (ChallengeExtras.h).
+//-------------------------------------------------------------------------------------------------
+static Bool selectGeneralForContinue( Int index )
+{
+	if (index < 0 || index >= NUM_GENERALS || buttonGeneralPosition[index] == nullptr || buttonGeneralPosition[index]->winIsHidden())
+		return FALSE;
+	if (index != lastButtonIndex)	// checking the selected one again would toggle it off
+	{
+		// sends GBM_SELECTED at once, which runs the selection code below (medal, bio, sound, Play button)
+		GadgetCheckBoxSetChecked( buttonGeneralPosition[index], TRUE );
+	}
+	setGeneralBio( index );
+	return TRUE;
+}
+
+//-------------------------------------------------------------------------------------------------
 /** init the challenge mode menu */
 //-------------------------------------------------------------------------------------------------
 void ChallengeMenuInit( WindowLayout *layout, void *userData )
@@ -398,6 +415,8 @@ void ChallengeMenuInit( WindowLayout *layout, void *userData )
 	lastPreviewSound = 0;
 	hasPlayedIntroAudio = FALSE;
 
+	// TheSuperHackers @feature Difficulty, game speed and "Continue" at the bottom left.
+	ChallengeExtras::init( parentMenu, buttonPlay, buttonBack, bioLine1Entry );
 }
 
 
@@ -460,6 +479,8 @@ void ChallengeMenuShutdown( WindowLayout *layout, void *userData )
 	lastButtonIndex = -1;
 
 	buttonSequenceStep = 0;
+
+	ChallengeExtras::shutdown();
 
 	Bool popImmediate = *(Bool *)userData;
 	if( popImmediate )
@@ -592,6 +613,13 @@ WindowMsgHandledType ChallengeMenuSystem( GameWindow *window, UnsignedInt msg, W
 			break;
 		}
 
+		case GSM_SLIDER_TRACK:
+		{
+			if (ChallengeExtras::onSliderTrack( (GameWindow *)mData1, (Int)mData2 ))
+				return MSG_HANDLED;
+			return MSG_IGNORED;
+		}
+
 		case GBM_SELECTED:
 		{
 			UnicodeString filename;
@@ -604,6 +632,9 @@ WindowMsgHandledType ChallengeMenuSystem( GameWindow *window, UnsignedInt msg, W
  				isAutoSelecting = FALSE;
  				break;
  			}
+
+			if (ChallengeExtras::onSelected( control, selectGeneralForContinue ))
+				break;
 
 			Int buttonIndex = findPositionButton(controlID);
 			if( buttonIndex != -1)
@@ -640,6 +671,9 @@ WindowMsgHandledType ChallengeMenuSystem( GameWindow *window, UnsignedInt msg, W
 
 				buttonPlay->winHide(FALSE);
 
+				// a general picked by the player ends "Continue" (selectGeneralForContinue sets it again afterwards)
+				ChallengeExtras::onGeneralClicked();
+
 				//@todo: outro transitions
 			}
 			else if( controlID == buttonPlayID )
@@ -651,7 +685,10 @@ WindowMsgHandledType ChallengeMenuSystem( GameWindow *window, UnsignedInt msg, W
 					return MSG_HANDLED;
 				}
 
+				const Int startedGeneral = lastButtonIndex;
 				setGeneralCampaign(lastButtonIndex);
+				// TheSuperHackers @feature "Continue": the run's next battle from its start, at the run's rank points
+				ChallengeExtras::applyContinue();
 				TheWritableGlobalData->m_pendingFile = TheCampaignManager->getCurrentMap();
 				TheChallengeGameInfo->setMap(TheCampaignManager->getCurrentMap());
 
@@ -671,6 +708,8 @@ WindowMsgHandledType ChallengeMenuSystem( GameWindow *window, UnsignedInt msg, W
 				DEBUG_ASSERTCRASH(TheChallengeGenerals, ("TheChallengeGenerals are not initialized."));
 				if (TheChallengeGenerals)
 				{
+					// TheSuperHackers @feature The difficulty of this screen (with "Continue": the run's own).
+					TheChallengeGenerals->setCurrentDifficulty((GameDifficulty)ChallengeExtras::getDifficulty());
 	        TheCampaignManager->setGameDifficulty(TheChallengeGenerals->getCurrentDifficulty());
 					TheScriptEngine->setGlobalDifficulty(TheChallengeGenerals->getCurrentDifficulty());
 				}
@@ -684,7 +723,11 @@ WindowMsgHandledType ChallengeMenuSystem( GameWindow *window, UnsignedInt msg, W
 
         // Added so that, even though a ChallengeGame is really a SkirmishGame in SinglePlayerGame's clothing,
         // GameEngine will still apply the default "FRAME CAP" as it does during "Solo Missions."
-        msg->appendIntegerArgument(LOGICFRAMES_PER_SECOND);	// FPS limit
+        // TheSuperHackers @feature The game speed of this screen (the logic steps per second, GameSpeedControl.h).
+        msg->appendIntegerArgument(ChallengeExtras::getLogicFps());
+
+				// the run: this general at this battle, the speed and difficulty for the next visit
+				ChallengeExtras::onPlay(startedGeneral);
 
 				InitRandom(0);
 			}
