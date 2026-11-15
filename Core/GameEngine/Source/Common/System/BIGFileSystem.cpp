@@ -38,6 +38,7 @@
 #include "Common/GameAudio.h"
 #include "Common/GameMemory.h"
 #include "Common/LocalFileSystem.h"
+#include "Common/Packs.h"
 
 #if RTS_ZEROHOUR
 #include "Common/Registry.h"
@@ -87,6 +88,9 @@ void BIGFileSystem::init() {
 	if (TheLocalFileSystem == nullptr) {
 		return;
 	}
+
+	// TheSuperHackers @feature The chosen data packs come first, so their files win (Packs.h).
+	mountPacks();
 
 	// TheSuperHackers @feature A self-contained folder names its archives in an ordered list file next to the exe
 	// (Archives_Generals.txt or Archives_ZeroHour.txt). Without that file the folder and, for Zero Hour, the registry
@@ -276,6 +280,11 @@ Bool BIGFileSystem::loadArchiveFilesFromList(const Char *listFile) {
 		}
 		path.concat(entry);
 
+		if (Packs::skipListEntry(entry, path)) {
+			DEBUG_LOG(("BIGFileSystem::loadArchiveFilesFromList - %s is left out for a data pack.", path.str()));
+			continue;
+		}
+
 		if (!TheLocalFileSystem->doesFileExist(path.str())) {
 			DEBUG_LOG(("BIGFileSystem::loadArchiveFilesFromList - listed archive %s does not exist.", path.str()));
 			continue;
@@ -292,6 +301,72 @@ Bool BIGFileSystem::loadArchiveFilesFromList(const Char *listFile) {
 
 	fclose(list);
 	return actuallyAdded;
+}
+
+void BIGFileSystem::mountPacks() {
+	std::vector<Packs::MountStep> steps;
+	Packs::prepareMount(steps);
+
+	// One group is one pack: all its archives are mounted, or none and the pack falls back to the base data.
+	size_t first = 0;
+	while (first < steps.size())
+	{
+		const Int group = steps[first].group;
+		size_t end = first;
+		while (end < steps.size() && steps[end].group == group) {
+			++end;
+		}
+		if (Packs::groupWanted(group))
+		{
+			std::vector<ArchiveFile *> opened;
+			Bool ok = TRUE;
+			for (size_t i = first; i < end && ok; ++i)
+			{
+				const AsciiString &path = steps[i].path;
+				ArchiveFile *archiveFile = nullptr;
+				if (TheLocalFileSystem->doesFileExist(path.str()))
+				{
+					// a look at the header first, so that a damaged file does not stop a debug build
+					Char id[sizeof(BIGFileIdentifier)] = { 0 };
+					if (File *fp = TheLocalFileSystem->openFile(path.str(), File::READ | File::BINARY))
+					{
+						const Bool header = fp->read(id, sizeof(id)) == (Int)sizeof(id) && memcmp(id, BIGFileIdentifier, sizeof(id)) == 0;
+						fp->close();
+						if (header) {
+							archiveFile = openArchiveFile(path.str());
+						}
+					}
+				}
+				if (archiveFile == nullptr)
+				{
+					DEBUG_LOG(("BIGFileSystem::mountPacks - pack archive %s is missing or damaged.", path.str()));
+					ok = FALSE;
+				}
+				else
+				{
+					opened.push_back(archiveFile);
+				}
+			}
+			if (ok)
+			{
+				for (size_t i = 0; i < opened.size(); ++i)
+				{
+					const AsciiString &path = steps[first + i].path;
+					DEBUG_LOG(("BIGFileSystem::mountPacks - loading %s into the directory tree.", path.str()));
+					loadIntoDirectoryTree(opened[i], FALSE);
+					m_archiveFileMap[path] = opened[i];
+				}
+			}
+			else
+			{
+				for (size_t i = 0; i < opened.size(); ++i) {
+					delete opened[i];
+				}
+				Packs::groupFailed(group);
+			}
+		}
+		first = end;
+	}
 }
 
 Bool BIGFileSystem::loadArchiveFilesFromDirectory(AsciiString dir, AsciiString fileMask, Bool overwrite) {

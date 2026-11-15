@@ -1,0 +1,137 @@
+/*
+**	Command & Conquer Generals Zero Hour(tm)
+**	Copyright 2026 TheSuperHackers
+**
+**	This program is free software: you can redistribute it and/or modify
+**	it under the terms of the GNU General Public License as published by
+**	the Free Software Foundation, either version 3 of the License, or
+**	(at your option) any later version.
+**
+**	This program is distributed in the hope that it will be useful,
+**	but WITHOUT ANY WARRANTY; without even the implied warranty of
+**	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+**	GNU General Public License for more details.
+**
+**	You should have received a copy of the GNU General Public License
+**	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+// Packs.h //////////////////////////////////////////////////////////////////////////////////////////
+// TheSuperHackers @feature Switchable data packs: interface text, voices, movies, control bar and hotkeys.
+//
+// A pack is a folder Packs\<Kind>\<Name>\ next to the exe. Its archives are mounted before the archives of the list
+// file (first loaded wins), so a pack replaces the files it has and the base data fills the rest. Options.ini chooses
+// one pack per kind (TextPack, VoicePack, MoviePack, ControlBarPack, HotkeyPack); "Base" chooses the base data, and a
+// missing key takes Default from Packs\<Kind>\default.ini. A pack that is missing or broken is skipped: the base data
+// is used and the player is told once. The choice takes effect at the next start.
+//
+// What a pack folder holds (all optional), searched in this order, first wins:
+//   <Game>\Lang<Language>\*.big   only when the interface text is <Language> (English, Russian ...)
+//   <Game>\Res<Height>\*.big      the largest Height not above the screen height (else the smallest)
+//   <Game>\*.big
+//   Lang<Language>\*.big, Res<Height>\*.big, *.big   the same for both games
+//   then the Archive lines of pack.ini (paths relative to the exe folder, for archives the folder already has)
+// <Game> is ZeroHour or Generals. Movies are loose files: <pack>\<Game>\Data\...\Movies\*.bik, or <pack>\Data\...
+// Fonts named by LocalFontFile of Language.ini are taken from <pack>\<Game>\ or <pack>\ when the folder has them.
+// pack.ini (UTF-8, Key = Value, ';' or '#' starts a comment):
+//   NameEnglish, NameRussian       the names shown in the options
+//   Preview                        a .tga picture in the pack folder (default preview.tga), shown under the chooser
+//   FullViewport = yes             the 3D view takes the whole screen height (control bars drawn over the view)
+//   TextLanguage                   Text pack: its language. Hotkey pack: the text language it fits (empty: any)
+//   Fallback                       another pack of the same kind, mounted after this one for what this one lacks
+//   Archive, ArchiveZeroHour, ArchiveGenerals    archives of the exe folder to mount as part of this pack
+//   Exclude, ExcludeZeroHour, ExcludeGenerals    lines of the archive list not to mount while this pack is in use
+// Packs\<Kind>\default.ini: Default, ShowBase (yes/no), BaseNameEnglish, BaseNameRussian, and for Text BaseTextLanguage.
+
+#pragma once
+
+#include "Lib/BaseType.h"
+#include "Common/AsciiString.h"
+#include "Common/UnicodeString.h"
+
+#include <vector>
+
+class OptionPreferences;
+
+namespace Packs
+{
+	enum Kind
+	{
+		KIND_TEXT, KIND_VOICE, KIND_MOVIES, KIND_CONTROLBAR, KIND_HOTKEYS,
+		KIND_COUNT
+	};
+
+	struct Pack
+	{
+		AsciiString name;              ///< the folder name
+		AsciiString folder;            ///< full path, ends with '\'
+		UnicodeString nameEnglish;
+		UnicodeString nameRussian;
+		AsciiString previewFile;       ///< full path of the preview picture, empty: none
+		AsciiString previewTexture;    ///< the bare texture name the preview is known by
+		Bool fullViewport;
+		AsciiString textLanguage;      ///< lower case, empty: any
+		AsciiString fallback;
+		std::vector<AsciiString> archives;   ///< Archive lines of this game, relative to the exe folder
+		std::vector<AsciiString> excludes;   ///< Exclude lines of this game, lower case, '\' separators
+	};
+
+	const char *kindKey(Kind kind);       ///< the Options.ini key: "TextPack" ...
+	const char *kindFolder(Kind kind);    ///< "Text" ...
+	extern const char *const BaseValue;   ///< "Base"
+
+	/// Reads the Packs folder (once).
+	void scan();
+	/// Frees what scan() and the mount made. Call before the memory manager goes.
+	void shutdown();
+
+	Int count(Kind kind);
+	const Pack *get(Kind kind, Int index);
+	const Pack *find(Kind kind, const AsciiString &name);
+	Bool baseShown(Kind kind);
+	UnicodeString baseName(Kind kind);
+	UnicodeString displayName(Kind kind, const Pack *pack);   ///< pack nullptr: the base data
+
+	/// The language of the interface text with 'textPack' chosen (nullptr: the base text); empty when unknown.
+	AsciiString textLanguageOf(const Pack *textPack);
+	/// TRUE when the hotkey pack can go with that text language.
+	Bool hotkeysFit(const Pack *hotkeyPack, const AsciiString &textLanguage);
+
+	/// The choice of 'kind' in 'pref' (or the kind's default): a pack name, or empty for the base data.
+	AsciiString chosenName(Kind kind, OptionPreferences &pref);
+	/// What this run uses: a pack, or nullptr for the base data.
+	const Pack *active(Kind kind);
+
+	//--- the archive file system --------------------------------------------------------------------
+	struct MountStep
+	{
+		AsciiString path;   ///< full path of an archive
+		Int group;          ///< the archives of one group are mounted all or none
+	};
+	/// Decides the packs of this run and lists their archives in mount order.
+	void prepareMount(std::vector<MountStep> &steps);
+	/// FALSE when the group is not mounted after all (its pack fell back to the base data).
+	Bool groupWanted(Int group);
+	/// A group could not be mounted (a file missing or broken): the pack falls back to the base data.
+	void groupFailed(Int group);
+	/// TRUE when a line of the archive list must be skipped: excluded by a pack in use, or mounted by a pack already.
+	/// 'entry' is the line as written, 'fullPath' the archive it names.
+	Bool skipListEntry(const AsciiString &entry, const AsciiString &fullPath);
+
+	//--- the rest of the game -----------------------------------------------------------------------
+	Bool fullViewport();                                     ///< the control bar pack in use wants the full view
+	void getMovieRoots(std::vector<AsciiString> &roots);     ///< folders to try first for a movie, each ends with '\'
+	AsciiString findFontFile(const AsciiString &fileName);   ///< a font of the packs in use, empty: none
+	const char *findPreviewPath(const char *textureName);    ///< the picture of a preview texture name, or nullptr
+
+	/// The splash picture of the chosen text pack (before the engine starts); FALSE when the pack has none.
+	Bool findSplash(const char *fileName, char *path, Int pathSize);
+
+	/// Shows the one-time message about packs that could not be used. Call from the shell update.
+	void showProblemsOnce();
+
+	/// Ends the game so that it starts again; the new process starts from WinMain after this one has shut down.
+	void requestRestart();
+	/// Call at the very end of WinMain: starts the game again when requestRestart() was called.
+	void restartIfRequested();
+}

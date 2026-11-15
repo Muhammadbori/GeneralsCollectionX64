@@ -41,6 +41,7 @@
 // #define MAINTAIN_LEGACY_FILES
 
 #include "Common/ArchiveFile.h"
+#include "Common/Packs.h"
 #include "Common/Debug.h"
 #include "Common/file.h"
 #include "Common/FileSystem.h"
@@ -286,6 +287,16 @@ char const * GameFileClass::Set_Name( char const *filename )
 	}
 
 
+
+	// TheSuperHackers @feature The preview picture of a data pack, shown in the options (Packs.h).
+	if( m_fileExists == FALSE && isImageFileType(fileType) )
+	{
+		if( const char *previewPath = Packs::findPreviewPath(filename) )
+		{
+			strlcpy(m_filePath, previewPath, ARRAY_SIZE(m_filePath));
+			m_fileExists = TheFileSystem->doesFileExist( m_filePath );
+		}
+	}
 
 	return m_filename;
 

@@ -86,6 +86,7 @@ set(GAMEENGINE_SRC
 #    Include/Common/NameKeyGenerator.h
     Include/Common/ObjectStatusTypes.h
     Include/Common/OptionPreferences.h
+    Include/Common/Packs.h
 #    Include/Common/OSDisplay.h
 #    Include/Common/Overridable.h
 #    Include/Common/Override.h
@@ -636,6 +637,7 @@ set(GAMEENGINE_SRC
 #    Source/Common/MultiplayerSettings.cpp
 #    Source/Common/NameKeyGenerator.cpp
     Source/Common/OptionPreferences.cpp
+    Source/Common/Packs.cpp
 #    Source/Common/PartitionSolver.cpp
     Source/Common/PerfTimer.cpp
     Source/Common/RandomValue.cpp

@@ -47,6 +47,9 @@ public:
 	// Returns the instance name of the first game client.
 	static const char* getFirstInstanceName();
 
+	// TheSuperHackers @feature Lets go of the instance at the very end, so a restarted game is this instance again.
+	static void release();
+
 private:
 	static HANDLE s_mutexHandle;
 	static UnsignedInt s_instanceIndex;
