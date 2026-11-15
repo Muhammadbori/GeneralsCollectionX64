@@ -30,6 +30,7 @@
 
 #include "GameClient/Display.h"
 #include "GameClient/GameWindowManager.h"
+#include "GameClient/GUICallbacks.h"
 #include "GameClient/TickSlider.h"
 #include "GameClient/Shell.h"
 #include "GameClient/KeyDefs.h"
@@ -118,13 +119,17 @@ namespace
 	//   dclickrow NAME ROW     (O29) the same twice, 80 ms apart: a double click
 	//   waitwin NAME [MS]      (O29) wait until window NAME exists and is shown (default at most 20000 ms; then a log
 	//                          line and the next step)
+	//   exitmatch              (O43) in a match: what the quit menu's Exit and its Yes do (in a network match this
+	//                          player surrenders and goes to the score screen; the others play on). It does not need the
+	//                          game window to be the active one, which the quit menu itself does (ESC opens it only in
+	//                          the active window). Use "waitgame" and "wait" before it.
 	// A step on a named window that is hidden (a settings section or page not shown) first asks the screen to show it
 	// (FrameShots::setRevealHook); a window still hidden is skipped with a log line, never clicked blind.
 	struct UiStep
 	{
 		enum Op { OP_SCALE, OP_TIMEOUT, OP_WAIT, OP_WAITFRAMES, OP_WAITSHELL, OP_WAITGAME, OP_MOVE, OP_CLICK, OP_RCLICK, OP_CLICKWIN, OP_KEY,
 			OP_TEXT, OP_SHOT, OP_LOADSHOT, OP_EXIT, OP_DOWN, OP_DOWNWIN, OP_DRAG, OP_DRAGWIN, OP_UP, OP_DOWNSLIDER, OP_DRAGSLIDER,
-			OP_CLICKROW, OP_WAITWIN };
+			OP_CLICKROW, OP_WAITWIN, OP_EXITMATCH };
 		Op op;
 		Int a, b, c, d;
 		AsciiString text;
@@ -389,6 +394,7 @@ void FrameShots::setUiScript(const char *path)
 		else if (stricmp(word, "waitframes") == 0) { step.op = UiStep::OP_WAITFRAMES; ok = n >= 1; }
 		else if (stricmp(word, "waitshell") == 0) { step.op = UiStep::OP_WAITSHELL; }
 		else if (stricmp(word, "waitgame") == 0) { step.op = UiStep::OP_WAITGAME; }
+		else if (stricmp(word, "exitmatch") == 0) { step.op = UiStep::OP_EXITMATCH; }
 		else if (stricmp(word, "move") == 0) { step.op = UiStep::OP_MOVE; ok = n >= 2; }
 		else if (stricmp(word, "click") == 0) { step.op = UiStep::OP_CLICK; ok = n >= 2; }
 		else if (stricmp(word, "rclick") == 0) { step.op = UiStep::OP_RCLICK; ok = n >= 2; }
@@ -857,6 +863,23 @@ void FrameShots::runUiScript()
 			uiLog("loadshot %s armed at %d%%", step.text.str(), step.a);
 			break;
 		}
+		case UiStep::OP_EXITMATCH:
+			// O43: the quit menu's Exit + Yes (exitQuitMenu): with the menu open, GameLogic::quit surrenders in a network
+			// match, stops the recording and leaves to the score screen
+			if (TheGameLogic != nullptr && TheGameLogic->isInGame() && !TheGameLogic->isInShellGame())
+			{
+				if (canOpenQuitMenu()) {
+					ToggleQuitMenu();   // as the player's ESC; without it quit() would only open the menu
+				}
+				uiLog("exitmatch at frame %u (%s)", TheGameLogic->getFrame(), TheGameLogic->isInMultiplayerGame() ? "multiplayer: surrender" : "not multiplayer");
+				TheGameLogic->quit(FALSE);
+				destroyQuitMenu();
+			}
+			else
+			{
+				uiLog("exitmatch: no match running");
+			}
+			break;
 		case UiStep::OP_EXIT:
 			uiLog("exit %d", step.a);
 			s_failureExitCode = step.a;

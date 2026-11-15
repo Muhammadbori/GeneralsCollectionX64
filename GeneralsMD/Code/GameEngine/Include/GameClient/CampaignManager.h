@@ -95,6 +95,9 @@ public:
 	Mission *newMission( AsciiString name );
 	Mission *getNextMission( Mission *current);
 	Mission *getMission( AsciiString missionName);
+	/// TheSuperHackers @bugfix O43 The mission of that name in any case, or nullptr (no assertion): for names read from
+	/// a file in the user data folder.
+	Mission *findMission( const AsciiString &missionName );
 	AsciiString getFinalVictoryMovie();
 	Bool isChallengeCampaign() { return m_isChallengeCampaign; }
 
@@ -128,6 +131,8 @@ public:
 	Mission *gotoNextMission();				///< Set the next mission as the current Mission, and returns a point to it
 	void setCampaignAndMission( AsciiString campaign, AsciiString mission );		///< Sets the campaign and Mission we're on
 	void setCampaign( AsciiString campaign );																		///< sets the campaign and set's it's first mission
+	/// TheSuperHackers @bugfix O43 The campaign of that name in any case, or nullptr; changes nothing.
+	Campaign *findCampaign( const AsciiString &campaign );
 	AsciiString getCurrentMap();			///< Get the map located in m_currentMission;
 	enum { INVALID_MISSION_NUMBER = -1 };
 	Int getCurrentMissionNumber();		///< get mission number for the currently loaded level if we are in a campaign
