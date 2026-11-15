@@ -45,16 +45,23 @@ namespace
 
 	/// The lobby object of a NetLab match: a LANAPI that is never initialised (no lobby socket, no broadcast); it only
 	/// carries the game, the local address and the name, as the lobby would have left them.
+	/// TheSuperHackers @bugfix (O22) In the lobby's order: the local address and the name first (setIdentity, then
+	/// TheLAN = the object), the game after (setGame). LANGameInfo's constructor reads TheLAN->GetLocalIP(), and a slot
+	/// is the local player when its address equals TheLAN->GetLocalIP(); with the game built before TheLAN was set the
+	/// constructor dereferenced a null TheLAN (S19 smoke run, LANGameInfo.cpp:98, 0xC0000005 on both instances).
 	class NetLabLANAPI : public LANAPI
 	{
 	public:
-		void setup(LANGameInfo *game, UnsignedInt localIP, const UnicodeString &name)
+		void setIdentity(UnsignedInt localIP, const UnicodeString &name)
 		{
-			m_currentGame = game;
 			m_localIP = localIP;
 			m_name = name;
 			m_inLobby = FALSE;
 			m_isInLANMenu = TRUE;
+		}
+		void setGame(LANGameInfo *game)
+		{
+			m_currentGame = game;
 		}
 	};
 
@@ -179,9 +186,13 @@ namespace
 	/// The LAN game object the lobby would have built from the roster.
 	LANGameInfo *buildGame()
 	{
+		// TheLAN and its local address must exist here (the constructor reads them).
 		LANGameInfo *game = NEW LANGameInfo;
-		game->setSeed(s_seed);
+		// TheSuperHackers @bugfix (O22) enterGame first: it resets the game info, and the reset draws a new seed from
+		// GetTickCount(). With the seed set before it, every instance had its own seed (the lobby sets the seed after
+		// the player entered the game too).
 		game->enterGame();
+		game->setSeed(s_seed);
 		for (Int i = 0; i < MAX_SLOTS; ++i)
 		{
 			LANGameSlot slot;
@@ -271,8 +282,18 @@ namespace
 		NetLabLANAPI *lan = NEW NetLabLANAPI;
 		UnicodeString name;
 		name.format(L"NetLab%d", s_slot);
-		lan->setup(buildGame(), slotIP(s_slot), name);
+		lan->setIdentity(slotIP(s_slot), name);
 		TheLAN = lan;
+		LANGameInfo *game = buildGame();
+		lan->setGame(game);
+		const Int localSlot = game->getLocalSlotNum();
+		if (localSlot != s_slot || game->getSeed() != s_seed)
+		{
+			logLine("the game built from the roster is wrong: local slot %d (should be %d), seed %d (should be %d): no match",
+				localSlot, s_slot, game->getSeed(), s_seed);
+			s_failed = TRUE;
+			return;
+		}
 		logLine("slot %d at 127.0.0.%d:%d, seed %d, map %s", s_slot, 10 + s_slot, NETWORK_BASE_PORT_NUMBER, s_seed, s_map);
 		for (Int i = 0; i < MAX_SLOTS; ++i)
 		{
@@ -406,8 +427,11 @@ void NetLab::shutdown()
 {
 	if (s_started && TheLAN != nullptr)
 	{
-		delete TheLAN;   // the NetLab LAN object (it owns the game object)
+		// the NetLab LAN object and its game: LANAPI's destructor frees only the lobby's game list, not the current game
+		LANGameInfo *game = TheLAN->GetMyGame();
+		delete TheLAN;
 		TheLAN = nullptr;
+		delete game;
 	}
 	if (s_csv != nullptr) { fclose(s_csv); s_csv = nullptr; }
 	if (s_log != nullptr) { fclose(s_log); s_log = nullptr; }
