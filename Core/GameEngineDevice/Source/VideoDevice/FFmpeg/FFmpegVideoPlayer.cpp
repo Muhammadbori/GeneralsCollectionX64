@@ -33,6 +33,7 @@
 #include "Lib/BaseType.h"
 #include "VideoDevice/FFmpeg/FFmpegVideoPlayer.h"
 #include "Common/AudioAffect.h"
+#include "Common/Packs.h"
 #include "Common/GameAudio.h"
 #include "Common/GameMemory.h"
 #include "Common/GlobalData.h"
@@ -287,6 +288,29 @@ VideoStreamInterface*	FFmpegVideoPlayer::open( AsciiString movieTitle )
 
 		char localizedFilePath[ _MAX_PATH ];
 		snprintf( localizedFilePath, ARRAY_SIZE(localizedFilePath), VIDEO_LANG_PATH_FORMAT, GetRegistryLanguage().str(), pVideo->m_filename.str(), VIDEO_EXT );
+
+		// TheSuperHackers @feature The movie pack in use is tried first: its loose files, under the same paths (Packs.h).
+		{
+			std::vector<AsciiString> roots;
+			Packs::getMovieRoots(roots);
+			for (size_t r = 0; r < roots.size(); ++r)
+			{
+				char packPath[ _MAX_PATH ];
+				snprintf( packPath, ARRAY_SIZE(packPath), "%s%s", roots[r].str(), localizedFilePath );
+				File* packFile = TheFileSystem->openFile(packPath);
+				if (!packFile)
+				{
+					snprintf( packPath, ARRAY_SIZE(packPath), "%s%s\\%s.%s", roots[r].str(), VIDEO_PATH, pVideo->m_filename.str(), VIDEO_EXT );
+					packFile = TheFileSystem->openFile(packPath);
+				}
+				if (packFile)
+				{
+					DEBUG_LOG(("opened pack movie %s", packPath));
+					return createStream( packFile );
+				}
+			}
+		}
+
 		File* file =  TheFileSystem->openFile(localizedFilePath);
 		DEBUG_ASSERTLOG(!file, ("opened localized bink file %s", localizedFilePath));
 		if (!file)

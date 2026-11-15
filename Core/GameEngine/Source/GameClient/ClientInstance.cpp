@@ -114,6 +114,15 @@ void ClientInstance::skipPrimaryInstance()
 	s_instanceIndex = 1;
 }
 
+void ClientInstance::release()
+{
+	if (s_mutexHandle != nullptr)
+	{
+		CloseHandle(s_mutexHandle);
+		s_mutexHandle = nullptr;
+	}
+}
+
 UnsignedInt ClientInstance::getInstanceIndex()
 {
 	DEBUG_ASSERTLOG(isInitialized(), ("ClientInstance::isInitialized() failed"));

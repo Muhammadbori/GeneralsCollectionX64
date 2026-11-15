@@ -29,7 +29,10 @@
 #include "Common/GlobalData.h"
 #include "Common/NameKeyGenerator.h"
 #include "Common/OptionPreferences.h"
+#include "Common/Packs.h"
 #include "GameClient/Display.h"
+#include "GameClient/DisplayString.h"
+#include "GameClient/DisplayStringManager.h"
 #include "GameClient/GadgetCheckBox.h"
 #include "GameClient/GadgetComboBox.h"
 #include "GameClient/GadgetPushButton.h"
@@ -38,7 +41,10 @@
 #include "GameClient/GameText.h"
 #include "GameClient/GameWindow.h"
 #include "GameClient/GameWindowManager.h"
+#include "GameClient/Image.h"
 #include "GameClient/LocalizedFallback.h"
+#include "GameClient/MessageBox.h"
+#include "GameLogic/GameLogic.h"
 
 #include <vector>
 
@@ -225,6 +231,14 @@ namespace
 	AsciiString curPlayerListSize(OptionPreferences &p) { return number(p.getPlayerInfoListFontSize()); }
 	AsciiString curMoneyPerMinute(OptionPreferences &p) { return yesNo(p.getShowMoneyPerMinute()); }
 
+	// The game's own defaults (the getters' values for an absent key): Zero Hour scrolls with the right mouse button
+	// with the alternate mouse, the base game does not (GlobalData).
+#if RTS_GENERALS
+	const char *const kRightMouseDefault = "no";
+#else
+	const char *const kRightMouseDefault = "yes";
+#endif
+
 	const Setting kSettings[] =
 	{
 		// Graphics
@@ -235,19 +249,19 @@ namespace
 		// Sound
 		{ SEC_SOUND, KIND_STEPS, "MoneyTransactionVolume", { "GUI:MoneyTransactionVolume", L"Money sound volume", L"\x0413\x0440\x043E\x043C\x043A\x043E\x0441\x0442\x044C \x0437\x0432\x0443\x043A\x0430 \x0434\x0435\x043D\x0435\x0433" }, STEPS(kPercent0To100), "%", "50", curMoneyVolume },
 		// Controls
-		{ SEC_CONTROLS, KIND_CHECK, "UseRightMouseScrollWithAlternateMouse", { "GUI:RightMouseScrollAlternate", L"Right mouse scroll with alternate mouse", L"\x041F\x0440\x043E\x043A\x0440\x0443\x0442\x043A\x0430 \x043F\x0440\x0430\x0432\x043E\x0439 \x043A\x043D\x043E\x043F\x043A\x043E\x0439 (\x0430\x043B\x044C\x0442\x0435\x0440. \x043C\x044B\x0448\x044C)" }, nullptr, 0, "", "no", curRightMouse },
+		{ SEC_CONTROLS, KIND_CHECK, "UseRightMouseScrollWithAlternateMouse", { "GUI:RightMouseScrollAlternate", L"Right mouse scroll with alternate mouse", L"\x041F\x0440\x043E\x043A\x0440\x0443\x0442\x043A\x0430 \x043F\x0440\x0430\x0432\x043E\x0439 \x043A\x043D\x043E\x043F\x043A\x043E\x0439 (\x0430\x043B\x044C\x0442\x0435\x0440. \x043C\x044B\x0448\x044C)" }, nullptr, 0, "", kRightMouseDefault, curRightMouse },
 		{ SEC_CONTROLS, KIND_CHECK, "ScreenEdgeScrollEnabledInWindowedApp", { "GUI:EdgeScrollWindowed", L"Screen edge scroll in a window", L"\x041F\x0440\x043E\x043A\x0440\x0443\x0442\x043A\x0430 \x0443 \x043A\x0440\x0430\x044F \x044D\x043A\x0440\x0430\x043D\x0430 \x0432 \x043E\x043A\x043D\x0435" }, nullptr, 0, "", "no", curEdgeWindowed },
 		{ SEC_CONTROLS, KIND_CHECK, "ScreenEdgeScrollEnabledInFullscreenApp", { "GUI:EdgeScrollFullscreen", L"Screen edge scroll in full screen", L"\x041F\x0440\x043E\x043A\x0440\x0443\x0442\x043A\x0430 \x0443 \x043A\x0440\x0430\x044F \x0432 \x043F\x043E\x043B\x043D\x043E\x043C \x044D\x043A\x0440\x0430\x043D\x0435" }, nullptr, 0, "", "yes", curEdgeFullscreen },
-		{ SEC_CONTROLS, KIND_CHECK, "CursorCaptureEnabledInWindowedGame", { "GUI:CursorCaptureWindowedGame", L"Keep the cursor in the window: game", L"\x041A\x0443\x0440\x0441\x043E\x0440 \x0432 \x043E\x043A\x043D\x0435: \x0432 \x0438\x0433\x0440\x0435" }, nullptr, 0, "", "no", curCaptureWG },
+		{ SEC_CONTROLS, KIND_CHECK, "CursorCaptureEnabledInWindowedGame", { "GUI:CursorCaptureWindowedGame", L"Keep the cursor in the window: game", L"\x041A\x0443\x0440\x0441\x043E\x0440 \x0432 \x043E\x043A\x043D\x0435: \x0432 \x0438\x0433\x0440\x0435" }, nullptr, 0, "", "yes", curCaptureWG },
 		{ SEC_CONTROLS, KIND_CHECK, "CursorCaptureEnabledInWindowedMenu", { "GUI:CursorCaptureWindowedMenu", L"Keep the cursor in the window: menus", L"\x041A\x0443\x0440\x0441\x043E\x0440 \x0432 \x043E\x043A\x043D\x0435: \x0432 \x043C\x0435\x043D\x044E" }, nullptr, 0, "", "no", curCaptureWM },
 		{ SEC_CONTROLS, KIND_CHECK, "CursorCaptureEnabledInFullscreenGame", { "GUI:CursorCaptureFullscreenGame", L"Keep the cursor on screen: game", L"\x041A\x0443\x0440\x0441\x043E\x0440 \x043D\x0430 \x044D\x043A\x0440\x0430\x043D\x0435: \x0432 \x0438\x0433\x0440\x0435" }, nullptr, 0, "", "yes", curCaptureFG },
-		{ SEC_CONTROLS, KIND_CHECK, "CursorCaptureEnabledInFullscreenMenu", { "GUI:CursorCaptureFullscreenMenu", L"Keep the cursor on screen: menus", L"\x041A\x0443\x0440\x0441\x043E\x0440 \x043D\x0430 \x044D\x043A\x0440\x0430\x043D\x0435: \x0432 \x043C\x0435\x043D\x044E" }, nullptr, 0, "", "no", curCaptureFM },
+		{ SEC_CONTROLS, KIND_CHECK, "CursorCaptureEnabledInFullscreenMenu", { "GUI:CursorCaptureFullscreenMenu", L"Keep the cursor on screen: menus", L"\x041A\x0443\x0440\x0441\x043E\x0440 \x043D\x0430 \x044D\x043A\x0440\x0430\x043D\x0435: \x0432 \x043C\x0435\x043D\x044E" }, nullptr, 0, "", "yes", curCaptureFM },
 		{ SEC_CONTROLS, KIND_CHECK, "DrawEntireTerrain", { "GUI:DrawEntireTerrain", L"Draw the entire terrain", L"\x0420\x0438\x0441\x043E\x0432\x0430\x0442\x044C \x0432\x0441\x044E \x043C\x0435\x0441\x0442\x043D\x043E\x0441\x0442\x044C" }, nullptr, 0, "", "no", curEntireTerrain },
-		{ SEC_CONTROLS, KIND_STEPS, "MaxCameraHeight", { "GUI:MaxCameraHeight", L"Highest camera", L"\x0412\x044B\x0441\x043E\x0442\x0430 \x043A\x0430\x043C\x0435\x0440\x044B" }, STEPS(kCameraHeight), "", "", curCameraHeight },
+		{ SEC_CONTROLS, KIND_STEPS, "MaxCameraHeight", { "GUI:MaxCameraHeight", L"Highest camera", L"\x041C\x0430\x043A\x0441\x0438\x043C\x0430\x043B\x044C\x043D\x0430\x044F \x0432\x044B\x0441\x043E\x0442\x0430 \x043A\x0430\x043C\x0435\x0440\x044B" }, STEPS(kCameraHeight), "", "", curCameraHeight },
 		{ SEC_CONTROLS, KIND_STEPS, "CameraPitch", { "GUI:CameraPitch", L"Camera pitch", L"\x041D\x0430\x043A\x043B\x043E\x043D \x043A\x0430\x043C\x0435\x0440\x044B" }, STEPS(kCameraPitch), "", "", curCameraPitch },
 		// Game
 		{ SEC_GAME, KIND_CHECK, "ArchiveReplays", { "GUI:ArchiveReplays", L"Keep every replay", L"\x0421\x043E\x0445\x0440\x0430\x043D\x044F\x0442\x044C \x0432\x0441\x0435 \x043F\x043E\x0432\x0442\x043E\x0440\x044B" }, nullptr, 0, "", "no", curArchiveReplays },
-		{ SEC_GAME, KIND_CHECK, "PlayerObserverEnabled", { "GUI:PlayerObserverEnabled", L"Observer: see with a player's eyes", L"\x041D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x044C: \x0433\x043B\x0430\x0437\x0430\x043C\x0438 \x0438\x0433\x0440\x043E\x043A\x0430" }, nullptr, 0, "", "no", curPlayerObserver },
+		{ SEC_GAME, KIND_CHECK, "PlayerObserverEnabled", { "GUI:PlayerObserverEnabled", L"Observer: see with a player's eyes", L"\x041D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x044C: \x0433\x043B\x0430\x0437\x0430\x043C\x0438 \x0438\x0433\x0440\x043E\x043A\x0430" }, nullptr, 0, "", "yes", curPlayerObserver },
 		// Interface
 		{ SEC_INTERFACE, KIND_STEPS, "GameWindowTransitionSpeedMultiplier", { "GUI:MenuTransitionSpeed", L"Menu animation speed", L"\x0421\x043A\x043E\x0440\x043E\x0441\x0442\x044C \x0430\x043D\x0438\x043C\x0430\x0446\x0438\x0438 \x043C\x0435\x043D\x044E" }, STEPS(kTransitionSpeed), "x", "1", curTransition },
 		{ SEC_INTERFACE, KIND_STEPS, "ScreenshotFormat", { "GUI:ScreenshotFormat", L"Screenshot format", L"\x0424\x043E\x0440\x043C\x0430\x0442 \x0441\x043D\x0438\x043C\x043A\x043E\x0432 \x044D\x043A\x0440\x0430\x043D\x0430" }, STEPS(kScreenshotFormat), "", "Jpeg", curScreenshot },
@@ -318,12 +332,46 @@ namespace
 	const char *const kOldGroups[] = { "VideoParent", "AudioParent", "ScrollParent", "NetworkParent", "WinAdvancedDisplayOptions" };
 
 	//---------------------------------------------------------------------------------------------
+	// The data pack choosers (Packs.h): one row of steps per kind, some with a preview picture.
+	struct PackRowDef
+	{
+		Packs::Kind kind;
+		Section section;
+		Bool preview;
+	};
+
+	const PackRowDef kPackRows[] =
+	{
+		{ Packs::KIND_TEXT, SEC_LANGUAGE, FALSE },     // first: the hotkey row depends on it
+		{ Packs::KIND_VOICE, SEC_LANGUAGE, FALSE },
+		{ Packs::KIND_MOVIES, SEC_LANGUAGE, FALSE },
+		{ Packs::KIND_CONTROLBAR, SEC_INTERFACE, TRUE },
+		{ Packs::KIND_HOTKEYS, SEC_CONTROLS, TRUE },
+	};
+	enum { PACK_ROW_COUNT = (Int)ARRAY_SIZE(kPackRows), PACK_ROW_TEXT = 0, MAX_PACK_CHOICES = 32 };
+
+	//---------------------------------------------------------------------------------------------
 	struct SettingState
 	{
 		GameWindow *control;          ///< check box or slider
 		GameWindow *label;            ///< KIND_STEPS
 		GameWindow *value;            ///< KIND_STEPS
 		Int step;
+		Bool touched;                 ///< KIND_STEPS: moved by the player or reset by Defaults; else save keeps the stored value
+	};
+
+	struct PackRowState
+	{
+		GameWindow *label;
+		GameWindow *value;
+		GameWindow *slider;
+		GameWindow *preview;          ///< draws 'image' in a frame
+		GameWindow *previewText;      ///< "no picture", over the frame
+		const Packs::Pack *choices[MAX_PACK_CHOICES];   ///< nullptr: the base data
+		Int choiceCount;
+		Int step;
+		const Packs::Pack *initial;   ///< the choice when the screen opened
+		const Image *image;
 	};
 
 	struct State
@@ -338,6 +386,7 @@ namespace
 		GameWindow *existing[EXISTING_COUNT];
 		GameWindow *existingLabels[EXISTING_COUNT];
 		GameWindow *detailCombo;
+		PackRowState packRows[PACK_ROW_COUNT];
 		// looks
 		GameWindow *buttonLook;
 		GameWindow *frameLook;
@@ -385,6 +434,61 @@ namespace
 		inst.m_hiliteText = from->m_hiliteText;
 		inst.m_imageOffset = from->m_imageOffset;
 		inst.m_font = from->m_font;
+	}
+
+	/// The drawn size of 'text' in 'font', wrapped at 'wrapWidth' pixels (0: one line).
+	ICoord2D textSize(GameFont *font, const UnicodeString &text, Int wrapWidth)
+	{
+		ICoord2D size = { 0, 0 };
+		if (font == nullptr || TheDisplayStringManager == nullptr || text.isEmpty()) {
+			return size;
+		}
+		DisplayString *ds = TheDisplayStringManager->newDisplayString();
+		if (ds == nullptr) {
+			return size;
+		}
+		ds->setFont(font);
+		ds->setWordWrap(wrapWidth > 0 ? wrapWidth : 0);
+		ds->setText(text);
+		ds->getSize(&size.x, &size.y);
+		TheDisplayStringManager->freeDisplayString(ds);
+		return size;
+	}
+
+	/// A static text window of 'width' wraps its text at width - 10 (W3DStaticText): the height its text needs.
+	Int labelHeightFor(GameFont *font, const UnicodeString &text, Int width, Int minHeight)
+	{
+		const ICoord2D size = textSize(font, text, width - 10);
+		return max(minHeight, size.y + 4);
+	}
+
+	/// A check box draws its text right of the box (which is as high as the window), centred on the window's middle, with
+	/// no clip. The window gets 'width'. When the text is wider than the room right of the box it is wrapped there (the
+	/// display string keeps the wrap; the draw does not reset it) and the lines spread above and below the window's middle.
+	/// Returns the height to reserve; the window goes in the middle of it, so the box keeps its size.
+	Int fitCheckBox(GameWindow *box, Int width)
+	{
+		if (box == nullptr) {
+			return 0;
+		}
+		const ICoord2D size = sizeOf(box);
+		box->winSetSize(width, size.y);
+		WinInstanceData *inst = box->winGetInstanceData();
+		DisplayString *ds = inst != nullptr ? inst->getTextDisplayString() : nullptr;
+		if (ds == nullptr || ds->getTextLength() == 0) {
+			return size.y;
+		}
+		ds->setFont(box->winGetFont());
+		ds->setWordWrap(0);
+		Int w = 0, h = 0;
+		ds->getSize(&w, &h);
+		const Int room = width - size.y - 4;   // the text starts one window height right of the left edge
+		if (w <= room || room <= 40) {
+			return max(size.y, h);
+		}
+		ds->setWordWrap(room);
+		ds->getSize(&w, &h);
+		return max(size.y, h + 2);
 	}
 
 	UnsignedInt imageStatusOf(GameWindow *look)
@@ -605,10 +709,11 @@ namespace
 		Int x0, y0, colW, gap, bottom;
 		Int col;
 		Int y;
+		Bool overflow;   ///< an item went below the page in the second column
 
 		void begin(GameWindow *p, Int left, Int top, Int columnWidth, Int g, Int b)
 		{
-			page = p; x0 = left; y0 = top; colW = columnWidth; gap = g; bottom = b; col = 0; y = top;
+			page = p; x0 = left; y0 = top; colW = columnWidth; gap = g; bottom = b; col = 0; y = top; overflow = FALSE;
 		}
 		/// The position of an item of 'height'.
 		ICoord2D next(Int height)
@@ -617,11 +722,63 @@ namespace
 				col = 1;
 				y = y0;
 			}
+			if (y + height > bottom) {
+				overflow = TRUE;
+			}
 			ICoord2D p = { x0 + col * (colW + gap * 2), y };
 			y += height + gap;
 			return p;
 		}
 	};
+
+	GameFont *labelFont()
+	{
+		return s.labelLook != nullptr ? s.labelLook->winGetFont() : nullptr;
+	}
+
+	/// A row of steps: the title over the whole column on as many lines as it needs, then the slider with the value text
+	/// right of it. 'valueTextW' is the width of the widest value text; 'extraBelow' is room kept under the row.
+	/// Returns the y below the row (in the page) through 'below'.
+	void placeStepRow(Flow &flow, const UnicodeString &title, Int valueTextW, Int sliderMax, Int id, Int labelH, Int sliderH,
+		Int extraBelow, GameWindow **label, GameWindow **value, GameWindow **slider, ICoord2D *below)
+	{
+		const Int titleH = labelHeightFor(labelFont(), title, flow.colW, labelH);
+		const Int lineH = max(labelH, sliderH);
+		if (valueTextW + 14 > flow.colW / 2)
+		{
+			// long values (pack names): the value on its own line under the title, the slider over the whole column
+			const ICoord2D at = flow.next(titleH + labelH + sliderH + extraBelow);
+			*label = makeLabel(flow.page, s.labelLook, at.x, at.y, flow.colW, titleH, title, FALSE);
+			*value = makeLabel(flow.page, s.labelLook, at.x, at.y + titleH, flow.colW, labelH, UnicodeString::TheEmptyString, FALSE);
+			*slider = makeSlider(flow.page, at.x, at.y + titleH + labelH, flow.colW, sliderH, sliderMax, id);
+			if (below != nullptr) {
+				below->x = at.x;
+				below->y = at.y + titleH + labelH + sliderH;
+			}
+			return;
+		}
+		const Int valueW = max(valueTextW + 14, flow.colW / 5);
+		const Int sliderW = flow.colW - valueW - flow.gap;
+		const ICoord2D at = flow.next(titleH + lineH + extraBelow);
+		*label = makeLabel(flow.page, s.labelLook, at.x, at.y, flow.colW, titleH, title, FALSE);
+		*slider = makeSlider(flow.page, at.x, at.y + titleH + (lineH - sliderH) / 2, sliderW, sliderH, sliderMax, id);
+		*value = makeLabel(flow.page, s.labelLook, at.x + sliderW + flow.gap, at.y + titleH, valueW, lineH,
+			UnicodeString::TheEmptyString, FALSE);
+		if (below != nullptr) {
+			below->x = at.x;
+			below->y = at.y + titleH + lineH;
+		}
+	}
+
+	/// A check box: the column's width, its text wrapped when it is wider (fitCheckBox), in the middle of its room.
+	void placeCheckBox(Flow &flow, GameWindow *box)
+	{
+		const Int room = fitCheckBox(box, flow.colW);
+		const Int h = sizeOf(box).y;
+		const ICoord2D at = flow.next(room);
+		box->winSetParent(flow.page);
+		box->winSetPosition(at.x, at.y + (room - h) / 2);
+	}
 
 	void placeExisting(Flow &flow, Int index)
 	{
@@ -631,29 +788,55 @@ namespace
 		}
 		const Existing &ex = kExisting[index];
 		GameWindow *label = s.existingLabels[index];
+		if (!ex.show && control->winIsHidden())
+		{
+			// hidden by the .wnd (the scroll anchor boxes): no room on the page
+			control->winSetParent(flow.page);
+			if (label != nullptr) {
+				label->winSetParent(flow.page);
+				label->winHide(TRUE);
+			}
+			return;
+		}
 		ICoord2D cs = sizeOf(control);
 		const UnsignedInt style = control->winGetStyle();
 		const Bool isSlider = (style & GWS_HORZ_SLIDER) != 0;
 		const Bool isCheck = (style & GWS_CHECK_BOX) != 0;
-		if (isSlider || isCheck)
+		if (isCheck)
 		{
-			// sliders and check boxes take the column's width
-			Int minVal = 0, maxVal = 0;
-			if (isSlider) {
-				GadgetSliderGetMinMax(control, &minVal, &maxVal);
+			// one font and height for all check boxes of the screen (some old ones were smaller)
+			if (s.checkLook != nullptr && control != s.checkLook)
+			{
+				control->winSetFont(s.checkLook->winGetFont());
+				control->winSetSize(cs.x, sizeOf(s.checkLook).y);
 			}
-			const Int pos = isSlider ? GadgetSliderGetPosition(control) : 0;
+			if (label != nullptr) {
+				label->winHide(TRUE);
+			}
+			placeCheckBox(flow, control);
+			if (ex.show) {
+				control->winHide(FALSE);
+			}
+			return;
+		}
+		if (isSlider)
+		{
+			// sliders take the column's width
+			Int minVal = 0, maxVal = 0;
+			GadgetSliderGetMinMax(control, &minVal, &maxVal);
+			const Int pos = GadgetSliderGetPosition(control);
 			control->winSetSize(flow.colW, cs.y);
 			cs.x = flow.colW;
-			if (isSlider)
-			{
-				TheWindowManager->winSendSystemMsg(control, GSM_SET_MIN_MAX, minVal, maxVal);
-				GadgetSliderSetPosition(control, pos);
-			}
+			TheWindowManager->winSendSystemMsg(control, GSM_SET_MIN_MAX, minVal, maxVal);
+			GadgetSliderSetPosition(control, pos);
 		}
 		Int labelH = 0;
-		if (label != nullptr) {
-			labelH = sizeOf(label).y;
+		if (label != nullptr)
+		{
+			// the title over the whole column, as high as its text needs
+			const UnicodeString text = GadgetStaticTextGetText(label);
+			labelH = labelHeightFor(label->winGetFont(), text, flow.colW, sizeOf(label).y);
+			label->winSetSize(flow.colW, labelH);
 		}
 		const ICoord2D at = flow.next(labelH + cs.y);
 		if (label != nullptr)
@@ -678,18 +861,213 @@ namespace
 		const Int id = windowId(name.str());
 		if (set.kind == KIND_CHECK)
 		{
-			const ICoord2D at = flow.next(checkH);
-			st.control = makeCheckBox(flow.page, at.x, at.y, flow.colW, checkH, textOf(set.text), id);
+			st.control = makeCheckBox(flow.page, 0, 0, flow.colW, checkH, textOf(set.text), id);
+			if (st.control != nullptr) {
+				placeCheckBox(flow, st.control);
+			}
 			setChecked(index, stricmp(set.current(*s.pref).str(), "yes") == 0);
 			return;
 		}
-		const ICoord2D at = flow.next(labelH + sliderH);
-		st.label = makeLabel(flow.page, s.labelLook, at.x, at.y, flow.colW * 2 / 3, labelH, textOf(set.text), FALSE);
-		st.value = makeLabel(flow.page, s.labelLook, at.x + flow.colW / 3, at.y, flow.colW * 2 / 3, labelH, UnicodeString::TheEmptyString, TRUE);
-		st.control = makeSlider(flow.page, at.x, at.y + labelH, flow.colW, sliderH, set.choiceCount - 1, id);
+		Int valueTextW = 0;
+		for (Int c = 0; c < set.choiceCount; ++c) {
+			valueTextW = max(valueTextW, textSize(labelFont(), choiceText(set, c), 0).x);
+		}
+		placeStepRow(flow, textOf(set.text), valueTextW, set.choiceCount - 1, id, labelH, sliderH, 0,
+			&st.label, &st.value, &st.control, nullptr);
 		const Int found = findChoice(set, set.current(*s.pref));
 		st.step = found >= 0 ? found : defaultStep(set);
 		showStep(index);
+	}
+
+	//---------------------------------------------------------------------------------------------
+	// Data pack rows
+	const Packs::Pack *selectedPack(Int row)
+	{
+		const PackRowState &st = s.packRows[row];
+		return (st.choiceCount > 0 && st.step >= 0 && st.step < st.choiceCount) ? st.choices[st.step] : nullptr;
+	}
+
+	/// The choices of a row; the hotkey row offers only the sets that fit the chosen interface language.
+	void buildPackChoices(Int row, const Packs::Pack *keep)
+	{
+		PackRowState &st = s.packRows[row];
+		const Packs::Kind kind = kPackRows[row].kind;
+		const AsciiString textLanguage = (kind == Packs::KIND_HOTKEYS) ? Packs::textLanguageOf(selectedPack(PACK_ROW_TEXT)) : AsciiString::TheEmptyString;
+		st.choiceCount = 0;
+		if (Packs::baseShown(kind)) {
+			st.choices[st.choiceCount++] = nullptr;
+		}
+		const Int count = Packs::count(kind);
+		for (Int i = 0; i < count && st.choiceCount < MAX_PACK_CHOICES; ++i)
+		{
+			const Packs::Pack *pack = Packs::get(kind, i);
+			if (kind == Packs::KIND_HOTKEYS && !Packs::hotkeysFit(pack, textLanguage)) {
+				continue;
+			}
+			st.choices[st.choiceCount++] = pack;
+		}
+		if (st.choiceCount == 0) {
+			st.choices[st.choiceCount++] = nullptr;   // nothing fits: the base data, as the game would use
+		}
+		st.step = -1;
+		for (Int i = 0; i < st.choiceCount; ++i) {
+			if (st.choices[i] == keep) {
+				st.step = i;
+			}
+		}
+		if (st.step < 0)
+		{
+			// a choice that is gone (another interface language): the base data if offered, else the first
+			st.step = 0;
+			for (Int i = 0; i < st.choiceCount; ++i) {
+				if (st.choices[i] == nullptr) {
+					st.step = i;
+					break;
+				}
+			}
+		}
+	}
+
+	/// The image of a pack's preview picture, made once and kept by the mapped image collection.
+	const Image *previewImageOf(const Packs::Pack *pack)
+	{
+		if (pack == nullptr || pack->previewTexture.isEmpty() || TheMappedImageCollection == nullptr) {
+			return nullptr;
+		}
+		const Image *found = TheMappedImageCollection->findImageByName(pack->previewTexture);
+		if (found != nullptr) {
+			return found;
+		}
+		Image *image = newInstance(Image);
+		image->setName(pack->previewTexture);
+		image->setFilename(pack->previewTexture);
+		image->setStatus(IMAGE_STATUS_NONE);
+		Region2D uv;
+		uv.lo.x = 0.0f;
+		uv.lo.y = 0.0f;
+		uv.hi.x = 1.0f;
+		uv.hi.y = 1.0f;
+		image->setUV(&uv);
+		image->setTextureWidth(512);
+		image->setTextureHeight(256);
+		ICoord2D size = { 512, 256 };
+		image->setImageSize(&size);
+		TheMappedImageCollection->addImage(image);
+		return image;
+	}
+
+	void showPackRow(Int row, Bool moveSlider = TRUE)
+	{
+		PackRowState &st = s.packRows[row];
+		const Packs::Kind kind = kPackRows[row].kind;
+		if (st.slider != nullptr && moveSlider)
+		{
+			TheWindowManager->winSendSystemMsg(st.slider, GSM_SET_MIN_MAX, 0, st.choiceCount > 1 ? st.choiceCount - 1 : 1);
+			GadgetSliderSetPosition(st.slider, st.step);
+			st.slider->winEnable(st.choiceCount > 1);
+		}
+		if (st.value != nullptr) {
+			GadgetStaticTextSetText(st.value, Packs::displayName(kind, selectedPack(row)));
+		}
+		if (st.preview != nullptr)
+		{
+			st.image = previewImageOf(selectedPack(row));
+			if (st.previewText != nullptr) {
+				st.previewText->winHide(st.image != nullptr);
+			}
+		}
+	}
+
+	/// The preview frame: the picture stretched over the window, and a thin border.
+	void drawPackPreview(GameWindow *window, WinInstanceData *instData)
+	{
+		(void)instData;
+		Int x = 0, y = 0, w = 0, h = 0;
+		window->winGetScreenPosition(&x, &y);
+		window->winGetSize(&w, &h);
+		const Int row = (Int)(intptr_t)window->winGetUserData();
+		const Image *image = (row >= 0 && row < PACK_ROW_COUNT) ? s.packRows[row].image : nullptr;
+		if (image != nullptr) {
+			TheDisplay->drawImage(image, x, y, x + w, y + h);
+		} else {
+			TheDisplay->drawFillRect(x, y, w, h, GameMakeColor(0, 0, 0, 128));
+		}
+		TheDisplay->drawOpenRect(x, y, w, h, 1.0f, GameMakeColor(255, 255, 255, 96));
+	}
+
+	void placePackRow(Flow &flow, Int row, Int labelH, Int sliderH)
+	{
+		const PackRowDef &def = kPackRows[row];
+		PackRowState &st = s.packRows[row];
+		const Int previewH = def.preview ? flow.colW / 2 : 0;   // preview pictures are 2:1 (512 x 256)
+		AsciiString name("OptionsMenu.wnd:Sections.");
+		name.concat(Packs::kindKey(def.kind));
+		const Int id = windowId(name.str());
+		// the widest name of any choice of this kind (the hotkey row's list changes with the language)
+		Int valueTextW = textSize(labelFont(), Packs::displayName(def.kind, nullptr), 0).x;
+		for (Int i = 0; i < Packs::count(def.kind); ++i) {
+			valueTextW = max(valueTextW, textSize(labelFont(), Packs::displayName(def.kind, Packs::get(def.kind, i)), 0).x);
+		}
+		ICoord2D below = { 0, 0 };
+		placeStepRow(flow, Packs::kindTitle(def.kind), valueTextW, st.choiceCount > 1 ? st.choiceCount - 1 : 1, id, labelH, sliderH,
+			def.preview ? flow.gap + previewH : 0, &st.label, &st.value, &st.slider, &below);
+		if (def.preview)
+		{
+			const ICoord2D at = below;
+			const Int py = below.y + flow.gap;
+			WinInstanceData inst;
+			inst.init();
+			inst.m_style = GWS_USER_WINDOW;
+			st.preview = TheWindowManager->winCreate(flow.page, WIN_STATUS_ENABLED, at.x, py, flow.colW, previewH,
+				PassMessagesToParentSystem, &inst);
+			if (st.preview != nullptr)
+			{
+				st.preview->winSetUserData((void *)(intptr_t)row);
+				st.preview->winSetDrawFunc(drawPackPreview);
+			}
+			st.previewText = makeLabel(flow.page, s.labelLook, at.x + flow.gap * 2, py + (previewH - labelH) / 2, flow.colW - flow.gap * 4, labelH,
+				TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackNoPreview", localizedFallback(L"No picture", L"\x041D\x0435\x0442 \x0438\x0437\x043E\x0431\x0440\x0430\x0436\x0435\x043D\x0438\x044F")), FALSE);
+		}
+		showPackRow(row);
+	}
+
+	void onRestartNow()
+	{
+		Packs::requestRestart();
+	}
+
+	/// After a save that changed a pack: the box that offers the restart (in a match: a note only).
+	void offerRestart()
+	{
+		const UnicodeString title = TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackRestartTitle",
+			localizedFallback(L"Restart to apply", L"\x041D\x0443\x0436\x0435\x043D \x043F\x0435\x0440\x0435\x0437\x0430\x043F\x0443\x0441\x043A"));
+		const Bool inMatch = TheGameLogic != nullptr && TheGameLogic->isInGame() && !TheGameLogic->isInShellGame();
+		if (inMatch)
+		{
+			MessageBoxOk(title, TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackRestartLater",
+				localizedFallback(L"The new language and pack choices take effect the next time the game starts.",
+					L"\x041D\x043E\x0432\x044B\x0435 \x044F\x0437\x044B\x043A \x0438 \x043F\x0430\x043A\x0435\x0442\x044B \x0437\x0430\x0440\x0430\x0431\x043E\x0442\x0430\x044E\x0442 \x043F\x0440\x0438 \x0441\x043B\x0435\x0434\x0443\x044E\x0449\x0435\x043C \x0437\x0430\x043F\x0443\x0441\x043A\x0435 \x0438\x0433\x0440\x044B.")),
+				nullptr);
+			return;
+		}
+		GameWindow *box = MessageBoxYesNo(title, TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackRestartBody",
+			localizedFallback(L"The new language and pack choices take effect after a restart of the game.",
+				L"\x041D\x043E\x0432\x044B\x0435 \x044F\x0437\x044B\x043A \x0438 \x043F\x0430\x043A\x0435\x0442\x044B \x0437\x0430\x0440\x0430\x0431\x043E\x0442\x0430\x044E\x0442 \x043F\x043E\x0441\x043B\x0435 \x043F\x0435\x0440\x0435\x0437\x0430\x043F\x0443\x0441\x043A\x0430 \x0438\x0433\x0440\x044B.")),
+			onRestartNow, nullptr);
+		if (box == nullptr) {
+			return;
+		}
+		// the buttons say what they do
+		GameWindow *yes = TheWindowManager->winGetWindowFromId(box, windowId("MessageBox.wnd:ButtonYes"));
+		GameWindow *no = TheWindowManager->winGetWindowFromId(box, windowId("MessageBox.wnd:ButtonNo"));
+		if (yes != nullptr) {
+			GadgetButtonSetText(yes, TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackRestartNow",
+				localizedFallback(L"Restart now", L"\x041F\x0435\x0440\x0435\x0437\x0430\x043F\x0443\x0441\x0442\x0438\x0442\x044C")));
+		}
+		if (no != nullptr) {
+			GadgetButtonSetText(no, TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackRestartLater2",
+				localizedFallback(L"Later", L"\x041F\x043E\x0437\x0436\x0435")));
+		}
 	}
 }
 
@@ -831,6 +1209,20 @@ void OptionsSections::init(OptionPreferences *pref)
 	const Int sliderH = s.sliderLook != nullptr ? sizeOf(s.sliderLook).y : 16;
 	const Int contentTop = gap * 2 + titleH + gap;
 	const Int colW = (pageW - gap * 8) / 2;
+
+	// the pack rows start at the saved choice (it may wait for a restart), else at what this run uses
+	for (Int r = 0; r < PACK_ROW_COUNT; ++r)
+	{
+		const Packs::Kind kind = kPackRows[r].kind;
+		const AsciiString saved = Packs::chosenName(kind, *pref);
+		const Packs::Pack *keep = saved.isEmpty() ? nullptr : Packs::find(kind, saved);
+		if (saved.isNotEmpty() && keep == nullptr) {
+			keep = Packs::active(kind);
+		}
+		buildPackChoices(r, keep);
+		s.packRows[r].initial = selectedPack(r);
+	}
+
 	for (Int sec = 0; sec < SEC_COUNT; ++sec)
 	{
 		if (s.pages[sec] == nullptr) {
@@ -847,6 +1239,34 @@ void OptionsSections::init(OptionPreferences *pref)
 			if (kSettings[i].section == sec) {
 				placeSetting(flow, i, labelH, checkH, sliderH);
 			}
+		}
+		for (Int r = 0; r < PACK_ROW_COUNT; ++r) {
+			if (kPackRows[r].section == sec) {
+				placePackRow(flow, r, labelH, sliderH);
+			}
+		}
+		if (flow.overflow) {
+			DEBUG_LOG(("OptionsSections: the items of section %d do not fit two columns of the page.", sec));
+		}
+	}
+
+	// An open drop-down list is drawn with its combo box: the combo boxes go on top of their pages, so their lists are
+	// not covered by the controls placed after them.
+	for (Int i = 0; i < EXISTING_COUNT; ++i)
+	{
+		if (s.existing[i] != nullptr && (s.existing[i]->winGetStyle() & GWS_COMBO_BOX) != 0) {
+			s.existing[i]->winBringToTop();
+		}
+	}
+
+	// "Show Props" has no Russian text in the Russian string file
+	if (GameWindow *props = findWindow("CheckShowProps"))
+	{
+		WinInstanceData *inst = props->winGetInstanceData();
+		if (isRussianText() && inst != nullptr && inst->getText().compare(L"Show Props") == 0)
+		{
+			GadgetCheckBoxSetText(props, TheGameText->FETCH_OR_SUBSTITUTE("GUI:ShowPropsFallback",
+				L"\x0414\x0435\x043A\x043E\x0440\x0430\x0442\x0438\x0432\x043D\x044B\x0435 \x043E\x0431\x044A\x0435\x043A\x0442\x044B"));
 		}
 	}
 
@@ -881,11 +1301,6 @@ void OptionsSections::init(OptionPreferences *pref)
 				child->winHide(TRUE);
 			}
 		}
-	}
-
-	// the language section has nothing yet (language and pack switching come later)
-	if (s.buttons[SEC_LANGUAGE] != nullptr) {
-		s.buttons[SEC_LANGUAGE]->winEnable(FALSE);
 	}
 
 	s.active = TRUE;
@@ -934,11 +1349,39 @@ Bool OptionsSections::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgD
 					Int step = (Int)mData2;
 					step = step < 0 ? 0 : (step >= kSettings[i].choiceCount ? kSettings[i].choiceCount - 1 : step);
 					s.settings[i].step = step;
+					s.settings[i].touched = TRUE;
 					if (s.settings[i].value != nullptr) {
 						GadgetStaticTextSetText(s.settings[i].value, choiceText(kSettings[i], step));
 					}
 					return TRUE;
 				}
+			}
+			for (Int r = 0; r < PACK_ROW_COUNT; ++r)
+			{
+				PackRowState &st = s.packRows[r];
+				if (st.slider == nullptr || control != st.slider) {
+					continue;
+				}
+				Int step = (Int)mData2;
+				step = step < 0 ? 0 : (step >= st.choiceCount ? st.choiceCount - 1 : step);
+				if (step != st.step)
+				{
+					st.step = step;
+					showPackRow(r, FALSE);   // the slider is where the player put it
+					if (r == PACK_ROW_TEXT)
+					{
+						// another interface language: the hotkey sets that fit it
+						for (Int h = 0; h < PACK_ROW_COUNT; ++h)
+						{
+							if (kPackRows[h].kind == Packs::KIND_HOTKEYS)
+							{
+								buildPackChoices(h, selectedPack(h));
+								showPackRow(h);
+							}
+						}
+					}
+				}
+				return TRUE;
 			}
 			return FALSE;
 		}
@@ -967,11 +1410,31 @@ void OptionsSections::save(OptionPreferences *pref)
 		}
 		if (set.kind == KIND_CHECK) {
 			(*pref)[set.key] = GadgetCheckBoxIsChecked(st.control) ? "yes" : "no";
+		} else if (!st.touched) {
+			continue;   // a hand-written value between two choices stays as it is (the slider shows the nearest)
 		} else if (set.choices[st.step].value[0] == '\0') {
 			pref->erase(set.key);
 		} else {
 			(*pref)[set.key] = set.choices[st.step].value;
 		}
+	}
+
+	// The pack choices: written when changed here, so a missing key keeps following Packs\<Kind>\default.ini.
+	// They take effect at the next start; the box offers the restart.
+	Bool packChanged = FALSE;
+	for (Int r = 0; r < PACK_ROW_COUNT; ++r)
+	{
+		const PackRowState &st = s.packRows[r];
+		if (st.slider == nullptr) {
+			continue;
+		}
+		const Packs::Pack *pack = selectedPack(r);
+		if (pack == st.initial) {
+			continue;
+		}
+		(*pref)[Packs::kindKey(kPackRows[r].kind)] = (pack != nullptr) ? pack->name : AsciiString(Packs::BaseValue);
+		s.packRows[r].initial = pack;
+		packChanged = TRUE;
 	}
 
 	// The keys the menu's save does not apply.
@@ -981,9 +1444,15 @@ void OptionsSections::save(OptionPreferences *pref)
 		TheFramePacer->setFramesPerSecondLimit(TheGlobalData->getDefaultRenderFpsLimit());
 	}
 	TheWritableGlobalData->m_snowStyle = pref->getSnowStyle();
-	pref->applyCameraOverrides();
+	pref->applyCameraOverrides(TRUE);   // "Standard" (no key) goes back to the GameData values
 	TheWritableGlobalData->m_counterStyle = pref->getCounterStyle();
 	TheWritableGlobalData->m_screenshotFormat = pref->getScreenshotFormat();
+
+	if (packChanged)
+	{
+		// the box comes after the menu has written Options.ini (it does so right after this call)
+		offerRestart();
+	}
 }
 
 void OptionsSections::setDefaults()
@@ -998,6 +1467,7 @@ void OptionsSections::setDefaults()
 			setChecked(i, stricmp(set.defaultValue, "yes") == 0);
 		} else {
 			s.settings[i].step = defaultStep(set);
+			s.settings[i].touched = TRUE;
 			showStep(i);
 		}
 	}

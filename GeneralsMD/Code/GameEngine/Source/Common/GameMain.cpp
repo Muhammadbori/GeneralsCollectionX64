@@ -31,6 +31,7 @@
 #include "Common/FramePacer.h"
 #include "Common/FrameShots.h"
 #include "Common/GameEngine.h"
+#include "Common/Packs.h"
 #include "Common/ReplaySimulation.h"
 
 
@@ -65,6 +66,7 @@ Int GameMain()
 	TheFramePacer = nullptr;
 	delete TheGameEngine;
 	TheGameEngine = nullptr;
+	Packs::shutdown();
 
 	return exitcode;
 }

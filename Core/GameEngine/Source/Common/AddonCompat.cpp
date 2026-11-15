@@ -20,11 +20,17 @@
 
 #include "Common/AddonCompat.h"
 #include "Common/FileSystem.h"
+#include "Common/Packs.h"
 
 namespace addon
 {
 Bool HasFullviewportDat()
 {
+	// TheSuperHackers @feature A control bar pack can ask for the full view in its pack.ini (Packs.h).
+	if (Packs::fullViewport())
+	{
+		return TRUE;
+	}
 	Char value = '0';
 	if (File* file = TheFileSystem->openFile("GenTool/fullviewport.dat", File::READ | File::BINARY))
 	{

@@ -43,6 +43,7 @@
 #include "Common/CommandLine.h"
 #include "Common/CriticalSection.h"
 #include "Common/GlobalData.h"
+#include "Common/Packs.h"
 #include "Common/GameEngine.h"
 #include "Common/GameSounds.h"
 #include "Common/Debug.h"
@@ -877,7 +878,10 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
 		// in release, the file only ever lives in the root dir
 		// TheSuperHackers @feature A folder shared with Generals keeps one splash picture per game.
-		const char *splashFile = (GetFileAttributes("Install_Final_ZeroHour.bmp") != INVALID_FILE_ATTRIBUTES) ? "Install_Final_ZeroHour.bmp" : "Install_Final.bmp";
+		// TheSuperHackers @feature The chosen text pack can bring its own splash picture (Packs.h).
+		char packSplash[_MAX_PATH];
+		const char *splashFile = Packs::findSplash("Install_Final_ZeroHour.bmp", packSplash, ARRAY_SIZE(packSplash)) ? packSplash
+			: (GetFileAttributes("Install_Final_ZeroHour.bmp") != INVALID_FILE_ATTRIBUTES) ? "Install_Final_ZeroHour.bmp" : "Install_Final.bmp";
 		gLoadScreenBitmap = (HBITMAP)LoadImage(hInstance, splashFile, IMAGE_BITMAP, 0, 0, LR_SHARED|LR_LOADFROMFILE);
 #endif
 
@@ -962,6 +966,9 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	TheUnicodeStringCriticalSection = nullptr;
 	TheDmaCriticalSection = nullptr;
 	TheMemoryPoolCriticalSection = nullptr;
+
+	// TheSuperHackers @feature "Restart now" of the options: the game starts again once this process is done.
+	Packs::restartIfRequested();
 
 	return exitcode;
 

@@ -32,6 +32,7 @@
 
 #include "Common/RandomValue.h"
 #include "GameClient/Shell.h"
+#include "Common/Packs.h"
 #include "GameClient/WindowLayout.h"
 #include "GameClient/GameWindowManager.h"
 #include "GameClient/GameWindowTransitions.h"
@@ -233,6 +234,9 @@ void Shell::update()
 	}
 
 	m_animateWindowManager->update();
+
+	// TheSuperHackers @feature Tells the player once about chosen data packs that could not be used (Packs.h).
+	Packs::showProblemsOnce();
 
 }
 

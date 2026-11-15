@@ -60,6 +60,7 @@
 
 #include "GameClient/Display.h"
 #include "GameClient/GlobalLanguage.h"
+#include "Common/Packs.h"
 
 //-----------------------------------------------------------------------------
 // DEFINES ////////////////////////////////////////////////////////////////////
@@ -161,6 +162,14 @@ void GlobalLanguage::init()
 	while( it != m_localFonts.end())
 	{
 		AsciiString font = *it;
+		// TheSuperHackers @feature A font file of a data pack in use (for example GenArial.ttf of a text pack),
+		// private to the game.
+		const AsciiString packFont = Packs::findFontFile(font);
+		if (packFont.isNotEmpty() && AddFontResourceEx(packFont.str(), FR_PRIVATE, nullptr) != 0)
+		{
+			++it;
+			continue;
+		}
 		if(AddFontResource(font.str()) == 0)
 		{
 			DEBUG_CRASH(("GlobalLanguage::init Failed to add font %s", font.str()));

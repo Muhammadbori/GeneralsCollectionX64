@@ -54,7 +54,8 @@ Int GameSpeed::stepToLogicFps(Int step)
 
 Int GameSpeed::logicFpsToStep(Int logicFps)
 {
-	if (logicFps >= 1000 || logicFps <= 0) {
+	// 61 is the old top slider position "UNCAP" as Skirmish.ini stored it; new values are multiples of StepLogicFps.
+	if (logicFps >= 1000 || logicFps <= 0 || logicFps == 61) {
 		return NormalStep;
 	}
 	return clampStep((logicFps + StepLogicFps / 2) / StepLogicFps);
@@ -95,11 +96,16 @@ void GameSpeedControl::init(GameWindow *parent, GameWindow *slider, GameWindow *
 		TheWindowManager->winSendSystemMsg(m_slider, GSM_SET_MIN_MAX, GameSpeed::MinStep, GameSpeed::MaxStep);
 	}
 
-	// The check box goes right of the speed text, as high as the text, in the parent's coordinates.
+	// The check box goes right of the speed text box, in the same row and as high as it. The text box may sit in a child
+	// window of 'parent', so the place is taken from the screen positions.
 	if (parent != nullptr && m_text != nullptr)
 	{
 		Int x = 0, y = 0, width = 0, height = 0;
-		m_text->winGetPosition(&x, &y);
+		Int parentX = 0, parentY = 0;
+		m_text->winGetScreenPosition(&x, &y);
+		parent->winGetScreenPosition(&parentX, &parentY);
+		x -= parentX;
+		y -= parentY;
 		m_text->winGetSize(&width, &height);
 		const Int boxHeight = height > 12 ? height : 12;
 
@@ -126,7 +132,7 @@ void GameSpeedControl::init(GameWindow *parent, GameWindow *slider, GameWindow *
 		}
 		instData.m_id = TheNameKeyGenerator->nameToKey(checkBoxName);
 
-		m_checkBox = TheWindowManager->gogoGadgetCheckbox(parent, status, x + width + 6, y, 140, boxHeight, &instData, font,
+		m_checkBox = TheWindowManager->gogoGadgetCheckbox(parent, status, x + width + 10, y, 160, boxHeight, &instData, font,
 			checkBoxTemplate == nullptr);
 		if (m_checkBox != nullptr)
 		{

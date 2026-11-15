@@ -24,6 +24,7 @@
 #include "Common/GameEngine.h"
 #include "Common/GameState.h"
 #include "Common/GlobalData.h"
+#include "Common/NameKeyGenerator.h"
 #include "Common/Recorder.h"
 
 #include "GameClient/Display.h"
@@ -91,13 +92,15 @@ namespace
 	//   move X Y               move the pointer to X Y (it stays there for the next steps)
 	//   click X Y [HOVER HOLD] move to X Y, wait HOVER ms (default 500), left button down, HOLD ms (default 200), up
 	//   rclick X Y [HOVER HOLD] the same with the right button
+	//   clickwin NAME [FX]     click the window NAME (for example OptionsMenu.wnd:Sections.TextPack) at FX/1000 of its
+	//                          width (default 500: the middle), half its height; skipped with a log line when not found
 	//   key NAME               press and release a key: ESC TAB ENTER SPACE BACKSPACE UP DOWN LEFT RIGHT F1..F12 A..Z 0..9
 	//   text WORDS             type the rest of the line into the window that has the keyboard focus
 	//   shot NAME              save <shot folder>\NAME.png after the next drawn frame (the -shotDir folder)
 	//   exit [CODE]            end the game through the normal quit path, after the pictures are written
 	struct UiStep
 	{
-		enum Op { OP_SCALE, OP_TIMEOUT, OP_WAIT, OP_WAITFRAMES, OP_WAITSHELL, OP_WAITGAME, OP_MOVE, OP_CLICK, OP_RCLICK, OP_KEY,
+		enum Op { OP_SCALE, OP_TIMEOUT, OP_WAIT, OP_WAITFRAMES, OP_WAITSHELL, OP_WAITGAME, OP_MOVE, OP_CLICK, OP_RCLICK, OP_CLICKWIN, OP_KEY,
 			OP_TEXT, OP_SHOT, OP_EXIT };
 		Op op;
 		Int a, b, c, d;
@@ -291,6 +294,16 @@ void FrameShots::setUiScript(const char *path)
 		else if (stricmp(word, "click") == 0) { step.op = UiStep::OP_CLICK; ok = n >= 2; }
 		else if (stricmp(word, "rclick") == 0) { step.op = UiStep::OP_RCLICK; ok = n >= 2; }
 		else if (stricmp(word, "exit") == 0) { step.op = UiStep::OP_EXIT; if (n < 1) a = 0; }
+		else if (stricmp(word, "clickwin") == 0)
+		{
+			step.op = UiStep::OP_CLICKWIN;
+			char name[256] = {};
+			Int fx = 500;
+			const Int got = sscanf(rest, " %255s %d", name, &fx);
+			ok = got >= 1;
+			step.text = name;
+			a = fx; b = 0; c = 500; d = 200;
+		}
 		else if (stricmp(word, "key") == 0 || stricmp(word, "text") == 0 || stricmp(word, "shot") == 0)
 		{
 			step.op = stricmp(word, "key") == 0 ? UiStep::OP_KEY : (stricmp(word, "text") == 0 ? UiStep::OP_TEXT : UiStep::OP_SHOT);
@@ -395,12 +408,34 @@ void FrameShots::runUiScript()
 			break;
 		case UiStep::OP_CLICK:
 		case UiStep::OP_RCLICK:
+		case UiStep::OP_CLICKWIN:
 		{
 			const Bool right = step.op == UiStep::OP_RCLICK;
 			done = FALSE;
 			if (s_uiPhase == 0)
 			{
-				s_uiPointer = uiPoint(step.a, step.b);
+				if (step.op == UiStep::OP_CLICKWIN)
+				{
+					// the window's own place on the screen, in real client coordinates (no scale)
+					GameWindow *win = (TheWindowManager != nullptr && TheNameKeyGenerator != nullptr)
+						? TheWindowManager->winGetWindowFromId(nullptr, TheNameKeyGenerator->nameToKey(step.text)) : nullptr;
+					if (win == nullptr)
+					{
+						uiLog("clickwin: no window %s", step.text.str());
+						done = TRUE;
+						break;
+					}
+					Int x = 0, y = 0, w = 0, h = 0;
+					win->winGetScreenPosition(&x, &y);
+					win->winGetSize(&w, &h);
+					const Int fx = step.a < 0 ? 0 : (step.a > 1000 ? 1000 : step.a);
+					s_uiPointer.x = x + (w > 1 ? (w - 1) * fx / 1000 : 0);
+					s_uiPointer.y = y + h / 2;
+				}
+				else
+				{
+					s_uiPointer = uiPoint(step.a, step.b);
+				}
 				uiMouse(GameMessage::MSG_RAW_MOUSE_POSITION);
 				s_uiPhase = 1;
 			}
@@ -413,7 +448,8 @@ void FrameShots::runUiScript()
 			else if (s_uiPhase == 2 && elapsed >= (UnsignedInt)step.d)
 			{
 				uiMouse(right ? GameMessage::MSG_RAW_MOUSE_RIGHT_BUTTON_UP : GameMessage::MSG_RAW_MOUSE_LEFT_BUTTON_UP);
-				uiLog("%s at %d %d", right ? "rclick" : "click", s_uiPointer.x, s_uiPointer.y);
+				uiLog("%s at %d %d%s%s", right ? "rclick" : "click", s_uiPointer.x, s_uiPointer.y,
+					step.op == UiStep::OP_CLICKWIN ? " on " : "", step.op == UiStep::OP_CLICKWIN ? step.text.str() : "");
 				done = TRUE;
 			}
 			break;
