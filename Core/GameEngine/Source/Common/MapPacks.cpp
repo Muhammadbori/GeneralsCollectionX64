@@ -427,12 +427,15 @@ namespace
 					st.items.push_back(item);
 					continue;
 				}
-				// installed before from this pack, the pack changed since, and its files differ from what was installed
+				// installed before from this pack, the pack changed since, its files differ from what was installed, and the
+				// player's copy is still that installed one (a copy the player changed is not offered at all)
 				const Record *r = findRecord(st, pack.name, mapNames[m]);
 				if (r != nullptr && stampChanged)
 				{
 					item.sourceCrc = folderCrc(item.source);
-					if (item.sourceCrc != r->crc)
+					AsciiString installed = target;
+					installed.concat("\\");
+					if (item.sourceCrc != r->crc && folderCrc(installed) == r->crc)
 					{
 						item.update = TRUE;
 						st.items.push_back(item);
