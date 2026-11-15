@@ -41,6 +41,10 @@ public:
 	static void setTestInput(const char *specs);
 	static void setTestLogicFps(Int fps); ///< -testLogicFps: forces the logic time scale fps while a game runs (1000000 = as fast as possible). Test only.
 	static void injectTestInput(); ///< Call once per client update after the device messages were appended to the stream.
+	/// TheSuperHackers @feature -uiScript <file>: plays a list of UI steps from inside the game (waits, clicks, keys, text,
+	/// pictures, exit), with no OS input: the real mouse and keyboard are cut off as for every frame shot run. See
+	/// FrameShots.cpp (runUiScript) for the step format. Test only.
+	static void setUiScript(const char *path);
 
 	static Bool isEnabled() { return s_enabled; }
 
@@ -60,6 +64,7 @@ private:
 	static void exitGame();
 	static void writeSave(UnsignedInt frame);
 	static void updateEnabled();
+	static void runUiScript();
 
 	static Bool s_enabled;
 	static Int s_failureExitCode;

@@ -1159,6 +1159,17 @@ Int parseShotNoImage(char *args[], int num)
 
 // TheSuperHackers @feature Inject raw input while the logic frame is in a range, to measure camera speed without a person,
 // for example -testInput "key:right@300-600;rmb:200,0@700-900". See FrameShots::setTestInput.
+// TheSuperHackers @feature -uiScript <file>: plays UI steps from inside the game (FrameShots::setUiScript). Test only.
+Int parseUiScript(char *args[], int num)
+{
+	if (num > 1)
+	{
+		FrameShots::setUiScript(args[1]);
+		return 2;
+	}
+	return 1;
+}
+
 Int parseTestInput(char *args[], int num)
 {
 	if (num > 1)
@@ -1693,6 +1704,7 @@ static CommandLineParam paramsForEngineInit[] =
 	{ "-shotFrames", parseShotFrames },
 	{ "-saveFrames", parseSaveFrames },
 	{ "-shotDir", parseShotDir },
+	{ "-uiScript", parseUiScript },
 	{ "-shotExit", parseShotExit },
 	{ "-fps", parseFPSLimit },
 	{ "-file", parseFile },
