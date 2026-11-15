@@ -871,22 +871,41 @@ namespace
 	void placeStepRow(Flow &flow, const UnicodeString &title, Int valueTextW, Int sliderMax, Int id, Int labelH, Int sliderH,
 		Int extraBelow, GameWindow **label, GameWindow **value, GameWindow **slider, ICoord2D *below)
 	{
-		// One rule for every row of a section: the value column has the width of the section's widest value (at most half
-		// the column); a wider value wraps to more lines in it.
+		// TheSuperHackers @bugfix (H1-H4) One rule for every row of a section: the value column is as wide as the section's
+		// widest value in the label font (the static text wraps 10 pixels inside its window), with no cap, so a value is
+		// never cut or wrapped beside the slider. When that would leave the slider less than two fifths of the column, the
+		// section's values go on their own line under the slider instead, as wide as the column.
 		const Int titleH = labelHeightFor(labelFont(), title, flow.colW, labelH);
-		const Int valueW = min(max(max(valueTextW, flow.valueW) + 14, flow.colW / 5), flow.colW / 2);
-		const Int valueLines = (valueTextW + 14 + valueW - 1) / max(1, valueW - 10);
-		const Int valueH = max(labelH, labelH * max(1, valueLines) * 4 / 5);
-		const Int lineH = max(valueH, sliderH);
-		const Int sliderW = flow.colW - valueW - flow.gap;
-		const ICoord2D at = flow.next(titleH + lineH + extraBelow);
+		const Int widest = max(valueTextW, flow.valueW);
+		const Int sideValueW = widest + 14;
+		const Bool stacked = flow.colW - sideValueW - flow.gap < flow.colW * 2 / 5;
+		if (!stacked)
+		{
+			const Int lineH = max(labelH, sliderH);
+			const Int sliderW = flow.colW - sideValueW - flow.gap;
+			const ICoord2D at = flow.next(titleH + lineH + extraBelow);
+			*label = makeLabel(flow.page, s.labelLook, at.x, at.y, flow.colW, titleH, title, FALSE);
+			*slider = makeSlider(flow.page, at.x, at.y + titleH + (lineH - sliderH) / 2, sliderW, sliderH, sliderMax, id);
+			*value = makeLabel(flow.page, s.labelLook, at.x + sliderW + flow.gap, at.y + titleH, sideValueW, lineH,
+				UnicodeString::TheEmptyString, FALSE);
+			if (below != nullptr) {
+				below->x = at.x;
+				below->y = at.y + titleH + lineH;
+			}
+			return;
+		}
+		// a value wider than the column wraps there: room for its lines
+		const Int wrapW = max(1, flow.colW - 10);
+		const Int valueLines = max(1, (valueTextW + wrapW - 1) / wrapW + ((valueTextW > wrapW) ? 1 : 0));
+		const Int valueH = labelH * valueLines;
+		const ICoord2D at = flow.next(titleH + sliderH + valueH + extraBelow);
 		*label = makeLabel(flow.page, s.labelLook, at.x, at.y, flow.colW, titleH, title, FALSE);
-		*slider = makeSlider(flow.page, at.x, at.y + titleH + (lineH - sliderH) / 2, sliderW, sliderH, sliderMax, id);
-		*value = makeLabel(flow.page, s.labelLook, at.x + sliderW + flow.gap, at.y + titleH, valueW, lineH,
+		*slider = makeSlider(flow.page, at.x, at.y + titleH, flow.colW, sliderH, sliderMax, id);
+		*value = makeLabel(flow.page, s.labelLook, at.x, at.y + titleH + sliderH, flow.colW, valueH,
 			UnicodeString::TheEmptyString, FALSE);
 		if (below != nullptr) {
 			below->x = at.x;
-			below->y = at.y + titleH + lineH;
+			below->y = at.y + titleH + sliderH + valueH;
 		}
 	}
 
@@ -1076,10 +1095,25 @@ namespace
 		return image;
 	}
 
+	/// A chooser's title with its position, "Control bar   2/4", so the number of choices can be seen (H5: a slider at its
+	/// first step looks the same as a disabled one).
+	UnicodeString countedTitle(const UnicodeString &title, Int step, Int count)
+	{
+		if (count < 2) {
+			return title;
+		}
+		UnicodeString text;
+		text.format(L"%ls   %d/%d", title.str(), step + 1, count);
+		return text;
+	}
+
 	void showPackRow(Int row, Bool moveSlider = TRUE)
 	{
 		PackRowState &st = s.packRows[row];
 		const Packs::Kind kind = kPackRows[row].kind;
+		if (st.label != nullptr) {
+			GadgetStaticTextSetText(st.label, countedTitle(Packs::kindTitle(kind), st.step, st.choiceCount));
+		}
 		if (st.slider != nullptr && moveSlider)
 		{
 			TheWindowManager->winSendSystemMsg(st.slider, GSM_SET_MIN_MAX, 0, st.choiceCount > 1 ? st.choiceCount - 1 : 1);
@@ -1092,8 +1126,11 @@ namespace
 		if (st.preview != nullptr)
 		{
 			st.image = previewImageOf(selectedPack(row));
+			// TheSuperHackers @bugfix (H6) The base data has no preview: no frame and no "No picture" for it.
+			const Bool base = selectedPack(row) == nullptr;
+			st.preview->winHide(base);
 			if (st.previewText != nullptr) {
-				st.previewText->winHide(st.image != nullptr);
+				st.previewText->winHide(st.image != nullptr || base);
 			}
 		}
 	}
@@ -1129,7 +1166,7 @@ namespace
 			valueTextW = max(valueTextW, textSize(labelFont(), Packs::displayName(def.kind, Packs::get(def.kind, i)), 0).x);
 		}
 		ICoord2D below = { 0, 0 };
-		placeStepRow(flow, Packs::kindTitle(def.kind), valueTextW, st.choiceCount > 1 ? st.choiceCount - 1 : 1, id, labelH, sliderH,
+		placeStepRow(flow, countedTitle(Packs::kindTitle(def.kind), st.choiceCount - 1, st.choiceCount), valueTextW, st.choiceCount > 1 ? st.choiceCount - 1 : 1, id, labelH, sliderH,
 			def.preview ? flow.gap + previewH : 0, &st.label, &st.value, &st.slider, &below);
 		if (def.preview)
 		{
@@ -1168,13 +1205,27 @@ namespace
 
 	/// The sound output device row: the devices the audio device lists, the system default first. Takes effect at the
 	/// next start (the restart box).
-	void placeDeviceRow(Flow &flow, Int labelH, Int sliderH)
+	/// The title of the sound output device row.
+	UnicodeString deviceTitle()
+	{
+		return TheGameText->FETCH_OR_SUBSTITUTE("GUI:AudioOutputDevice", localizedFallback(L"Sound output device", L"\x0423\x0441\x0442\x0440\x043E\x0439\x0441\x0442\x0432\x043E \x0432\x044B\x0432\x043E\x0434\x0430 \x0437\x0432\x0443\x043A\x0430"));
+	}
+
+	/// The device list: the system default first, then what the audio device lists.
+	void loadDevices()
 	{
 		s_devices.clear();
 		s_devices.push_back(AsciiString::TheEmptyString);
 		std::vector<AsciiString> names;
 		AudioOutputDevices::list(names);
 		s_devices.insert(s_devices.end(), names.begin(), names.end());
+	}
+
+	void placeDeviceRow(Flow &flow, Int labelH, Int sliderH)
+	{
+		if (s_devices.empty()) {
+			loadDevices();
+		}
 		const AsciiString chosen = s.pref->getAudioOutputDevice();
 		s.deviceStep = 0;
 		for (size_t i = 1; i < s_devices.size(); ++i) {
@@ -1188,9 +1239,12 @@ namespace
 			valueTextW = max(valueTextW, textSize(labelFont(), deviceName((Int)i), 0).x);
 		}
 		const Int count = (Int)s_devices.size();
-		placeStepRow(flow, TheGameText->FETCH_OR_SUBSTITUTE("GUI:AudioOutputDevice", localizedFallback(L"Sound output device", L"\x0423\x0441\x0442\x0440\x043E\x0439\x0441\x0442\x0432\x043E \x0432\x044B\x0432\x043E\x0434\x0430 \x0437\x0432\x0443\x043A\x0430")),
+		placeStepRow(flow, countedTitle(deviceTitle(), count - 1, count),
 			valueTextW, count > 1 ? count - 1 : 1, windowId("OptionsMenu.wnd:Sections.AudioOutputDevice"), labelH, sliderH, 0,
 			&s.deviceLabel, &s.deviceValue, &s.deviceSlider, nullptr);
+		if (s.deviceLabel != nullptr) {
+			GadgetStaticTextSetText(s.deviceLabel, countedTitle(deviceTitle(), s.deviceStep, count));
+		}
 		if (s.deviceSlider != nullptr)
 		{
 			GadgetSliderSetPosition(s.deviceSlider, s.deviceStep);
@@ -1395,6 +1449,18 @@ void OptionsSections::init(OptionPreferences *pref)
 		s.packRows[r].initial = selectedPack(r);
 	}
 
+	// "Show Props" has no Russian text in the Russian string file. TheSuperHackers @bugfix (H2) Set before the layout, so
+	// the check box text is measured and wrapped in its column.
+	if (GameWindow *props = findWindow("CheckShowProps"))
+	{
+		WinInstanceData *inst = props->winGetInstanceData();
+		if (isRussianText() && inst != nullptr && inst->getText().compare(L"Show Props") == 0)
+		{
+			GadgetCheckBoxSetText(props, TheGameText->FETCH_OR_SUBSTITUTE("GUI:ShowPropsFallback",
+				L"\x0414\x0435\x043A\x043E\x0440\x0430\x0442\x0438\x0432\x043D\x044B\x0435 \x043E\x0431\x044A\x0435\x043A\x0442\x044B"));
+		}
+	}
+
 	for (Int sec = 0; sec < SEC_COUNT; ++sec)
 	{
 		if (s.pages[sec] == nullptr) {
@@ -1410,6 +1476,13 @@ void OptionsSections::init(OptionPreferences *pref)
 			}
 			for (Int c = 0; c < kSettings[i].choiceCount; ++c) {
 				flow.valueW = max(flow.valueW, textSize(labelFont(), choiceText(kSettings[i], c), 0).x);
+			}
+		}
+		if (sec == SEC_SOUND)
+		{
+			loadDevices();
+			for (size_t d = 0; d < s_devices.size(); ++d) {
+				flow.valueW = max(flow.valueW, textSize(labelFont(), deviceName((Int)d), 0).x);
 			}
 		}
 		for (Int r = 0; r < PACK_ROW_COUNT; ++r)
@@ -1457,14 +1530,16 @@ void OptionsSections::init(OptionPreferences *pref)
 		}
 	}
 
-	// "Show Props" has no Russian text in the Russian string file
-	if (GameWindow *props = findWindow("CheckShowProps"))
+	// TheSuperHackers @tweak Small drop-down lists show all their entries without a scroll bar (H7: the detail list no
+	// longer ends in the middle of the title under it).
+	for (Int i = 0; i < EXISTING_COUNT; ++i)
 	{
-		WinInstanceData *inst = props->winGetInstanceData();
-		if (isRussianText() && inst != nullptr && inst->getText().compare(L"Show Props") == 0)
+		if (s.existing[i] != nullptr && (s.existing[i]->winGetStyle() & GWS_COMBO_BOX) != 0)
 		{
-			GadgetCheckBoxSetText(props, TheGameText->FETCH_OR_SUBSTITUTE("GUI:ShowPropsFallback",
-				L"\x0414\x0435\x043A\x043E\x0440\x0430\x0442\x0438\x0432\x043D\x044B\x0435 \x043E\x0431\x044A\x0435\x043A\x0442\x044B"));
+			const ComboBoxData *data = (const ComboBoxData *)s.existing[i]->winGetUserData();
+			if (data != nullptr && data->maxDisplay < 8) {
+				GadgetComboBoxSetMaxDisplay(s.existing[i], 8);
+			}
 		}
 	}
 
@@ -1575,6 +1650,9 @@ Bool OptionsSections::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgD
 				s.deviceStep = step;
 				if (s.deviceValue != nullptr) {
 					GadgetStaticTextSetText(s.deviceValue, deviceName(step));
+				}
+				if (s.deviceLabel != nullptr) {
+					GadgetStaticTextSetText(s.deviceLabel, countedTitle(deviceTitle(), step, count));
 				}
 				return TRUE;
 			}

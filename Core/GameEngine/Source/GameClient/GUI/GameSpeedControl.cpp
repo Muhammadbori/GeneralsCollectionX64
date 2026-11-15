@@ -238,7 +238,8 @@ void GameSpeedControl::init(GameWindow *parent, GameWindow *slider, GameWindow *
 		{
 			// TheSuperHackers @tweak The box takes the width it needs and must end before the text of the next control of
 			// the row (in skirmish: the "starting money" label, centred in its window left of the money box). If the room
-			// is short, the slider and the speed text move left, by at most a third of the slider.
+			// is short, the slider gets shorter at its right end (its left end stays clear of its title) and the speed text
+			// moves left, by at most a third of the slider.
 			const Int need = boxHeight + 6 + measureText(font, boxText);
 			const Int limit = textStartLeftOf(parent, rightNeighbour) - 6;
 			boxW = need;
@@ -247,9 +248,12 @@ void GameSpeedControl::init(GameWindow *parent, GameWindow *slider, GameWindow *
 				Int sliderW = 0, sliderH = 0;
 				m_slider->winGetSize(&sliderW, &sliderH);
 				const Int shift = min(boxX + need - limit, sliderW / 3);
-				Int sx = 0, sy = 0;
-				m_slider->winGetPosition(&sx, &sy);
-				m_slider->winSetPosition(sx - shift, sy);
+				Int minVal = 0, maxVal = 0;
+				GadgetSliderGetMinMax(m_slider, &minVal, &maxVal);
+				const Int pos = GadgetSliderGetPosition(m_slider);
+				m_slider->winSetSize(sliderW - shift, sliderH);
+				TheWindowManager->winSendSystemMsg(m_slider, GSM_SET_MIN_MAX, minVal, maxVal);
+				GadgetSliderSetPosition(m_slider, pos);
 				Int tx = 0, ty = 0;
 				m_text->winGetPosition(&tx, &ty);
 				m_text->winSetPosition(tx - shift, ty);
