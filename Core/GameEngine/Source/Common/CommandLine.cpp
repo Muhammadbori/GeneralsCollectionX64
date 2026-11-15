@@ -882,6 +882,24 @@ Int parseServeReplayStopAfter(char *args[], int num)
 	return 1;
 }
 
+// TheSuperHackers @feature O31 (test switches) -serveReplayOutsideMax <n>: outside viewers a source serves itself before it
+// sends further ones to relays (default 4); -watchRoomObserver: a -watchReplay viewer says it is a room observer (served
+// up to the source's maximum, never sent on).
+Int parseServeReplayOutsideMax(char *args[], int num)
+{
+	if (num > 1)
+	{
+		ReplayStream::configureServeOutsideMax(atoi(args[1]));
+		return 2;
+	}
+	return 1;
+}
+Int parseWatchRoomObserver(char *args[], int num)
+{
+	ReplayStream::configureWatchRoomObserver();
+	return 1;
+}
+
 // -watchReplay <host:port>[,<host:port>...]: follow a live replay from these sources, hopping to the next one when a
 // source is lost. Like -followReplay it may run next to the source on the same PC (another instance).
 Int parseWatchReplay(char *args[], int num)
@@ -1976,6 +1994,8 @@ static CommandLineParam paramsForStartup[] =
 	{ "-serveReplayRate", parseServeReplayRate },
 	{ "-serveReplayStopAfter", parseServeReplayStopAfter },
 	{ "-watchReplay", parseWatchReplay },
+	{ "-serveReplayOutsideMax", parseServeReplayOutsideMax },
+	{ "-watchRoomObserver", parseWatchRoomObserver },
 	{ "-voiceTest", parseVoiceTest },
 	{ "-netLab", parseNetLab },
 	{ "-netLabPlayers", parseNetLabPlayers },

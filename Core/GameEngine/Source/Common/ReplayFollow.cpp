@@ -167,6 +167,11 @@ void ReplayFollow::configure(Int delaySeconds, Real catchUpFactor)
 	s_catchUp = catchUpFactor < 1.0f ? 1.0f : (catchUpFactor > 8.0f ? 8.0f : catchUpFactor);
 }
 
+void ReplayFollow::turnOff()
+{
+	s_on = FALSE;
+}
+
 Bool ReplayFollow::isOn()
 {
 	return s_on && s_reading;

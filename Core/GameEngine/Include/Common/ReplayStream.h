@@ -40,6 +40,17 @@
 // counter} (at least every half second), or "NOPE" 0 (rejected: another game, or full). The source sends LIVE for a frame
 // only after the bytes that were in its file when it read that frame's side file.
 // -serveReplayStopAfter <seconds> (test only): the server stops after that time (its game goes on): a forced source loss.
+//
+// TheSuperHackers @feature O31 (row 21, step 3) LAN observers and outside viewers:
+//   - The server can listen on the LAN address (configureServeAddress; a LAN match's players serve on their lobby address,
+//     port 8090) instead of 127.0.0.1.
+//   - Hello version 2 (28 bytes) adds u32 flags (bit 0: a room observer) and u32 relay port (the viewer serves its mirror
+//     on that port of its own address; 0: it does not). A server takes room observers up to its maximum, but outside
+//     viewers only up to configureServeOutsideMax (default 4): a further outside viewer gets "MORE" {count, count x (ip,
+//     port)}: the addresses of viewers that relay, then "NOPE". The viewer adds them to its sources and goes there, so
+//     viewers feed viewers. A version 1 hello is served as before.
+//   - The viewer tries its sources fastest first (a connect time probe at the start).
+//   - beginWatching starts the mirror without waiting (a LAN screen keeps running); headerReady says when to play.
 // Each game with a server or a mirror writes ReplayStream.log in its user data folder.
 
 #pragma once
@@ -55,6 +66,20 @@ namespace ReplayStream
 	void configureServeRate(Int kilobytesPerSecond);
 	void configureServeStopAfter(Int seconds);
 	void configureWatch(const char *sources);
+	/// O31: the address the server listens on (host order; 0: 127.0.0.1) and the outside viewers one source serves itself.
+	void configureServeAddress(UnsignedInt ipHostOrder);
+	/// O31: serve on this port unless a port was given already (-serveReplay wins).
+	void configureServeDefault(Int port);
+	void configureServeOutsideMax(Int viewers);
+	/// O31 (-watchRoomObserver): a command line viewer's hello says "room observer".
+	void configureWatchRoomObserver();
+	/// O31: the sources as addresses (host order) and one port; 'roomObserver' marks the hello (bit 0 of its flags).
+	void configureWatchList(const UnsignedInt *ipsHostOrder, Int count, Int port, Bool roomObserver);
+	/// O31: starts the mirror without waiting for the header (FALSE: no source, or no thread); 'localPath' is the mirror.
+	Bool beginWatching(AsciiString &localPath);
+	Bool headerReady();
+	/// O31: stops the mirror and forgets the sources (a LAN viewer is done); the server stays as it is.
+	void stopWatching();
 
 	/// TRUE when -watchReplay was given (the replay to play comes from a source).
 	Bool isWatching();
