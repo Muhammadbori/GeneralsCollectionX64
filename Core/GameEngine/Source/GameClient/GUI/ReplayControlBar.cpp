@@ -29,6 +29,7 @@
 #include "Common/NameKeyGenerator.h"
 #include "Common/Recorder.h"
 #include "Common/ReplayFollow.h"
+#include "Common/ReplayStream.h"
 #include "GameClient/Display.h"
 #include "GameClient/DisplayString.h"
 #include "GameClient/DisplayStringManager.h"
@@ -615,6 +616,12 @@ UnicodeString ReplayControl::timeText(UnsignedInt frame)
 void ReplayControl::update()
 {
 	const Bool inReplay = TheGameLogic != nullptr && TheGameLogic->isInReplayGame();
+	// TheSuperHackers @feature (S16) A watched game whose stream is lost: the watcher is told once.
+	if (ReplayStream::takeLostNotice() && TheInGameUI != nullptr)
+	{
+		TheInGameUI->message(text("GUI:ReplayStreamLost", L"The game's stream was lost: the replay plays what it has to the end.",
+			L"\x0422\x0440\x0430\x043D\x0441\x043B\x044F\x0446\x0438\x044F \x0438\x0433\x0440\x044B \x043F\x043E\x0442\x0435\x0440\x044F\x043D\x0430: \x0437\x0430\x043F\x0438\x0441\x044C \x043F\x0440\x043E\x0438\x0433\x0440\x044B\x0432\x0430\x0435\x0442\x0441\x044F \x0434\x043E \x043A\x043E\x043D\x0446\x0430 \x0442\x043E\x0433\x043E, \x0447\x0442\x043E \x043F\x043E\x043B\x0443\x0447\x0435\x043D\x043E."));
+	}
 	if (inReplay && s_startSpeed >= 0 && !s_startSpeedApplied)
 	{
 		s_startSpeedApplied = TRUE;
