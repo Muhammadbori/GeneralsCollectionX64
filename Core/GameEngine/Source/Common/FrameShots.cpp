@@ -27,6 +27,8 @@
 #include "Common/Recorder.h"
 
 #include "GameClient/Display.h"
+#include "GameClient/GameWindowManager.h"
+#include "GameClient/Shell.h"
 #include "GameClient/KeyDefs.h"
 #include "GameClient/LookAtXlat.h"
 #include "GameClient/View.h"
@@ -77,6 +79,98 @@ namespace
 	};
 	std::vector<TestInputSpec> s_testInputs;
 	Int s_testLogicFps = 0;
+
+	//---------------------------------------------------------------------------------------------------------------
+	// -uiScript: the steps. One step per line, '#' starts a comment, words separated by spaces:
+	//   scale W H              the coordinates of the next steps are for a W x H client area, scaled to the real one
+	//   timeout MS             the whole script ends with exit code 5 after MS milliseconds (default 300000)
+	//   wait MS                wait MS milliseconds
+	//   waitframes N           wait N engine updates
+	//   waitshell              wait until the shell menu is up (a shell screen is shown and its animation has ended)
+	//   waitgame               wait until a match (not the shell map) runs
+	//   move X Y               move the pointer to X Y (it stays there for the next steps)
+	//   click X Y [HOVER HOLD] move to X Y, wait HOVER ms (default 500), left button down, HOLD ms (default 200), up
+	//   rclick X Y [HOVER HOLD] the same with the right button
+	//   key NAME               press and release a key: ESC TAB ENTER SPACE BACKSPACE UP DOWN LEFT RIGHT F1..F12 A..Z 0..9
+	//   text WORDS             type the rest of the line into the window that has the keyboard focus
+	//   shot NAME              save <shot folder>\NAME.png after the next drawn frame (the -shotDir folder)
+	//   exit [CODE]            end the game through the normal quit path, after the pictures are written
+	struct UiStep
+	{
+		enum Op { OP_SCALE, OP_TIMEOUT, OP_WAIT, OP_WAITFRAMES, OP_WAITSHELL, OP_WAITGAME, OP_MOVE, OP_CLICK, OP_RCLICK, OP_KEY,
+			OP_TEXT, OP_SHOT, OP_EXIT };
+		Op op;
+		Int a, b, c, d;
+		AsciiString text;
+		Int line;
+	};
+	std::vector<UiStep> s_uiSteps;
+	size_t s_uiNext = 0;
+	Bool s_uiStepStarted = FALSE;
+	UnsignedInt s_uiStepStartMs = 0;
+	UnsignedInt s_uiStepStartUpdate = 0;
+	UnsignedInt s_uiUpdates = 0;
+	UnsignedInt s_uiStartMs = 0;
+	UnsignedInt s_uiTimeoutMs = 300000;
+	Int s_uiPhase = 0;
+	ICoord2D s_uiPointer = { 0, 0 };
+	Int s_uiScaleW = 0, s_uiScaleH = 0;
+	FILE *s_uiLog = nullptr;
+
+	struct UiKey { const char *name; Int key; };
+	const UiKey s_uiKeys[] =
+	{
+		{ "ESC", KEY_ESC }, { "TAB", KEY_TAB }, { "ENTER", KEY_ENTER }, { "SPACE", KEY_SPACE }, { "BACKSPACE", KEY_BACKSPACE },
+		{ "UP", KEY_UP }, { "DOWN", KEY_DOWN }, { "LEFT", KEY_LEFT }, { "RIGHT", KEY_RIGHT },
+		{ "F1", KEY_F1 }, { "F2", KEY_F2 }, { "F3", KEY_F3 }, { "F4", KEY_F4 }, { "F5", KEY_F5 }, { "F6", KEY_F6 },
+		{ "F7", KEY_F7 }, { "F8", KEY_F8 }, { "F9", KEY_F9 }, { "F10", KEY_F10 }, { "F11", KEY_F11 }, { "F12", KEY_F12 },
+		{ "A", KEY_A }, { "B", KEY_B }, { "C", KEY_C }, { "D", KEY_D }, { "E", KEY_E }, { "F", KEY_F }, { "G", KEY_G },
+		{ "H", KEY_H }, { "I", KEY_I }, { "J", KEY_J }, { "K", KEY_K }, { "L", KEY_L }, { "M", KEY_M }, { "N", KEY_N },
+		{ "O", KEY_O }, { "P", KEY_P }, { "Q", KEY_Q }, { "R", KEY_R }, { "S", KEY_S }, { "T", KEY_T }, { "U", KEY_U },
+		{ "V", KEY_V }, { "W", KEY_W }, { "X", KEY_X }, { "Y", KEY_Y }, { "Z", KEY_Z },
+		{ "0", KEY_0 }, { "1", KEY_1 }, { "2", KEY_2 }, { "3", KEY_3 }, { "4", KEY_4 }, { "5", KEY_5 }, { "6", KEY_6 },
+		{ "7", KEY_7 }, { "8", KEY_8 }, { "9", KEY_9 },
+	};
+
+	void uiLog(const char *format, ...)
+	{
+		if (s_uiLog == nullptr)
+			return;
+		va_list args;
+		va_start(args, format);
+		fprintf(s_uiLog, "[%8.3fs] ", (timeGetTime() - s_uiStartMs) / 1000.0);
+		vfprintf(s_uiLog, format, args);
+		fprintf(s_uiLog, "\n");
+		fflush(s_uiLog);
+		va_end(args);
+	}
+
+	ICoord2D uiPoint(Int x, Int y)
+	{
+		ICoord2D p = { x, y };
+		if (s_uiScaleW > 0 && s_uiScaleH > 0 && TheDisplay != nullptr)
+		{
+			p.x = x * (Int)TheDisplay->getWidth() / s_uiScaleW;
+			p.y = y * (Int)TheDisplay->getHeight() / s_uiScaleH;
+		}
+		return p;
+	}
+
+	void uiMouse(GameMessage::Type type)
+	{
+		GameMessage *msg = TheMessageStream->appendMessage(type);
+		msg->appendPixelArgument(s_uiPointer);
+		msg->appendIntegerArgument(0);
+		if (type != GameMessage::MSG_RAW_MOUSE_POSITION)
+			msg->appendIntegerArgument((Int)timeGetTime());
+	}
+
+	void uiKey(Int key, Bool down)
+	{
+		GameMessage *msg = TheMessageStream->appendMessage(down ? GameMessage::MSG_RAW_KEY_DOWN : GameMessage::MSG_RAW_KEY_UP);
+		msg->appendIntegerArgument(key);
+		msg->appendIntegerArgument(down ? KEY_STATE_DOWN : KEY_STATE_UP);
+	}
 
 	Int64 queryTicks()
 	{
@@ -148,7 +242,257 @@ void FrameShots::setSaveFrames(const char *commaSeparatedFrames)
 
 void FrameShots::updateEnabled()
 {
-	s_enabled = !s_frames.empty() || !s_saveFrames.empty();
+	s_enabled = !s_frames.empty() || !s_saveFrames.empty() || !s_uiSteps.empty();
+}
+
+void FrameShots::setUiScript(const char *path)
+{
+	s_uiSteps.clear();
+	FILE *file = fopen(path, "r");
+	if (file == nullptr)
+	{
+		// an unattended run must not wait behind a message box: the script is one step, exit with code 7
+		DEBUG_LOG(("-uiScript: cannot open %s", path));
+		UiStep step;
+		step.op = UiStep::OP_EXIT;
+		step.a = 7;
+		step.b = step.c = step.d = 0;
+		step.line = 0;
+		s_uiSteps.push_back(step);
+		updateEnabled();
+		return;
+	}
+	char line[1024];
+	Int lineNo = 0;
+	while (fgets(line, sizeof(line), file) != nullptr)
+	{
+		++lineNo;
+		char *hash = strchr(line, '#');
+		if (hash != nullptr)
+			*hash = '\0';
+		char word[64] = {};
+		Int consumed = 0;
+		if (sscanf(line, " %63s%n", word, &consumed) != 1)
+			continue;
+		UiStep step;
+		step.a = step.b = step.c = step.d = 0;
+		step.line = lineNo;
+		const char *rest = line + consumed;
+		Int a = 0, b = 0, c = 500, d = 200;
+		const Int n = sscanf(rest, "%d %d %d %d", &a, &b, &c, &d);
+		Bool ok = TRUE;
+		if (stricmp(word, "scale") == 0) { step.op = UiStep::OP_SCALE; ok = n >= 2; }
+		else if (stricmp(word, "timeout") == 0) { step.op = UiStep::OP_TIMEOUT; ok = n >= 1; }
+		else if (stricmp(word, "wait") == 0) { step.op = UiStep::OP_WAIT; ok = n >= 1; }
+		else if (stricmp(word, "waitframes") == 0) { step.op = UiStep::OP_WAITFRAMES; ok = n >= 1; }
+		else if (stricmp(word, "waitshell") == 0) { step.op = UiStep::OP_WAITSHELL; }
+		else if (stricmp(word, "waitgame") == 0) { step.op = UiStep::OP_WAITGAME; }
+		else if (stricmp(word, "move") == 0) { step.op = UiStep::OP_MOVE; ok = n >= 2; }
+		else if (stricmp(word, "click") == 0) { step.op = UiStep::OP_CLICK; ok = n >= 2; }
+		else if (stricmp(word, "rclick") == 0) { step.op = UiStep::OP_RCLICK; ok = n >= 2; }
+		else if (stricmp(word, "exit") == 0) { step.op = UiStep::OP_EXIT; if (n < 1) a = 0; }
+		else if (stricmp(word, "key") == 0 || stricmp(word, "text") == 0 || stricmp(word, "shot") == 0)
+		{
+			step.op = stricmp(word, "key") == 0 ? UiStep::OP_KEY : (stricmp(word, "text") == 0 ? UiStep::OP_TEXT : UiStep::OP_SHOT);
+			while (*rest == ' ' || *rest == '\t')
+				++rest;
+			AsciiString text(rest);
+			text.trim();
+			step.text = text;
+			ok = !text.isEmpty();
+		}
+		else
+		{
+			ok = FALSE;
+		}
+		if (!ok)
+		{
+			DEBUG_LOG(("-uiScript: line %d is not a step: %s", lineNo, line));
+			continue;
+		}
+		step.a = a; step.b = b; step.c = c; step.d = d;
+		s_uiSteps.push_back(step);
+	}
+	fclose(file);
+	s_uiNext = 0;
+	updateEnabled();
+}
+
+/// Plays the -uiScript steps; called once per client update, after the device messages (which are cut off) were appended.
+/// The pointer position is sent on every update, so hovering works as with a real mouse that does not move.
+void FrameShots::runUiScript()
+{
+	if (s_uiSteps.empty() || TheMessageStream == nullptr || TheDisplay == nullptr)
+		return;
+
+	const UnsignedInt now = timeGetTime();
+	if (s_uiUpdates == 0)
+	{
+		s_uiStartMs = now;
+		if (prepareOutput())
+		{
+			AsciiString logPath;
+			logPath.format("%s\\uiscript.log", s_directory.str());
+			s_uiLog = fopen(logPath.str(), "w");
+		}
+		uiLog("ui script: %u steps", (unsigned)s_uiSteps.size());
+	}
+	++s_uiUpdates;
+
+	if (s_exitRequested)
+		return;
+
+	if (now - s_uiStartMs > s_uiTimeoutMs)
+	{
+		uiLog("timeout after %u ms at step %u", s_uiTimeoutMs, (unsigned)s_uiNext + 1);
+		s_failureExitCode = 5;
+		s_exitRequested = TRUE;
+		return;
+	}
+
+	// the pointer, every update
+	uiMouse(GameMessage::MSG_RAW_MOUSE_POSITION);
+
+	while (s_uiNext < s_uiSteps.size())
+	{
+		UiStep &step = s_uiSteps[s_uiNext];
+		if (!s_uiStepStarted)
+		{
+			s_uiStepStarted = TRUE;
+			s_uiStepStartMs = now;
+			s_uiStepStartUpdate = s_uiUpdates;
+			s_uiPhase = 0;
+			uiLog("step %u (line %d)", (unsigned)s_uiNext + 1, step.line);
+		}
+		const UnsignedInt elapsed = now - s_uiStepStartMs;
+		Bool done = TRUE;
+
+		switch (step.op)
+		{
+		case UiStep::OP_SCALE:
+			s_uiScaleW = step.a;
+			s_uiScaleH = step.b;
+			break;
+		case UiStep::OP_TIMEOUT:
+			s_uiTimeoutMs = (UnsignedInt)step.a;
+			break;
+		case UiStep::OP_WAIT:
+			done = elapsed >= (UnsignedInt)step.a;
+			break;
+		case UiStep::OP_WAITFRAMES:
+			done = s_uiUpdates - s_uiStepStartUpdate >= (UnsignedInt)step.a;
+			break;
+		case UiStep::OP_WAITSHELL:
+			done = TheShell != nullptr && TheShell->isShellActive() && TheShell->getScreenCount() > 0 && TheShell->top() != nullptr
+				&& TheShell->isAnimFinished();
+			break;
+		case UiStep::OP_WAITGAME:
+			done = TheGameLogic != nullptr && TheGameLogic->isInGame() && !TheGameLogic->isInShellGame();
+			break;
+		case UiStep::OP_MOVE:
+			s_uiPointer = uiPoint(step.a, step.b);
+			uiMouse(GameMessage::MSG_RAW_MOUSE_POSITION);
+			break;
+		case UiStep::OP_CLICK:
+		case UiStep::OP_RCLICK:
+		{
+			const Bool right = step.op == UiStep::OP_RCLICK;
+			done = FALSE;
+			if (s_uiPhase == 0)
+			{
+				s_uiPointer = uiPoint(step.a, step.b);
+				uiMouse(GameMessage::MSG_RAW_MOUSE_POSITION);
+				s_uiPhase = 1;
+			}
+			else if (s_uiPhase == 1 && elapsed >= (UnsignedInt)step.c)
+			{
+				uiMouse(right ? GameMessage::MSG_RAW_MOUSE_RIGHT_BUTTON_DOWN : GameMessage::MSG_RAW_MOUSE_LEFT_BUTTON_DOWN);
+				s_uiPhase = 2;
+				s_uiStepStartMs = now;
+			}
+			else if (s_uiPhase == 2 && elapsed >= (UnsignedInt)step.d)
+			{
+				uiMouse(right ? GameMessage::MSG_RAW_MOUSE_RIGHT_BUTTON_UP : GameMessage::MSG_RAW_MOUSE_LEFT_BUTTON_UP);
+				uiLog("%s at %d %d", right ? "rclick" : "click", s_uiPointer.x, s_uiPointer.y);
+				done = TRUE;
+			}
+			break;
+		}
+		case UiStep::OP_KEY:
+		{
+			Int key = KEY_NONE;
+			for (size_t i = 0; i < ARRAY_SIZE(s_uiKeys); ++i)
+			{
+				if (step.text.compareNoCase(s_uiKeys[i].name) == 0)
+					key = s_uiKeys[i].key;
+			}
+			if (key == KEY_NONE)
+			{
+				uiLog("unknown key %s", step.text.str());
+				break;
+			}
+			// down on this update, up on the next one
+			done = FALSE;
+			if (s_uiPhase == 0)
+			{
+				uiKey(key, TRUE);
+				s_uiPhase = 1;
+			}
+			else
+			{
+				uiKey(key, FALSE);
+				uiLog("key %s", step.text.str());
+				done = TRUE;
+			}
+			break;
+		}
+		case UiStep::OP_TEXT:
+		{
+			GameWindow *focus = TheWindowManager != nullptr ? TheWindowManager->winGetFocus() : nullptr;
+			if (focus == nullptr)
+			{
+				uiLog("text: no window has the keyboard focus");
+				break;
+			}
+			for (Int i = 0; i < step.text.getLength(); ++i)
+			{
+				TheWindowManager->winSendInputMsg(focus, GWM_IME_CHAR, (WindowMsgData)(UnsignedByte)step.text.getCharAt(i), 0);
+			}
+			uiLog("text %s", step.text.str());
+			break;
+		}
+		case UiStep::OP_SHOT:
+		{
+			// two drawn frames after the step starts, so the picture shows the effect of the steps before
+			done = FALSE;
+			if (s_uiPhase == 0)
+			{
+				s_uiPhase = 1;
+				s_uiStepStartUpdate = TheDisplay->getRenderedFrameCount();
+			}
+			else if (TheDisplay->getRenderedFrameCount() >= s_uiStepStartUpdate + 2 && prepareOutput())
+			{
+				AsciiString filePath;
+				filePath.format("%s\\%s.png", s_directory.str(), step.text.str());
+				TheDisplay->takeScreenShotToFile(SCREENSHOT_PNG, filePath.str());
+				uiLog("shot %s", filePath.str());
+				done = TRUE;
+			}
+			break;
+		}
+		case UiStep::OP_EXIT:
+			uiLog("exit %d", step.a);
+			s_failureExitCode = step.a;
+			s_exitRequested = TRUE;
+			s_uiNext = s_uiSteps.size();
+			return;
+		}
+
+		if (!done)
+			return;
+		++s_uiNext;
+		s_uiStepStarted = FALSE;
+	}
 }
 
 void FrameShots::setNoImage(Bool noImage)
@@ -216,6 +560,8 @@ void FrameShots::setTestLogicFps(Int fps)
 
 void FrameShots::injectTestInput()
 {
+	runUiScript();
+
 	if (s_testLogicFps > 0 && TheGameLogic != nullptr && TheGameLogic->isInGame() && TheFramePacer != nullptr)
 		TheFramePacer->setLogicTimeScaleFps(s_testLogicFps);
 

@@ -691,6 +691,22 @@ Int OptionPreferences::getRenderFpsLimit()
 	return RenderFpsPreset::parseUserLimit(it->second.str());
 }
 
+Int OptionPreferences::getCounterStyle() const
+{
+	OptionPreferences::const_iterator it = find("CounterStyle");
+	if (it != end() && stricmp(it->second.str(), "GenTool") == 0)
+		return 1;
+	return 0;
+}
+
+Int OptionPreferences::getScreenshotFormat() const
+{
+	OptionPreferences::const_iterator it = find("ScreenshotFormat");
+	if (it != end() && stricmp(it->second.str(), "Png") == 0)
+		return SCREENSHOT_PNG;
+	return SCREENSHOT_JPEG;
+}
+
 SnowStyle OptionPreferences::getSnowStyle() const
 {
 	OptionPreferences::const_iterator it = find("SnowStyle");

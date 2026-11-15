@@ -126,6 +126,10 @@ public:
 	Int getRenderFpsLimit();
 	/// TheSuperHackers @feature Optional key SnowStyle: Classic or Large, SNOW_STYLE_DEFAULT if absent or unknown.
 	SnowStyle getSnowStyle() const;
+	/// TheSuperHackers @feature Optional key CounterStyle: Hackers (0, the default) or GenTool (1), the look of the top counters.
+	Int getCounterStyle() const;
+	/// TheSuperHackers @feature Optional key ScreenshotFormat: Jpeg (the default) or Png, the format of the screenshot key.
+	Int getScreenshotFormat() const;
 	Bool getBuildingOcclusionEnabled();
 	Int getParticleCap();
 

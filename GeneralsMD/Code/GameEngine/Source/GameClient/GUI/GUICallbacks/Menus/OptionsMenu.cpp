@@ -65,6 +65,8 @@
 #include "GameClient/ShellHooks.h"
 #include "GameClient/GUICallbacks.h"
 #include "GameClient/GlobalLanguage.h"
+#include "GameClient/LocalizedFallback.h"
+#include "GameClient/OptionsSections.h"
 #include "GameNetwork/FirewallHelper.h"
 #include "GameNetwork/IPEnumeration.h"
 #include "GameNetwork/GameSpyOverlay.h"
@@ -365,10 +367,15 @@ static void setDefaults()
 		GadgetCheckBoxSetChecked( checkProps, TheGlobalData->m_useTrees);
 	}
 	}
+	// TheSuperHackers @feature The settings of the options sections.
+	OptionsSections::setDefaults();
 }
 
 static void saveOptions()
 {
+	// TheSuperHackers @feature The options sections write their settings into pref first, so the code below applies them.
+	OptionsSections::save(pref);
+
 	Int index;
 	Int val;
 	//-------------------------------------------------------------------------------------------------
@@ -886,6 +893,7 @@ static void saveOptions()
 }
 
 static void DestroyOptionsLayout() {
+	OptionsSections::shutdown();
 
 	SignalUIInteraction(SHELL_SCRIPT_HOOK_OPTIONS_CLOSED);
 
@@ -895,6 +903,9 @@ static void DestroyOptionsLayout() {
 
 static void showAdvancedOptions()
 {
+	// TheSuperHackers @feature The custom detail controls are on the graphics section, not in a separate panel.
+	if (OptionsSections::isActive())
+		return;
 	WinAdvancedDisplay->winHide(FALSE);
 }
 
@@ -1251,7 +1262,7 @@ void OptionsMenuInit( WindowLayout *layout, void *userData )
 	GadgetComboBoxAddEntry(comboBoxDetail, TheGameText->fetch("GUI:Low"), color);
 	GadgetComboBoxAddEntry(comboBoxDetail, TheGameText->fetch("GUI:Medium"), color);
 	GadgetComboBoxAddEntry(comboBoxDetail, TheGameText->fetch("GUI:High"), color);
-	GadgetComboBoxAddEntry(comboBoxDetail, TheGameText->FETCH_OR_SUBSTITUTE("GUI:VeryHigh", L"Very High"), color);
+	GadgetComboBoxAddEntry(comboBoxDetail, TheGameText->FETCH_OR_SUBSTITUTE("GUI:VeryHigh", localizedFallback(L"Very High", L"\x041E\x0447\x0435\x043D\x044C \x0432\x044B\x0441\x043E\x043A\x0430\x044F")), color);
 	GadgetComboBoxAddEntry(comboBoxDetail, TheGameText->fetch("GUI:Custom"), color);
 	static_assert(STATIC_GAME_LOD_COUNT == 5, "Wrong combo box count");
 
@@ -1423,6 +1434,9 @@ void OptionsMenuInit( WindowLayout *layout, void *userData )
 	}
 
 
+	// TheSuperHackers @feature The options screen in sections (OptionsSections.h), after every control is set up.
+	OptionsSections::init(pref);
+
 	TheWindowManager->winSetModal(parent);
 	ignoreSelected = FALSE;
 }
@@ -1522,6 +1536,10 @@ WindowMsgHandledType OptionsMenuSystem( GameWindow *window, UnsignedInt msg,
 	static NameKeyType buttonAccept = NAMEKEY_INVALID;
 	static NameKeyType buttonReplayMenu = NAMEKEY_INVALID;
 	static NameKeyType buttonKeyboardOptionsMenu = NAMEKEY_INVALID;
+
+	// TheSuperHackers @feature The section buttons and the new controls of the options sections come first.
+	if (!ignoreSelected && OptionsSections::onSystem(msg, mData1, mData2))
+		return MSG_HANDLED;
 
 	switch( msg )
 	{
