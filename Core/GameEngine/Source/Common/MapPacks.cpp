@@ -132,16 +132,34 @@ namespace
 		return UnicodeString(buffer);
 	}
 
+	/// TheSuperHackers @bugfix (M2) A path for the file functions that is not limited to 260 characters: the full path
+	/// with the \\?\ prefix (a deep game folder plus a long map name can pass 260, and the copy failed with "path
+	/// not found").
+	AsciiString longPath(const char *path)
+	{
+		if (strncmp(path, "\\\\?\\", 4) == 0 || strncmp(path, "\\\\", 2) == 0) {
+			return AsciiString(path);   // already long, or a network path (left as it is)
+		}
+		static char full[32768];
+		const DWORD n = GetFullPathNameA(path, sizeof(full), full, nullptr);
+		if (n == 0 || n >= sizeof(full)) {
+			return AsciiString(path);
+		}
+		AsciiString out("\\\\?\\");
+		out.concat(full);
+		return out;
+	}
+
 	Bool isDirectory(const char *path)
 	{
-		const DWORD a = GetFileAttributesA(path);
+		const DWORD a = GetFileAttributesA(longPath(path).str());
 		return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY) != 0;
 	}
 
 	/// The names in 'folder' (with a trailing backslash): sub folders or files, sorted.
 	void listNames(const AsciiString &folder, Bool directories, std::vector<AsciiString> &out)
 	{
-		AsciiString pattern = folder;
+		AsciiString pattern = longPath(folder.str());
 		pattern.concat("*");
 		WIN32_FIND_DATAA data;
 		HANDLE find = FindFirstFileA(pattern.str(), &data);
@@ -175,14 +193,15 @@ namespace
 			crc.computeCRC(name.str(), name.getLength());
 			AsciiString path = folder;
 			path.concat(files[i]);
-			if (FILE *fp = fopen(path.str(), "rb"))
+			HANDLE file = CreateFileA(longPath(path.str()).str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+			if (file != INVALID_HANDLE_VALUE)
 			{
-				char buffer[65536];
-				size_t got;
-				while ((got = fread(buffer, 1, sizeof(buffer), fp)) > 0) {
+				static char buffer[65536];
+				DWORD got = 0;
+				while (ReadFile(file, buffer, sizeof(buffer), &got, nullptr) && got > 0) {
 					crc.computeCRC(buffer, (Int)got);
 				}
-				fclose(fp);
+				CloseHandle(file);
 			}
 		}
 		std::vector<AsciiString> dirs;
@@ -481,6 +500,63 @@ namespace
 		GadgetButtonSetText(button, textWidth(button, longText) <= w - 12 ? longText : shortText);
 	}
 
+	/// TheSuperHackers @bugfix (M1) The question's three buttons sized by their texts and spread over the box (the
+	/// box's own button cells are too narrow for "Установить / Позже / Больше не спрашивать"); a short text is used
+	/// only when the long ones cannot fit side by side.
+	void layoutButtons(GameWindow *box, const UnicodeString longText[3], const UnicodeString shortText[3])
+	{
+		static const char *const names[3] = { "MessageBox.wnd:ButtonYes", "MessageBox.wnd:ButtonNo", "MessageBox.wnd:ButtonCancel" };
+		GameWindow *button[3];
+		for (Int i = 0; i < 3; ++i)
+		{
+			button[i] = boxChild(box, names[i]);
+			if (button[i] == nullptr) return;
+		}
+		GameWindow *parent = button[0]->winGetParent();
+		if (parent == nullptr) return;
+		Int pw = 0, ph = 0, bx = 0, by = 0, bw = 0, bh = 0;
+		parent->winGetSize(&pw, &ph);
+		button[0]->winGetPosition(&bx, &by);
+		button[0]->winGetSize(&bw, &bh);
+		const Int pad = max(16, bh / 2);
+		const Int margin = max(8, pw / 40);
+		const Int gap = max(6, pw / 60);
+		UnicodeString chosen[3];
+		Int width[3];
+		Int total = 0;
+		for (Int i = 0; i < 3; ++i)
+		{
+			chosen[i] = longText[i];
+			width[i] = max(bw / 2, textWidth(button[i], chosen[i]) + pad);
+			total += width[i];
+		}
+		// too wide: the short texts, longest first, until it fits
+		for (Int pass = 0; pass < 3 && total + 2 * gap + 2 * margin > pw; ++pass)
+		{
+			Int widest = 0;
+			for (Int i = 1; i < 3; ++i) if (width[i] > width[widest]) widest = i;
+			const Int w = max(bw / 2, textWidth(button[widest], shortText[widest]) + pad);
+			total += w - width[widest];
+			width[widest] = w;
+			chosen[widest] = shortText[widest];
+		}
+		if (total + 2 * gap + 2 * margin > pw)
+		{
+			// still too wide: three equal cells (the text may be cut)
+			const Int w = (pw - 2 * gap - 2 * margin) / 3;
+			for (Int i = 0; i < 3; ++i) width[i] = w;
+			total = 3 * w;
+		}
+		Int x = (pw - total - 2 * gap) / 2;
+		for (Int i = 0; i < 3; ++i)
+		{
+			button[i]->winSetPosition(x, by);
+			button[i]->winSetSize(width[i], bh);
+			GadgetButtonSetText(button[i], chosen[i]);
+			x += width[i] + gap;
+		}
+	}
+
 	UnicodeString title()
 	{
 		return text("GUI:MapPacksTitle", L"Maps", L"\x041A\x0430\x0440\x0442\x044B");
@@ -524,12 +600,15 @@ namespace
 			L"They are copied into your maps folder. Your own maps are never changed or removed.",
 			L"\x041E\x043D\x0438 \x0431\x0443\x0434\x0443\x0442 \x0441\x043A\x043E\x043F\x0438\x0440\x043E\x0432\x0430\x043D\x044B \x0432 \x0432\x0430\x0448\x0443 \x043F\x0430\x043F\x043A\x0443 \x043A\x0430\x0440\x0442. \x0412\x0430\x0448\x0438 \x0441\x043E\x0431\x0441\x0442\x0432\x0435\x043D\x043D\x044B\x0435 \x043A\x0430\x0440\x0442\x044B \x043D\x0435 \x0438\x0437\x043C\x0435\x043D\x044F\x044E\x0442\x0441\x044F \x0438 \x043D\x0435 \x0443\x0434\x0430\x043B\x044F\x044E\x0442\x0441\x044F."));
 		GameWindow *box = MessageBoxYesNoCancel(title(), body, onInstall, onLater, onNever);
-		setButtonText(box, "MessageBox.wnd:ButtonYes", text("GUI:MapPacksInstall", L"Install", L"\x0423\x0441\x0442\x0430\x043D\x043E\x0432\x0438\x0442\x044C"),
-			text("GUI:MapPacksInstallShort", L"Install", L"\x0423\x0441\x0442\x0430\x043D\x043E\x0432\x0438\x0442\x044C"));
-		setButtonText(box, "MessageBox.wnd:ButtonNo", text("GUI:MapPacksLater", L"Later", L"\x041F\x043E\x0437\x0436\x0435"),
-			text("GUI:MapPacksLater", L"Later", L"\x041F\x043E\x0437\x0436\x0435"));
-		setButtonText(box, "MessageBox.wnd:ButtonCancel", text("GUI:MapPacksNever", L"Do not ask again", L"\x0411\x043E\x043B\x044C\x0448\x0435 \x043D\x0435 \x0441\x043F\x0440\x0430\x0448\x0438\x0432\x0430\x0442\x044C"),
-			text("GUI:MapPacksNeverShort", L"Never", L"\x041D\x0435 \x0441\x043F\x0440\x0430\x0448\x0438\x0432\x0430\x0442\x044C"));
+		{
+			const UnicodeString longText[3] = { text("GUI:MapPacksInstall", L"Install", L"\x0423\x0441\x0442\x0430\x043D\x043E\x0432\x0438\x0442\x044C"),
+				text("GUI:MapPacksLater", L"Later", L"\x041F\x043E\x0437\x0436\x0435"),
+				text("GUI:MapPacksNever", L"Do not ask again", L"\x0411\x043E\x043B\x044C\x0448\x0435 \x043D\x0435 \x0441\x043F\x0440\x0430\x0448\x0438\x0432\x0430\x0442\x044C") };
+			const UnicodeString shortText[3] = { text("GUI:MapPacksInstallShort", L"Install", L"\x0423\x0441\x0442\x0430\x043D\x043E\x0432\x0438\x0442\x044C"),
+				text("GUI:MapPacksLater", L"Later", L"\x041F\x043E\x0437\x0436\x0435"),
+				text("GUI:MapPacksNeverShort", L"Never", L"\x041D\x0435 \x0441\x043F\x0440\x0430\x0448\x0438\x0432\x0430\x0442\x044C") };
+			layoutButtons(box, longText, shortText);
+		}
 		st.phase = PHASE_ASKING;
 	}
 
@@ -575,7 +654,7 @@ namespace
 	/// and 'error' on the first failure.
 	Bool copyFolder(const AsciiString &from, const AsciiString &to, Bool overwrite, DWORD *error)
 	{
-		if (!isDirectory(to.str()) && !CreateDirectoryA(to.str(), nullptr))
+		if (!isDirectory(to.str()) && !CreateDirectoryA(longPath(to.str()).str(), nullptr))
 		{
 			*error = GetLastError();
 			return FALSE;
@@ -599,7 +678,7 @@ namespace
 			AsciiString a = from, b = to;
 			a.concat(files[i]);
 			b.concat(files[i]);
-			if (!CopyFileA(a.str(), b.str(), overwrite ? FALSE : TRUE))
+			if (!CopyFileA(longPath(a.str()).str(), longPath(b.str()).str(), overwrite ? FALSE : TRUE))
 			{
 				*error = GetLastError();
 				return FALSE;
@@ -713,7 +792,7 @@ namespace
 		st.phase = PHASE_INSTALLING;
 		st.next = 0;
 		st.stopRequested = FALSE;
-		CreateDirectoryA(st.userMaps.str(), nullptr);
+		CreateDirectoryA(longPath(st.userMaps.str()).str(), nullptr);
 	}
 
 	void onLater()
