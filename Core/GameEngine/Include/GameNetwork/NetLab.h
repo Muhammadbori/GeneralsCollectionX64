@@ -35,7 +35,8 @@
 // Network condition simulator (test only, every received packet of the game transport, after the transport's own checks):
 //   delay=<ms> jitter=<ms> loss=<percent> reorder=<percent> kbps=<incoming bandwidth, 0 = no cap> freeze=<ms>
 // given by -netLabSim and changed during a run by writing <user data>\NetLabSim.txt (read twice a second when it
-// changes). freeze=<ms> makes the game thread sleep once for that long (a starved computer). Packets keep their order
+// changes). freeze=<ms> makes the game thread sleep once for that long (a starved computer). O35: resend=<slot> makes
+// this computer treat that player's next frame as broken once (it resets the frame and asks for a resend). Packets keep their order
 // unless reorder is set; a packet that would wait more than a second for the bandwidth is dropped.
 //
 // Measurement: <user data>\NetLab.csv, one line per second (time, logic frame, logic frames in the second, the
@@ -75,6 +76,9 @@ namespace NetLab
 	void noteRunAheadLatency(Int ms);   ///< O23: the latency the run-ahead is computed from
 	void noteStallNotice(UnsignedInt mask);   ///< O23: the "waiting for" notice was shown (a log line)
 	void noteWaitingFor(Int slot);
+	/// O35: TRUE once after "resend=<slot>" was given (-netLabSim or NetLabSim.txt): that slot's next frame counts as broken
+	/// on this computer, so a frame resend is requested (the path of S21 R5).
+	Bool takeForcedResend(Int slot);
 
 	// the simulator, from the transport: TRUE when it took the packet (to be delivered later, or dropped)
 	Bool simTake(const TransportMessage &message);

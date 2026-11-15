@@ -151,7 +151,8 @@ private:
 	void doRelay();
 	void doKeepAlive();
 	void sendRemoteCommand(NetCommandRef *msg);
-	void ackCommand(NetCommandRef *ref, UnsignedInt localSlot);
+	void ackCommand(NetCommandRef *ref, UnsignedInt localSlot, Int senderSlot = -1);   ///< O35: senderSlot, the packet's computer
+	Int slotOfAddress(UnsignedInt addr, UnsignedShort port);                            ///< O35
 
 	Bool processNetCommand(NetCommandRef *ref);
 	void processAckStage1(NetCommandMsg *msg);

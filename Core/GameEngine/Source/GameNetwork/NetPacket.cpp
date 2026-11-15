@@ -318,6 +318,16 @@ Bool NetPacket::isFrameRepeat(NetCommandRef *msg) {
 	if (framemsg->getCommandCount() != 0) {
 		return FALSE;
 	}
+	// TheSuperHackers @bugfix O35 A repeat is read back as the previous command's player (NetPacket::getCommandList takes
+	// the player from the last written field), so it may only stand for a frame info of the same player. Every player
+	// takes one command ID per frame, so the packet router's frame infos of different players for adjacent frames often
+	// have adjacent IDs too; with O23's extra copies they often sit side by side in one packet. Then player B's frame info
+	// was read as player A's: B's frame info was lost and acked under A's ID (which removed A's real one from the
+	// router's resend list), or A got a count of 0 next to its real commands ("more commands than there should be", a
+	// frame resend request). Sender side only: the wire format is unchanged.
+	if (framemsg->getPlayerID() != lastmsg->getPlayerID()) {
+		return FALSE;
+	}
 	if (framemsg->getExecutionFrame() != (lastmsg->getExecutionFrame() + 1)) {
 		return FALSE;
 	}

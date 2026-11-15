@@ -45,6 +45,7 @@ enum { MaxQuitFlushTime = 30000 }; // wait this many milliseconds at most to ret
 // frame) and acks every copy, so the wire format and the lockstep are unchanged; only the sending side decides more.
 enum
 {
+	MaxStaleRetries = 5,	// O35: see doSend
 	ExtraCopies = 2,
 	RetryTimeStart = 1000,	// until the first round trip was measured
 	RetryTimeMin = 100,
@@ -295,6 +296,18 @@ UnsignedInt Connection::doSend() {
 
 			time_t timeLastSent = msg->getTimeLastSent();
 
+			// TheSuperHackers @bugfix O35 A frame-synchronised command for a frame more than MAX_FRAMES_AHEAD behind this
+			// computer's logic, that the timer already sent MaxStaleRetries times without an ack, is given up: no player can
+			// still wait for it (the lockstep keeps every player within the run-ahead of the others; a player that lost it
+			// asks for the frame again). Frame data resent after a request is the only such case; without an ack it used
+			// to be sent again every 2 s for the rest of the match. So no command is retried for ever.
+			if ((timeLastSent != -1) && (msg->getTimerRetries() >= MaxStaleRetries) && IsCommandSynchronized(msg->getCommand()->getNetCommandType())
+				&& (TheGameLogic != nullptr) && (msg->getCommand()->getExecutionFrame() + MAX_FRAMES_AHEAD < TheGameLogic->getFrame())) {
+				m_netCommandList->removeMessage(msg);
+				deleteInstance(msg);
+				msg = next;
+				continue;
+			}
 			if (((curtime - timeLastSent) > m_retryTime) || (timeLastSent == -1)) {
 				notDone = packet.addCommand(msg);
 				if (notDone) {

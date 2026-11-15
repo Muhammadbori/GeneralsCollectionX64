@@ -473,6 +473,8 @@ void ConnectionManager::doRelay() {
 
 			// Get the command list from the packet.
 			NetCommandList *cmdList = packet.getCommandList();
+			// O35: the computer this packet came from (its acks may have to go to it; see ackCommand)
+			const Int senderSlot = slotOfAddress(m_transport->m_inBuffer[i].addr, m_transport->m_inBuffer[i].port);
 
 			// Iterate through the commands in this packet and send them to the proper connections.
 			for (NetCommandRef* cmd = cmdList->getFirstMessage(); cmd; cmd = cmd->getNext()) {
@@ -480,7 +482,7 @@ void ConnectionManager::doRelay() {
 					//GetNetCommandTypeAsString(cmd->getCommand()->getNetCommandType())));
 
 				if (CommandRequiresAck(cmd->getCommand())) {
-					ackCommand(cmd, m_localSlot);
+					ackCommand(cmd, m_localSlot, senderSlot);
 				}
 				if (!processNetCommand(cmd)) {
 					sendRemoteCommand(cmd);
@@ -986,7 +988,10 @@ void ConnectionManager::processAckStage1(NetCommandMsg *msg) {
 	if (ref != nullptr) {
 		if (ref->getCommand()->getNetCommandType() == NETCOMMANDTYPE_FRAMEINFO) {
 			// O23: an ack of a frame info that the retry timer had to send again is no latency sample
-			m_frameMetrics.processLatencyResponse(((NetFrameCommandMsg *)(ref->getCommand()))->getExecutionFrame(), !ref->wasRetriedByTimer());
+			// O35: nor the ack of a frame info the packet router relayed for another player
+			if (ref->getCommand()->getPlayerID() == m_localSlot) {
+				m_frameMetrics.processLatencyResponse(((NetFrameCommandMsg *)(ref->getCommand()))->getExecutionFrame(), !ref->wasRetriedByTimer());
+			}
 		}
 
 		deleteInstance(ref);
@@ -1155,7 +1160,23 @@ void ConnectionManager::handleLocalPlayerLeaving(UnsignedInt frame) {
 /**
  * We just got a message that needs to be ack'd, so ack it!
  */
-void ConnectionManager::ackCommand(NetCommandRef *ref, UnsignedInt localSlot) {
+/**
+ * O35: the slot whose connection has this address (host order) and port; -1 when none.
+ */
+Int ConnectionManager::slotOfAddress(UnsignedInt addr, UnsignedShort port) {
+	Int byAddress = -1;
+	for (Int i = 0; i < MAX_SLOTS; ++i) {
+		if ((m_connections[i] != nullptr) && (m_connections[i]->getUser() != nullptr) && (m_connections[i]->getUser()->GetIPAddr() == addr)) {
+			if (m_connections[i]->getUser()->GetPort() == port) {
+				return i;
+			}
+			byAddress = (byAddress == -1) ? i : -2;
+		}
+	}
+	return byAddress >= 0 ? byAddress : -1;
+}
+
+void ConnectionManager::ackCommand(NetCommandRef *ref, UnsignedInt localSlot, Int senderSlot) {
 	NetCommandMsg *msg = ref->getCommand();
 	NetCommandMsg *ackmsg;
 	UnsignedShort commandID;
@@ -1230,6 +1251,20 @@ void ConnectionManager::ackCommand(NetCommandRef *ref, UnsignedInt localSlot) {
 		} else {
 			DEBUG_CRASH(("I don't know who the packet router is."));
 		}
+	}
+
+	// TheSuperHackers @bugfix O35 A command can come from another computer than its own player: frame data resent after a
+	// frame resend request (sendSingleFrameToPlayer sends every player's commands of a frame, each with its own player
+	// ID). The ack above goes to that player (or to the packet router), never to the computer that resent it, so the
+	// resender never saw an ack and sent the whole lot again every 2 seconds for the rest of the match (S21 R5: 167
+	// commands every 2 s from 44 s to the end on slot 1, 46,285 in all; R8b run 1: 195 every 2 s on slots 1 and 3). A
+	// stage 1 ack also goes straight to the computer the packet came from when that is someone else.
+	if ((senderSlot >= 0) && (senderSlot < MAX_SLOTS) && (senderSlot != (Int)localSlot) && (senderSlot != (Int)msg->getPlayerID())
+		&& (senderSlot != m_packetRouterSlot || m_localSlot == m_packetRouterSlot) && (m_connections[senderSlot] != nullptr)) {
+		NetAckStage1CommandMsg *direct = newInstance(NetAckStage1CommandMsg)(msg);
+		direct->setPlayerID(localSlot);
+		m_connections[senderSlot]->sendNetCommandMsg(direct, 1 << senderSlot);
+		direct->detach();
 	}
 
 	ackmsg->detach();
@@ -1717,6 +1752,12 @@ Bool ConnectionManager::allCommandsReady(UnsignedInt frame, Bool justTesting /* 
 */
 
 			frameRetVal = m_frameData[i]->allCommandsReady(frame, (frame != commandsReadyDebugSpewage) && (justTesting == FALSE));
+			// TheSuperHackers @feature O35 NetLab "resend=<slot>": this frame's data of that player counts as broken once
+			// (the path a frame resend takes, on demand)
+			if ((justTesting == FALSE) && (i != (Int)m_localSlot) && NetLab::takeForcedResend(i)) {
+				m_frameData[i]->resetFrame(frame, FALSE);
+				frameRetVal = FRAMEDATA_RESEND;
+			}
 			if (frameRetVal == FRAMEDATA_NOTREADY) {
 				retval = FALSE;
 				NetLab::noteWaitingFor(i);   // TheSuperHackers @feature NetLab measurement (a note only)
@@ -2597,6 +2638,16 @@ UnsignedInt ConnectionManager::getNextPacketRouterSlot(UnsignedInt playerID) {
 }
 
 void ConnectionManager::requestFrameDataResend(Int playerID, UnsignedInt frame) {
+	// TheSuperHackers @tweak O35 At most one request per player and second (the resent frames come in a few packets; a
+	// second request before they arrived only doubles them).
+	static time_t s_lastRequest[MAX_SLOTS] = { 0 };
+	const time_t now = timeGetTime();
+	if ((playerID >= 0) && (playerID < MAX_SLOTS)) {
+		if ((s_lastRequest[playerID] != 0) && (now - s_lastRequest[playerID] < 1000)) {
+			return;
+		}
+		s_lastRequest[playerID] = now;
+	}
 	NetFrameResendRequestCommandMsg *msg = newInstance(NetFrameResendRequestCommandMsg);
 	msg->setPlayerID(m_localSlot);
 	msg->setFrameToResend(frame);
