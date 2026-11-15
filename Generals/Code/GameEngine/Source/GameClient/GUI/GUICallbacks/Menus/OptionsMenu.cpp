@@ -1151,8 +1151,12 @@ void OptionsMenuInit( WindowLayout *layout, void *userData )
 	Int i=0;
 	for (; i < OptionPreferences::AntiAliasingMode_Count; ++i)
 	{
+		// TheSuperHackers @bugfix O25 (row 30) The fourth entry (8x) has no label in the string files ("MISSING:
+		// 'GUI:AntiAliasing3'"): every entry gets an English and a Russian fallback.
+		static const WideChar *const aaEnglish[OptionPreferences::AntiAliasingMode_Count] = { L"Off", L"Low", L"High", L"Very high" };
+		static const WideChar *const aaRussian[OptionPreferences::AntiAliasingMode_Count] = { L"\x0412\x044B\x043A\x043B.", L"\x041D\x0438\x0437\x043A\x043E\x0435", L"\x0412\x044B\x0441\x043E\x043A\x043E\x0435", L"\x041E\x0447\x0435\x043D\x044C \x0432\x044B\x0441\x043E\x043A\x043E\x0435" };
 		temp.format("GUI:AntiAliasing%d", i);
-		str = TheGameText->fetch( temp );
+		str = TheGameText->FETCH_OR_SUBSTITUTE( temp.str(), localizedFallback(aaEnglish[i], aaRussian[i]) );
 		index = GadgetComboBoxAddEntry(comboBoxAntiAliasing, str, color);
 	}
 	Int val = atoi(selectedAliasingMode.str());

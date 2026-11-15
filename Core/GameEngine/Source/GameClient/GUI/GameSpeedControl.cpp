@@ -35,6 +35,7 @@
 #include "GameClient/DisplayString.h"
 #include "GameClient/Gadget.h"
 #include "GameClient/DisplayStringManager.h"
+#include "GameClient/TickSlider.h"
 
 namespace
 {
@@ -100,6 +101,79 @@ namespace
 	{
 		return step < GameSpeed::MinStep ? GameSpeed::MinStep : (step > GameSpeed::MaxStep ? GameSpeed::MaxStep : step);
 	}
+
+	/// O25: a tick label, "0,5x" in Russian (decimal comma), "0.5x" otherwise.
+	UnicodeString tickLabel(Int step)
+	{
+		const UnicodeString text = GameSpeed::multiplierText(GameSpeed::stepToLogicFps(step));
+		if (!isRussianText()) {
+			return text;
+		}
+		WideChar buffer[32];
+		Int n = 0;
+		for (const WideChar *p = text.str(); *p != 0 && n < 31; ++p) {
+			buffer[n++] = (*p == L'.') ? L',' : *p;
+		}
+		buffer[n] = 0;
+		return UnicodeString(buffer);
+	}
+
+	/// O25: TRUE when no visible window of 'parent' (other than 'win' and the two given, and the frames and backdrops that
+	/// hold the whole of 'win') lies in the rows top..bottom of 'win''s columns, in 'parent' coordinates.
+	Bool rowsFree(GameWindow *parent, GameWindow *win, GameWindow *ignoreA, GameWindow *ignoreB, Int top, Int bottom)
+	{
+		Int pw = 0, ph = 0, x = 0, y = 0, w = 0, h = 0;
+		parent->winGetSize(&pw, &ph);
+		win->winGetPosition(&x, &y);
+		win->winGetSize(&w, &h);
+		if (top < 0 || bottom > ph) {
+			return FALSE;
+		}
+		for (GameWindow *c = parent->winGetChild(); c != nullptr; c = c->winGetNext())
+		{
+			if (c == win || c == ignoreA || c == ignoreB || c->winIsHidden()) {
+				continue;
+			}
+			Int cx = 0, cy = 0, cw = 0, ch = 0;
+			c->winGetPosition(&cx, &cy);
+			c->winGetSize(&cw, &ch);
+			const Bool holdsWin = cx <= x && cy <= y && cx + cw >= x + w && cy + ch >= y + h;
+			if (holdsWin) {
+				continue;   // a frame or backdrop behind the control
+			}
+			if (cx < x + w && cx + cw > x && cy < bottom && cy + ch > top) {
+				return FALSE;
+			}
+		}
+		return TRUE;
+	}
+
+	/// O25: makes 'win' up to 'want' pixels high, taking the free rows above and below it (half each where both are free),
+	/// so the slider gets room for its value and labels without covering anything. Returns the new height.
+	Int growIntoFreeRows(GameWindow *win, Int want, GameWindow *ignoreA, GameWindow *ignoreB)
+	{
+		Int x = 0, y = 0, w = 0, h = 0;
+		win->winGetPosition(&x, &y);
+		win->winGetSize(&w, &h);
+		GameWindow *parent = win->winGetParent();
+		if (parent == nullptr || h >= want) {
+			return h;
+		}
+		const Int extra = want - h;
+		Int maxUp = 0, maxDown = 0;
+		while (maxUp < extra && rowsFree(parent, win, ignoreA, ignoreB, y - maxUp - 1, y + h)) {
+			++maxUp;
+		}
+		while (maxDown < extra && rowsFree(parent, win, ignoreA, ignoreB, y, y + h + maxDown + 1)) {
+			++maxDown;
+		}
+		Int up = min(maxUp, (extra + 1) / 2);
+		const Int down = min(maxDown, extra - up);
+		up = min(maxUp, extra - down);
+		win->winSetPosition(x, y - up);
+		win->winSetSize(w, h + up + down);
+		return h + up + down;
+	}
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -142,6 +216,7 @@ GameSpeedControl::GameSpeedControl()
 	, m_sliderStep(GameSpeed::NormalStep)
 	, m_normal(TRUE)
 	, m_shown(FALSE)
+	, m_textHidden(FALSE)
 {
 }
 
@@ -151,6 +226,7 @@ void GameSpeedControl::init(GameWindow *parent, GameWindow *slider, GameWindow *
 	m_slider = slider;
 	m_text = text;
 	m_checkBox = nullptr;
+	m_textHidden = FALSE;
 	m_sliderStep = GameSpeed::logicFpsToStep(logicFps);
 	m_normal = normal;
 
@@ -274,6 +350,44 @@ void GameSpeedControl::init(GameWindow *parent, GameWindow *slider, GameWindow *
 			// O24: hidden until the menu's enter transition is over (setShown)
 			m_checkBox->winHide(TRUE);
 			m_shown = FALSE;
+		}
+	}
+
+	// TheSuperHackers @feature O25 (item 28) The slider in the look the user chose (TickSlider.h): a large round handle,
+	// a tick and label at every speed step, the value above the handle. The slider takes the free rows above and below
+	// it; when it gets the full height the value is drawn above the handle and the separate "1x" text is hidden, else
+	// the text stays and the slider shows what fits (handle and labels, or the handle alone).
+	if (m_slider != nullptr)
+	{
+		GameFont *font = m_text != nullptr ? m_text->winGetFont() : m_slider->winGetFont();
+		TickSlider::attach(m_slider, font, FALSE);
+		UnicodeString labels[GameSpeed::MaxStep - GameSpeed::MinStep + 1];
+		for (Int step = GameSpeed::MinStep; step <= GameSpeed::MaxStep; ++step) {
+			labels[step - GameSpeed::MinStep] = tickLabel(step);
+		}
+		TickSlider::setLabels(m_slider, labels, GameSpeed::MaxStep - GameSpeed::MinStep + 1);
+		const Int full = TickSlider::fullHeight(font);
+		const Int height = growIntoFreeRows(m_slider, full, m_text, m_checkBox);
+		m_textHidden = m_text != nullptr && height >= full;
+		if (m_textHidden) {
+			m_text->winHide(TRUE);
+		}
+		// the Normal box (and the text when it stays) on the track's line
+		Int sx = 0, sy = 0;
+		m_slider->winGetScreenPosition(&sx, &sy);
+		const Int lineY = sy + TickSlider::trackCenter(m_slider);
+		GameWindow *const onLine[2] = { m_checkBox, m_textHidden ? nullptr : m_text };
+		for (Int i = 0; i < 2; ++i)
+		{
+			GameWindow *w = onLine[i];
+			if (w == nullptr) {
+				continue;
+			}
+			Int wx = 0, wy = 0, ww = 0, wh = 0, ax = 0, ay = 0;
+			w->winGetPosition(&wx, &wy);
+			w->winGetSize(&ww, &wh);
+			w->winGetScreenPosition(&ax, &ay);
+			w->winSetPosition(wx, wy + (lineY - wh / 2) - ay);
 		}
 	}
 	apply();

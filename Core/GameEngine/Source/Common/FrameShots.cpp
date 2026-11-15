@@ -103,10 +103,16 @@ namespace
 	//                          or more. The step only arms the picture and goes on at once: put it before the click that
 	//                          starts the game (the steps do not run while a map loads). Several may be armed.
 	//   exit [CODE]            end the game through the normal quit path, after the pictures are written
+	//   down X Y               (O25) move there and press the left button, and keep it pressed
+	//   downwin NAME [FX FY]   (O25) the same at a point of window NAME (FX, FY in thousandths of its size, default middle)
+	//   drag X Y [MS]          (O25) move the pressed pointer there over MS milliseconds (default 500), a drag event every
+	//                          update, as the real mouse sends them
+	//   dragwin NAME FX FY [MS] (O25) the same to a point of window NAME
+	//   up                     (O25) release the left button where the pointer is
 	struct UiStep
 	{
 		enum Op { OP_SCALE, OP_TIMEOUT, OP_WAIT, OP_WAITFRAMES, OP_WAITSHELL, OP_WAITGAME, OP_MOVE, OP_CLICK, OP_RCLICK, OP_CLICKWIN, OP_KEY,
-			OP_TEXT, OP_SHOT, OP_LOADSHOT, OP_EXIT };
+			OP_TEXT, OP_SHOT, OP_LOADSHOT, OP_EXIT, OP_DOWN, OP_DOWNWIN, OP_DRAG, OP_DRAGWIN, OP_UP };
 		Op op;
 		Int a, b, c, d;
 		AsciiString text;
@@ -165,6 +171,27 @@ namespace
 			p.y = y * (Int)TheDisplay->getHeight() / s_uiScaleH;
 		}
 		return p;
+	}
+
+	ICoord2D s_uiDragFrom = { 0, 0 };   ///< O25: a drag step's start and end (screen pixels)
+	ICoord2D s_uiDragTo = { 0, 0 };
+
+	/// O25: a point of a window, in thousandths of its size (as clickwin), in screen pixels; FALSE when it does not exist.
+	Bool uiWindowPoint(const AsciiString &name, Int fx, Int fy, ICoord2D &p)
+	{
+		GameWindow *win = (TheWindowManager != nullptr && TheNameKeyGenerator != nullptr)
+			? TheWindowManager->winGetWindowFromId(nullptr, TheNameKeyGenerator->nameToKey(name)) : nullptr;
+		if (win == nullptr) {
+			return FALSE;
+		}
+		Int x = 0, y = 0, w = 0, h = 0;
+		win->winGetScreenPosition(&x, &y);
+		win->winGetSize(&w, &h);
+		fx = fx < 0 ? 0 : (fx > 1000 ? 1000 : fx);
+		fy = fy < 0 ? 0 : (fy > 1000 ? 1000 : fy);
+		p.x = x + (w > 1 ? (w - 1) * fx / 1000 : 0);
+		p.y = y + (h > 1 ? (h - 1) * fy / 1000 : 0);
+		return TRUE;
 	}
 
 	void uiMouse(GameMessage::Type type)
@@ -302,6 +329,20 @@ void FrameShots::setUiScript(const char *path)
 		else if (stricmp(word, "click") == 0) { step.op = UiStep::OP_CLICK; ok = n >= 2; }
 		else if (stricmp(word, "rclick") == 0) { step.op = UiStep::OP_RCLICK; ok = n >= 2; }
 		else if (stricmp(word, "exit") == 0) { step.op = UiStep::OP_EXIT; if (n < 1) a = 0; }
+		else if (stricmp(word, "down") == 0) { step.op = UiStep::OP_DOWN; ok = n >= 2; }
+		else if (stricmp(word, "drag") == 0) { step.op = UiStep::OP_DRAG; ok = n >= 2; if (n < 3) c = 500; }
+		else if (stricmp(word, "up") == 0) { step.op = UiStep::OP_UP; }
+		else if (stricmp(word, "downwin") == 0 || stricmp(word, "dragwin") == 0)
+		{
+			const Bool isDrag = stricmp(word, "dragwin") == 0;
+			step.op = isDrag ? UiStep::OP_DRAGWIN : UiStep::OP_DOWNWIN;
+			char name[256] = {};
+			Int fx = 500, fy = 500, ms = 500;
+			const Int got = sscanf(rest, " %255s %d %d %d", name, &fx, &fy, &ms);
+			ok = got >= (isDrag ? 3 : 1);
+			step.text = name;
+			a = fx; b = fy; c = ms; d = 0;
+		}
 		else if (stricmp(word, "loadshot") == 0)
 		{
 			step.op = UiStep::OP_LOADSHOT;
@@ -473,6 +514,77 @@ void FrameShots::runUiScript()
 			}
 			break;
 		}
+		// O25: a held left button and drags (the ticked slider's held state and drag)
+		case UiStep::OP_DOWN:
+		case UiStep::OP_DOWNWIN:
+		{
+			if (step.op == UiStep::OP_DOWNWIN)
+			{
+				ICoord2D p;
+				if (!uiWindowPoint(step.text, step.a, step.b, p))
+				{
+					uiLog("downwin: no window %s", step.text.str());
+					break;
+				}
+				s_uiPointer = p;
+			}
+			else
+			{
+				s_uiPointer = uiPoint(step.a, step.b);
+			}
+			uiMouse(GameMessage::MSG_RAW_MOUSE_POSITION);
+			uiMouse(GameMessage::MSG_RAW_MOUSE_LEFT_BUTTON_DOWN);
+			uiLog("down at %d %d", s_uiPointer.x, s_uiPointer.y);
+			break;
+		}
+		case UiStep::OP_DRAG:
+		case UiStep::OP_DRAGWIN:
+		{
+			done = FALSE;
+			if (s_uiPhase == 0)
+			{
+				ICoord2D target;
+				if (step.op == UiStep::OP_DRAGWIN)
+				{
+					if (!uiWindowPoint(step.text, step.a, step.b, target))
+					{
+						uiLog("dragwin: no window %s", step.text.str());
+						done = TRUE;
+						break;
+					}
+				}
+				else
+				{
+					target = uiPoint(step.a, step.b);
+				}
+				s_uiDragFrom = s_uiPointer;
+				s_uiDragTo = target;
+				s_uiPhase = 1;
+			}
+			const UnsignedInt span = step.c > 0 ? (UnsignedInt)step.c : 1;
+			const Real f = elapsed >= span ? 1.0f : (Real)elapsed / (Real)span;
+			ICoord2D p;
+			p.x = s_uiDragFrom.x + (Int)((s_uiDragTo.x - s_uiDragFrom.x) * f);
+			p.y = s_uiDragFrom.y + (Int)((s_uiDragTo.y - s_uiDragFrom.y) * f);
+			ICoord2D delta;
+			delta.x = p.x - s_uiPointer.x;
+			delta.y = p.y - s_uiPointer.y;
+			s_uiPointer = p;
+			GameMessage *msg = TheMessageStream->appendMessage(GameMessage::MSG_RAW_MOUSE_LEFT_DRAG);
+			msg->appendPixelArgument(s_uiPointer);
+			msg->appendPixelArgument(delta);
+			msg->appendIntegerArgument(0);
+			if (f >= 1.0f)
+			{
+				uiLog("drag to %d %d", s_uiPointer.x, s_uiPointer.y);
+				done = TRUE;
+			}
+			break;
+		}
+		case UiStep::OP_UP:
+			uiMouse(GameMessage::MSG_RAW_MOUSE_LEFT_BUTTON_UP);
+			uiLog("up at %d %d", s_uiPointer.x, s_uiPointer.y);
+			break;
 		case UiStep::OP_KEY:
 		{
 			Int key = KEY_NONE;

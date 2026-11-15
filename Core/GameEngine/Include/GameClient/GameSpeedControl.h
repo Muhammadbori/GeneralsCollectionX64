@@ -74,6 +74,8 @@ public:
 	Int getLogicFps() const;        ///< the speed to play at: 1x while Normal is checked
 	Int getSliderLogicFps() const;  ///< the slider's own speed, kept while Normal is checked
 	Bool isNormal() const { return m_normal; }
+	/// O25: the slider draws the value above its handle, so the separate speed text is hidden (keep it hidden).
+	Bool isTextHidden() const { return m_textHidden; }
 
 private:
 	void apply();
@@ -84,4 +86,5 @@ private:
 	Int m_sliderStep;
 	Bool m_normal;
 	Bool m_shown;
+	Bool m_textHidden;
 };

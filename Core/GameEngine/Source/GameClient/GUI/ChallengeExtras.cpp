@@ -42,6 +42,7 @@
 #include "GameClient/GameWindowManager.h"
 #include "GameClient/Image.h"
 #include "GameClient/LocalizedFallback.h"
+#include "GameClient/TickSlider.h"
 
 //=================================================================================================
 // The stored run
@@ -441,6 +442,10 @@ static void setControlsShown(Bool shown)
 			mine[i]->winHide(!shown);
 		}
 	}
+	// O25: the "1x" text stays hidden when the slider writes the value above its handle
+	if (s.speedText != nullptr && s_speed.isTextHidden()) {
+		s.speedText->winHide(TRUE);
+	}
 	s_speed.setShown(shown);
 	s.shown = shown;
 }
@@ -575,6 +580,16 @@ void ChallengeExtras::init(GameWindow *parentMenu, GameWindow *buttonPlay, GameW
 	const Int boxLeft = sliderX + sx(88) + sx(32) + sx(10);
 	s_speed.init(s.parent, s.speedSlider, s.speedText, s.checkTemplate, "ChallengeMenu.wnd:CheckBoxGameSpeedNormal", fps, normal,
 		boxRight - boxLeft);
+
+	// O25: the slider took the free rows round it (TickSlider look): its title goes on the track's line
+	if (s.speedLabel != nullptr && s.speedSlider != nullptr)
+	{
+		Int lx = 0, ly = 0, lw = 0, lh = 0, sx0 = 0, sy0 = 0;
+		s.speedLabel->winGetPosition(&lx, &ly);
+		s.speedLabel->winGetSize(&lw, &lh);
+		s.speedSlider->winGetPosition(&sx0, &sy0);
+		s.speedLabel->winSetPosition(lx, sy0 + TickSlider::trackCenter(s.speedSlider) - lh / 2);
+	}
 
 	showDifficulty();
 

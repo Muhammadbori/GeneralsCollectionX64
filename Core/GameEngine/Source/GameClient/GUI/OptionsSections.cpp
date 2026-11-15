@@ -37,6 +37,7 @@
 #include "GameClient/DisplayStringManager.h"
 #include "GameClient/GadgetCheckBox.h"
 #include "GameClient/GadgetComboBox.h"
+#include "GameClient/GadgetListBox.h"
 #include "GameClient/GadgetPushButton.h"
 #include "GameClient/GadgetSlider.h"
 #include "GameClient/GadgetStaticText.h"
@@ -46,6 +47,7 @@
 #include "GameClient/Image.h"
 #include "GameClient/LocalizedFallback.h"
 #include "GameClient/MessageBox.h"
+#include "GameClient/TickSlider.h"
 #include "GameLogic/GameLogic.h"
 
 #include <vector>
@@ -374,6 +376,28 @@ namespace
 	};
 	enum { EXISTING_COUNT = (Int)ARRAY_SIZE(kExisting) };
 
+	/// TheSuperHackers @bugfix O25 (row 29) The titles of the three old controls without a label window: our own texts in
+	/// both languages. The string file's are upper case ("TEXTURE RESOLUTION" wrapped to two lines in English).
+	UnicodeString existingTitle(const char *label)
+	{
+		static const Text titles[] =
+		{
+			{ "GUI:AntiAliasing", L"Anti-aliasing", L"\x0421\x0433\x043B\x0430\x0436\x0438\x0432\x0430\x043D\x0438\x0435" },
+			{ "GUI:LowResSlider", L"Texture resolution", L"\x0420\x0430\x0437\x0440\x0435\x0448\x0435\x043D\x0438\x0435 \x0442\x0435\x043A\x0441\x0442\x0443\x0440" },
+			{ "GUI:ParticleCap", L"Particle limit", L"\x041B\x0438\x043C\x0438\x0442 \x0447\x0430\x0441\x0442\x0438\x0446" },
+		};
+		static const char *const ownLabels[] = { "GUI:OptionsAntiAliasing", "GUI:OptionsTextureResolution", "GUI:OptionsParticleLimit" };
+		for (Int i = 0; i < (Int)ARRAY_SIZE(titles); ++i)
+		{
+			if (stricmp(label, titles[i].label) == 0)
+			{
+				const Text own = { ownLabels[i], titles[i].english, titles[i].russian };
+				return textOf(own);
+			}
+		}
+		return TheGameText->fetch(label);
+	}
+
 	/// The old group windows: hidden once their controls are on the pages.
 	const char *const kOldGroups[] = { "VideoParent", "AudioParent", "ScrollParent", "NetworkParent", "WinAdvancedDisplayOptions" };
 
@@ -399,9 +423,9 @@ namespace
 	//---------------------------------------------------------------------------------------------
 	struct SettingState
 	{
-		GameWindow *control;          ///< check box or slider
+		GameWindow *control;          ///< check box, slider or drop-down list
 		GameWindow *label;            ///< KIND_STEPS
-		GameWindow *value;            ///< KIND_STEPS
+		Bool combo;                   ///< KIND_STEPS: a drop-down list (O25), else a slider
 		Int step;
 		Bool touched;                 ///< KIND_STEPS: moved by the player or reset by Defaults; else save keeps the stored value
 	};
@@ -409,8 +433,7 @@ namespace
 	struct PackRowState
 	{
 		GameWindow *label;
-		GameWindow *value;
-		GameWindow *slider;
+		GameWindow *combo;            ///< O25: a drop-down list (was a slider)
 		GameWindow *preview;          ///< draws 'image' in a frame
 		GameWindow *previewText;      ///< "no picture", over the frame
 		const Packs::Pack *choices[MAX_PACK_CHOICES];   ///< nullptr: the base data
@@ -440,16 +463,15 @@ namespace
 		Int pageX, pageY, pageW, pageH, gap, titleH;      ///< where the pages are, for the pages made while filling
 		Bool restartNeeded;          ///< a key that takes effect at the next start changed in this save
 		GameWindow *deviceLabel;     ///< the sound output device row (AudioOutputDevice)
-		GameWindow *deviceValue;
-		GameWindow *deviceSlider;
+		GameWindow *deviceCombo;
 		Int deviceStep;
 		Int deviceInitial;
 		GameWindow *micLabel;        ///< the microphone row (VoiceInputDevice, VoiceChat.h)
-		GameWindow *micValue;
-		GameWindow *micSlider;
+		GameWindow *micCombo;
 		Int micStep;
 		Int micInitial;
 		Section current;
+		Bool quiet;                  ///< O25: lists filled or set by the code: their GCM_SELECTED is not the player's choice
 		SettingState settings[SETTING_COUNT];
 		GameWindow *existing[EXISTING_COUNT];
 		GameWindow *existingLabels[EXISTING_COUNT];
@@ -709,15 +731,18 @@ namespace
 		return text;
 	}
 
+	void selectCombo(GameWindow *combo, Int selected);
+
 	void showStep(Int index)
 	{
 		SettingState &st = s.settings[index];
-		const Setting &set = kSettings[index];
-		if (st.control != nullptr) {
-			GadgetSliderSetPosition(st.control, st.step);
+		if (st.control == nullptr) {
+			return;
 		}
-		if (st.value != nullptr) {
-			GadgetStaticTextSetText(st.value, choiceText(set, st.step));
+		if (st.combo) {
+			selectCombo(st.control, st.step);
+		} else {
+			GadgetSliderSetPosition(st.control, st.step);
 		}
 	}
 
@@ -784,22 +809,25 @@ namespace
 		Int x0, y0, colW, gap, bottom;
 		Int col;
 		Int y;
-		Int valueW;      ///< the width of the value texts of this section's step rows (one column of values)
 		Bool overflow;   ///< an item taller than a column
 
 		void begin(Int section, GameWindow *p, Int left, Int top, Int columnWidth, Int g, Int b)
 		{
 			sec = section; page = p; x0 = left; y0 = top; colW = columnWidth; gap = g; bottom = b; col = 0; y = top;
-			valueW = 0; overflow = FALSE;
+			overflow = FALSE;
 		}
-		/// The position of an item of 'height'.
-		ICoord2D next(Int height)
+		/// The position of an item of 'height'. 'nextHeight' and 'leftAfter': the next item's height and how many come
+		/// after this one (O25: in the last column, when only one more is left and it would not fit after this one, this
+		/// one starts the new page as well, so no page holds a single row).
+		ICoord2D next(Int height, Int nextHeight = 0, Int leftAfter = 0)
 		{
+			const Bool orphanNext = col == 1 && y > y0 && leftAfter == 1 && y + height <= bottom
+				&& y + height + gap + nextHeight > bottom;
 			if (y + height > bottom && y > y0 && col == 0) {
 				col = 1;
 				y = y0;
 			}
-			else if (y + height > bottom && y > y0 && col == 1)
+			else if ((y + height > bottom && y > y0 && col == 1) || orphanNext)
 			{
 				GameWindow *more = makePage(sec);
 				if (more != nullptr)
@@ -887,133 +915,246 @@ namespace
 		return page;
 	}
 
-	/// A row of steps: the title over the whole column on as many lines as it needs, then the slider with the value text
-	/// right of it. 'valueTextW' is the width of the widest value text; 'extraBelow' is room kept under the row.
-	/// Returns the y below the row (in the page) through 'below'.
-	void placeStepRow(Flow &flow, const UnicodeString &title, Int valueTextW, Int sliderMax, Int id, Int labelH, Int sliderH,
-		Int extraBelow, GameWindow **label, GameWindow **value, GameWindow **slider, ICoord2D *below)
+	//---------------------------------------------------------------------------------------------
+	// TheSuperHackers @feature O25 (items 28, 29) Rows. Named choices and long lists are drop-down lists in the look of the
+	// screen's own detail list; numbers and continuous values are the ticked slider (TickSlider.h). A row is prepared first
+	// (its windows made on the section's first page at places relative to the row, its height known) and then placed by
+	// the flow, which can so look one row ahead (no page with a single row left over).
+	enum { MAX_ROW_WINDOWS = 4 };
+	struct Row
 	{
-		// TheSuperHackers @bugfix (H1-H4) One rule for every row of a section: the value column is as wide as the section's
-		// widest value in the label font (the static text wraps 10 pixels inside its window), with no cap, so a value is
-		// never cut or wrapped beside the slider. When that would leave the slider less than two fifths of the column, the
-		// section's values go on their own line under the slider instead, as wide as the column.
-		const Int titleH = labelHeightFor(labelFont(), title, flow.colW, labelH);
-		const Int widest = max(valueTextW, flow.valueW);
-		const Int sideValueW = widest + 14;
-		const Bool stacked = flow.colW - sideValueW - flow.gap < flow.colW * 2 / 5;
-		if (!stacked)
-		{
-			const Int lineH = max(labelH, sliderH);
-			const Int sliderW = flow.colW - sideValueW - flow.gap;
-			const ICoord2D at = flow.next(titleH + lineH + extraBelow);
-			*label = makeLabel(flow.page, s.labelLook, at.x, at.y, flow.colW, titleH, title, FALSE);
-			*slider = makeSlider(flow.page, at.x, at.y + titleH + (lineH - sliderH) / 2, sliderW, sliderH, sliderMax, id);
-			*value = makeLabel(flow.page, s.labelLook, at.x + sliderW + flow.gap, at.y + titleH, sideValueW, lineH,
-				UnicodeString::TheEmptyString, FALSE);
-			if (below != nullptr) {
-				below->x = at.x;
-				below->y = at.y + titleH + lineH;
-			}
+		Int height;              ///< -1: takes no room (a control the .wnd hides)
+		Int count;
+		GameWindow *wins[MAX_ROW_WINDOWS];
+		ICoord2D rel[MAX_ROW_WINDOWS];
+	};
+
+	void rowClear(Row &row)
+	{
+		row.height = 0;
+		row.count = 0;
+	}
+
+	void rowAdd(Row &row, GameWindow *w, Int x, Int y)
+	{
+		if (w == nullptr || row.count >= MAX_ROW_WINDOWS) {
 			return;
 		}
-		// a value wider than the column wraps there: room for its lines
-		const Int wrapW = max(1, flow.colW - 10);
-		const Int valueLines = max(1, (valueTextW + wrapW - 1) / wrapW + ((valueTextW > wrapW) ? 1 : 0));
-		const Int valueH = labelH * valueLines;
-		const ICoord2D at = flow.next(titleH + sliderH + valueH + extraBelow);
-		*label = makeLabel(flow.page, s.labelLook, at.x, at.y, flow.colW, titleH, title, FALSE);
-		*slider = makeSlider(flow.page, at.x, at.y + titleH, flow.colW, sliderH, sliderMax, id);
-		*value = makeLabel(flow.page, s.labelLook, at.x, at.y + titleH + sliderH, flow.colW, valueH,
-			UnicodeString::TheEmptyString, FALSE);
-		if (below != nullptr) {
-			below->x = at.x;
-			below->y = at.y + titleH + sliderH + valueH;
+		row.wins[row.count] = w;
+		row.rel[row.count].x = x;
+		row.rel[row.count].y = y;
+		++row.count;
+	}
+
+	void rowPlace(const Row &row, GameWindow *page, ICoord2D at)
+	{
+		for (Int i = 0; i < row.count; ++i)
+		{
+			row.wins[i]->winSetParent(page);
+			row.wins[i]->winSetPosition(at.x + row.rel[i].x, at.y + row.rel[i].y);
 		}
 	}
 
-	/// A check box: the column's width, its text wrapped when it is wider (fitCheckBox), in the middle of its room.
-	void placeCheckBox(Flow &flow, GameWindow *box)
+	Int comboHeight()
 	{
-		const Int room = fitCheckBox(box, flow.colW);
-		const Int h = sizeOf(box).y;
-		const ICoord2D at = flow.next(room);
-		box->winSetParent(flow.page);
-		box->winSetPosition(at.x, at.y + (room - h) / 2);
+		const Int fromLook = s.detailCombo != nullptr ? sizeOf(s.detailCombo).y : 0;
+		const Int fromFont = (s.labelLook != nullptr ? sizeOf(s.labelLook).y : 20) + 4;
+		return max(fromLook, fromFont);
 	}
 
-	void placeExisting(Flow &flow, Int index)
+	Int sliderHeight()
 	{
-		GameWindow *control = s.existing[index];
-		if (control == nullptr) {
+		return TickSlider::fullHeight(labelFont());
+	}
+
+	/// The drop-down button: as wide as the box is high and a bit more (easy to hit); the closed text takes the rest.
+	void widenArrow(GameWindow *combo)
+	{
+		GameWindow *button = combo != nullptr ? GadgetComboBoxGetDropDownButton(combo) : nullptr;
+		if (button == nullptr) {
 			return;
 		}
-		const Existing &ex = kExisting[index];
-		GameWindow *label = s.existingLabels[index];
-		if (!ex.show && control->winIsHidden())
-		{
-			// hidden by the .wnd (the scroll anchor boxes): no room on the page
-			control->winSetParent(flow.page);
-			if (label != nullptr) {
-				label->winSetParent(flow.page);
-				label->winHide(TRUE);
-			}
+		const ICoord2D size = sizeOf(combo);
+		button->winSetSize(max(21, size.y * 6 / 5), size.y);
+		combo->winSetSize(size.x, size.y);   // GGM_RESIZED places the button and the text box
+	}
+
+	Int arrowWidth()
+	{
+		return max(21, comboHeight() * 6 / 5);
+	}
+
+	void copyDrawData(GameWindow *to, GameWindow *from)
+	{
+		if (to == nullptr || from == nullptr) {
 			return;
 		}
-		ICoord2D cs = sizeOf(control);
-		const UnsignedInt style = control->winGetStyle();
-		const Bool isSlider = (style & GWS_HORZ_SLIDER) != 0;
-		const Bool isCheck = (style & GWS_CHECK_BOX) != 0;
-		if (isCheck)
+		WinInstanceData *t = to->winGetInstanceData();
+		const WinInstanceData *f = from->winGetInstanceData();
+		for (Int i = 0; i < MAX_DRAW_DATA; ++i)
 		{
-			// one font and height for all check boxes of the screen (some old ones were smaller)
-			if (s.checkLook != nullptr && control != s.checkLook)
+			t->m_enabledDrawData[i] = f->m_enabledDrawData[i];
+			t->m_disabledDrawData[i] = f->m_disabledDrawData[i];
+			t->m_hiliteDrawData[i] = f->m_hiliteDrawData[i];
+		}
+		to->winSetDrawFunc(from->winGetDrawFunc());
+	}
+
+	/// A drop-down list (not editable) in the look of the screen's detail level list: the box, its arrow button, the text,
+	/// the open list with its scroll bar.
+	GameWindow *makeCombo(GameWindow *parent, Int x, Int y, Int w, Int h, Int id)
+	{
+		GameWindow *look = s.detailCombo;
+		WinInstanceData inst;
+		copyLook(inst, look, GWS_COMBO_BOX | GWS_MOUSE_TRACK);
+		inst.m_id = id;
+		ComboBoxData data;
+		memset(&data, 0, sizeof(data));
+		data.isEditable = FALSE;
+		data.maxDisplay = 8;
+		data.maxChars = 128;
+		// gogoGadgetComboBox frees these two after it made the parts from them (as the .wnd loader does)
+		data.entryData = NEW EntryData;
+		memset(data.entryData, 0, sizeof(EntryData));
+		data.entryData->maxTextLen = data.maxChars;
+		data.listboxData = NEW ListboxData;
+		memset(data.listboxData, 0, sizeof(ListboxData));
+		data.listboxData->listLength = 10;
+		data.listboxData->scrollBar = 1;
+		data.listboxData->forceSelect = 1;
+		data.listboxData->columns = 1;
+		GameWindow *combo = TheWindowManager->gogoGadgetComboBox(parent, WIN_STATUS_ENABLED | imageStatusOf(look), x, y, w, h,
+			&inst, &data, inst.m_font, look == nullptr);
+		if (combo == nullptr) {
+			return nullptr;
+		}
+		combo->winSetWindowId(id);
+		combo->winSetOwner(s.menuParent);
+		if (look != nullptr)
+		{
+			copyDrawData(GadgetComboBoxGetDropDownButton(combo), GadgetComboBoxGetDropDownButton(look));
+			copyDrawData(GadgetComboBoxGetEditBox(combo), GadgetComboBoxGetEditBox(look));
+			GameWindow *list = GadgetComboBoxGetListBox(combo);
+			GameWindow *lookList = GadgetComboBoxGetListBox(look);
+			copyDrawData(list, lookList);
+			if (list != nullptr && lookList != nullptr)
 			{
-				control->winSetFont(s.checkLook->winGetFont());
-				control->winSetSize(cs.x, sizeOf(s.checkLook).y);
+				copyDrawData(GadgetListBoxGetUpButton(list), GadgetListBoxGetUpButton(lookList));
+				copyDrawData(GadgetListBoxGetDownButton(list), GadgetListBoxGetDownButton(lookList));
+				GameWindow *bar = GadgetListBoxGetSlider(list);
+				GameWindow *lookBar = GadgetListBoxGetSlider(lookList);
+				copyDrawData(bar, lookBar);
+				if (bar != nullptr && lookBar != nullptr) {
+					copyDrawData(bar->winGetChild(), lookBar->winGetChild());
+				}
 			}
-			if (label != nullptr) {
-				label->winHide(TRUE);
-			}
-			placeCheckBox(flow, control);
-			if (ex.show) {
-				control->winHide(FALSE);
-			}
-			return;
 		}
-		if (isSlider)
-		{
-			// sliders take the column's width
-			Int minVal = 0, maxVal = 0;
-			GadgetSliderGetMinMax(control, &minVal, &maxVal);
-			const Int pos = GadgetSliderGetPosition(control);
-			control->winSetSize(flow.colW, cs.y);
-			cs.x = flow.colW;
-			TheWindowManager->winSendSystemMsg(control, GSM_SET_MIN_MAX, minVal, maxVal);
-			GadgetSliderSetPosition(control, pos);
-		}
-		Int labelH = 0;
-		if (label != nullptr)
-		{
-			// the title over the whole column, as high as its text needs
-			const UnicodeString text = GadgetStaticTextGetText(label);
-			labelH = labelHeightFor(label->winGetFont(), text, flow.colW, sizeOf(label).y);
-			label->winSetSize(flow.colW, labelH);
-		}
-		const ICoord2D at = flow.next(labelH + cs.y);
-		if (label != nullptr)
-		{
-			label->winSetParent(flow.page);
-			label->winSetPosition(at.x, at.y);
-			label->winHide(FALSE);
-		}
-		control->winSetParent(flow.page);
-		control->winSetPosition(at.x, at.y + labelH);
-		if (ex.show) {
-			control->winHide(FALSE);
-		}
+		widenArrow(combo);
+		return combo;
 	}
 
-	void placeSetting(Flow &flow, Int index, Int labelH, Int checkH, Int sliderH)
+	/// Puts the entries into a list without the menu reacting (a programmatic choice sends GCM_SELECTED as well).
+	void fillCombo(GameWindow *combo, const UnicodeString *texts, Int count, Int selected)
+	{
+		if (combo == nullptr) {
+			return;
+		}
+		const Bool quiet = s.quiet;
+		s.quiet = TRUE;
+		GadgetComboBoxReset(combo);
+		const Color color = combo->winGetEnabledTextColor();
+		for (Int i = 0; i < count; ++i) {
+			GadgetComboBoxAddEntry(combo, texts[i], color);
+		}
+		GadgetComboBoxSetSelectedPos(combo, selected >= 0 && selected < count ? selected : 0);
+		s.quiet = quiet;
+	}
+
+	void selectCombo(GameWindow *combo, Int selected)
+	{
+		if (combo == nullptr) {
+			return;
+		}
+		const Bool quiet = s.quiet;
+		s.quiet = TRUE;
+		GadgetComboBoxSetSelectedPos(combo, selected);
+		s.quiet = quiet;
+	}
+
+	Int comboSelection(GameWindow *combo)
+	{
+		Int index = -1;
+		if (combo != nullptr) {
+			GadgetComboBoxGetSelectedPos(combo, &index);
+		}
+		return index;
+	}
+
+	/// The box as wide as its longest entry needs (between half the column and the column); a longer entry opens a wider
+	/// list (up to the page's right edge, set when the row is placed).
+	Int comboWidthFor(Int longestText, Int colW)
+	{
+		const Int want = longestText + s.gap * 4 + arrowWidth() + 8;
+		return want < colW / 2 ? colW / 2 : (want > colW ? colW : want);
+	}
+
+	Int titleHeight(const UnicodeString &title, Int colW, Int labelH)
+	{
+		return labelHeightFor(labelFont(), title, colW, labelH);
+	}
+
+	/// A title over the whole column and a drop-down list under it.
+	GameWindow *prepareComboRow(Row &row, GameWindow *page, const UnicodeString &title, Int id, Int longestText, Int colW, Int labelH,
+		GameWindow **label)
+	{
+		const Int titleH = titleHeight(title, colW, labelH);
+		*label = makeLabel(page, s.labelLook, 0, 0, colW, titleH, title, FALSE);
+		rowAdd(row, *label, 0, 0);
+		const Int h = comboHeight();
+		GameWindow *combo = makeCombo(page, 0, titleH, comboWidthFor(longestText, colW), h, id);
+		rowAdd(row, combo, 0, titleH);
+		row.height = titleH + h;
+		if (combo != nullptr && longestText + s.gap * 4 + arrowWidth() + 8 > colW) {
+			GadgetComboBoxSetListMinWidth(combo, longestText + s.gap * 4 + arrowWidth() + 8);
+		}
+		return combo;
+	}
+
+	/// A title over the whole column and the ticked slider under it, a mark at every step with its label.
+	GameWindow *prepareSliderRow(Row &row, GameWindow *page, const UnicodeString &title, Int id, const UnicodeString *labels, Int count,
+		Int colW, Int labelH, GameWindow **label)
+	{
+		const Int titleH = titleHeight(title, colW, labelH);
+		*label = makeLabel(page, s.labelLook, 0, 0, colW, titleH, title, FALSE);
+		rowAdd(row, *label, 0, 0);
+		const Int h = sliderHeight();
+		GameWindow *slider = makeSlider(page, 0, titleH, colW, h, count > 1 ? count - 1 : 1, id);
+		if (slider != nullptr)
+		{
+			TickSlider::attach(slider, labelFont(), FALSE);
+			TickSlider::setLabels(slider, labels, count);
+		}
+		rowAdd(row, slider, 0, titleH);
+		row.height = titleH + h;
+		return slider;
+	}
+
+	//---------------------------------------------------------------------------------------------
+	// The settings of kSettings
+	/// O25: the settings whose values are names or a long list are drop-down lists (item 29); the others are sliders.
+	Bool isListSetting(const Setting &set)
+	{
+		static const char *const keys[] = { "RenderFpsLimit", "TextureFilter", "AnisotropyLevel", "SnowStyle", "VoicePushToTalk",
+			"ScreenshotFormat", "CounterStyle", "Windowed", "WindowPosition" };
+		for (Int i = 0; i < (Int)ARRAY_SIZE(keys); ++i) {
+			if (stricmp(set.key, keys[i]) == 0) {
+				return TRUE;
+			}
+		}
+		return FALSE;
+	}
+
+	void prepareSetting(Row &row, GameWindow *page, Int index, Int colW, Int labelH, Int checkH)
 	{
 		const Setting &set = kSettings[index];
 		SettingState &st = s.settings[index];
@@ -1022,22 +1163,36 @@ namespace
 		const Int id = windowId(name.str());
 		if (set.kind == KIND_CHECK)
 		{
-			st.control = makeCheckBox(flow.page, 0, 0, flow.colW, checkH, textOf(set.text), id);
-			if (st.control != nullptr) {
-				placeCheckBox(flow, st.control);
+			st.control = makeCheckBox(page, 0, 0, colW, checkH, textOf(set.text), id);
+			if (st.control != nullptr)
+			{
+				const Int room = fitCheckBox(st.control, colW);
+				rowAdd(row, st.control, 0, (room - sizeOf(st.control).y) / 2);
+				row.height = room;
 			}
 			setChecked(index, stricmp(set.current(*s.pref).str(), "yes") == 0);
 			return;
 		}
-		Int valueTextW = 0;
-		for (Int c = 0; c < set.choiceCount; ++c) {
-			valueTextW = max(valueTextW, textSize(labelFont(), choiceText(set, c), 0).x);
-		}
-		placeStepRow(flow, textOf(set.text), valueTextW, set.choiceCount - 1, id, labelH, sliderH, 0,
-			&st.label, &st.value, &st.control, nullptr);
 		const Int found = findChoice(set, set.current(*s.pref));
 		st.step = found >= 0 ? found : defaultStep(set);
-		showStep(index);
+		std::vector<UnicodeString> texts;
+		Int longest = 0;
+		for (Int c = 0; c < set.choiceCount; ++c)
+		{
+			texts.push_back(choiceText(set, c));
+			longest = max(longest, textSize(labelFont(), texts.back(), 0).x);
+		}
+		st.combo = isListSetting(set);
+		if (st.combo)
+		{
+			st.control = prepareComboRow(row, page, textOf(set.text), id, longest, colW, labelH, &st.label);
+			fillCombo(st.control, &texts[0], set.choiceCount, st.step);
+		}
+		else
+		{
+			st.control = prepareSliderRow(row, page, textOf(set.text), id, &texts[0], set.choiceCount, colW, labelH, &st.label);
+			showStep(index);
+		}
 	}
 
 	//---------------------------------------------------------------------------------------------
@@ -1117,33 +1272,19 @@ namespace
 		return image;
 	}
 
-	/// A chooser's title with its position, "Control bar   2/4", so the number of choices can be seen (H5: a slider at its
-	/// first step looks the same as a disabled one).
-	UnicodeString countedTitle(const UnicodeString &title, Int step, Int count)
-	{
-		if (count < 2) {
-			return title;
-		}
-		UnicodeString text;
-		text.format(L"%ls   %d/%d", title.str(), step + 1, count);
-		return text;
-	}
-
-	void showPackRow(Int row, Bool moveSlider = TRUE)
+	/// The list's entries (again, after the hotkey sets changed with the language) and the preview of the chosen one.
+	void showPackRow(Int row, Bool refill = TRUE)
 	{
 		PackRowState &st = s.packRows[row];
 		const Packs::Kind kind = kPackRows[row].kind;
-		if (st.label != nullptr) {
-			GadgetStaticTextSetText(st.label, countedTitle(Packs::kindTitle(kind), st.step, st.choiceCount));
-		}
-		if (st.slider != nullptr && moveSlider)
+		if (st.combo != nullptr && refill)
 		{
-			TheWindowManager->winSendSystemMsg(st.slider, GSM_SET_MIN_MAX, 0, st.choiceCount > 1 ? st.choiceCount - 1 : 1);
-			GadgetSliderSetPosition(st.slider, st.step);
-			st.slider->winEnable(st.choiceCount > 1);
-		}
-		if (st.value != nullptr) {
-			GadgetStaticTextSetText(st.value, Packs::displayName(kind, selectedPack(row)));
+			UnicodeString texts[MAX_PACK_CHOICES];
+			for (Int i = 0; i < st.choiceCount; ++i) {
+				texts[i] = Packs::displayName(kind, st.choices[i]);
+			}
+			fillCombo(st.combo, texts, st.choiceCount, st.step);
+			st.combo->winEnable(st.choiceCount > 1);
 		}
 		if (st.preview != nullptr)
 		{
@@ -1174,42 +1315,43 @@ namespace
 		TheDisplay->drawOpenRect(x, y, w, h, 1.0f, GameMakeColor(255, 255, 255, 96));
 	}
 
-	void placePackRow(Flow &flow, Int row, Int labelH, Int sliderH)
+	void preparePackRow(Row &row, GameWindow *page, Int r, Int colW, Int labelH)
 	{
-		const PackRowDef &def = kPackRows[row];
-		PackRowState &st = s.packRows[row];
-		const Int previewH = def.preview ? flow.colW / 2 : 0;   // preview pictures are 2:1 (512 x 256)
+		const PackRowDef &def = kPackRows[r];
+		PackRowState &st = s.packRows[r];
 		AsciiString name("OptionsMenu.wnd:Sections.");
 		name.concat(Packs::kindKey(def.kind));
-		const Int id = windowId(name.str());
 		// the widest name of any choice of this kind (the hotkey row's list changes with the language)
-		Int valueTextW = textSize(labelFont(), Packs::displayName(def.kind, nullptr), 0).x;
+		Int longest = textSize(labelFont(), Packs::displayName(def.kind, nullptr), 0).x;
 		for (Int i = 0; i < Packs::count(def.kind); ++i) {
-			valueTextW = max(valueTextW, textSize(labelFont(), Packs::displayName(def.kind, Packs::get(def.kind, i)), 0).x);
+			longest = max(longest, textSize(labelFont(), Packs::displayName(def.kind, Packs::get(def.kind, i)), 0).x);
 		}
-		ICoord2D below = { 0, 0 };
-		placeStepRow(flow, countedTitle(Packs::kindTitle(def.kind), st.choiceCount - 1, st.choiceCount), valueTextW, st.choiceCount > 1 ? st.choiceCount - 1 : 1, id, labelH, sliderH,
-			def.preview ? flow.gap + previewH : 0, &st.label, &st.value, &st.slider, &below);
+		st.combo = prepareComboRow(row, page, Packs::kindTitle(def.kind), windowId(name.str()), longest, colW, labelH, &st.label);
 		if (def.preview)
 		{
-			const ICoord2D at = below;
-			const Int py = below.y + flow.gap;
+			// preview pictures are 2:1 (512 x 256), under the list, following the chosen entry
+			const Int previewH = colW / 2;
+			const Int py = row.height + s.gap;
 			WinInstanceData inst;
 			inst.init();
 			inst.m_style = GWS_USER_WINDOW;
-			st.preview = TheWindowManager->winCreate(flow.page, WIN_STATUS_ENABLED, at.x, py, flow.colW, previewH,
-				PassMessagesToParentSystem, &inst);
+			st.preview = TheWindowManager->winCreate(page, WIN_STATUS_ENABLED, 0, py, colW, previewH, PassMessagesToParentSystem, &inst);
 			if (st.preview != nullptr)
 			{
-				st.preview->winSetUserData((void *)(intptr_t)row);
+				st.preview->winSetUserData((void *)(intptr_t)r);
 				st.preview->winSetDrawFunc(drawPackPreview);
 			}
-			st.previewText = makeLabel(flow.page, s.labelLook, at.x + flow.gap * 2, py + (previewH - labelH) / 2, flow.colW - flow.gap * 4, labelH,
+			rowAdd(row, st.preview, 0, py);
+			st.previewText = makeLabel(page, s.labelLook, s.gap * 2, py + (previewH - labelH) / 2, colW - s.gap * 4, labelH,
 				TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackNoPreview", localizedFallback(L"No picture", L"\x041D\x0435\x0442 \x0438\x0437\x043E\x0431\x0440\x0430\x0436\x0435\x043D\x0438\x044F")), FALSE);
+			rowAdd(row, st.previewText, s.gap * 2, py + (previewH - labelH) / 2);
+			row.height = py + previewH;
 		}
-		showPackRow(row);
+		showPackRow(r);
 	}
 
+	//---------------------------------------------------------------------------------------------
+	// The sound output device row (AudioOutputDevice): the system default first, then what the audio device lists.
 	UnicodeString deviceName(Int index)
 	{
 		if (index <= 0 || index >= (Int)s_devices.size()) {
@@ -1225,15 +1367,11 @@ namespace
 		return UnicodeString(buffer);
 	}
 
-	/// The sound output device row: the devices the audio device lists, the system default first. Takes effect at the
-	/// next start (the restart box).
-	/// The title of the sound output device row.
 	UnicodeString deviceTitle()
 	{
 		return TheGameText->FETCH_OR_SUBSTITUTE("GUI:AudioOutputDevice", localizedFallback(L"Sound output device", L"\x0423\x0441\x0442\x0440\x043E\x0439\x0441\x0442\x0432\x043E \x0432\x044B\x0432\x043E\x0434\x0430 \x0437\x0432\x0443\x043A\x0430"));
 	}
 
-	/// The device list: the system default first, then what the audio device lists.
 	void loadDevices()
 	{
 		s_devices.clear();
@@ -1241,40 +1379,6 @@ namespace
 		std::vector<AsciiString> names;
 		AudioOutputDevices::list(names);
 		s_devices.insert(s_devices.end(), names.begin(), names.end());
-	}
-
-	void placeDeviceRow(Flow &flow, Int labelH, Int sliderH)
-	{
-		if (s_devices.empty()) {
-			loadDevices();
-		}
-		const AsciiString chosen = s.pref->getAudioOutputDevice();
-		s.deviceStep = 0;
-		for (size_t i = 1; i < s_devices.size(); ++i) {
-			if (s_devices[i] == chosen) {
-				s.deviceStep = (Int)i;
-			}
-		}
-		s.deviceInitial = s.deviceStep;
-		Int valueTextW = 0;
-		for (size_t i = 0; i < s_devices.size(); ++i) {
-			valueTextW = max(valueTextW, textSize(labelFont(), deviceName((Int)i), 0).x);
-		}
-		const Int count = (Int)s_devices.size();
-		placeStepRow(flow, countedTitle(deviceTitle(), count - 1, count),
-			valueTextW, count > 1 ? count - 1 : 1, windowId("OptionsMenu.wnd:Sections.AudioOutputDevice"), labelH, sliderH, 0,
-			&s.deviceLabel, &s.deviceValue, &s.deviceSlider, nullptr);
-		if (s.deviceLabel != nullptr) {
-			GadgetStaticTextSetText(s.deviceLabel, countedTitle(deviceTitle(), s.deviceStep, count));
-		}
-		if (s.deviceSlider != nullptr)
-		{
-			GadgetSliderSetPosition(s.deviceSlider, s.deviceStep);
-			s.deviceSlider->winEnable(count > 1);
-		}
-		if (s.deviceValue != nullptr) {
-			GadgetStaticTextSetText(s.deviceValue, deviceName(s.deviceStep));
-		}
 	}
 
 	//--- the microphone row (VoiceChat.h): the system default first, then the enumerated microphones -------------
@@ -1307,7 +1411,47 @@ namespace
 		s_mics.insert(s_mics.end(), names.begin(), names.end());
 	}
 
-	void placeMicRow(Flow &flow, Int labelH, Int sliderH)
+	/// The device or microphone row: a list of 'names' (the system default first) with 'chosen' selected.
+	GameWindow *prepareNameListRow(Row &row, GameWindow *page, const UnicodeString &title, const char *windowName,
+		const std::vector<UnicodeString> &names, Int chosen, Int colW, Int labelH, GameWindow **label)
+	{
+		Int longest = 0;
+		for (size_t i = 0; i < names.size(); ++i) {
+			longest = max(longest, textSize(labelFont(), names[i], 0).x);
+		}
+		GameWindow *combo = prepareComboRow(row, page, title, windowId(windowName), longest, colW, labelH, label);
+		if (!names.empty())
+		{
+			fillCombo(combo, &names[0], (Int)names.size(), chosen);
+			if (combo != nullptr) {
+				combo->winEnable(names.size() > 1);
+			}
+		}
+		return combo;
+	}
+
+	void prepareDeviceRow(Row &row, GameWindow *page, Int colW, Int labelH)
+	{
+		if (s_devices.empty()) {
+			loadDevices();
+		}
+		const AsciiString chosen = s.pref->getAudioOutputDevice();
+		s.deviceStep = 0;
+		for (size_t i = 1; i < s_devices.size(); ++i) {
+			if (s_devices[i] == chosen) {
+				s.deviceStep = (Int)i;
+			}
+		}
+		s.deviceInitial = s.deviceStep;
+		std::vector<UnicodeString> names;
+		for (size_t i = 0; i < s_devices.size(); ++i) {
+			names.push_back(deviceName((Int)i));
+		}
+		s.deviceCombo = prepareNameListRow(row, page, deviceTitle(), "OptionsMenu.wnd:Sections.AudioOutputDevice", names, s.deviceStep,
+			colW, labelH, &s.deviceLabel);
+	}
+
+	void prepareMicRow(Row &row, GameWindow *page, Int colW, Int labelH)
 	{
 		if (s_mics.empty()) {
 			loadMics();
@@ -1321,23 +1465,169 @@ namespace
 			}
 		}
 		s.micInitial = s.micStep;
-		Int valueTextW = 0;
+		std::vector<UnicodeString> names;
 		for (size_t i = 0; i < s_mics.size(); ++i) {
-			valueTextW = max(valueTextW, textSize(labelFont(), micName((Int)i), 0).x);
+			names.push_back(micName((Int)i));
 		}
-		const Int count = (Int)s_mics.size();
-		placeStepRow(flow, countedTitle(micTitle(), count - 1, count), valueTextW, count > 1 ? count - 1 : 1,
-			windowId("OptionsMenu.wnd:Sections.VoiceInputDevice"), labelH, sliderH, 0, &s.micLabel, &s.micValue, &s.micSlider, nullptr);
-		if (s.micLabel != nullptr) {
-			GadgetStaticTextSetText(s.micLabel, countedTitle(micTitle(), s.micStep, count));
+		s.micCombo = prepareNameListRow(row, page, micTitle(), "OptionsMenu.wnd:Sections.VoiceInputDevice", names, s.micStep,
+			colW, labelH, &s.micLabel);
+	}
+
+	//---------------------------------------------------------------------------------------------
+	// The existing controls of OptionsMenu.wnd
+	/// O25: the old sliders in the ticked look: which are continuous (volumes, brightness, scroll speed, particle limit;
+	/// marks at 0, 25, 50, 75 and 100 % of their range) and which have named steps (texture resolution).
+	void attachExistingSlider(GameWindow *control, const char *name)
+	{
+		const Bool volume = stricmp(name, "SliderMusicVolume") == 0 || stricmp(name, "SliderSFXVolume") == 0 || stricmp(name, "SliderVoiceVolume") == 0;
+		const Bool textureSteps = stricmp(name, "LowResSlider") == 0;
+		TickSlider::attach(control, labelFont(), !textureSteps);
+		if (volume) {
+			TickSlider::setSuffix(control, UnicodeString(L" %"));
 		}
-		if (s.micSlider != nullptr)
+		if (textureSteps)
 		{
-			GadgetSliderSetPosition(s.micSlider, s.micStep);
-			s.micSlider->winEnable(count > 1);
+			// the slider's position is 2 - the texture reduction: 0 low, 1 medium, 2 high
+			const UnicodeString labels[3] =
+			{
+				TheGameText->FETCH_OR_SUBSTITUTE("GUI:Low", localizedFallback(L"Low", L"\x041D\x0438\x0437\x043A\x043E\x0435")),
+				TheGameText->FETCH_OR_SUBSTITUTE("GUI:Medium", localizedFallback(L"Medium", L"\x0421\x0440\x0435\x0434\x043D\x0435\x0435")),
+				TheGameText->FETCH_OR_SUBSTITUTE("GUI:High", localizedFallback(L"High", L"\x0412\x044B\x0441\x043E\x043A\x043E\x0435")),
+			};
+			TickSlider::setLabels(control, labels, 3);
 		}
-		if (s.micValue != nullptr) {
-			GadgetStaticTextSetText(s.micValue, micName(s.micStep));
+	}
+
+	void prepareExisting(Row &row, Int index, Int colW)
+	{
+		GameWindow *control = s.existing[index];
+		if (control == nullptr) {
+			row.height = -1;
+			return;
+		}
+		const Existing &ex = kExisting[index];
+		GameWindow *label = s.existingLabels[index];
+		if (!ex.show && control->winIsHidden())
+		{
+			// hidden by the .wnd (the scroll anchor boxes): no room on the page
+			rowAdd(row, control, 0, 0);
+			if (label != nullptr)
+			{
+				rowAdd(row, label, 0, 0);
+				label->winHide(TRUE);
+			}
+			row.height = -1;
+			return;
+		}
+		ICoord2D cs = sizeOf(control);
+		const UnsignedInt style = control->winGetStyle();
+		if ((style & GWS_CHECK_BOX) != 0)
+		{
+			// one font and height for all check boxes of the screen (some old ones were smaller)
+			if (s.checkLook != nullptr && control != s.checkLook)
+			{
+				control->winSetFont(s.checkLook->winGetFont());
+				control->winSetSize(cs.x, sizeOf(s.checkLook).y);
+			}
+			if (label != nullptr) {
+				label->winHide(TRUE);
+			}
+			const Int room = fitCheckBox(control, colW);
+			rowAdd(row, control, 0, (room - sizeOf(control).y) / 2);
+			row.height = room;
+			if (ex.show) {
+				control->winHide(FALSE);
+			}
+			return;
+		}
+		if ((style & GWS_HORZ_SLIDER) != 0)
+		{
+			// the ticked look over the column's width
+			Int minVal = 0, maxVal = 0;
+			GadgetSliderGetMinMax(control, &minVal, &maxVal);
+			const Int pos = GadgetSliderGetPosition(control);
+			control->winSetSize(colW, sliderHeight());
+			cs = sizeOf(control);
+			TheWindowManager->winSendSystemMsg(control, GSM_SET_MIN_MAX, minVal, maxVal);
+			GadgetSliderSetPosition(control, pos);
+			attachExistingSlider(control, ex.control);
+		}
+		if ((style & GWS_COMBO_BOX) != 0) {
+			widenArrow(control);
+		}
+		Int labelH = 0;
+		if (label != nullptr)
+		{
+			// the title over the whole column, as high as its text needs
+			const UnicodeString text = GadgetStaticTextGetText(label);
+			labelH = labelHeightFor(label->winGetFont(), text, colW, sizeOf(label).y);
+			label->winSetSize(colW, labelH);
+			rowAdd(row, label, 0, 0);
+			label->winHide(FALSE);
+		}
+		rowAdd(row, control, 0, labelH);
+		row.height = labelH + cs.y;
+		if (ex.show) {
+			control->winHide(FALSE);
+		}
+	}
+
+	/// O25: the open lists: drawn over the rows below (a list higher on a page is brought to the top last) and as long as
+	/// the room under the box in the menu allows (at least three entries; a scroll bar for the rest).
+	void finishCombos()
+	{
+		std::vector<GameWindow *> combos;
+		for (Int i = 0; i < EXISTING_COUNT; ++i) {
+			if (s.existing[i] != nullptr && (s.existing[i]->winGetStyle() & GWS_COMBO_BOX) != 0) {
+				combos.push_back(s.existing[i]);
+			}
+		}
+		for (Int i = 0; i < SETTING_COUNT; ++i) {
+			if (s.settings[i].combo && s.settings[i].control != nullptr) {
+				combos.push_back(s.settings[i].control);
+			}
+		}
+		for (Int r = 0; r < PACK_ROW_COUNT; ++r) {
+			if (s.packRows[r].combo != nullptr) {
+				combos.push_back(s.packRows[r].combo);
+			}
+		}
+		if (s.deviceCombo != nullptr) {
+			combos.push_back(s.deviceCombo);
+		}
+		if (s.micCombo != nullptr) {
+			combos.push_back(s.micCombo);
+		}
+		// lowest first, so the highest is brought to the top last
+		for (size_t a = 0; a < combos.size(); ++a) {
+			for (size_t b = a + 1; b < combos.size(); ++b)
+			{
+				Int ax = 0, ay = 0, bx = 0, by = 0;
+				combos[a]->winGetScreenPosition(&ax, &ay);
+				combos[b]->winGetScreenPosition(&bx, &by);
+				if (by > ay) {
+					GameWindow *t = combos[a];
+					combos[a] = combos[b];
+					combos[b] = t;
+				}
+			}
+		}
+		Int mx = 0, my = 0;
+		s.menuParent->winGetScreenPosition(&mx, &my);
+		const Int menuBottom = my + sizeOf(s.menuParent).y;
+		for (size_t i = 0; i < combos.size(); ++i)
+		{
+			GameWindow *combo = combos[i];
+			combo->winBringToTop();
+			Int cx = 0, cy = 0;
+			combo->winGetScreenPosition(&cx, &cy);
+			const Int rowH = TheWindowManager->winFontHeight(combo->winGetFont()) + 6;
+			const Int room = menuBottom - (cy + sizeOf(combo).y) - 4;
+			const Int count = GadgetComboBoxGetLength(combo);
+			Int show = rowH > 0 ? room / rowH : 8;
+			show = show < 3 ? 3 : show;
+			show = show > count ? count : show;
+			GadgetComboBoxSetMaxDisplay(combo, show > 0 ? show : 1);
 		}
 	}
 
@@ -1511,14 +1801,13 @@ void OptionsSections::init(OptionPreferences *pref)
 		{
 			const Int h = sizeOf(s.labelLook).y;
 			s.existingLabels[i] = makeLabel(s.menuParent, s.labelLook, 0, 0, pageW / 2 - gap * 3, h,
-				TheGameText->fetch(kExisting[i].labelText), FALSE);
+				existingTitle(kExisting[i].labelText), FALSE);
 		}
 	}
 
 	// fill the pages
 	const Int labelH = s.labelLook != nullptr ? sizeOf(s.labelLook).y : 20;
 	const Int checkH = s.checkLook != nullptr ? sizeOf(s.checkLook).y : 18;
-	const Int sliderH = s.sliderLook != nullptr ? sizeOf(s.sliderLook).y : 16;
 	const Int contentTop = gap * 2 + titleH + gap;
 	const Int colW = (pageW - gap * 8) / 2;
 
@@ -1552,87 +1841,76 @@ void OptionsSections::init(OptionPreferences *pref)
 		if (s.pages[sec] == nullptr) {
 			continue;
 		}
-		Flow flow;
-		flow.begin(sec, s.pages[sec], gap * 3, contentTop, colW, gap, height - gap * 2);
-		// one value column for the section: the widest value of its step rows
-		for (Int i = 0; i < SETTING_COUNT; ++i)
-		{
-			if (kSettings[i].section != sec || kSettings[i].kind != KIND_STEPS) {
-				continue;
-			}
-			for (Int c = 0; c < kSettings[i].choiceCount; ++c) {
-				flow.valueW = max(flow.valueW, textSize(labelFont(), choiceText(kSettings[i], c), 0).x);
-			}
-		}
 		if (sec == SEC_SOUND)
 		{
 			loadDevices();
-			for (size_t d = 0; d < s_devices.size(); ++d) {
-				flow.valueW = max(flow.valueW, textSize(labelFont(), deviceName((Int)d), 0).x);
-			}
 			loadMics();
-			for (size_t d = 0; d < s_mics.size(); ++d) {
-				flow.valueW = max(flow.valueW, textSize(labelFont(), micName((Int)d), 0).x);
-			}
 		}
-		for (Int r = 0; r < PACK_ROW_COUNT; ++r)
-		{
-			if (kPackRows[r].section != sec) {
-				continue;
-			}
-			const Packs::Kind kind = kPackRows[r].kind;
-			flow.valueW = max(flow.valueW, textSize(labelFont(), Packs::displayName(kind, nullptr), 0).x);
-			for (Int i = 0; i < Packs::count(kind); ++i) {
-				flow.valueW = max(flow.valueW, textSize(labelFont(), Packs::displayName(kind, Packs::get(kind, i)), 0).x);
-			}
-		}
+		// O25: the rows of the section, prepared on its first page (their heights known), then placed with one row of
+		// look-ahead
+		std::vector<Row> rows;
+		Row row;
 		for (Int i = 0; i < EXISTING_COUNT; ++i) {
 			if (kExisting[i].section == sec) {
-				placeExisting(flow, i);
+				rowClear(row);
+				prepareExisting(row, i, colW);
+				rows.push_back(row);
 			}
 		}
 		for (Int i = 0; i < SETTING_COUNT; ++i) {
 			if (kSettings[i].section == sec) {
-				placeSetting(flow, i, labelH, checkH, sliderH);
+				rowClear(row);
+				prepareSetting(row, s.pages[sec], i, colW, labelH, checkH);
+				rows.push_back(row);
 			}
 		}
 		for (Int r = 0; r < PACK_ROW_COUNT; ++r) {
 			if (kPackRows[r].section == sec) {
-				placePackRow(flow, r, labelH, sliderH);
+				rowClear(row);
+				preparePackRow(row, s.pages[sec], r, colW, labelH);
+				rows.push_back(row);
 			}
 		}
-		if (sec == SEC_SOUND) {
-			placeDeviceRow(flow, labelH, sliderH);
-			placeMicRow(flow, labelH, sliderH);
+		if (sec == SEC_SOUND)
+		{
+			rowClear(row);
+			prepareDeviceRow(row, s.pages[sec], colW, labelH);
+			rows.push_back(row);
+			rowClear(row);
+			prepareMicRow(row, s.pages[sec], colW, labelH);
+			rows.push_back(row);
+		}
+		Flow flow;
+		flow.begin(sec, s.pages[sec], gap * 3, contentTop, colW, gap, height - gap * 2);
+		for (size_t k = 0; k < rows.size(); ++k)
+		{
+			if (rows[k].height < 0)
+			{
+				const ICoord2D origin = { 0, 0 };
+				rowPlace(rows[k], s.pages[sec], origin);   // takes no room
+				continue;
+			}
+			Int nextHeight = 0, leftAfter = 0;
+			for (size_t m = k + 1; m < rows.size(); ++m)
+			{
+				if (rows[m].height < 0) {
+					continue;
+				}
+				if (leftAfter == 0) {
+					nextHeight = rows[m].height;
+				}
+				++leftAfter;
+			}
+			const ICoord2D at = flow.next(rows[k].height, nextHeight, leftAfter);
+			rowPlace(rows[k], flow.page, at);
 		}
 		if (flow.overflow) {
 			DEBUG_LOG(("OptionsSections: an item of section %d is taller than a column of the page.", sec));
 		}
 	}
 
-	// An open drop-down list is drawn with its combo box: the combo boxes go on top of their pages, so their lists are
-	// not covered by the controls placed after them.
-	// The lists open downwards, so a combo box higher on a page must lie over the ones below it: the last brought to
-	// the top is drawn last, so they go from the bottom of the table up.
-	for (Int i = EXISTING_COUNT - 1; i >= 0; --i)
-	{
-		if (s.existing[i] != nullptr && (s.existing[i]->winGetStyle() & GWS_COMBO_BOX) != 0) {
-			s.existing[i]->winBringToTop();
-		}
-	}
-
-	// TheSuperHackers @tweak Small drop-down lists show all their entries without a scroll bar (H7: the detail list no
-	// longer ends in the middle of the title under it).
-	for (Int i = 0; i < EXISTING_COUNT; ++i)
-	{
-		if (s.existing[i] != nullptr && (s.existing[i]->winGetStyle() & GWS_COMBO_BOX) != 0)
-		{
-			const ComboBoxData *data = (const ComboBoxData *)s.existing[i]->winGetUserData();
-			if (data != nullptr && data->maxDisplay < 8) {
-				GadgetComboBoxSetMaxDisplay(s.existing[i], 8);
-			}
-		}
-	}
+	// O25: the drop-down lists over the rows below them, each as long as the room under it allows
+	finishCombos();
 
 	// the old groups and what is left on them; the old "unlock fps" box (now the frame rate limit) and the keyboard button
 	for (Int g = 0; g < (Int)ARRAY_SIZE(kOldGroups); ++g)
@@ -1722,58 +2000,61 @@ Bool OptionsSections::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgD
 		{
 			for (Int i = 0; i < SETTING_COUNT; ++i)
 			{
-				if (control == s.settings[i].control && kSettings[i].kind == KIND_STEPS)
+				if (control == s.settings[i].control && kSettings[i].kind == KIND_STEPS && !s.settings[i].combo)
 				{
 					Int step = (Int)mData2;
 					step = step < 0 ? 0 : (step >= kSettings[i].choiceCount ? kSettings[i].choiceCount - 1 : step);
 					s.settings[i].step = step;
 					s.settings[i].touched = TRUE;
-					if (s.settings[i].value != nullptr) {
-						GadgetStaticTextSetText(s.settings[i].value, choiceText(kSettings[i], step));
+					return TRUE;   // the slider writes the step's text above its handle
+				}
+			}
+			return FALSE;
+		}
+		case GCM_SELECTED:
+		{
+			if (control == s.detailCombo) {
+				updateCustomDetail();
+				return FALSE;   // the menu handles the detail level too
+			}
+			// O25: the drop-down lists of this screen
+			const Int index = comboSelection(control);
+			for (Int i = 0; i < SETTING_COUNT; ++i)
+			{
+				if (control == s.settings[i].control && s.settings[i].combo)
+				{
+					if (!s.quiet && index >= 0 && index < kSettings[i].choiceCount)
+					{
+						s.settings[i].step = index;
+						s.settings[i].touched = TRUE;
 					}
 					return TRUE;
 				}
 			}
-			if (control == s.micSlider && s.micSlider != nullptr)
+			if (control == s.deviceCombo && s.deviceCombo != nullptr)
 			{
-				const Int count = (Int)s_mics.size();
-				Int step = (Int)mData2;
-				step = step < 0 ? 0 : (step >= count ? count - 1 : step);
-				s.micStep = step;
-				if (s.micValue != nullptr) {
-					GadgetStaticTextSetText(s.micValue, micName(step));
-				}
-				if (s.micLabel != nullptr) {
-					GadgetStaticTextSetText(s.micLabel, countedTitle(micTitle(), step, count));
+				if (!s.quiet && index >= 0 && index < (Int)s_devices.size()) {
+					s.deviceStep = index;
 				}
 				return TRUE;
 			}
-			if (control == s.deviceSlider && s.deviceSlider != nullptr)
+			if (control == s.micCombo && s.micCombo != nullptr)
 			{
-				const Int count = (Int)s_devices.size();
-				Int step = (Int)mData2;
-				step = step < 0 ? 0 : (step >= count ? count - 1 : step);
-				s.deviceStep = step;
-				if (s.deviceValue != nullptr) {
-					GadgetStaticTextSetText(s.deviceValue, deviceName(step));
-				}
-				if (s.deviceLabel != nullptr) {
-					GadgetStaticTextSetText(s.deviceLabel, countedTitle(deviceTitle(), step, count));
+				if (!s.quiet && index >= 0 && index < (Int)s_mics.size()) {
+					s.micStep = index;
 				}
 				return TRUE;
 			}
 			for (Int r = 0; r < PACK_ROW_COUNT; ++r)
 			{
 				PackRowState &st = s.packRows[r];
-				if (st.slider == nullptr || control != st.slider) {
+				if (st.combo == nullptr || control != st.combo) {
 					continue;
 				}
-				Int step = (Int)mData2;
-				step = step < 0 ? 0 : (step >= st.choiceCount ? st.choiceCount - 1 : step);
-				if (step != st.step)
+				if (!s.quiet && index >= 0 && index < st.choiceCount && index != st.step)
 				{
-					st.step = step;
-					showPackRow(r, FALSE);   // the slider is where the player put it
+					st.step = index;
+					showPackRow(r, FALSE);   // the preview follows the chosen entry
 					if (r == PACK_ROW_TEXT)
 					{
 						// another interface language: the hotkey sets that fit it
@@ -1790,13 +2071,6 @@ Bool OptionsSections::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgD
 				return TRUE;
 			}
 			return FALSE;
-		}
-		case GCM_SELECTED:
-		{
-			if (control == s.detailCombo) {
-				updateCustomDetail();
-			}
-			return FALSE;   // the menu handles the detail level too
 		}
 	}
 	return FALSE;
@@ -1830,7 +2104,7 @@ void OptionsSections::save(OptionPreferences *pref)
 	}
 
 	// the sound output device (AudioOutputDevice), opened at the start
-	if (s.deviceSlider != nullptr && s.deviceStep != s.deviceInitial && s.deviceStep >= 0 && s.deviceStep < (Int)s_devices.size())
+	if (s.deviceCombo != nullptr && s.deviceStep != s.deviceInitial && s.deviceStep >= 0 && s.deviceStep < (Int)s_devices.size())
 	{
 		if (s.deviceStep == 0) {
 			pref->erase("AudioOutputDevice");
@@ -1842,7 +2116,7 @@ void OptionsSections::save(OptionPreferences *pref)
 	}
 
 	// the microphone (VoiceInputDevice): opened at the next match
-	if (s.micSlider != nullptr && s.micStep != s.micInitial && s.micStep >= 0 && s.micStep < (Int)s_mics.size())
+	if (s.micCombo != nullptr && s.micStep != s.micInitial && s.micStep >= 0 && s.micStep < (Int)s_mics.size())
 	{
 		if (s.micStep == 0) {
 			pref->erase("VoiceInputDevice");
@@ -1860,7 +2134,7 @@ void OptionsSections::save(OptionPreferences *pref)
 	for (Int r = 0; r < PACK_ROW_COUNT; ++r)
 	{
 		const PackRowState &st = s.packRows[r];
-		if (st.slider == nullptr) {
+		if (st.combo == nullptr) {
 			continue;
 		}
 		const Packs::Pack *pack = selectedPack(r);
