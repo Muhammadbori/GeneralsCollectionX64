@@ -62,12 +62,28 @@ public:
 	time_t getTimeLastSent() const;
 	void setTimeLastSent(time_t timeLastSent);
 
+	// TheSuperHackers @tweak O23 Send bookkeeping of this reference (local only, nothing of it goes on the wire):
+	// when the first copy was sent, the time and number of the extra copies sent before any ack came, and whether the
+	// retry timer had to send it again and how often (then its ack time says nothing about the latency).
+	time_t getTimeFirstSent() const { return m_timeFirstSent; }
+	void setTimeFirstSent(time_t t) { m_timeFirstSent = t; }
+	time_t getTimeLastCopy() const { return m_timeLastCopy; }
+	UnsignedByte getCopiesSent() const { return m_copiesSent; }
+	void noteCopySent(time_t t) { m_timeLastCopy = t; if (m_copiesSent < 255) ++m_copiesSent; }
+	Bool wasRetriedByTimer() const { return m_timerRetries != 0; }
+	UnsignedByte getTimerRetries() const { return m_timerRetries; }
+	void noteTimerRetry() { if (m_timerRetries < 255) ++m_timerRetries; }
+
 protected:
 	NetCommandMsg *m_msg;
 	NetCommandRef *m_next;
 	NetCommandRef *m_prev;
 	UnsignedByte m_relay; ///< Need this in the command reference since the relay value will be different depending on where this particular reference is being sent.
 	time_t m_timeLastSent;
+	time_t m_timeFirstSent;
+	time_t m_timeLastCopy;
+	UnsignedByte m_copiesSent;
+	UnsignedByte m_timerRetries;
 
 #ifdef DEBUG_NETCOMMANDREF
 	UnsignedInt m_id;

@@ -90,6 +90,9 @@ namespace
 
 	// counters of the current second
 	Int s_bytesIn = 0, s_bytesOut = 0, s_packetsIn = 0, s_packetsOut = 0, s_retries = 0, s_frameResends = 0;
+	// O23: extra copies of unacknowledged commands, the largest retry time of a connection and the latency the run-ahead
+	// is computed from (milliseconds), in the second
+	Int s_copies = 0, s_retryMsMax = 0, s_latencyMs = 0;
 	UnsignedInt s_waitingMask = 0;
 	Real s_stallMs = 0.0f;
 
@@ -263,7 +266,7 @@ namespace
 			{
 				fprintf(s_csv, "seconds,logic_frame,logic_frames_in_second,net_frame_rate,run_ahead,stalled_ms,waiting_for_slots,"
 					"packets_in,packets_out,bytes_in,bytes_out,command_resends,frame_resend_requests,sim_dropped,sim_held_max,"
-					"disconnect_screen,connected_slots\n");
+					"disconnect_screen,connected_slots,redundant_copies,retry_ms_max,runahead_latency_ms\n");
 				fflush(s_csv);
 			}
 		}
@@ -322,14 +325,15 @@ namespace
 				if (TheNetwork->isPlayerConnected(i)) connected |= (1u << i);
 			}
 		}
-		fprintf(s_csv, "%.1f,%u,%u,%u,%u,%.0f,%u,%d,%d,%d,%d,%d,%d,%d,%d,%d,%u\n",
+		fprintf(s_csv, "%.1f,%u,%u,%u,%u,%.0f,%u,%d,%d,%d,%d,%d,%d,%d,%d,%d,%u,%d,%d,%d\n",
 			(now - s_matchStartMs) / 1000.0, frame, frame - s_framesAtSecond,
 			TheNetwork != nullptr ? TheNetwork->getFrameRate() : 0, TheNetwork != nullptr ? TheNetwork->getRunAhead() : 0,
 			(double)s_stallMs, s_waitingMask, s_packetsIn, s_packetsOut, s_bytesIn, s_bytesOut, s_retries, s_frameResends,
-			s_simDropped, s_simHeldMax, s_disconnectShown ? 1 : 0, connected);
+			s_simDropped, s_simHeldMax, s_disconnectShown ? 1 : 0, connected, s_copies, s_retryMsMax, s_latencyMs);
 		fflush(s_csv);
 		s_framesAtSecond = frame;
 		s_bytesIn = s_bytesOut = s_packetsIn = s_packetsOut = s_retries = s_frameResends = s_simDropped = s_simHeldMax = 0;
+		s_copies = s_retryMsMax = 0;
 		s_waitingMask = 0;
 		s_stallMs = 0.0f;
 		if (connected != s_connectedMask)
@@ -443,6 +447,10 @@ void NetLab::countSent(Int bytes) { ++s_packetsOut; s_bytesOut += bytes; }
 void NetLab::countReceived(Int bytes) { ++s_packetsIn; s_bytesIn += bytes; }
 void NetLab::countRetry() { ++s_retries; }
 void NetLab::countFrameResend() { ++s_frameResends; }
+void NetLab::countCopy() { ++s_copies; }
+void NetLab::noteRetryTime(Int ms) { if (ms > s_retryMsMax) s_retryMsMax = ms; }
+void NetLab::noteRunAheadLatency(Int ms) { s_latencyMs = ms; }
+void NetLab::noteStallNotice(UnsignedInt mask) { logLine("waiting-for notice shown: slots mask %u", mask); }
 void NetLab::noteWaitingFor(Int slot) { if (slot >= 0 && slot < MAX_SLOTS) s_waitingMask |= (1u << slot); }
 
 Bool NetLab::simTake(const TransportMessage &message)

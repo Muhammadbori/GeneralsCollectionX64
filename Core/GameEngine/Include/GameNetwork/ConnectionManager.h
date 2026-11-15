@@ -87,6 +87,7 @@ public:
 
 	UnsignedInt getLocalPlayerID();
 	UnicodeString getPlayerName(Int playerNum);
+	UnsignedInt getWaitingSlotMask(UnsignedInt frame);	///< O23: slots whose commands for the frame are not all here (no side effect)
 	Int getNumPlayers();
 
 	UnsignedInt getPacketRouterFallbackSlot(Int packetRouterNumber);	///< Returns the slot of the given packet router number in the fallback plan.

@@ -40,7 +40,8 @@
 //
 // Measurement: <user data>\NetLab.csv, one line per second (time, logic frame, logic frames in the second, the
 // network's frame rate and run-ahead, milliseconds stalled and the slots waited for, packets and bytes in and out,
-// command resends, frame-data resend requests, simulator drops, disconnect screen, connected slots), and NetLab.log
+// command resends, frame-data resend requests, simulator drops, disconnect screen, connected slots, and since O23 the extra
+// command copies, the largest retry time and the run-ahead latency in ms), and NetLab.log
 // for events (start, disconnect screen on and off, a player gone, the simulator's settings).
 
 #pragma once
@@ -69,6 +70,10 @@ namespace NetLab
 	void countReceived(Int bytes);
 	void countRetry();
 	void countFrameResend();
+	void countCopy();                   ///< O23: an extra copy of an unacknowledged command went out
+	void noteRetryTime(Int ms);         ///< O23: a connection's current retry time
+	void noteRunAheadLatency(Int ms);   ///< O23: the latency the run-ahead is computed from
+	void noteStallNotice(UnsignedInt mask);   ///< O23: the "waiting for" notice was shown (a log line)
 	void noteWaitingFor(Int slot);
 
 	// the simulator, from the transport: TRUE when it took the packet (to be delivered later, or dropped)

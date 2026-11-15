@@ -51,6 +51,10 @@
 #include "GameLogic/ScriptEngine.h"
 #include "Common/Recorder.h"
 #include "GameClient/MessageBox.h"
+#include "GameClient/GameText.h"
+#include "GameClient/InGameUI.h"
+#include "GameClient/LocalizedFallback.h"
+#include "GameNetwork/NetLab.h"
 
 
 #if defined(DEBUG_CRC) && !RETAIL_COMPATIBLE_NETWORKING
@@ -208,6 +212,11 @@ protected:
 
 	Bool m_frameDataReady;																		///< Is the frame data for the next frame ready to be executed by TheGameLogic?
 	Bool m_isStalling;
+	// TheSuperHackers @feature O23 "Waiting for <player>" in the message area once a stall lasts StallNoticeMs (the
+	// disconnect screen comes only after NetworkDisconnectTime, 5 s). Client side only.
+	DWORD m_stallStartMs;
+	Bool m_stallNoticeShown;
+	void updateStallNotice(Bool stalling);
 
 	// CRC info
 	Bool m_checkCRCsThisFrame;
@@ -269,6 +278,8 @@ Network::Network()
 	m_didSelfSlug = FALSE;
 	m_frameDataReady = FALSE;
 	m_isStalling = FALSE;
+	m_stallStartMs = 0;
+	m_stallNoticeShown = FALSE;
 	m_sawCRCMismatch = FALSE;
 	m_conMgr = nullptr;
 	m_messageWindow = nullptr;
@@ -652,6 +663,14 @@ void Network::processRunAheadCommand(NetRunAheadCommandMsg *msg) {
 	if (frameGrouping > 500) {
 		frameGrouping = 500; // Max of a half a second.
 	}
+	// TheSuperHackers @tweak O23 At most one logic frame between packet sends. Half the run-ahead (the old rule, from the
+	// modem days) held commands and acks back for 200 ms and more under delay; that wait was part of the measured
+	// latency, which raised the run-ahead, which raised the wait again (S19: run-ahead 37 and 54 with 4 players). A
+	// lost packet now costs one packet interval (Connection: extra copies), so the interval should be short. About 30
+	// small packets a second per connection.
+	if (m_frameRate > 0 && frameGrouping > 1000 / m_frameRate) {
+		frameGrouping = 1000 / m_frameRate;
+	}
 	m_conMgr->setFrameGrouping(frameGrouping);
 }
 
@@ -732,6 +751,48 @@ void Network::update()
 		QueryPerformanceCounter((LARGE_INTEGER *)&curTime);
 		m_isStalling = curTime >= m_nextFrameTime;
 	}
+	updateStallNotice(m_isStalling);
+}
+
+/**
+ * O23: once the lockstep has been held for StallNoticeMs, name the players whose commands are missing, once per stall.
+ */
+void Network::updateStallNotice(Bool stalling)
+{
+	enum { StallNoticeMs = 1000 };
+	if (!stalling || m_conMgr == nullptr || m_localStatus != NETLOCALSTATUS_INGAME) {
+		if (m_frameDataReady || m_localStatus != NETLOCALSTATUS_INGAME) {
+			m_stallStartMs = 0;
+			m_stallNoticeShown = FALSE;
+		}
+		return;
+	}
+	const DWORD now = timeGetTime();
+	if (m_stallStartMs == 0) {
+		m_stallStartMs = now;
+	}
+	if (m_stallNoticeShown || now - m_stallStartMs < (DWORD)StallNoticeMs || TheInGameUI == nullptr) {
+		return;
+	}
+	const UnsignedInt mask = m_conMgr->getWaitingSlotMask(TheGameLogic->getFrame());
+	if (mask == 0) {
+		return;
+	}
+	UnicodeString names;
+	for (Int i = 0; i < MAX_SLOTS; ++i) {
+		if (mask & (1u << i)) {
+			if (!names.isEmpty()) {
+				names.concat(L", ");
+			}
+			names.concat(m_conMgr->getPlayerName(i));
+		}
+	}
+	// Russian: "Ozhidanie igroka: %ls"
+	TheInGameUI->messageNoFormat(TheGameText->FETCH_OR_SUBSTITUTE_FORMAT("NETWORK:WaitingForPlayer",
+		localizedFallback(L"Waiting for %ls", L"\x041E\x0436\x0438\x0434\x0430\x043D\x0438\x0435 \x0438\x0433\x0440\x043E\x043A\x0430: %ls"),
+		names.str()));
+	m_stallNoticeShown = TRUE;
+	NetLab::noteStallNotice(mask);
 }
 
 void Network::liteupdate() {

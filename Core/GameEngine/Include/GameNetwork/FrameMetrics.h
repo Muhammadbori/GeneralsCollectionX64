@@ -37,10 +37,11 @@ public:
 	void reset();
 
 	void doPerFrameMetrics(UnsignedInt frame);
-	void processLatencyResponse(UnsignedInt frame);
+	void processLatencyResponse(UnsignedInt frame, Bool cleanSample = TRUE);
 	void addCushion(Int cushion);
 
 	Real getAverageLatency();
+	Real getRunAheadLatency();	///< O23: smoothed latency plus two mean deviations (seconds), what the run-ahead must cover
 	Int getAverageFPS();
 	Int getMinimumCushion();
 
@@ -60,6 +61,13 @@ protected:
 	Real m_averageLatency;																		///< The current average latency, this is used to save calculation time.
 																														///< When a new latency value is received, the old one is subtracted out and the new
 																														///< one is added in.
+
+	// TheSuperHackers @tweak O23 A faster latency estimate for the run-ahead: smoothed mean and mean deviation of the
+	// clean samples (seconds). The average above over the last 200 frames reacts in seconds and took the samples of
+	// frame infos that the retry timer had to send again (2 s and more each), which inflated the run-ahead under loss.
+	Real m_smoothedLatency;
+	Real m_latencyDeviation;
+	Bool m_haveLatency;
 
 	// packet arrival cushion variables.
 	// Keeps track of the cushion for the incoming commands.

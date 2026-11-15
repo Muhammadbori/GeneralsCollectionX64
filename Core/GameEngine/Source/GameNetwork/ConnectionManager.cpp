@@ -985,7 +985,8 @@ void ConnectionManager::processAckStage1(NetCommandMsg *msg) {
 
 	if (ref != nullptr) {
 		if (ref->getCommand()->getNetCommandType() == NETCOMMANDTYPE_FRAMEINFO) {
-			m_frameMetrics.processLatencyResponse(((NetFrameCommandMsg *)(ref->getCommand()))->getExecutionFrame());
+			// O23: an ack of a frame info that the retry timer had to send again is no latency sample
+			m_frameMetrics.processLatencyResponse(((NetFrameCommandMsg *)(ref->getCommand()))->getExecutionFrame(), !ref->wasRetriedByTimer());
 		}
 
 		deleteInstance(ref);
@@ -1356,7 +1357,7 @@ void ConnectionManager::updateRunAhead(Int oldRunAhead, Int frameRate, Bool didS
 	if ((lasttimesent == 0) || ((curTime - lasttimesent) > TheGlobalData->m_networkRunAheadMetricsTime)) {
 		if (m_localSlot == m_packetRouterSlot) {
 			// We are the packet router, time to compute a new run ahead for this game.
-			m_latencyAverages[m_localSlot] = m_frameMetrics.getAverageLatency();
+			m_latencyAverages[m_localSlot] = m_frameMetrics.getRunAheadLatency(); // O23: was getAverageLatency()
 
 			// since we are now using the display frame rate rather than the logic frame rate to get our average FPS,
 			// it doesn't make sense to send the desired logic frame rate if we "slugged" ourself.
@@ -1388,6 +1389,16 @@ void ConnectionManager::updateRunAhead(Int oldRunAhead, Int frameRate, Bool didS
 			// The network slack pushes the runahead up to the next value when the latency is within the slack percentage of the current runahead
 			const Real runAheadSlackScale = 1.0f + ( (Real)TheGlobalData->m_networkRunAheadSlack / 100.0f );
 			Int newRunAhead = ceilf( getMaximumLatency() * runAheadSlackScale * (Real)minFps );
+
+			// TheSuperHackers @tweak O23 The latencies are now the smoothed latency plus two mean deviations of each player
+			// (FrameMetrics::getRunAheadLatency), without the samples the retry timer spoiled. One frame more covers the wait
+			// for the next engine update on the receiving side. The run-ahead rises at once but falls by at most two frames
+			// per update (every NetworkRunAheadMetricsTime, 500 ms), so a short calm spell does not take the cushion away.
+			// It is still one command (NETCOMMANDTYPE_RUNAHEAD) that every player executes on the same frame.
+			newRunAhead += 1;
+			if (newRunAhead < oldRunAhead - 2) {
+				newRunAhead = oldRunAhead - 2;
+			}
 
 			// TheSuperHackers @info if the runahead goes below 3 logic frames it can start to introduce stutter
 			// We also limit the upper range of the runahead to prevent it getting out of hand
@@ -1470,7 +1481,7 @@ void ConnectionManager::updateRunAhead(Int oldRunAhead, Int frameRate, Bool didS
 			if (DoesCommandRequireACommandID(msg->getNetCommandType())) {
 				msg->setID(GenerateNextCommandID());
 			}
-			msg->setAverageLatency(m_frameMetrics.getAverageLatency());
+			msg->setAverageLatency(m_frameMetrics.getRunAheadLatency()); // O23: was getAverageLatency()
 
 			// see above for explanation.
 //			if (didSelfSlug) {
@@ -1487,6 +1498,7 @@ void ConnectionManager::updateRunAhead(Int oldRunAhead, Int frameRate, Bool didS
 			msg->detach();
 		}
 		lasttimesent = curTime;
+		NetLab::noteRunAheadLatency((Int)(m_frameMetrics.getRunAheadLatency() * 1000.0f));
 	}
 }
 
@@ -1996,6 +2008,22 @@ void ConnectionManager::resendPendingCommands() {
 
 UnsignedInt ConnectionManager::getLocalPlayerID() {
 	return m_localSlot;
+}
+
+/**
+ * O23: the slots whose command count for the frame does not match the commands received yet, for the "waiting for"
+ * notice. Only reads (allCommandsReady may reset a frame).
+ */
+UnsignedInt ConnectionManager::getWaitingSlotMask(UnsignedInt frame) {
+	UnsignedInt mask = 0;
+	for (Int i = 0; i < MAX_SLOTS; ++i) {
+		if ((i != (Int)m_localSlot) && (m_frameData[i] != nullptr) && (m_frameData[i]->getIsQuitting() == FALSE)) {
+			if (m_frameData[i]->getFrameCommandCount(frame) != m_frameData[i]->getCommandCount(frame)) {
+				mask |= (1u << i);
+			}
+		}
+	}
+	return mask;
 }
 
 UnicodeString ConnectionManager::getPlayerName(Int playerNum) {
