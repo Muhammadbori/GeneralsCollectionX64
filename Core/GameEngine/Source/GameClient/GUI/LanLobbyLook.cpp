@@ -1673,10 +1673,14 @@ void LanLobbyLook::update(Bool screenReady)
 		return;
 	}
 	// O30: this player's own anti-cheat check failed: said once in the chat (others see the red mark)
-	if (!s.ownFailureSaid && GuardLink::ownVerdict() == GuardLink::VERDICT_FAILED && s.chatList != nullptr)
+	// O32: the line names the file, module or program, and comes again when the finding changes
 	{
-		GadgetListBoxAddEntryText(s.chatList, GuardLink::ownFailureText(), chatSystemColor, -1, 0);
-		s.ownFailureSaid = TRUE;
+		UnicodeString own;
+		if (s.chatList != nullptr && GuardLink::takeOwnFailureNotice(&own))
+		{
+			GadgetListBoxAddEntryText(s.chatList, own, chatSystemColor, -1, 0);
+			s.ownFailureSaid = TRUE;
+		}
 	}
 	// own address (copy button feedback for two seconds)
 	const UnsignedInt ip = LanTest::sampleData() ? ((26u << 24) | (12u << 16) | (45u << 8) | 78u) : (TheLAN != nullptr ? TheLAN->GetLocalIP() : 0);

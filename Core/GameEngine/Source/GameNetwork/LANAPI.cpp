@@ -537,8 +537,25 @@ void LANAPI::update()
 	if(LANbuttonPushed)
 		return;
 	{
+		// O32: in the lobby the red mark, and one chat line with the player's name and the kind of failure (never a path)
 		UnsignedInt failedIP = 0;
-		while (GuardLink::takeNewFailure(&failedIP)) {}   // O30: in the lobby the red mark says it
+		while (GuardLink::takeNewFailure(&failedIP))
+		{
+			UnicodeString name;
+			if (LANPlayer *player = LookupPlayer(failedIP)) {
+				name = player->getName();
+			}
+			for (Int k = 0; name.isEmpty() && m_currentGame != nullptr && k < MAX_SLOTS; ++k)
+			{
+				const LANGameSlot *slot = m_currentGame->getLANSlot(k);
+				if (slot != nullptr && slot->isHuman() && slot->getIP() == failedIP) {
+					name = slot->getName();
+				}
+			}
+			if (!name.isEmpty()) {
+				OnChat(UnicodeString::TheEmptyString, 0, GuardLink::failedInLobbyText(name, failedIP), LANAPIInterface::LANCHAT_SYSTEM);
+			}
+		}
 	}
 	// Send out periodic I'm Here messages
 	if (now > s_resendDelta + m_lastResendTime)
@@ -1464,6 +1481,13 @@ void LANAPI::pumpGuard()
 			}
 		}
 	}
+	// O32: this player's own new finding, named, during the match too
+	{
+		UnicodeString own;
+		if (GuardLink::takeOwnFailureNotice(&own) && TheInGameUI != nullptr) {
+			TheInGameUI->messageNoFormat(own);
+		}
+	}
 	UnsignedInt failedIP = 0;
 	while (GuardLink::takeNewFailure(&failedIP))
 	{
@@ -1476,7 +1500,7 @@ void LANAPI::pumpGuard()
 			}
 		}
 		if (!name.isEmpty() && TheInGameUI != nullptr) {
-			TheInGameUI->messageNoFormat(GuardLink::failedInMatchText(name));
+			TheInGameUI->messageNoFormat(GuardLink::failedInMatchText(name, failedIP));
 		}
 	}
 }
