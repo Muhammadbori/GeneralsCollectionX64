@@ -28,6 +28,7 @@
 
 #pragma once
 
+extern UnsignedInt TheGameLogicRandomDrawCount;	///< TheSuperHackers @feature logic random draws so far (MismatchReport.h)
 extern void InitRandom();
 extern void InitRandom( UnsignedInt seed );
 extern UnsignedInt GetGameLogicRandomSeed();   ///< Get the seed (used for replays)

@@ -28,6 +28,7 @@
 #include "Common/ArchiveFileSystem.h"
 #include "Common/CommandLine.h"
 #include "Common/ReplayFollow.h"
+#include "Common/MismatchReport.h"
 #include "Common/CRCDebug.h"
 #include "Common/FrameRateLimit.h"
 #include "Common/FrameShots.h"
@@ -37,6 +38,7 @@
 #include "GameClient/ClientInstance.h"
 #include "GameClient/TerrainVisual.h" // for TERRAIN_LOD_MIN definition
 #include "GameClient/GameText.h"
+#include "GameClient/ReplayControlBar.h"
 #include "GameNetwork/NetworkDefs.h"
 
 
@@ -798,6 +800,27 @@ Int parseFollowReplay(char *args[], int num)
 	return 1;
 }
 
+// TheSuperHackers @feature -testPerturbFrame <frame>: test only, replay playback only (MismatchReport.h).
+Int parseTestPerturbFrame(char *args[], int num)
+{
+	if (num > 1)
+	{
+		MismatchReport::setPerturbFrame(atoi(args[1]));
+		return 2;
+	}
+	return 1;
+}
+
+Int parseTestReportFrame(char *args[], int num)
+{
+	if (num > 1)
+	{
+		MismatchReport::setReportFrame(atoi(args[1]));
+		return 2;
+	}
+	return 1;
+}
+
 Int parseFollowDelay(char *args[], int num)
 {
 	if (num > 1)
@@ -807,6 +830,13 @@ Int parseFollowDelay(char *args[], int num)
 			ReplayFollow::configure(s_followDelaySeconds, s_followCatchUp);
 		return 2;
 	}
+	return 1;
+}
+
+// TheSuperHackers @feature -noReplayBar: no replay control bar (the keys still work); for screenshot comparisons.
+Int parseNoReplayBar(char *args[], int num)
+{
+	ReplayControl::disableBar();
 	return 1;
 }
 
@@ -1725,6 +1755,9 @@ static CommandLineParam paramsForStartup[] =
 	{ "-followReplay", parseFollowReplay },
 	{ "-followDelay", parseFollowDelay },
 	{ "-followCatchUp", parseFollowCatchUp },
+	{ "-noReplayBar", parseNoReplayBar },
+	{ "-testPerturbFrame", parseTestPerturbFrame },
+	{ "-testReportFrame", parseTestReportFrame },
 
 	// TheSuperHackers @feature helmutbuhler 23/05/2025
 	// Simulate each replay in a separate process and use 1..N processes at the same time.

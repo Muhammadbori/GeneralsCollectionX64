@@ -87,6 +87,8 @@ set(GAMEENGINE_SRC
     Include/Common/ObjectStatusTypes.h
     Include/Common/AudioOutputDevices.h
     Include/Common/OptionPreferences.h
+    Include/Common/Fingerprint.h
+    Include/Common/MismatchReport.h
     Include/Common/Packs.h
     Include/Common/ReplayFollow.h
 #    Include/Common/OSDisplay.h
@@ -196,6 +198,7 @@ set(GAMEENGINE_SRC
     Include/GameClient/GameWindowManager.h
     Include/GameClient/GameWindowTransitions.h
     Include/GameClient/GameSpeedControl.h
+    Include/GameClient/ReplayControlBar.h
     Include/GameClient/LocalizedFallback.h
     Include/GameClient/OptionsSections.h
     Include/GameClient/PlayerTable.h
@@ -642,6 +645,8 @@ set(GAMEENGINE_SRC
 #    Source/Common/NameKeyGenerator.cpp
     Source/Common/AudioOutputDevices.cpp
     Source/Common/OptionPreferences.cpp
+    Source/Common/Fingerprint.cpp
+    Source/Common/MismatchReport.cpp
     Source/Common/Packs.cpp
     Source/Common/ReplayFollow.cpp
 #    Source/Common/PartitionSolver.cpp
@@ -779,6 +784,7 @@ set(GAMEENGINE_SRC
     Source/GameClient/GUI/GameWindowTransitions.cpp
     Source/GameClient/GUI/GameWindowTransitionsStyles.cpp
     Source/GameClient/GUI/GameSpeedControl.cpp
+    Source/GameClient/GUI/ReplayControlBar.cpp
     Source/GameClient/GUI/OptionsSections.cpp
     Source/GameClient/GUI/PlayerTable.cpp
     Source/GameClient/LocalizedFallback.cpp

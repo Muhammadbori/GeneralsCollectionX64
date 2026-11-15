@@ -26,6 +26,7 @@
 
 #include "Common/Recorder.h"
 #include "Common/ReplayFollow.h"
+#include "Common/MismatchReport.h"
 
 // TheSuperHackers @feature m_nextFrame while a followed replay waits for more data (ReplayFollow.h).
 static const UnsignedInt FOLLOW_WAIT = 0xFFFFFFFE;
@@ -1039,6 +1040,9 @@ void RecorderClass::handleCRCMessage(UnsignedInt newCRC, Int playerIndex, Bool f
 			// Note: We subtract the queue size from the frame number. This way we calculate the correct frame
 			// the mismatch first happened in case the NetCRCInterval is set to 1 during the game.
 			const UnsignedInt mismatchFrame = TheGameLogic->getFrame() - m_crcInfo.GetQueueSize() - 1;
+
+			// TheSuperHackers @feature The mismatch report of this computer (MismatchReport.h).
+			MismatchReport::write("replay", mismatchFrame, playbackCRC, newCRC);
 
 			// Now also prints a UI message for it.
 			const UnicodeString mismatchDetailsStr = TheGameText->FETCH_OR_SUBSTITUTE("GUI:CRCMismatchDetails", L"InGame:%8.8X Replay:%8.8X Frame:%d");

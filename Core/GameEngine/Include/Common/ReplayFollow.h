@@ -55,4 +55,6 @@ namespace ReplayFollow
 	Bool writerAlive();
 	/// Call before each logic update of a followed replay with the frame it would run. FALSE: hold it this time.
 	Bool mayRunFrame(UnsignedInt frame);
+	/// The writer's newest finished frame (0 before the side file was read). For the replay control bar.
+	UnsignedInt newestFrame();
 }

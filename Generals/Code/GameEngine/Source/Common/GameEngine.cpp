@@ -41,6 +41,7 @@
 #include "Common/GameAudio.h"
 #include "Common/GameEngine.h"
 #include "Common/ReplayFollow.h"
+#include "Common/Fingerprint.h"
 #include "Common/INI.h"
 #include "Common/INIException.h"
 #include "Common/MessageStream.h"
@@ -513,6 +514,9 @@ void GameEngine::init()
 
 		xferCRC.close();
 		TheWritableGlobalData->m_iniCRC = xferCRC.getCRC();
+
+		// TheSuperHackers @feature The fingerprint of what decides whether two players can play together (Fingerprint.h).
+		Fingerprint::compute();
 		DEBUG_LOG(("INI CRC is 0x%8.8X", TheGlobalData->m_iniCRC));
 
 		TheSubsystemList->postProcessLoadAll();

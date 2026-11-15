@@ -74,6 +74,11 @@ public:
 
 	Real getLogicFramesPerRenderUpdate() const; ///< How many logic frames one render update covers, in (0,MaxLogicFramesPerRenderUpdate]. For client animations that count render updates: add this per update instead of 1, so they take the same game time at any render fps. Keeps running while time is frozen or the game is halted, as a per update counter does.
 
+	/// TheSuperHackers @feature The replay control bar's 2x, 4x and 8x (ReplayControlBar.h): the logic time scale is
+	/// multiplied by it in replay playback only.
+	void setReplaySpeedFactor(Int factor);
+	Int getReplaySpeedFactor() const { return m_replaySpeedFactor; }
+
 	Real getLogicFramePhase() const; ///< Get how far the current render step reaches into the current logic frame, in [0,1]. Used to interpolate render updates between logic updates.
 
 protected:
@@ -91,6 +96,7 @@ protected:
 	Bool m_enableLogicTimeScale;
 	Bool m_isTimeFrozen;
 	Bool m_isGameHalted;
+	Int m_replaySpeedFactor;
 };
 
 extern FramePacer* TheFramePacer;

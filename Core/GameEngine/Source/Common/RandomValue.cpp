@@ -278,6 +278,9 @@ Real GetGameClientRandomValueReal( Real lo, Real hi, const char *file, int line 
 //
 // Integer random value
 //
+// TheSuperHackers @feature The logic random draws so far (read by the mismatch report; only counted, nothing drawn).
+UnsignedInt TheGameLogicRandomDrawCount = 0;
+
 Int GetGameLogicRandomValue( int lo, int hi, const char *file, int line )
 {
 #if RETAIL_COMPATIBLE_CRC
@@ -292,6 +295,7 @@ Int GetGameLogicRandomValue( int lo, int hi, const char *file, int line )
 #endif
 
 	const Int rval = ((Int)(randomValue(theGameLogicSeed) % delta)) + lo;
+	++TheGameLogicRandomDrawCount;	// TheSuperHackers @feature counted for the mismatch report (MismatchReport.h)
 	STATE_TRACE(logicDraw(file, line, lo, hi, rval));
 
 #ifdef DEBUG_RANDOM_LOGIC
@@ -320,6 +324,7 @@ Real GetGameLogicRandomValueReal( Real lo, Real hi, const char *file, int line )
 #endif
 
 	const Real rval = ((Real)(randomValue(theGameLogicSeed)) * theMultFactor) * delta + lo;
+	++TheGameLogicRandomDrawCount;	// TheSuperHackers @feature counted for the mismatch report (MismatchReport.h)
 	STATE_TRACE(logicDraw(file, line, lo, hi, rval));
 
 #ifdef DEBUG_RANDOM_LOGIC

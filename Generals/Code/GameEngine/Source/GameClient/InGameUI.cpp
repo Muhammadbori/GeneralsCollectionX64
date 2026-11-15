@@ -88,6 +88,7 @@
 
 #include "GameNetwork/GameInfo.h"
 #include "GameNetwork/NetworkInterface.h"
+#include "GameClient/ReplayControlBar.h"
 
 
 
@@ -1799,6 +1800,9 @@ void InGameUI::update()
 {
 	//USE_PERF_TIMER(InGameUI_update)
 	Int i;
+
+	// TheSuperHackers @feature The replay control bar (ReplayControlBar.h).
+	ReplayControl::update();
 
 	/// @todo make sure this code gets called even when the UI is not being drawn
 	if ( m_videoStream && m_videoBuffer )

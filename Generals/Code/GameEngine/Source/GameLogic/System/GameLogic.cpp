@@ -52,6 +52,7 @@
 #include "Common/RandomValue.h"
 #include "Common/Recorder.h"
 #include "Common/StateTrace.h"
+#include "Common/MismatchReport.h"
 #include "Common/StatsCollector.h"
 #include "Common/ThingFactory.h"
 #include "Common/Team.h"
@@ -2390,6 +2391,14 @@ void GameLogic::processCommandList( CommandList *list )
 					player?player->getPlayerDisplayName().str():L"<NONE>", crcIt->second));
 			}
 #endif // DEBUG_LOGGING
+			// TheSuperHackers @feature Each computer writes its mismatch report by itself (MismatchReport.h).
+			for (CachedCRCMap::const_iterator crcIt = m_cachedCRCs.begin(); crcIt != m_cachedCRCs.end(); ++crcIt)
+			{
+				Player *player = ThePlayerList->getNthPlayer(crcIt->first);
+				MismatchReport::notePlayerCRC(crcIt->first, player ? player->getPlayerDisplayName() : UnicodeString::TheEmptyString, crcIt->second);
+			}
+			MismatchReport::write("network", m_frame, 0, 0);
+
 			TheNetwork->setSawCRCMismatch();
 		}
 	}
@@ -3206,6 +3215,14 @@ void GameLogic::update()
 
 	LatchRestore<Bool> inUpdateLatch(m_isInUpdate, TRUE);
 	StateTrace::LogicUpdateScope stateTraceScope;	// TheSuperHackers @feature -stateTrace: a line when this update ends
+	MismatchReport::FrameScope mismatchScope;	// TheSuperHackers @feature the rolling record of the mismatch report
+
+	// TheSuperHackers @feature -testPerturbFrame (replay playback only): one extra logic random draw, so the replay's
+	// CRC check fires and the mismatch report can be tried without a network.
+	if (MismatchReport::perturbNow(m_frame))
+	{
+		GameLogicRandomValue(0, 1000);
+	}
 #ifdef DO_UNIT_TIMINGS
 	unitTimings();
 #endif
@@ -3667,6 +3684,13 @@ UnsignedInt GameLogic::getCRC( Int mode, AsciiString deepCRCFileName )
 		xferCRC->open(crcName);
 	}
 
+	// TheSuperHackers @feature The mismatch report keeps the CRC after each part and each object of a logic update's CRC.
+	const Bool mismatchRecord = isInGameLogicUpdate() && MismatchReport::recording();
+	if (mismatchRecord)
+	{
+		MismatchReport::crcBegin(m_frame);
+	}
+
 	// calculate CRCs
 	Object *obj;
 	DEBUG_ASSERTCRASH(this == TheGameLogic, ("Not in GameLogic"));
@@ -3680,6 +3704,14 @@ UnsignedInt GameLogic::getCRC( Int mode, AsciiString deepCRCFileName )
 	for( obj = m_objList; obj; obj=obj->getNextObject() )
 	{
 		xferCRC->xferSnapshot( obj );
+		if (mismatchRecord)
+		{
+			MismatchReport::crcObject((UnsignedInt)obj->getID(), xferCRC->getCRC());
+		}
+	}
+	if (mismatchRecord)
+	{
+		MismatchReport::crcStage("objects", xferCRC->getCRC());
 	}
 	UnsignedInt seed = GetGameLogicRandomSeedCRC();
 	if (isInGameLogicUpdate())
@@ -3695,9 +3727,17 @@ UnsignedInt GameLogic::getCRC( Int mode, AsciiString deepCRCFileName )
 	{
 		xferCRC->xferUnsignedInt( &seed );
 	}
+	if (mismatchRecord)
+	{
+		MismatchReport::crcStage("seed", xferCRC->getCRC());
+	}
 	marker = "MARKER:ThePartitionManager";
 	xferCRC->xferAsciiString(&marker);
 	xferCRC->xferSnapshot( ThePartitionManager );
+	if (mismatchRecord)
+	{
+		MismatchReport::crcStage("partition", xferCRC->getCRC());
+	}
 	if (isInGameLogicUpdate())
 	{
 		CRCGEN_LOG(("CRC after partition manager for frame %d is 0x%8.8X", m_frame, xferCRC->getCRC()));
@@ -3720,6 +3760,10 @@ UnsignedInt GameLogic::getCRC( Int mode, AsciiString deepCRCFileName )
 	marker = "MARKER:ThePlayerList";
 	xferCRC->xferAsciiString(&marker);
 	xferCRC->xferSnapshot( ThePlayerList );
+	if (mismatchRecord)
+	{
+		MismatchReport::crcStage("players", xferCRC->getCRC());
+	}
 	if (isInGameLogicUpdate())
 	{
 		CRCGEN_LOG(("CRC after PlayerList for frame %d is 0x%8.8X", m_frame, xferCRC->getCRC()));
@@ -3728,6 +3772,10 @@ UnsignedInt GameLogic::getCRC( Int mode, AsciiString deepCRCFileName )
 	marker = "MARKER:TheAI";
 	xferCRC->xferAsciiString(&marker);
 	xferCRC->xferSnapshot( TheAI );
+	if (mismatchRecord)
+	{
+		MismatchReport::crcStage("ai", xferCRC->getCRC());
+	}
 	if (isInGameLogicUpdate())
 	{
 		CRCGEN_LOG(("CRC after AI for frame %d is 0x%8.8X", m_frame, xferCRC->getCRC()));
@@ -3743,6 +3791,10 @@ UnsignedInt GameLogic::getCRC( Int mode, AsciiString deepCRCFileName )
 	xferCRC->close();
 
 	UnsignedInt theCRC = xferCRC->getCRC();
+	if (mismatchRecord)
+	{
+		MismatchReport::crcEnd(theCRC);
+	}
 
 	delete xferCRC;
 	xferCRC = nullptr;
