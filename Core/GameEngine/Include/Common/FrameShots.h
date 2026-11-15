@@ -56,6 +56,9 @@ public:
 
 	static void onLogicUpdated(); ///< Call after every regular logic update.
 	static void onClientUpdated(); ///< Call once per engine update, after the client update that draws.
+	/// TheSuperHackers @feature Call after the loading screen has drawn a frame (LoadScreen::update): takes the pictures
+	/// that -uiScript "loadshot" steps armed. Test only.
+	static void onLoadScreenDrawn(Int percent);
 
 private:
 	static void beginGame();

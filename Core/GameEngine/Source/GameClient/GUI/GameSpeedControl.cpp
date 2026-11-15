@@ -191,17 +191,55 @@ void GameSpeedControl::init(GameWindow *parent, GameWindow *slider, GameWindow *
 			font = look->m_font;
 			status |= checkBoxTemplate->winGetStatus() & WIN_STATUS_IMAGE;
 		}
+		else
+		{
+			// TheSuperHackers @bugfix No check box to copy (base Generals): not the engine's red default look but no
+			// background, and the box, the cross and the text in the colour of the speed text (G2).
+			const WinInstanceData *textLook = m_text->winGetInstanceData();
+			const Color textColor = textLook->m_enabledText.color;
+			const Color clear = GameMakeColor(0, 0, 0, 0);
+			const Color grey = GameMakeColor(128, 128, 128, 255);
+			for (Int i = 0; i < MAX_DRAW_DATA; ++i)
+			{
+				instData.m_enabledDrawData[i].image = nullptr;
+				instData.m_enabledDrawData[i].color = clear;
+				instData.m_enabledDrawData[i].borderColor = clear;
+				instData.m_disabledDrawData[i] = instData.m_enabledDrawData[i];
+				instData.m_hiliteDrawData[i] = instData.m_enabledDrawData[i];
+			}
+			instData.m_enabledDrawData[1].color = WIN_COLOR_UNDEFINED;   // unchecked: the empty box
+			instData.m_enabledDrawData[1].borderColor = textColor;
+			instData.m_enabledDrawData[2].color = textColor;             // checked: the box with the cross
+			instData.m_enabledDrawData[2].borderColor = textColor;
+			instData.m_hiliteDrawData[1] = instData.m_enabledDrawData[1];
+			instData.m_hiliteDrawData[2] = instData.m_enabledDrawData[2];
+			instData.m_disabledDrawData[1].color = WIN_COLOR_UNDEFINED;
+			instData.m_disabledDrawData[1].borderColor = grey;
+			instData.m_disabledDrawData[2].color = grey;
+			instData.m_disabledDrawData[2].borderColor = grey;
+			instData.m_enabledText = textLook->m_enabledText;
+			instData.m_hiliteText = textLook->m_enabledText;
+			instData.m_disabledText = textLook->m_disabledText;
+			font = m_text->winGetFont();
+			instData.m_font = font;
+		}
 		instData.m_id = TheNameKeyGenerator->nameToKey(checkBoxName);
 
 		const UnicodeString boxText = TheGameText->FETCH_OR_SUBSTITUTE("GUI:GameSpeedNormal",
 			GameSpeed::localized(L"Normal", L"\x041E\x0431\x044B\x0447\x043D\x0430\x044F"));   // ru: Obychnaya
 		Int boxX = x + width + 10;
 		Int boxW = checkBoxWidth > 20 ? checkBoxWidth : 160;
+		if (checkBoxTemplate == nullptr)
+		{
+			// the width the box and its text need, so it does not reach into the next control (G2)
+			boxW = boxHeight + 6 + measureText(font, boxText);
+		}
 		if (rightNeighbour != nullptr)
 		{
 			// TheSuperHackers @tweak The box takes the width it needs and must end before the text of the next control of
 			// the row (in skirmish: the "starting money" label, centred in its window left of the money box). If the room
-			// is short, the slider and the speed text move left, by at most a third of the slider.
+			// is short, the slider gets shorter at its right end (its left end stays clear of its title) and the speed text
+			// moves left, by at most a third of the slider.
 			const Int need = boxHeight + 6 + measureText(font, boxText);
 			const Int limit = textStartLeftOf(parent, rightNeighbour) - 6;
 			boxW = need;
@@ -210,17 +248,19 @@ void GameSpeedControl::init(GameWindow *parent, GameWindow *slider, GameWindow *
 				Int sliderW = 0, sliderH = 0;
 				m_slider->winGetSize(&sliderW, &sliderH);
 				const Int shift = min(boxX + need - limit, sliderW / 3);
-				Int sx = 0, sy = 0;
-				m_slider->winGetPosition(&sx, &sy);
-				m_slider->winSetPosition(sx - shift, sy);
+				Int minVal = 0, maxVal = 0;
+				GadgetSliderGetMinMax(m_slider, &minVal, &maxVal);
+				const Int pos = GadgetSliderGetPosition(m_slider);
+				m_slider->winSetSize(sliderW - shift, sliderH);
+				TheWindowManager->winSendSystemMsg(m_slider, GSM_SET_MIN_MAX, minVal, maxVal);
+				GadgetSliderSetPosition(m_slider, pos);
 				Int tx = 0, ty = 0;
 				m_text->winGetPosition(&tx, &ty);
 				m_text->winSetPosition(tx - shift, ty);
 				boxX -= shift;
 			}
 		}
-		m_checkBox = TheWindowManager->gogoGadgetCheckbox(parent, status, boxX, y, boxW, boxHeight, &instData, font,
-			checkBoxTemplate == nullptr);
+		m_checkBox = TheWindowManager->gogoGadgetCheckbox(parent, status, boxX, y, boxW, boxHeight, &instData, font, FALSE);
 		if (m_checkBox != nullptr)
 		{
 			m_checkBox->winSetWindowId(instData.m_id);

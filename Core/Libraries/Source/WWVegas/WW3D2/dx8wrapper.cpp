@@ -793,9 +793,14 @@ void DX8Wrapper::Resize_And_Position_Window()
 	RECT rect = { 0 };
 	::GetClientRect (_Hwnd, &rect);
 
+	// TheSuperHackers @bugfix A corner from WindowPosition is applied once even when the window already has the size of
+	// the resolution (a -win start creates it at that size, centred), so the preset is not lost.
+	static bool s_placementApplied = false;
+	const bool placeCorner = IsWindowed && WindowPlacement != 0 && !s_placementApplied;
+
 	// Is the window the correct size for this resolution?
 	if ((rect.right-rect.left) != ResolutionWidth ||
-			(rect.bottom-rect.top) != ResolutionHeight) {
+			(rect.bottom-rect.top) != ResolutionHeight || placeCorner) {
 
 		// Calculate what the main window's bounding rectangle should be to
 		// accommodate this resolution
@@ -847,6 +852,7 @@ void DX8Wrapper::Resize_And_Position_Window()
 			MoveRectIntoOtherRect(rectClient, mi.rcMonitor, &left, &top);
 
 			::SetWindowPos (_Hwnd, nullptr, left, top, width, height, SWP_NOZORDER);
+			s_placementApplied = true;
 
 			DEBUG_LOG(("Window positioned to x:%d y:%d, resized to w:%d h:%d", left, top, width, height));
 		}

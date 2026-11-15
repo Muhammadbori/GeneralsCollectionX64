@@ -89,6 +89,7 @@
 #include "GameNetwork/GameSpy/PersistentStorageThread.h"
 #include "GameNetwork/NetworkInterface.h"
 #include "GameNetwork/RankPointValue.h"
+#include "Common/FrameShots.h"
 
 //-----------------------------------------------------------------------------
 // DEFINES ////////////////////////////////////////////////////////////////////
@@ -167,6 +168,9 @@ void LoadScreen::update( Int percent )
 	TheDisplay->update();
 	// redraw all views, update the GUI
 	TheDisplay->draw();
+
+	// TheSuperHackers @feature -uiScript "loadshot": a picture of the loading screen (test only).
+	FrameShots::onLoadScreenDrawn(percent);
 
 	setFPMode();
 }

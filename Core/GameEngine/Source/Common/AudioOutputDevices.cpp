@@ -22,6 +22,10 @@
 
 #include "Common/AudioOutputDevices.h"
 
+#include "Common/GlobalData.h"
+
+#include <stdio.h>
+
 namespace
 {
 	AudioOutputDevices::Lister s_lister = nullptr;
@@ -35,9 +39,27 @@ void AudioOutputDevices::setLister(Lister lister)
 Bool AudioOutputDevices::list(std::vector<AsciiString> &names)
 {
 	names.clear();
-	if (s_lister == nullptr) {
-		return FALSE;
+	AsciiString how;
+	if (s_lister != nullptr) {
+		s_lister(names, how);
 	}
-	s_lister(names);
-	return TRUE;
+	// TheSuperHackers @feature AudioDevices.log: what the options were offered (no device is opened for it).
+	if (TheGlobalData != nullptr)
+	{
+		AsciiString path = TheGlobalData->getPath_UserData();
+		path.concat("AudioDevices.log");
+		if (FILE *fp = fopen(path.str(), "w"))
+		{
+			fprintf(fp, "lister: %s\n", s_lister != nullptr ? "yes" : "none (this audio device cannot list its outputs)");
+			if (s_lister != nullptr) {
+				fprintf(fp, "listed by: %s\n", how.isEmpty() ? "-" : how.str());
+			}
+			fprintf(fp, "devices: %u\n", (unsigned)names.size());
+			for (size_t i = 0; i < names.size(); ++i) {
+				fprintf(fp, "device: %s\n", names[i].str());   // UTF-8 as the system gives it
+			}
+			fclose(fp);
+		}
+	}
+	return s_lister != nullptr;
 }

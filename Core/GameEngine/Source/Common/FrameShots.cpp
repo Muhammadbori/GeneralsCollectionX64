@@ -98,11 +98,14 @@ namespace
 	//   key NAME               press and release a key: ESC TAB ENTER SPACE BACKSPACE UP DOWN LEFT RIGHT F1..F12 A..Z 0..9
 	//   text WORDS             type the rest of the line into the window that has the keyboard focus
 	//   shot NAME              save <shot folder>\NAME.png after the next drawn frame (the -shotDir folder)
+	//   loadshot NAME [PERCENT] save <shot folder>\NAME.png from the loading screen, at its first draw at PERCENT (default 0)
+	//                          or more. The step only arms the picture and goes on at once: put it before the click that
+	//                          starts the game (the steps do not run while a map loads). Several may be armed.
 	//   exit [CODE]            end the game through the normal quit path, after the pictures are written
 	struct UiStep
 	{
 		enum Op { OP_SCALE, OP_TIMEOUT, OP_WAIT, OP_WAITFRAMES, OP_WAITSHELL, OP_WAITGAME, OP_MOVE, OP_CLICK, OP_RCLICK, OP_CLICKWIN, OP_KEY,
-			OP_TEXT, OP_SHOT, OP_EXIT };
+			OP_TEXT, OP_SHOT, OP_LOADSHOT, OP_EXIT };
 		Op op;
 		Int a, b, c, d;
 		AsciiString text;
@@ -120,6 +123,9 @@ namespace
 	ICoord2D s_uiPointer = { 0, 0 };
 	Int s_uiScaleW = 0, s_uiScaleH = 0;
 	FILE *s_uiLog = nullptr;
+
+	struct LoadShot { AsciiString name; Int percent; };
+	std::vector<LoadShot> s_loadShots;   ///< armed by "loadshot", taken by FrameShots::onLoadScreenDrawn
 
 	struct UiKey { const char *name; Int key; };
 	const UiKey s_uiKeys[] =
@@ -295,6 +301,16 @@ void FrameShots::setUiScript(const char *path)
 		else if (stricmp(word, "click") == 0) { step.op = UiStep::OP_CLICK; ok = n >= 2; }
 		else if (stricmp(word, "rclick") == 0) { step.op = UiStep::OP_RCLICK; ok = n >= 2; }
 		else if (stricmp(word, "exit") == 0) { step.op = UiStep::OP_EXIT; if (n < 1) a = 0; }
+		else if (stricmp(word, "loadshot") == 0)
+		{
+			step.op = UiStep::OP_LOADSHOT;
+			char name[256] = {};
+			Int percent = 0;
+			const Int got = sscanf(rest, " %255s %d", name, &percent);
+			ok = got >= 1;
+			step.text = name;
+			a = percent; b = 0; c = 500; d = 200;
+		}
 		else if (stricmp(word, "clickwin") == 0)
 		{
 			step.op = UiStep::OP_CLICKWIN;
@@ -516,6 +532,15 @@ void FrameShots::runUiScript()
 				uiLog("shot %s", filePath.str());
 				done = TRUE;
 			}
+			break;
+		}
+		case UiStep::OP_LOADSHOT:
+		{
+			LoadShot shot;
+			shot.name = step.text;
+			shot.percent = step.a;
+			s_loadShots.push_back(shot);
+			uiLog("loadshot %s armed at %d%%", step.text.str(), step.a);
 			break;
 		}
 		case UiStep::OP_EXIT:
@@ -775,6 +800,26 @@ void FrameShots::writeSave(UnsignedInt frame)
 	}
 	fprintf(s_savesCsv, "%u,%d,%s\n", frame, (Int)result.saveCode, TheGameState->getFilePathInSaveDirectory(fileName).str());
 	fflush(s_savesCsv);
+}
+
+void FrameShots::onLoadScreenDrawn(Int percent)
+{
+	if (s_loadShots.empty() || TheDisplay == nullptr || !prepareOutput())
+		return;
+	// The picture is read back from the frame the loading screen has just presented.
+	for (size_t i = 0; i < s_loadShots.size(); )
+	{
+		if (percent >= s_loadShots[i].percent)
+		{
+			AsciiString filePath;
+			filePath.format("%s\\%s.png", s_directory.str(), s_loadShots[i].name.str());
+			TheDisplay->takeScreenShotToFile(SCREENSHOT_PNG, filePath.str());
+			uiLog("loadshot %s at %d%%", filePath.str(), percent);
+			s_loadShots.erase(s_loadShots.begin() + i);
+			break;   // one picture per drawn frame
+		}
+		++i;
+	}
 }
 
 void FrameShots::onClientUpdated()

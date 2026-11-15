@@ -39,6 +39,8 @@
 #include "GameClient/TerrainVisual.h" // for TERRAIN_LOD_MIN definition
 #include "GameClient/GameText.h"
 #include "GameClient/ReplayControlBar.h"
+#include "Common/MapPacks.h"
+#include "Common/ReplayStream.h"
 #include "GameNetwork/NetworkDefs.h"
 
 
@@ -830,6 +832,76 @@ Int parseFollowDelay(char *args[], int num)
 			ReplayFollow::configure(s_followDelaySeconds, s_followCatchUp);
 		return 2;
 	}
+	return 1;
+}
+
+// TheSuperHackers @feature The live replay over a connection (ReplayStream.h). -serveReplay <port>: serve this game's
+// replay (or, with -watchReplay, the mirror: a relay) on 127.0.0.1:<port>. -serveReplayMax <viewers>, -serveReplayRate
+// <KB per second>, -serveReplayStopAfter <seconds> (test only: a forced source loss).
+Int parseServeReplay(char *args[], int num)
+{
+	if (num > 1)
+	{
+		ReplayStream::configureServe(atoi(args[1]));
+		return 2;
+	}
+	return 1;
+}
+
+Int parseServeReplayMax(char *args[], int num)
+{
+	if (num > 1)
+	{
+		ReplayStream::configureServeMax(atoi(args[1]));
+		return 2;
+	}
+	return 1;
+}
+
+Int parseServeReplayRate(char *args[], int num)
+{
+	if (num > 1)
+	{
+		ReplayStream::configureServeRate(atoi(args[1]));
+		return 2;
+	}
+	return 1;
+}
+
+Int parseServeReplayStopAfter(char *args[], int num)
+{
+	if (num > 1)
+	{
+		ReplayStream::configureServeStopAfter(atoi(args[1]));
+		return 2;
+	}
+	return 1;
+}
+
+// -watchReplay <host:port>[,<host:port>...]: follow a live replay from these sources, hopping to the next one when a
+// source is lost. Like -followReplay it may run next to the source on the same PC (another instance).
+Int parseWatchReplay(char *args[], int num)
+{
+	if (num > 1)
+	{
+		ReplayStream::configureWatch(args[1]);
+		TheWritableGlobalData->m_loadReplayGame = "(watched)";   // replaced by the mirror file when the replay starts
+		TheWritableGlobalData->m_shellMapOn = FALSE;
+		TheWritableGlobalData->m_playIntro = FALSE;
+		TheWritableGlobalData->m_playSizzle = FALSE;
+		ReplayFollow::configure(s_followDelaySeconds, s_followCatchUp);
+		s_followRequested = TRUE;
+		rts::ClientInstance::setMultiInstance(TRUE);
+		rts::ClientInstance::skipPrimaryInstance();
+		return 2;
+	}
+	return 1;
+}
+
+// TheSuperHackers @feature -mapPacksTest: a test run (-shotFrames, -uiScript) is asked about the map packs too.
+Int parseMapPacksTest(char *args[], int num)
+{
+	MapPacks::enableInTestRuns();
 	return 1;
 }
 
@@ -1756,6 +1828,12 @@ static CommandLineParam paramsForStartup[] =
 	{ "-followDelay", parseFollowDelay },
 	{ "-followCatchUp", parseFollowCatchUp },
 	{ "-noReplayBar", parseNoReplayBar },
+	{ "-mapPacksTest", parseMapPacksTest },
+	{ "-serveReplay", parseServeReplay },
+	{ "-serveReplayMax", parseServeReplayMax },
+	{ "-serveReplayRate", parseServeReplayRate },
+	{ "-serveReplayStopAfter", parseServeReplayStopAfter },
+	{ "-watchReplay", parseWatchReplay },
 	{ "-testPerturbFrame", parseTestPerturbFrame },
 	{ "-testReportFrame", parseTestReportFrame },
 
