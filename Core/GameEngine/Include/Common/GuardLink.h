@@ -34,9 +34,13 @@
 //     4 SEND     guard -> game   u32 peer ip, opaque bytes (<= 200)  (give these bytes to that player)
 //     5 RECV     game -> guard   u32 from ip, u32 own ip, opaque bytes (that player sent these bytes)
 //     6 VERDICT  guard -> game   u32 peer ip, u32 verdict (0 no answer, 1 verified, 2 failed), u32 fail bits
+//     7 REASON   guard -> game   O32: u32 kind (0 none, 1 exe, 2 file, 3 module, 4 program), UTF-16 text: what this
+//                                player's own check found (a path in the game folder or a file name), for this player's
+//                                own chat only; other players learn only the kind from the fail bits of a verdict
 // Fail bits (informational): 0x1 exe not official, 0x2 gameplay file changed, 0x4 override file, 0x8 foreign module,
 // 0x10 cheat program running, 0x20 official list missing, 0x40 wrong pipe client, 0x80 first check running, 0x100 test
-// build seen by a normal guard, 0x200 another official list, 0x400 answer not signed by a guard.
+// build seen by a normal guard, 0x200 another official list, 0x400 answer not signed by a guard, 0x800 (O32) another
+// release file (art, sound, movies, packs; the second pass) missing or changed.
 //
 // LAN: MSG_GUARD_DATA carries u32 magic "GRD1", u16 length, the opaque bytes, to one address. The game passes what
 // arrives to its guard and does not look inside.
@@ -86,6 +90,12 @@ namespace GuardLink
 	UnicodeString joinRefusedText();
 	/// A player whose verdict turned to failed since the last call (for the match message line); FALSE: none.
 	Bool takeNewFailure(UnsignedInt *ip);
-	UnicodeString failedInMatchText(const UnicodeString &playerName);
+	UnicodeString failedInMatchText(const UnicodeString &playerName, UnsignedInt ip);
 	UnicodeString ownFailureText();
+	/// O32: TRUE once each time this player's own check found something new (the line names the file, module or program)
+	Bool takeOwnFailureNotice(UnicodeString *text);
+	/// O32: the kind of another player's failure ("files differ", "foreign module", ...), never a path of their PC
+	UnicodeString failKindOf(UnsignedInt ip);
+	/// O32: the chat line for a player whose verdict turned to failed in the lobby
+	UnicodeString failedInLobbyText(const UnicodeString &playerName, UnsignedInt ip);
 }

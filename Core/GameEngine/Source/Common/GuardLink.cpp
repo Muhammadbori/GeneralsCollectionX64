@@ -37,7 +37,7 @@ extern "C" BOOLEAN NTAPI SystemFunction036(PVOID buffer, ULONG length);
 namespace
 {
 	const UnsignedInt kMagic = 0x314C4747;   // "GGL1"
-	enum { PIPE_HELLO = 1, PIPE_STATUS = 2, PIPE_CHECK = 3, PIPE_SEND = 4, PIPE_RECV = 5, PIPE_VERDICT = 6 };
+	enum { PIPE_HELLO = 1, PIPE_STATUS = 2, PIPE_CHECK = 3, PIPE_SEND = 4, PIPE_RECV = 5, PIPE_VERDICT = 6, PIPE_REASON = 7 };
 	enum { kProtocol = 1, kMaxPayload = 512, kMaxRelay = 200, PENDING_BIT = 0x80 };
 	const UnsignedInt kConnectGiveUpMs = 30000;
 	const UnsignedInt kSeenWindowMs = 20000;     ///< a player is checked while a message came from it within this time
@@ -95,6 +95,9 @@ namespace
 	UnsignedInt s_lastPeerPass = 0;
 	UnsignedInt s_state = 0;
 	UnsignedInt s_failBits = PENDING_BIT;
+	UnsignedInt s_reasonKind = 0;          ///< O32: this player's own finding (PIPE_REASON)
+	UnicodeString s_reasonText;
+	Bool s_reasonNew = FALSE;
 	Bool s_statusSeen = FALSE;
 	std::vector<UnsignedByte> s_inbox;
 	std::map<UnsignedInt, Peer> s_peers;
@@ -110,6 +113,21 @@ namespace
 		L"The host accepts only players with a verified anti-cheat. Yours is not verified (yet): wait a few seconds and try again.",
 		L"\x0425\x043E\x0441\x0442 \x043F\x0440\x0438\x043D\x0438\x043C\x0430\x0435\x0442 \x0442\x043E\x043B\x044C\x043A\x043E \x0438\x0433\x0440\x043E\x043A\x043E\x0432 \x0441 \x043F\x0440\x043E\x0432\x0435\x0440\x0435\x043D\x043D\x044B\x043C \x0430\x043D\x0442\x0438\x0447\x0438\x0442\x043E\x043C. \x0412\x0430\x0448 \x0435\x0449\x0451 \x043D\x0435 \x043F\x0440\x043E\x0432\x0435\x0440\x0435\x043D: \x043F\x043E\x0434\x043E\x0436\x0434\x0438\x0442\x0435 \x043D\x0435\x0441\x043A\x043E\x043B\x044C\x043A\x043E \x0441\x0435\x043A\x0443\x043D\x0434 \x0438 \x043F\x043E\x043F\x0440\x043E\x0431\x0443\x0439\x0442\x0435 \x0441\x043D\x043E\x0432\x0430." };
 	const Text kJoinRefusedOwnFailed = { "GUI:GuardJoinRefusedOwnFailed", L"The host accepts only players with a verified anti-cheat. Yours found a problem with your game or its files: see the line about it in the chat.", L"\x0425\x043E\x0441\x0442 \x043F\x0440\x0438\x043D\x0438\x043C\x0430\x0435\x0442 \x0442\x043E\x043B\x044C\x043A\x043E \x0438\x0433\x0440\x043E\x043A\x043E\x0432 \x0441 \x043F\x0440\x043E\x0432\x0435\x0440\x0435\x043D\x043D\x044B\x043C \x0430\x043D\x0442\x0438\x0447\x0438\x0442\x043E\x043C. \x0412\x0430\x0448 \x0430\x043D\x0442\x0438\x0447\x0438\x0442 \x043D\x0430\x0448\x0451\x043B \x043F\x0440\x043E\x0431\x043B\x0435\x043C\x0443 \x0432 \x0432\x0430\x0448\x0435\x0439 \x0438\x0433\x0440\x0435 \x0438\x043B\x0438 \x0435\x0451 \x0444\x0430\x0439\x043B\x0430\x0445: \x0441\x043C. \x0441\x0442\x0440\x043E\x043A\x0443 \x043E\x0431 \x044D\x0442\x043E\x043C \x0432 \x0447\x0430\x0442\x0435." };
+	// O32: this player's own finding, named
+	const Text kOwnExe = { "GUI:GuardOwnExe", L"Anti-cheat: the game (%ls) is not an official build.", L"\x0410\x043D\x0442\x0438\x0447\x0438\x0442: \x0438\x0433\x0440\x0430 (%ls) \x043D\x0435 \x044F\x0432\x043B\x044F\x0435\x0442\x0441\x044F \x043E\x0444\x0438\x0446\x0438\x0430\x043B\x044C\x043D\x043E\x0439 \x0441\x0431\x043E\x0440\x043A\x043E\x0439." };
+	const Text kOwnFile = { "GUI:GuardOwnFile", L"Anti-cheat: the file %ls differs from the official build or is missing. Restore it from the release.", L"\x0410\x043D\x0442\x0438\x0447\x0438\x0442: \x0444\x0430\x0439\x043B %ls \x043E\x0442\x043B\x0438\x0447\x0430\x0435\x0442\x0441\x044F \x043E\x0442 \x043E\x0444\x0438\x0446\x0438\x0430\x043B\x044C\x043D\x043E\x0439 \x0441\x0431\x043E\x0440\x043A\x0438 \x0438\x043B\x0438 \x043E\x0442\x0441\x0443\x0442\x0441\x0442\x0432\x0443\x0435\x0442. \x0412\x043E\x0441\x0441\x0442\x0430\x043D\x043E\x0432\x0438\x0442\x0435 \x0435\x0433\x043E \x0438\x0437 \x0441\x0431\x043E\x0440\x043A\x0438." };
+	const Text kOwnModule = { "GUI:GuardOwnModule", L"Anti-cheat: a foreign module, %ls, is loaded into the game.", L"\x0410\x043D\x0442\x0438\x0447\x0438\x0442: \x0432 \x0438\x0433\x0440\x0443 \x0437\x0430\x0433\x0440\x0443\x0436\x0435\x043D \x043F\x043E\x0441\x0442\x043E\x0440\x043E\x043D\x043D\x0438\x0439 \x043C\x043E\x0434\x0443\x043B\x044C %ls." };
+	const Text kOwnProgram = { "GUI:GuardOwnProgram", L"Anti-cheat: a forbidden program is running: %ls.", L"\x0410\x043D\x0442\x0438\x0447\x0438\x0442: \x0437\x0430\x043F\x0443\x0449\x0435\x043D\x0430 \x0437\x0430\x043F\x0440\x0435\x0449\x0451\x043D\x043D\x0430\x044F \x043F\x0440\x043E\x0433\x0440\x0430\x043C\x043C\x0430 %ls." };
+	// O32: another player's failure: its kind only
+	const Text kKindFiles = { "GUI:GuardKindFiles", L"files differ from the official build", L"\x0444\x0430\x0439\x043B\x044B \x043E\x0442\x043B\x0438\x0447\x0430\x044E\x0442\x0441\x044F \x043E\x0442 \x043E\x0444\x0438\x0446\x0438\x0430\x043B\x044C\x043D\x043E\x0439 \x0441\x0431\x043E\x0440\x043A\x0438" };
+	const Text kKindModule = { "GUI:GuardKindModule", L"a foreign module in the game", L"\x043F\x043E\x0441\x0442\x043E\x0440\x043E\x043D\x043D\x0438\x0439 \x043C\x043E\x0434\x0443\x043B\x044C \x0432 \x0438\x0433\x0440\x0435" };
+	const Text kKindProgram = { "GUI:GuardKindProgram", L"a forbidden program is running", L"\x0437\x0430\x043F\x0443\x0449\x0435\x043D\x0430 \x0437\x0430\x043F\x0440\x0435\x0449\x0451\x043D\x043D\x0430\x044F \x043F\x0440\x043E\x0433\x0440\x0430\x043C\x043C\x0430" };
+	const Text kKindExe = { "GUI:GuardKindExe", L"not an official game build", L"\x043D\x0435\x043E\x0444\x0438\x0446\x0438\x0430\x043B\x044C\x043D\x0430\x044F \x0441\x0431\x043E\x0440\x043A\x0430 \x0438\x0433\x0440\x044B" };
+	const Text kKindTest = { "GUI:GuardKindTest", L"a test build", L"\x0442\x0435\x0441\x0442\x043E\x0432\x0430\x044F \x0441\x0431\x043E\x0440\x043A\x0430" };
+	const Text kKindUnsigned = { "GUI:GuardKindUnsigned", L"its anti-cheat answer is not valid", L"\x043E\x0442\x0432\x0435\x0442 \x0435\x0433\x043E \x0430\x043D\x0442\x0438\x0447\x0438\x0442\x0430 \x043D\x0435\x0434\x0435\x0439\x0441\x0442\x0432\x0438\x0442\x0435\x043B\x0435\x043D" };
+	const Text kKindOther = { "GUI:GuardKindOther", L"the check failed", L"\x043F\x0440\x043E\x0432\x0435\x0440\x043A\x0430 \x043D\x0435 \x043F\x0440\x043E\x0439\x0434\x0435\x043D\x0430" };
+	const Text kFailedInLobby = { "GUI:GuardFailedInLobby", L"Anti-cheat: %ls: %ls.", L"\x0410\x043D\x0442\x0438\x0447\x0438\x0442: %ls: %ls." };
+	const Text kFailedInMatchKind = { "GUI:GuardFailedInMatchKind", L"Anti-cheat: %ls failed the check (%ls).", L"\x0410\x043D\x0442\x0438\x0447\x0438\x0442: \x0438\x0433\x0440\x043E\x043A %ls \x043D\x0435 \x043F\x0440\x043E\x0448\x0451\x043B \x043F\x0440\x043E\x0432\x0435\x0440\x043A\x0443 (%ls)." };
 	const Text kFailedInMatch = { "GUI:GuardFailedInMatch", L"Anti-cheat: %ls failed the check.",
 		L"\x0410\x043D\x0442\x0438\x0447\x0438\x0442: \x0438\x0433\x0440\x043E\x043A %ls \x043D\x0435 \x043F\x0440\x043E\x0448\x0451\x043B \x043F\x0440\x043E\x0432\x0435\x0440\x043A\x0443." };
 	const Text kOwnFailure = { "GUI:GuardOwnFailure",
@@ -218,6 +236,24 @@ namespace
 					memcpy(&s_state, p + 8, 4);
 					memcpy(&s_failBits, p + 12, 4);
 					s_statusSeen = TRUE;
+				}
+				break;
+			case PIPE_REASON:
+				if (h.length >= 4)
+				{
+					UnsignedInt kind = 0;
+					memcpy(&kind, p, 4);
+					const Int chars = (h.length - 4) / 2;
+					WideChar buf[256];
+					const Int n = chars < 255 ? chars : 255;
+					memcpy(buf, p + 4, n * 2);
+					buf[n] = 0;
+					if (kind != s_reasonKind || s_reasonText.compare(buf) != 0)
+					{
+						s_reasonKind = kind;
+						s_reasonText = UnicodeString(buf);
+						s_reasonNew = kind != 0;
+					}
 				}
 				break;
 			case PIPE_SEND:
@@ -522,13 +558,54 @@ UnicodeString GuardLink::joinRefusedText()
 	// O32 (review 24): a player whose own check failed is not told to wait
 	return textOf(ownVerdict() == VERDICT_FAILED ? kJoinRefusedOwnFailed : kJoinRefused);
 }
-UnicodeString GuardLink::ownFailureText() { return textOf(kOwnFailure); }
+UnicodeString GuardLink::ownFailureText()
+{
+	// O32: the file, module or program this player's own check found (only this player sees it)
+	const Text *t = s_reasonKind == 1 ? &kOwnExe : (s_reasonKind == 2 ? &kOwnFile : (s_reasonKind == 3 ? &kOwnModule
+		: (s_reasonKind == 4 ? &kOwnProgram : nullptr)));
+	if (t == nullptr || s_reasonText.isEmpty()) {
+		return textOf(kOwnFailure);
+	}
+	UnicodeString line;
+	line.format(textOf(*t).str(), s_reasonText.str());
+	return line;
+}
 
-UnicodeString GuardLink::failedInMatchText(const UnicodeString &playerName)
+UnicodeString GuardLink::failedInMatchText(const UnicodeString &playerName, UnsignedInt ip)
 {
 	UnicodeString t;
-	t.format(textOf(kFailedInMatch).str(), playerName.str());
+	t.format(textOf(kFailedInMatchKind).str(), playerName.str(), failKindOf(ip).str());
 	return t;
+}
+
+UnicodeString GuardLink::failedInLobbyText(const UnicodeString &playerName, UnsignedInt ip)
+{
+	UnicodeString t;
+	t.format(textOf(kFailedInLobby).str(), playerName.str(), failKindOf(ip).str());
+	return t;
+}
+
+UnicodeString GuardLink::failKindOf(UnsignedInt ip)
+{
+	std::map<UnsignedInt, Peer>::const_iterator it = s_peers.find(ip);
+	const UnsignedInt bits = it != s_peers.end() ? it->second.bits : 0;
+	if (bits & 0x400) return textOf(kKindUnsigned);
+	if (bits & 0x001) return textOf(kKindExe);
+	if (bits & 0x100) return textOf(kKindTest);
+	if (bits & 0x010) return textOf(kKindProgram);
+	if (bits & 0x008) return textOf(kKindModule);
+	if (bits & (0x002 | 0x004 | 0x200 | 0x800 | 0x020)) return textOf(kKindFiles);
+	return textOf(kKindOther);
+}
+
+Bool GuardLink::takeOwnFailureNotice(UnicodeString *text)
+{
+	if (!s_reasonNew || ownVerdict() != VERDICT_FAILED) {
+		return FALSE;
+	}
+	s_reasonNew = FALSE;
+	*text = ownFailureText();
+	return TRUE;
 }
 
 GuardLink::Verdict GuardLink::ownVerdict()
