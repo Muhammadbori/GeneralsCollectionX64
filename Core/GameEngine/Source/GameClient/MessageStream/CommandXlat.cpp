@@ -33,6 +33,7 @@
 #include "Common/AudioAffect.h"
 #include "Common/ActionManager.h"
 #include "Common/FramePacer.h"
+#include "GameClient/GameSpeedControl.h"
 #include "Common/GameAudio.h"
 #include "Common/GameEngine.h"
 #include "Common/GameType.h"
@@ -226,8 +227,11 @@ bool changeLogicTimeScale(FpsValueChange change)
 
 	if (logicTimeScaleFps < LogicTimeScaleFpsPreset::MaxFpsValue)
 	{
-		message = TheGameText->FETCH_OR_SUBSTITUTE_FORMAT("GUI:SetLogicTimeScaleFps", L"Logic Time Scale FPS is %u (actual %u, ratio %.02f)",
-			logicTimeScaleFps, actualLogicTimeScaleFps, actualLogicTimeScaleRatio);
+		// TheSuperHackers @tweak The speed as the multiplier the skirmish slider shows.
+		message = TheGameText->FETCH_OR_SUBSTITUTE_FORMAT("GUI:SetGameSpeedMultiplier",
+			GameSpeed::localized(L"Game speed %ls (%u logic steps per second)", L"\x0421\x043A\x043E\x0440\x043E\x0441\x0442\x044C \x0438\x0433\x0440\x044B %ls (%u \x0448\x0430\x0433\x043E\x0432 \x043B\x043E\x0433\x0438\x043A\x0438 \x0432 \x0441\x0435\x043A\x0443\x043D\x0434\x0443)"),
+			GameSpeed::multiplierText((Int)logicTimeScaleFps).str(), actualLogicTimeScaleFps);
+		(void)actualLogicTimeScaleRatio;
 	}
 	else
 	{

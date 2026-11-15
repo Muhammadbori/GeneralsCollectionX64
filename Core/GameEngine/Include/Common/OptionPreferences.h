@@ -120,7 +120,9 @@ public:
 	Bool getUseHeatEffects();
 	Bool getDynamicLODEnabled();
 	Bool getFPSLimitEnabled();
-	/// TheSuperHackers @feature Optional key RenderFpsLimit: -1 if absent or not a number, 0 for no limit, else the limit clamped to 30..1000.
+	/// TheSuperHackers @feature Optional key RenderFpsLimit: "display" (RenderFpsPreset::MatchDisplayLimit), 0 for no limit,
+	/// else the limit clamped to 30..1000. Absent: "match the display", or no limit when the older key FPSLimit is "no";
+	/// -1 when the value is not a number.
 	Int getRenderFpsLimit();
 	/// TheSuperHackers @feature Optional key SnowStyle: Classic or Large, SNOW_STYLE_DEFAULT if absent or unknown.
 	SnowStyle getSnowStyle() const;

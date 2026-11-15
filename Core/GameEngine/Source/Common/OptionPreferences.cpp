@@ -679,7 +679,14 @@ Int OptionPreferences::getRenderFpsLimit()
 {
 	OptionPreferences::const_iterator it = find("RenderFpsLimit");
 	if (it == end())
-		return -1;
+	{
+		// TheSuperHackers @tweak Without the key the render fps follows the display, so the menus are no longer held at
+		// the nominal 30 fps. An explicit FPSLimit = no (the older on/off key) still means no limit.
+		OptionPreferences::const_iterator onOff = find("FPSLimit");
+		if (onOff != end() && stricmp(onOff->second.str(), "no") == 0)
+			return 0;
+		return RenderFpsPreset::MatchDisplayLimit;
+	}
 
 	return RenderFpsPreset::parseUserLimit(it->second.str());
 }

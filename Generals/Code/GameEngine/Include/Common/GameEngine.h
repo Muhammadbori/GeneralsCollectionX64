@@ -80,9 +80,10 @@ protected:
 
 	virtual void resetSubsystems();
 
-	Bool canUpdateGameLogic(UnsignedInt logicTimeQueryFlags);
+	Int getGameLogicUpdateCount(UnsignedInt logicTimeQueryFlags);	///< logic updates due in this engine update
+	Bool canContinueGameLogicUpdates(UnsignedInt logicTimeQueryFlags);	///< before the second and later of them
 	Bool canUpdateNetworkGameLogic();
-	Bool canUpdateRegularGameLogic(UnsignedInt logicTimeQueryFlags);
+	Int getRegularGameLogicUpdateCount(UnsignedInt logicTimeQueryFlags);
 
 	virtual FileSystem *createFileSystem();								///< Factory for FileSystem classes
 	virtual LocalFileSystem *createLocalFileSystem() = 0;	///< Factory for LocalFileSystem classes

@@ -66,8 +66,10 @@ void FrameRateLimit::reset()
 }
 
 
+// TheSuperHackers @tweak The render fps limits the settings offer (and the max render fps keys step through): common
+// display refresh rates from 60 to 1000, and no limit. "Match the display" is RenderFpsPreset::MatchDisplayLimit.
 const UnsignedInt RenderFpsPreset::s_fpsValues[] = {
-	30, 50, 56, 60, 65, 70, 72, 75, 80, 85, 90, 100, 110, 120, 144, 240, 480, UncappedFpsValue };
+	60, 75, 90, 100, 120, 144, 165, 180, 200, 240, 280, 300, 360, 400, 480, 500, 540, 600, 700, 720, 750, 1000, UncappedFpsValue };
 
 static_assert(LOGICFRAMES_PER_SECOND <= 30, "Min FPS values need to be revisited!");
 
@@ -118,6 +120,9 @@ Int RenderFpsPreset::parseUserLimit(const char *text)
 	const Int minLimit = 30;
 	const Int maxLimit = 1000;
 
+	if (stricmp(text, "display") == 0)
+		return MatchDisplayLimit;
+
 	char *endPtr = nullptr;
 	const long value = strtol(text, &endPtr, 10);
 	if (endPtr == text || value < 0)
@@ -125,6 +130,25 @@ Int RenderFpsPreset::parseUserLimit(const char *text)
 	if (value == 0)
 		return 0;
 	return std::max<Int>(minLimit, std::min<Int>(maxLimit, (Int)std::min<long>(value, 100000L)));
+}
+
+
+Int RenderFpsPreset::getDisplayRefreshRate()
+{
+	MONITORINFOEXA info;
+	info.cbSize = sizeof(info);
+	const HWND window = ::GetActiveWindow();
+	const HMONITOR monitor = ::MonitorFromWindow(window, MONITOR_DEFAULTTOPRIMARY);
+	const char *deviceName = nullptr;
+	if (monitor != nullptr && ::GetMonitorInfoA(monitor, &info))
+		deviceName = info.szDevice;
+
+	DEVMODEA mode;
+	memset(&mode, 0, sizeof(mode));
+	mode.dmSize = sizeof(mode);
+	if (!::EnumDisplaySettingsA(deviceName, ENUM_CURRENT_SETTINGS, &mode) || mode.dmDisplayFrequency <= 1)
+		return 60; // 0 and 1 mean the hardware default
+	return std::max<Int>(30, std::min<Int>(1000, (Int)mode.dmDisplayFrequency));
 }
 
 

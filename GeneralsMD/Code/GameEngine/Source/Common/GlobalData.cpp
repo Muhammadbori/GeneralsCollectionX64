@@ -1273,13 +1273,15 @@ Int GlobalData::getDefaultRenderFpsLimit() const
 		return RenderFpsPreset::UncappedFpsValue; // Also stays uncapped if a script switches the limit back on.
 	if (m_renderFpsLimit > 0)
 		return m_renderFpsLimit;
+	if (m_renderFpsLimit == RenderFpsPreset::MatchDisplayLimit)
+		return RenderFpsPreset::getDisplayRefreshRate();
 	return m_framesPerSecondLimit;
 }
 
 void GlobalData::applyRenderFpsLimitOption()
 {
-	if (m_renderFpsLimit >= 0)
-		m_useFpsLimit = (m_renderFpsLimit > 0);
+	if (m_renderFpsLimit >= 0 || m_renderFpsLimit == RenderFpsPreset::MatchDisplayLimit)
+		m_useFpsLimit = (m_renderFpsLimit != 0);
 }
 
 void GlobalData::parseCustomDefinition()

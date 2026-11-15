@@ -50,6 +50,10 @@ public:
 		UncappedFpsValue = 1000000,
 	};
 
+	/// TheSuperHackers @feature A user render fps limit of this value means "match the display": the refresh rate of the
+	/// display the game window is on (Options.ini RenderFpsLimit = display; the default when the key is absent).
+	enum { MatchDisplayLimit = -2 };
+
 	static UnsignedInt getNextFpsValue(UnsignedInt value);
 	static UnsignedInt getPrevFpsValue(UnsignedInt value);
 	static UnsignedInt changeFpsValue(UnsignedInt value, FpsValueChange change);
@@ -58,9 +62,13 @@ private:
 	static const UnsignedInt s_fpsValues[];
 
 public:
-	/// Parses a render fps limit given by the user (Options.ini RenderFpsLimit, -fps): -1 if it is not a non-negative
-	/// number, 0 for no limit, else the number clamped to 30..1000.
+	/// Parses a render fps limit given by the user (Options.ini RenderFpsLimit, -fps): MatchDisplayLimit for "display",
+	/// -1 if it is not a non-negative number, 0 for no limit, else the number clamped to 30..1000.
 	static Int parseUserLimit(const char *text);
+
+	/// The refresh rate of the display the active window is on (the primary display without one), clamped to
+	/// 30..1000; 60 when Windows does not say.
+	static Int getDisplayRefreshRate();
 };
 
 
@@ -69,13 +77,11 @@ class LogicTimeScaleFpsPreset
 public:
 	enum CPP_11(: UnsignedInt)
 	{
-#if RTS_DEBUG
-		MinFpsValue = 5,
-#else
-		MinFpsValue = 15, ///< Matches the slowest skirmish game speed.
-#endif
-		StepFpsValue = 5,
-		MaxSteppedFpsValue = 60, ///< Matches the fastest numbered skirmish game speed. The next step is "as fast as possible".
+		// TheSuperHackers @tweak The game speed steps of the skirmish slider: 0.5x to 3x of LOGICFRAMES_PER_SECOND in
+		// steps of 0.5x (GameSpeedControl.h).
+		MinFpsValue = 15, ///< 0.5x, the slowest game speed.
+		StepFpsValue = 15, ///< 0.5x
+		MaxSteppedFpsValue = 90, ///< 3x, the fastest game speed. The next step is "as fast as possible".
 		MaxFpsValue = 1000, ///< Values at or above this mean as fast as possible.
 	};
 

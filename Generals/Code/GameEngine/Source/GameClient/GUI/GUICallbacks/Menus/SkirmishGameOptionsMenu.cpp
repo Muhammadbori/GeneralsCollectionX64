@@ -57,6 +57,7 @@
 #include "GameClient/MapUtil.h"
 #include "GameClient/Mouse.h"
 #include "GameClient/GameWindowTransitions.h"
+#include "GameClient/GameSpeedControl.h"
 
 #include "Common/MultiplayerSettings.h"
 #include "GameClient/GameText.h"
@@ -141,7 +142,8 @@ static Bool justEntered = FALSE;
 static Bool buttonPushed = FALSE;
 void skirmishUpdateSlotList();
 static void populateSkirmishBattleHonors();
-enum{ GREATER_NO_FPS_LIMIT = 60};
+// TheSuperHackers @feature The game speed slider, its text and the Normal check box (GameSpeedControl.h).
+static GameSpeedControl s_gameSpeed;
 Bool doUpdateSlotList = TRUE;
 
 static Int getNextSelectablePlayer(Int start)
@@ -351,9 +353,10 @@ Bool SkirmishPreferences::write()
 	setSlotList();
 
 //	NameKeyType sliderGameSpeedID = TheNameKeyGenerator->nameToKey( "SkirmishGameOptionsMenu.wnd:SliderGameSpeed" );
-	GameWindow *sliderGameSpeed = TheWindowManager->winGetWindowFromId( parentSkirmishGameOptions, sliderGameSpeedID );
-	Int maxFPS = GadgetSliderGetPosition( sliderGameSpeed );
-	setInt("FPS", maxFPS);
+	// TheSuperHackers @tweak FPS is the slider's game speed as logic steps per second (15 to 90, 0.5x to 3x); the Normal
+	// check box is GameSpeedNormal.
+	setInt("FPS", s_gameSpeed.getSliderLogicFps());
+	setBool("GameSpeedNormal", s_gameSpeed.isNormal());
 
 	return UserPreferences::write();
 }
@@ -382,28 +385,6 @@ static void playerTooltip(GameWindow *window,
 }
 */
 
-void setFPSTextBox( Int sliderPos )
-{
-	if(!staticTextGameSpeed)
-		return;
-	UnicodeString text;
-	staticTextGameSpeed->winEnable(TRUE);
-	if(sliderPos > GREATER_NO_FPS_LIMIT)
-	{
-		// TheSuperHackers @tweak The top position is the normal speed with the render fps limit switched off.
-		text.set(L"UNCAP");
-		GadgetStaticTextSetText(staticTextGameSpeed, text);
-		return;
-	}
-	else if( sliderPos == LOGICFRAMES_PER_SECOND )
-	{
-		// set different color
-		staticTextGameSpeed->winEnable(FALSE);
-	}
-	// TheSuperHackers @tweak The slider is the game speed in logic frames per second. Show it relative to the normal speed.
-	text.format(L"%d%%", (sliderPos * 100 + LOGICFRAMES_PER_SECOND / 2) / LOGICFRAMES_PER_SECOND);
-	GadgetStaticTextSetText(staticTextGameSpeed, text);
-}
 
 void reallyDoStart()
 {
@@ -412,13 +393,11 @@ void reallyDoStart()
 
 	//NameKeyType sliderGameSpeedID = TheNameKeyGenerator->nameToKey( "SkirmishGameOptionsMenu.wnd:SliderGameSpeed" );
 	GameWindow *sliderGameSpeed = TheWindowManager->winGetWindowFromId( parentSkirmishGameOptions, sliderGameSpeedID );
-	// TheSuperHackers @tweak The game speed is the logic time scale FPS. It no longer sets the render FPS limit.
-	Int gameSpeedFps = GadgetSliderGetPosition( sliderGameSpeed );
-	DEBUG_LOG(("GameSpeedSlider was at %d", gameSpeedFps));
-	if (gameSpeedFps > GREATER_NO_FPS_LIMIT)
-		gameSpeedFps = 1000; // as fast as possible
-	if (gameSpeedFps < 15)
-		gameSpeedFps = 15;
+	// TheSuperHackers @tweak The game speed is the logic time scale FPS (the multiplier x 30). It never sets the render
+	// FPS limit.
+	(void)sliderGameSpeed;
+	const Int gameSpeedFps = s_gameSpeed.getLogicFps();
+	DEBUG_LOG(("Game speed %d logic steps per second", gameSpeedFps));
 
   TheWritableGlobalData->m_mapName = TheSkirmishGameInfo->getMap();
   TheSkirmishGameInfo->startGame(0);
@@ -1351,9 +1330,15 @@ void SkirmishGameOptionsMenuInit( WindowLayout *layout, void *userData )
 	// set up the game speed slider
 //	NameKeyType sliderGameSpeedID = TheNameKeyGenerator->nameToKey( "SkirmishGameOptionsMenu.wnd:SliderGameSpeed" );
 	GameWindow *sliderGameSpeed = TheWindowManager->winGetWindowFromId( parentSkirmishGameOptions, sliderGameSpeedID );
-	Int sliderPos = max(15,min(61,prefs.getInt("FPS", LOGICFRAMES_PER_SECOND)));
-	GadgetSliderSetPosition( sliderGameSpeed, sliderPos );
-	setFPSTextBox(sliderPos);
+	// TheSuperHackers @feature The speed is a multiplier (0.5x to 3x) with a Normal check box; old FPS values map to the
+	// nearest step, the old top position "UNCAP" (61) to 1x. Without GameSpeedNormal, Normal is checked when the stored
+	// speed is 1x.
+	{
+		const Int storedFps = prefs.getInt("FPS", LOGICFRAMES_PER_SECOND);
+		const Bool normal = prefs.getBool("GameSpeedNormal", GameSpeed::logicFpsToStep(storedFps) == GameSpeed::NormalStep);
+		s_gameSpeed.init(parentSkirmishGameOptions, sliderGameSpeed, staticTextGameSpeed, nullptr,
+			"SkirmishGameOptionsMenu.wnd:CheckBoxGameSpeedNormal", storedFps, normal);
+	}
 	buttonStart->winSetText(TheGameText->fetch("GUI:Start"));
 	/* hey, for now we're also going to disable the map select button until it doesn't crash */
 	//buttonSelectMap->winEnable( FALSE );
@@ -1415,6 +1400,7 @@ static void shutdownComplete( WindowLayout *layout )
 //-------------------------------------------------------------------------------------------------
 void SkirmishGameOptionsMenuShutdown( WindowLayout *layout, void *userData )
 {
+	s_gameSpeed.reset();
 	SignalUIInteraction(SHELL_SCRIPT_HOOK_SKIRMISH_CLOSED);
 
 	TheMouse->setCursor(Mouse::ARROW);
@@ -1572,7 +1558,7 @@ WindowMsgHandledType SkirmishGameOptionsMenuSystem( GameWindow *window, Unsigned
 			Int controlID = control->winGetWindowId();
 			if(controlID == sliderGameSpeedID)
 			{
-				setFPSTextBox(sliderPos);
+				s_gameSpeed.onSliderTrack(control, sliderPos);
 			}
 			break;
 		}
@@ -1585,6 +1571,10 @@ WindowMsgHandledType SkirmishGameOptionsMenuSystem( GameWindow *window, Unsigned
 ///				static NameKeyType buttonResetFPSID = TheNameKeyGenerator->nameToKey( "SkirmishGameOptionsMenu.wnd:ButtonResetFPS" );
 				if(buttonPushed)
 					break;
+				if ( s_gameSpeed.onSelected(control) )
+				{
+					break;
+				}
 				if ( controlID == buttonExitID )
 				{
 					buttonPushed = TRUE;

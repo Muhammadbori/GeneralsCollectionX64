@@ -118,7 +118,8 @@ public:
 	Bool m_useFpsLimit;
 	Bool m_dumpAssetUsage;
 	Int m_framesPerSecondLimit;
-	// TheSuperHackers @feature Options.ini RenderFpsLimit. -1 is not set, 0 is uncapped, above 0 is the render fps limit.
+	// TheSuperHackers @feature Options.ini RenderFpsLimit. -1 is not set, 0 is uncapped, above 0 is the render fps limit,
+	// RenderFpsPreset::MatchDisplayLimit is the display's refresh rate (the default when the key is absent).
 	// Set by -fps (which wins over Options.ini), cleared by -noFPSLimit. Separate from m_framesPerSecondLimit, the GameData.ini nominal
 	// game rate, which network games also use as the upper clamp of the logic rate and which no user setting may change.
 	Int m_renderFpsLimit;

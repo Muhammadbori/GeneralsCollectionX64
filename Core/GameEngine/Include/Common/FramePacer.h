@@ -28,6 +28,8 @@ class FramePacer
 {
 public:
 
+	enum { MaxLogicFramesPerRenderUpdate = 4 }; ///< TheSuperHackers @tweak The most logic updates one engine update runs.
+
 	typedef UnsignedInt LogicTimeQueryFlags;
 	enum LogicTimeQueryFlags_ CPP_11(: LogicTimeQueryFlags)
 	{
@@ -49,7 +51,7 @@ public:
 	void setMatchRenderLimitDisabled( Bool disabled ); ///< Switch the render fps limit off for the running match only. Does not change the user's limit settings.
 	Bool isMatchRenderLimitDisabled() const;
 	Bool isScriptFastForward() const; ///< Returns whether a script or the tactical view fast forwards the game time.
-	Int  getActualFramesPerSecondLimit() const; ///< Get the actual update fps limit. Outside of network games it is raised to the logic time scale fps.
+	Int  getActualFramesPerSecondLimit() const; ///< Get the actual update fps limit: the render fps limit, uncapped for "as fast as possible".
 
 	Real getUpdateTime() const; ///< Get the last update delta time in seconds.
 	Real getUpdateFps() const; ///< Get the last update fps.
@@ -66,11 +68,11 @@ public:
 	Bool isLogicTimeScaleEnabled() const; ///< Check whether the logic time scale setup is enabled.
 	Int  getActualLogicTimeScaleFps(LogicTimeQueryFlags flags = 0) const; ///< Get the real logic time scale fps, depending on the max render fps, network state and enabled state.
 	Real getActualLogicTimeScaleRatio(LogicTimeQueryFlags flags = 0) const; ///< Get the real logic time scale ratio, depending on the max render fps, network state and enabled state.
-	Real getActualLogicTimeScaleOverFpsRatio(LogicTimeQueryFlags flags = 0) const; ///< Get the real logic time scale over render fps ratio, used to scale down steps in render updates to match logic updates.
+	Real getActualLogicTimeScaleOverFpsRatio(LogicTimeQueryFlags flags = 0) const; ///< Get the real logic time scale over render fps ratio (at most MaxLogicFramesPerRenderUpdate), used to scale steps in render updates to match logic updates.
 	Real getLogicTimeStepSeconds(LogicTimeQueryFlags flags = 0) const; ///< Get the logic time step in seconds
 	Real getLogicTimeStepMilliseconds(LogicTimeQueryFlags flags = 0) const; ///< Get the logic time step in milliseconds
 
-	Real getLogicFramesPerRenderUpdate() const; ///< How many logic frames one render update covers, in (0,1]. For client animations that count render updates: add this per update instead of 1, so they take the same game time at any render fps. Keeps running while time is frozen or the game is halted, as a per update counter does.
+	Real getLogicFramesPerRenderUpdate() const; ///< How many logic frames one render update covers, in (0,MaxLogicFramesPerRenderUpdate]. For client animations that count render updates: add this per update instead of 1, so they take the same game time at any render fps. Keeps running while time is frozen or the game is halted, as a per update counter does.
 
 	Real getLogicFramePhase() const; ///< Get how far the current render step reaches into the current logic frame, in [0,1]. Used to interpolate render updates between logic updates.
 
