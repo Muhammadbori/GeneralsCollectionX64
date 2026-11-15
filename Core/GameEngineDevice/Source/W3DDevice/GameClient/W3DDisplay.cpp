@@ -44,6 +44,7 @@ static void drawFramerateBar();
 
 // USER INCLUDES //////////////////////////////////////////////////////////////
 #include "Common/FramePacer.h"
+#include "Common/OptionPreferences.h"
 #include "Common/FrameRateLimit.h"
 #include "Common/FrameShots.h"
 #include "Common/ThingFactory.h"
@@ -774,6 +775,18 @@ static void failDirect3D12Startup(const char *step)
 //=============================================================================
 void W3DDisplay::init()
 {
+	// TheSuperHackers @feature WindowPosition of Options.ini: where a windowed game window goes.
+	{
+		OptionPreferences pref;
+		const AsciiString where = pref.getWindowPosition();
+		Int placement = 0;
+		if (stricmp(where.str(), "TopLeft") == 0) placement = 1;
+		else if (stricmp(where.str(), "TopRight") == 0) placement = 2;
+		else if (stricmp(where.str(), "BottomLeft") == 0) placement = 3;
+		else if (stricmp(where.str(), "BottomRight") == 0) placement = 4;
+		DX8Wrapper::Set_Window_Placement(placement);
+	}
+
 
 	//
 	// call our base class init, this method should be able to handle re-entry

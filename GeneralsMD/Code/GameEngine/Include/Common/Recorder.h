@@ -223,6 +223,7 @@ protected:
 	GameMode m_originalGameMode; // valid in replays
 
 	UnsignedInt m_nextFrame;												///< The Frame that the next message is to be executed on.  This can be -1.
+	UnsignedInt m_followResumeFrame;								///< TheSuperHackers @feature the frame read last, while m_nextFrame waits for more data (ReplayFollow.h)
 };
 
 extern RecorderClass *TheRecorder;

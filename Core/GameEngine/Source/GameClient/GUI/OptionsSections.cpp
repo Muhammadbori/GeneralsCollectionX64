@@ -23,6 +23,7 @@
 
 #include "GameClient/OptionsSections.h"
 
+#include "Common/AudioOutputDevices.h"
 #include "Common/FramePacer.h"
 #include "Common/FrameRateLimit.h"
 #include "Common/GameLOD.h"
@@ -173,6 +174,20 @@ namespace
 		{ "Hackers", { "GUI:CounterStyleHackers", L"Hackers", L"Hackers" } },
 		{ "GenTool", { "GUI:CounterStyleGenTool", L"GenTool", L"GenTool" } },
 	};
+	const Choice kWindowed[] =
+	{
+		{ "no", { "GUI:DisplayModeFullScreen", L"Full screen", L"\x041F\x043E\x043B\x043D\x044B\x0439 \x044D\x043A\x0440\x0430\x043D" } },
+		{ "yes", { "GUI:DisplayModeWindow", L"Window", L"\x041E\x043A\x043D\x043E" } },
+	};
+	const Choice kWindowPosition[] =
+	{
+		{ "Center", { "GUI:WindowPositionCenter", L"Centre", L"\x041F\x043E \x0446\x0435\x043D\x0442\x0440\x0443" } },
+		{ "TopLeft", { "GUI:WindowPositionTopLeft", L"Top left", L"\x0421\x043B\x0435\x0432\x0430 \x0432\x0432\x0435\x0440\x0445\x0443" } },
+		{ "TopRight", { "GUI:WindowPositionTopRight", L"Top right", L"\x0421\x043F\x0440\x0430\x0432\x0430 \x0432\x0432\x0435\x0440\x0445\x0443" } },
+		{ "BottomLeft", { "GUI:WindowPositionBottomLeft", L"Bottom left", L"\x0421\x043B\x0435\x0432\x0430 \x0432\x043D\x0438\x0437\x0443" } },
+		{ "BottomRight", { "GUI:WindowPositionBottomRight", L"Bottom right", L"\x0421\x043F\x0440\x0430\x0432\x0430 \x0432\x043D\x0438\x0437\x0443" } },
+	};
+	const Choice kRotateSpeed[] = { PLAIN("50"), PLAIN("75"), PLAIN("100"), PLAIN("125"), PLAIN("150"), PLAIN("200"), PLAIN("300") };
 	const Choice kFontSize[] =
 	{
 		{ "0", { "GUI:CounterOff", L"Off", L"\x0412\x044B\x043A\x043B." } },
@@ -230,6 +245,16 @@ namespace
 	AsciiString curLatencySize(OptionPreferences &p) { return number(p.getNetworkLatencyFontSize()); }
 	AsciiString curPlayerListSize(OptionPreferences &p) { return number(p.getPlayerInfoListFontSize()); }
 	AsciiString curMoneyPerMinute(OptionPreferences &p) { return yesNo(p.getShowMoneyPerMinute()); }
+	AsciiString curWindowed(OptionPreferences &p) { const Int w = p.getWindowed(); return yesNo(w >= 0 ? w == 1 : TheGlobalData->m_windowed); }
+	AsciiString curWindowPosition(OptionPreferences &p) { return p.getWindowPosition(); }
+	AsciiString curRotateSpeed(OptionPreferences &p) { return number(p.getCameraRotateSpeedPercent()); }
+	AsciiString curHideIP(OptionPreferences &p) { return yesNo(p.getHideIPAddresses()); }
+
+	/// Keys that take effect at the next start: a change of them brings the restart box.
+	Bool needsRestart(const char *key)
+	{
+		return stricmp(key, "Windowed") == 0 || stricmp(key, "WindowPosition") == 0;
+	}
 
 	// The game's own defaults (the getters' values for an absent key): Zero Hour scrolls with the right mouse button
 	// with the alternate mouse, the base game does not (GlobalData).
@@ -274,6 +299,11 @@ namespace
 		{ SEC_INFO, KIND_STEPS, "GameTimeFontSize", { "GUI:GameTimeCounter", L"Game time", L"\x0412\x0440\x0435\x043C\x044F \x0438\x0433\x0440\x044B" }, STEPS(kFontSize), "", "8", curGameTimeSize },
 		{ SEC_INFO, KIND_STEPS, "NetworkLatencyFontSize", { "GUI:NetworkLatencyCounter", L"Network delay (ms)", L"\x0421\x0435\x0442\x0435\x0432\x0430\x044F \x0437\x0430\x0434\x0435\x0440\x0436\x043A\x0430 (\x043C\x0441)" }, STEPS(kFontSize), "", "8", curLatencySize },
 		{ SEC_INFO, KIND_STEPS, "PlayerInfoListFontSize", { "GUI:PlayerInfoListCounter", L"Observer money list", L"\x0421\x043F\x0438\x0441\x043E\x043A \x0434\x0435\x043D\x0435\x0433 (\x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x044C)" }, STEPS(kFontSize), "", "8", curPlayerListSize },
+		// Display, controls, network (O8)
+		{ SEC_DISPLAY, KIND_STEPS, "Windowed", { "GUI:DisplayMode", L"Display mode", L"\x0420\x0435\x0436\x0438\x043C \x044D\x043A\x0440\x0430\x043D\x0430" }, STEPS(kWindowed), "", "no", curWindowed },
+		{ SEC_DISPLAY, KIND_STEPS, "WindowPosition", { "GUI:WindowPosition", L"Window position", L"\x041F\x043E\x043B\x043E\x0436\x0435\x043D\x0438\x0435 \x043E\x043A\x043D\x0430" }, STEPS(kWindowPosition), "", "Center", curWindowPosition },
+		{ SEC_CONTROLS, KIND_STEPS, "CameraRotateSpeed", { "GUI:CameraRotateSpeed", L"Camera rotation speed", L"\x0421\x043A\x043E\x0440\x043E\x0441\x0442\x044C \x043F\x043E\x0432\x043E\x0440\x043E\x0442\x0430 \x043A\x0430\x043C\x0435\x0440\x044B" }, STEPS(kRotateSpeed), "%", "100", curRotateSpeed },
+		{ SEC_NETWORK, KIND_CHECK, "HideIPAddresses", { "GUI:HideIPAddresses", L"Hide IP addresses", L"\x0421\x043A\x0440\x044B\x0432\x0430\x0442\x044C IP-\x0430\x0434\x0440\x0435\x0441\x0430" }, nullptr, 0, "", "no", curHideIP },
 		{ SEC_INFO, KIND_CHECK, "ShowMoneyPerMinute", { "GUI:ShowMoneyPerMinute", L"Money per minute", L"\x0414\x0435\x043D\x044C\x0433\x0438 \x0432 \x043C\x0438\x043D\x0443\x0442\x0443" }, nullptr, 0, "", "no", curMoneyPerMinute },
 	};
 	enum { SETTING_COUNT = (Int)ARRAY_SIZE(kSettings) };
@@ -374,13 +404,29 @@ namespace
 		const Image *image;
 	};
 
+	enum { MAX_SUB_PAGES = 4 };
+
+	/// The sound output devices of the device row: [0] is the system default (empty name); UTF-8 names.
+	std::vector<AsciiString> s_devices;
+
 	struct State
 	{
 		Bool active;
 		OptionPreferences *pref;
 		GameWindow *menuParent;
 		GameWindow *buttons[SEC_COUNT];
-		GameWindow *pages[SEC_COUNT];
+		GameWindow *pages[SEC_COUNT];       ///< the first page of each section
+		GameWindow *subPages[SEC_COUNT][MAX_SUB_PAGES];   ///< all pages of a section, [0] = pages[]
+		GameWindow *pagers[SEC_COUNT][MAX_SUB_PAGES];     ///< "1/2 >" on each page of a section with more than one
+		Int subPageCount[SEC_COUNT];
+		Int currentSub[SEC_COUNT];
+		Int pageX, pageY, pageW, pageH, gap, titleH;      ///< where the pages are, for the pages made while filling
+		Bool restartNeeded;          ///< a key that takes effect at the next start changed in this save
+		GameWindow *deviceLabel;     ///< the sound output device row (AudioOutputDevice)
+		GameWindow *deviceValue;
+		GameWindow *deviceSlider;
+		Int deviceStep;
+		Int deviceInitial;
 		Section current;
 		SettingState settings[SETTING_COUNT];
 		GameWindow *existing[EXISTING_COUNT];
@@ -665,8 +711,10 @@ namespace
 		s.current = section;
 		for (Int i = 0; i < SEC_COUNT; ++i)
 		{
-			if (s.pages[i] != nullptr) {
-				s.pages[i]->winHide(i != section);
+			for (Int k = 0; k < s.subPageCount[i]; ++k) {
+				if (s.subPages[i][k] != nullptr) {
+					s.subPages[i][k]->winHide(i != section || k != s.currentSub[i]);
+				}
 			}
 			if (s.buttons[i] != nullptr)
 			{
@@ -702,18 +750,25 @@ namespace
 	}
 
 	//---------------------------------------------------------------------------------------------
-	/// Places items top to bottom in two columns of a page; a new column starts when the next item does not fit.
+	GameWindow *makePage(Int sec);
+
+	/// Places items top to bottom in two columns of a page; a new column starts when the next item does not fit, and a
+	/// new page of the section when the second column is full too (the section then gets a "1/2 >" button on each page).
+	/// So nothing leaves a page at any resolution; only an item taller than a whole column could, and that is logged.
 	struct Flow
 	{
 		GameWindow *page;
+		Int sec;
 		Int x0, y0, colW, gap, bottom;
 		Int col;
 		Int y;
-		Bool overflow;   ///< an item went below the page in the second column
+		Int valueW;      ///< the width of the value texts of this section's step rows (one column of values)
+		Bool overflow;   ///< an item taller than a column
 
-		void begin(GameWindow *p, Int left, Int top, Int columnWidth, Int g, Int b)
+		void begin(Int section, GameWindow *p, Int left, Int top, Int columnWidth, Int g, Int b)
 		{
-			page = p; x0 = left; y0 = top; colW = columnWidth; gap = g; bottom = b; col = 0; y = top; overflow = FALSE;
+			sec = section; page = p; x0 = left; y0 = top; colW = columnWidth; gap = g; bottom = b; col = 0; y = top;
+			valueW = 0; overflow = FALSE;
 		}
 		/// The position of an item of 'height'.
 		ICoord2D next(Int height)
@@ -721,6 +776,16 @@ namespace
 			if (y + height > bottom && y > y0 && col == 0) {
 				col = 1;
 				y = y0;
+			}
+			else if (y + height > bottom && y > y0 && col == 1)
+			{
+				GameWindow *more = makePage(sec);
+				if (more != nullptr)
+				{
+					page = more;
+					col = 0;
+					y = y0;
+				}
 			}
 			if (y + height > bottom) {
 				overflow = TRUE;
@@ -736,28 +801,83 @@ namespace
 		return s.labelLook != nullptr ? s.labelLook->winGetFont() : nullptr;
 	}
 
+	/// "2/3 >" on every page of a section with more than one page: the next page of the section.
+	void updatePagers(Int sec)
+	{
+		const Int count = s.subPageCount[sec];
+		if (count < 2) {
+			return;
+		}
+		for (Int k = 0; k < count; ++k)
+		{
+			GameWindow *page = s.subPages[sec][k];
+			if (page == nullptr) {
+				continue;
+			}
+			UnicodeString text;
+			text.format(L"%d/%d  >", k + 1, count);
+			if (s.pagers[sec][k] == nullptr)
+			{
+				WinInstanceData inst;
+				copyLook(inst, s.buttonLook, GWS_PUSH_BUTTON | GWS_MOUSE_TRACK);
+				if (labelFont() != nullptr) {
+					inst.m_font = labelFont();
+				}
+				AsciiString name;
+				name.format("OptionsMenu.wnd:Sections.Pager%d_%d", sec, k);
+				inst.m_id = windowId(name.str());
+				const Int w = textSize(inst.m_font, UnicodeString(L"4/4  >"), 0).x + s.gap * 6;
+				GameWindow *button = TheWindowManager->gogoGadgetPushButton(page, WIN_STATUS_ENABLED | imageStatusOf(s.buttonLook),
+					s.pageW - s.gap * 3 - w, s.gap, w, s.titleH, &inst, inst.m_font, FALSE);
+				if (button != nullptr)
+				{
+					button->winSetWindowId(inst.m_id);
+					button->winSetOwner(s.menuParent);
+				}
+				s.pagers[sec][k] = button;
+			}
+			if (s.pagers[sec][k] != nullptr) {
+				GadgetButtonSetText(s.pagers[sec][k], text);
+			}
+		}
+	}
+
+	/// A (further) page of a section, framed like the old groups, with the section's title; hidden until shown.
+	GameWindow *makePage(Int sec)
+	{
+		if (s.subPageCount[sec] >= MAX_SUB_PAGES) {
+			return nullptr;
+		}
+		WinInstanceData inst;
+		copyLook(inst, s.frameLook, GWS_USER_WINDOW);
+		GameWindow *page = TheWindowManager->winCreate(s.menuParent, WIN_STATUS_ENABLED | imageStatusOf(s.frameLook), s.pageX, s.pageY,
+			s.pageW, s.pageH, PassMessagesToParentSystem, &inst);
+		if (page == nullptr) {
+			return nullptr;
+		}
+		if (s.frameLook != nullptr) {
+			page->winSetDrawFunc(s.frameLook->winGetDrawFunc());
+		}
+		makeLabel(page, s.titleLook, s.gap * 3, s.gap, s.pageW - s.gap * 6, s.titleH, textOf(kSectionNames[sec]), FALSE);
+		page->winHide(TRUE);
+		s.subPages[sec][s.subPageCount[sec]++] = page;
+		updatePagers(sec);
+		return page;
+	}
+
 	/// A row of steps: the title over the whole column on as many lines as it needs, then the slider with the value text
 	/// right of it. 'valueTextW' is the width of the widest value text; 'extraBelow' is room kept under the row.
 	/// Returns the y below the row (in the page) through 'below'.
 	void placeStepRow(Flow &flow, const UnicodeString &title, Int valueTextW, Int sliderMax, Int id, Int labelH, Int sliderH,
 		Int extraBelow, GameWindow **label, GameWindow **value, GameWindow **slider, ICoord2D *below)
 	{
+		// One rule for every row of a section: the value column has the width of the section's widest value (at most half
+		// the column); a wider value wraps to more lines in it.
 		const Int titleH = labelHeightFor(labelFont(), title, flow.colW, labelH);
-		const Int lineH = max(labelH, sliderH);
-		if (valueTextW + 14 > flow.colW / 2)
-		{
-			// long values (pack names): the value on its own line under the title, the slider over the whole column
-			const ICoord2D at = flow.next(titleH + labelH + sliderH + extraBelow);
-			*label = makeLabel(flow.page, s.labelLook, at.x, at.y, flow.colW, titleH, title, FALSE);
-			*value = makeLabel(flow.page, s.labelLook, at.x, at.y + titleH, flow.colW, labelH, UnicodeString::TheEmptyString, FALSE);
-			*slider = makeSlider(flow.page, at.x, at.y + titleH + labelH, flow.colW, sliderH, sliderMax, id);
-			if (below != nullptr) {
-				below->x = at.x;
-				below->y = at.y + titleH + labelH + sliderH;
-			}
-			return;
-		}
-		const Int valueW = max(valueTextW + 14, flow.colW / 5);
+		const Int valueW = min(max(max(valueTextW, flow.valueW) + 14, flow.colW / 5), flow.colW / 2);
+		const Int valueLines = (valueTextW + 14 + valueW - 1) / max(1, valueW - 10);
+		const Int valueH = max(labelH, labelH * max(1, valueLines) * 4 / 5);
+		const Int lineH = max(valueH, sliderH);
 		const Int sliderW = flow.colW - valueW - flow.gap;
 		const ICoord2D at = flow.next(titleH + lineH + extraBelow);
 		*label = makeLabel(flow.page, s.labelLook, at.x, at.y, flow.colW, titleH, title, FALSE);
@@ -1031,6 +1151,56 @@ namespace
 		showPackRow(row);
 	}
 
+	UnicodeString deviceName(Int index)
+	{
+		if (index <= 0 || index >= (Int)s_devices.size()) {
+			return TheGameText->FETCH_OR_SUBSTITUTE("GUI:AudioDeviceDefault", localizedFallback(L"System default", L"\x0421\x0438\x0441\x0442\x0435\x043C\x043D\x043E\x0435 \x043F\x043E \x0443\x043C\x043E\x043B\x0447\x0430\x043D\x0438\x044E"));
+		}
+		WideChar buffer[256];
+		const int n = MultiByteToWideChar(CP_UTF8, 0, s_devices[index].str(), -1, buffer, ARRAY_SIZE(buffer));
+		if (n <= 0) {
+			UnicodeString plain;
+			plain.translate(s_devices[index]);
+			return plain;
+		}
+		return UnicodeString(buffer);
+	}
+
+	/// The sound output device row: the devices the audio device lists, the system default first. Takes effect at the
+	/// next start (the restart box).
+	void placeDeviceRow(Flow &flow, Int labelH, Int sliderH)
+	{
+		s_devices.clear();
+		s_devices.push_back(AsciiString::TheEmptyString);
+		std::vector<AsciiString> names;
+		AudioOutputDevices::list(names);
+		s_devices.insert(s_devices.end(), names.begin(), names.end());
+		const AsciiString chosen = s.pref->getAudioOutputDevice();
+		s.deviceStep = 0;
+		for (size_t i = 1; i < s_devices.size(); ++i) {
+			if (s_devices[i] == chosen) {
+				s.deviceStep = (Int)i;
+			}
+		}
+		s.deviceInitial = s.deviceStep;
+		Int valueTextW = 0;
+		for (size_t i = 0; i < s_devices.size(); ++i) {
+			valueTextW = max(valueTextW, textSize(labelFont(), deviceName((Int)i), 0).x);
+		}
+		const Int count = (Int)s_devices.size();
+		placeStepRow(flow, TheGameText->FETCH_OR_SUBSTITUTE("GUI:AudioOutputDevice", localizedFallback(L"Sound output device", L"\x0423\x0441\x0442\x0440\x043E\x0439\x0441\x0442\x0432\x043E \x0432\x044B\x0432\x043E\x0434\x0430 \x0437\x0432\x0443\x043A\x0430")),
+			valueTextW, count > 1 ? count - 1 : 1, windowId("OptionsMenu.wnd:Sections.AudioOutputDevice"), labelH, sliderH, 0,
+			&s.deviceLabel, &s.deviceValue, &s.deviceSlider, nullptr);
+		if (s.deviceSlider != nullptr)
+		{
+			GadgetSliderSetPosition(s.deviceSlider, s.deviceStep);
+			s.deviceSlider->winEnable(count > 1);
+		}
+		if (s.deviceValue != nullptr) {
+			GadgetStaticTextSetText(s.deviceValue, deviceName(s.deviceStep));
+		}
+	}
+
 	void onRestartNow()
 	{
 		Packs::requestRestart();
@@ -1045,14 +1215,14 @@ namespace
 		if (inMatch)
 		{
 			MessageBoxOk(title, TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackRestartLater",
-				localizedFallback(L"The new language and pack choices take effect the next time the game starts.",
-					L"\x041D\x043E\x0432\x044B\x0435 \x044F\x0437\x044B\x043A \x0438 \x043F\x0430\x043A\x0435\x0442\x044B \x0437\x0430\x0440\x0430\x0431\x043E\x0442\x0430\x044E\x0442 \x043F\x0440\x0438 \x0441\x043B\x0435\x0434\x0443\x044E\x0449\x0435\x043C \x0437\x0430\x043F\x0443\x0441\x043A\x0435 \x0438\x0433\x0440\x044B.")),
+				localizedFallback(L"These changes take effect the next time the game starts.",
+					L"\x042D\x0442\x0438 \x0438\x0437\x043C\x0435\x043D\x0435\x043D\x0438\x044F \x0432\x0441\x0442\x0443\x043F\x044F\x0442 \x0432 \x0441\x0438\x043B\x0443 \x043F\x0440\x0438 \x0441\x043B\x0435\x0434\x0443\x044E\x0449\x0435\x043C \x0437\x0430\x043F\x0443\x0441\x043A\x0435 \x0438\x0433\x0440\x044B.")),
 				nullptr);
 			return;
 		}
 		GameWindow *box = MessageBoxYesNo(title, TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackRestartBody",
-			localizedFallback(L"The new language and pack choices take effect after a restart of the game.",
-				L"\x041D\x043E\x0432\x044B\x0435 \x044F\x0437\x044B\x043A \x0438 \x043F\x0430\x043A\x0435\x0442\x044B \x0437\x0430\x0440\x0430\x0431\x043E\x0442\x0430\x044E\x0442 \x043F\x043E\x0441\x043B\x0435 \x043F\x0435\x0440\x0435\x0437\x0430\x043F\x0443\x0441\x043A\x0430 \x0438\x0433\x0440\x044B.")),
+			localizedFallback(L"These changes take effect after a restart of the game.",
+				L"\x042D\x0442\x0438 \x0438\x0437\x043C\x0435\x043D\x0435\x043D\x0438\x044F \x0432\x0441\x0442\x0443\x043F\x044F\x0442 \x0432 \x0441\x0438\x043B\x0443 \x043F\x043E\x0441\x043B\x0435 \x043F\x0435\x0440\x0435\x0437\x0430\x043F\x0443\x0441\x043A\x0430 \x0438\x0433\x0440\x044B.")),
 			onRestartNow, nullptr);
 		if (box == nullptr) {
 			return;
@@ -1060,9 +1230,17 @@ namespace
 		// the buttons say what they do
 		GameWindow *yes = TheWindowManager->winGetWindowFromId(box, windowId("MessageBox.wnd:ButtonYes"));
 		GameWindow *no = TheWindowManager->winGetWindowFromId(box, windowId("MessageBox.wnd:ButtonNo"));
-		if (yes != nullptr) {
-			GadgetButtonSetText(yes, TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackRestartNow",
-				localizedFallback(L"Restart now", L"\x041F\x0435\x0440\x0435\x0437\x0430\x043F\x0443\x0441\x0442\x0438\x0442\x044C")));
+		if (yes != nullptr)
+		{
+			// The text must fit the box's button: the long text when it does, else the short one ("Restart").
+			UnicodeString text = TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackRestartNow",
+				localizedFallback(L"Restart now", L"\x041F\x0435\x0440\x0435\x0437\x0430\x043F\x0443\x0441\x0442\x0438\x0442\x044C"));
+			if (textSize(yes->winGetFont(), text, 0).x > sizeOf(yes).x - 12)
+			{
+				text = TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackRestartShort",
+					localizedFallback(L"Restart", L"\x041F\x0435\x0440\x0435\x0437\x0430\x043F\x0443\x0441\x043A"));
+			}
+			GadgetButtonSetText(yes, text);
 		}
 		if (no != nullptr) {
 			GadgetButtonSetText(no, TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackRestartLater2",
@@ -1172,22 +1350,16 @@ void OptionsSections::init(OptionPreferences *pref)
 		s.buttons[i] = button;
 	}
 
-	// the pages, framed like the old groups
+	// the pages, framed like the old groups (a section that needs more gets further pages while it is filled)
 	const Int titleH = s.titleLook != nullptr ? sizeOf(s.titleLook).y : (buttonH * 2 / 3);
-	for (Int i = 0; i < SEC_COUNT; ++i)
-	{
-		WinInstanceData inst;
-		copyLook(inst, s.frameLook, GWS_USER_WINDOW);
-		GameWindow *page = TheWindowManager->winCreate(s.menuParent, WIN_STATUS_ENABLED | imageStatusOf(s.frameLook), pageX, top,
-			pageW, height, PassMessagesToParentSystem, &inst);
-		if (page != nullptr)
-		{
-			if (s.frameLook != nullptr) {
-				page->winSetDrawFunc(s.frameLook->winGetDrawFunc());
-			}
-			makeLabel(page, s.titleLook, gap * 3, gap, pageW - gap * 6, titleH, textOf(kSectionNames[i]), FALSE);
-		}
-		s.pages[i] = page;
+	s.pageX = pageX;
+	s.pageY = top;
+	s.pageW = pageW;
+	s.pageH = height;
+	s.gap = gap;
+	s.titleH = titleH;
+	for (Int i = 0; i < SEC_COUNT; ++i) {
+		s.pages[i] = makePage(i);
 	}
 
 	// the existing controls, found before the old groups go
@@ -1229,7 +1401,28 @@ void OptionsSections::init(OptionPreferences *pref)
 			continue;
 		}
 		Flow flow;
-		flow.begin(s.pages[sec], gap * 3, contentTop, colW, gap, height - gap * 2);
+		flow.begin(sec, s.pages[sec], gap * 3, contentTop, colW, gap, height - gap * 2);
+		// one value column for the section: the widest value of its step rows
+		for (Int i = 0; i < SETTING_COUNT; ++i)
+		{
+			if (kSettings[i].section != sec || kSettings[i].kind != KIND_STEPS) {
+				continue;
+			}
+			for (Int c = 0; c < kSettings[i].choiceCount; ++c) {
+				flow.valueW = max(flow.valueW, textSize(labelFont(), choiceText(kSettings[i], c), 0).x);
+			}
+		}
+		for (Int r = 0; r < PACK_ROW_COUNT; ++r)
+		{
+			if (kPackRows[r].section != sec) {
+				continue;
+			}
+			const Packs::Kind kind = kPackRows[r].kind;
+			flow.valueW = max(flow.valueW, textSize(labelFont(), Packs::displayName(kind, nullptr), 0).x);
+			for (Int i = 0; i < Packs::count(kind); ++i) {
+				flow.valueW = max(flow.valueW, textSize(labelFont(), Packs::displayName(kind, Packs::get(kind, i)), 0).x);
+			}
+		}
 		for (Int i = 0; i < EXISTING_COUNT; ++i) {
 			if (kExisting[i].section == sec) {
 				placeExisting(flow, i);
@@ -1245,14 +1438,19 @@ void OptionsSections::init(OptionPreferences *pref)
 				placePackRow(flow, r, labelH, sliderH);
 			}
 		}
+		if (sec == SEC_SOUND) {
+			placeDeviceRow(flow, labelH, sliderH);
+		}
 		if (flow.overflow) {
-			DEBUG_LOG(("OptionsSections: the items of section %d do not fit two columns of the page.", sec));
+			DEBUG_LOG(("OptionsSections: an item of section %d is taller than a column of the page.", sec));
 		}
 	}
 
 	// An open drop-down list is drawn with its combo box: the combo boxes go on top of their pages, so their lists are
 	// not covered by the controls placed after them.
-	for (Int i = 0; i < EXISTING_COUNT; ++i)
+	// The lists open downwards, so a combo box higher on a page must lie over the ones below it: the last brought to
+	// the top is drawn last, so they go from the bottom of the table up.
+	for (Int i = EXISTING_COUNT - 1; i >= 0; --i)
 	{
 		if (s.existing[i] != nullptr && (s.existing[i]->winGetStyle() & GWS_COMBO_BOX) != 0) {
 			s.existing[i]->winBringToTop();
@@ -1288,7 +1486,10 @@ void OptionsSections::init(OptionPreferences *pref)
 		{
 			Bool ours = FALSE;
 			for (Int i = 0; i < SEC_COUNT; ++i) {
-				ours = ours || child == s.buttons[i] || child == s.pages[i];
+				ours = ours || child == s.buttons[i];
+				for (Int k = 0; k < s.subPageCount[i]; ++k) {
+					ours = ours || child == s.subPages[i][k];
+				}
 			}
 			for (Int i = 0; i < 4; ++i) {
 				ours = ours || child == keep[i];
@@ -1311,6 +1512,7 @@ void OptionsSections::init(OptionPreferences *pref)
 void OptionsSections::shutdown()
 {
 	memset(&s, 0, sizeof(s));
+	s_devices.clear();
 }
 
 Bool OptionsSections::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgData mData2)
@@ -1331,6 +1533,15 @@ Bool OptionsSections::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgD
 				if (control == s.buttons[i]) {
 					showSection((Section)i);
 					return TRUE;
+				}
+				for (Int k = 0; k < s.subPageCount[i]; ++k)
+				{
+					if (control == s.pagers[i][k])
+					{
+						s.currentSub[i] = (s.currentSub[i] + 1) % s.subPageCount[i];
+						showSection((Section)i);
+						return TRUE;
+					}
 				}
 			}
 			for (Int i = 0; i < SETTING_COUNT; ++i) {
@@ -1355,6 +1566,17 @@ Bool OptionsSections::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgD
 					}
 					return TRUE;
 				}
+			}
+			if (control == s.deviceSlider && s.deviceSlider != nullptr)
+			{
+				const Int count = (Int)s_devices.size();
+				Int step = (Int)mData2;
+				step = step < 0 ? 0 : (step >= count ? count - 1 : step);
+				s.deviceStep = step;
+				if (s.deviceValue != nullptr) {
+					GadgetStaticTextSetText(s.deviceValue, deviceName(step));
+				}
+				return TRUE;
 			}
 			for (Int r = 0; r < PACK_ROW_COUNT; ++r)
 			{
@@ -1408,6 +1630,7 @@ void OptionsSections::save(OptionPreferences *pref)
 		if (st.control == nullptr) {
 			continue;
 		}
+		const AsciiString before = set.current(*pref);
 		if (set.kind == KIND_CHECK) {
 			(*pref)[set.key] = GadgetCheckBoxIsChecked(st.control) ? "yes" : "no";
 		} else if (!st.touched) {
@@ -1417,6 +1640,21 @@ void OptionsSections::save(OptionPreferences *pref)
 		} else {
 			(*pref)[set.key] = set.choices[st.step].value;
 		}
+		if (needsRestart(set.key) && stricmp(before.str(), set.current(*pref).str()) != 0) {
+			s.restartNeeded = TRUE;
+		}
+	}
+
+	// the sound output device (AudioOutputDevice), opened at the start
+	if (s.deviceSlider != nullptr && s.deviceStep != s.deviceInitial && s.deviceStep >= 0 && s.deviceStep < (Int)s_devices.size())
+	{
+		if (s.deviceStep == 0) {
+			pref->erase("AudioOutputDevice");
+		} else {
+			(*pref)["AudioOutputDevice"] = s_devices[s.deviceStep];
+		}
+		s.deviceInitial = s.deviceStep;
+		s.restartNeeded = TRUE;
 	}
 
 	// The pack choices: written when changed here, so a missing key keeps following Packs\<Kind>\default.ini.
@@ -1448,9 +1686,10 @@ void OptionsSections::save(OptionPreferences *pref)
 	TheWritableGlobalData->m_counterStyle = pref->getCounterStyle();
 	TheWritableGlobalData->m_screenshotFormat = pref->getScreenshotFormat();
 
-	if (packChanged)
+	if (packChanged || s.restartNeeded)
 	{
 		// the box comes after the menu has written Options.ini (it does so right after this call)
+		s.restartNeeded = FALSE;
 		offerRestart();
 	}
 }

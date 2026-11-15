@@ -1420,7 +1420,7 @@ void SkirmishGameOptionsMenuInit( WindowLayout *layout, void *userData )
 		const Int storedFps = prefs.getInt("FPS", LOGICFRAMES_PER_SECOND);
 		const Bool normal = prefs.getBool("GameSpeedNormal", GameSpeed::logicFpsToStep(storedFps) == GameSpeed::NormalStep);
 		s_gameSpeed.init(parentSkirmishGameOptions, sliderGameSpeed, staticTextGameSpeed, checkBoxLimitSuperweapons,
-			"SkirmishGameOptionsMenu.wnd:CheckBoxGameSpeedNormal", storedFps, normal);
+			"SkirmishGameOptionsMenu.wnd:CheckBoxGameSpeedNormal", storedFps, normal, 160, comboBoxStartingCash);
 	}
 	buttonStart->winSetText(TheGameText->fetch("GUI:Start"));
 	/* hey, for now we're also going to disable the map select button until it doesn't crash */

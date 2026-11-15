@@ -46,7 +46,9 @@
 #include "MiniaudioAudioDevice/MiniaudioAudioDevice.h"
 
 #include "AudioDevice/AudioDeviceCommon.h"
+#include "Common/AudioOutputDevices.h"
 #include "Common/FileSystem.h"
+#include "Common/OptionPreferences.h"
 #include "Common/file.h"
 
 #include "miniaudio.h"
@@ -419,6 +421,8 @@ struct MiniaudioDeviceState
 	bool fallbackContextReady;
 	ma_device fallbackDevice;        ///< runs the engine on the null backend while the output is lost
 	bool fallbackReady;
+	ma_device_id chosenId;           ///< AudioOutputDevice of Options.ini, found in the context
+	bool hasChosenId;
 	int output;                      ///< OUTPUT_REAL, OUTPUT_FALLBACK or OUTPUT_NONE (main thread)
 	std::atomic<int> ourStop;        ///< set while the device stops or closes an output itself: no loss
 	std::atomic<int> lost;           ///< a stop of an output that the device did not ask for
@@ -493,12 +497,57 @@ namespace
 		}
 	}
 
+	/// TheSuperHackers @feature AudioOutputDevice of Options.ini: the playback device of that name in the context.
+	void findChosenDevice(MiniaudioDeviceState *s)
+	{
+		s->hasChosenId = false;
+		OptionPreferences pref;
+		const AsciiString wanted = pref.getAudioOutputDevice();
+		if (wanted.isEmpty()) {
+			return;
+		}
+		ma_device_info *infos = nullptr;
+		ma_uint32 count = 0;
+		if (ma_context_get_devices(&s->context, &infos, &count, nullptr, nullptr) != MA_SUCCESS) {
+			return;
+		}
+		for (ma_uint32 i = 0; i < count; ++i)
+		{
+			if (strcmp(infos[i].name, wanted.str()) == 0)
+			{
+				s->chosenId = infos[i].id;
+				s->hasChosenId = true;
+				return;
+			}
+		}
+	}
+
+	/// The playback device names for the options (a context of its own, opened and closed here).
+	void listOutputDevices(std::vector<AsciiString> &names)
+	{
+		ma_context context;
+		ma_context_config cc = ma_context_config_init();
+		if (ma_context_init(nullptr, 0, &cc, &context) != MA_SUCCESS) {
+			return;
+		}
+		ma_device_info *infos = nullptr;
+		ma_uint32 count = 0;
+		if (ma_context_get_devices(&context, &infos, &count, nullptr, nullptr) == MA_SUCCESS)
+		{
+			for (ma_uint32 i = 0; i < count; ++i) {
+				names.push_back(AsciiString(infos[i].name));
+			}
+		}
+		ma_context_uninit(&context);
+	}
+
 	/// The device configuration ma_engine_init gives the device it makes itself (miniaudio 0.11.26), with our
 	/// callbacks: the same format, rate, channels and period, so the engine mixes and latency are as before.
-	ma_device_config outputConfig(MiniaudioDeviceState *s)
+	ma_device_config outputConfig(MiniaudioDeviceState *s, bool chosenDevice = true)
 	{
 		ma_device_config dc = ma_device_config_init(ma_device_type_playback);
-		dc.playback.pDeviceID = nullptr;
+		// TheSuperHackers @feature The output device chosen in the options, else the system default.
+		dc.playback.pDeviceID = (chosenDevice && s->hasChosenId) ? &s->chosenId : nullptr;
 		dc.playback.format = ma_format_f32;
 		dc.playback.channels = kEngineChannels;
 		dc.sampleRate = kEngineRate;
@@ -557,8 +606,16 @@ namespace
 			return false;
 		}
 		ma_device_config dc = outputConfig(s);
-		if (ma_device_init(&s->context, &dc, &s->device) != MA_SUCCESS) {
-			return false;
+		if (ma_device_init(&s->context, &dc, &s->device) != MA_SUCCESS)
+		{
+			// the chosen device is gone: the system default
+			if (!s->hasChosenId) {
+				return false;
+			}
+			dc = outputConfig(s, false);
+			if (ma_device_init(&s->context, &dc, &s->device) != MA_SUCCESS) {
+				return false;
+			}
 		}
 		s->deviceReady = true;
 		return true;
@@ -609,7 +666,7 @@ namespace
 			}
 			context = s->fallbackContextReady ? &s->fallbackContext : nullptr;
 		}
-		ma_device_config dc = outputConfig(s);
+		ma_device_config dc = outputConfig(s, false);   // the null backend's own device
 		if (context == nullptr || ma_device_init(context, &dc, &s->fallbackDevice) != MA_SUCCESS)
 		{
 			s->output = OUTPUT_NONE;
@@ -1035,6 +1092,8 @@ namespace
 MiniaudioAudioDevice::MiniaudioAudioDevice()
 	: m_state(new MiniaudioDeviceState)
 {
+	m_state->hasChosenId = false;
+	AudioOutputDevices::setLister(listOutputDevices);
 	m_state->options.noOutputDevice = FALSE;
 	m_state->options.endsInUpdate = FALSE;
 	m_state->options.noJobThread = FALSE;
@@ -1122,8 +1181,18 @@ AudioDevice::OpenResult MiniaudioAudioDevice::open(const AudioSettings *settings
 			return OPEN_NO_OUTPUT;
 		}
 		s->contextReady = true;
+		if (!s->options.nullBackend) {
+			findChosenDevice(s);
+		}
 		ma_device_config dc = outputConfig(s);
-		if (ma_device_init(&s->context, &dc, &s->device) != MA_SUCCESS) {
+		ma_result opened = ma_device_init(&s->context, &dc, &s->device);
+		if (opened != MA_SUCCESS && s->hasChosenId)
+		{
+			s->hasChosenId = false;   // the chosen device does not open: the system default
+			dc = outputConfig(s);
+			opened = ma_device_init(&s->context, &dc, &s->device);
+		}
+		if (opened != MA_SUCCESS) {
 			ma_context_uninit(&s->context);
 			s->contextReady = false;
 			return OPEN_NO_OUTPUT;

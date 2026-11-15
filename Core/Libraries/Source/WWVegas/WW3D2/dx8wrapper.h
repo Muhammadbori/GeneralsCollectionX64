@@ -286,6 +286,9 @@ class DX8Wrapper
 	static void Device_Set_Pixel_Shader_Constant(int reg, const void* data, int count);
 
 public:
+	// TheSuperHackers @feature Where a windowed game window goes in the work area of its monitor:
+	// 0 centre (default), 1 top left, 2 top right, 3 bottom left, 4 bottom right.
+	static void Set_Window_Placement(int placement) { WindowPlacement = placement; }
 #ifdef EXTENDED_STATS
 	static DX8_Stats stats;
 #endif
@@ -679,6 +682,7 @@ protected:
 	static int								BitDepth;
 	static int								TextureBitDepth;
 	static bool								IsWindowed;
+	static int								WindowPlacement;
 	static D3DFORMAT					DisplayFormat;
 	static D3DMULTISAMPLE_TYPE	MultiSampleAntiAliasing;
 

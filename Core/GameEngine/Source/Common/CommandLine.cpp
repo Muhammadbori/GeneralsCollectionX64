@@ -27,6 +27,7 @@
 
 #include "Common/ArchiveFileSystem.h"
 #include "Common/CommandLine.h"
+#include "Common/ReplayFollow.h"
 #include "Common/CRCDebug.h"
 #include "Common/FrameRateLimit.h"
 #include "Common/FrameShots.h"
@@ -137,9 +138,17 @@ Int parseNoLogOrCrash(char *args[], int)
 
 //=============================================================================
 //=============================================================================
+// TheSuperHackers @feature -win / -fullscreen win over the Windowed key of Options.ini.
+static Bool s_windowModeGiven = FALSE;
+Bool CommandLine::isWindowModeGiven()
+{
+	return s_windowModeGiven;
+}
+
 Int parseWin(char *args[], int)
 {
 	TheWritableGlobalData->m_windowed = true;
+	s_windowModeGiven = TRUE;
 
 	return 1;
 }
@@ -700,6 +709,7 @@ Int parseNoAudio(char *args[], int)
 Int parseNoWin(char *args[], int)
 {
 	TheWritableGlobalData->m_windowed = false;
+	s_windowModeGiven = TRUE;
 
 	return 1;
 }
@@ -746,6 +756,10 @@ Int parseHeadless(char *args[], int num)
 	return 1;
 }
 
+static Int s_followDelaySeconds = 0;
+static Real s_followCatchUp = 2.0f;
+static Bool s_followRequested = FALSE;
+
 Int parseReplay(char *args[], int num)
 {
 	if (num > 1)
@@ -760,6 +774,49 @@ Int parseReplay(char *args[], int num)
 		rts::ClientInstance::setMultiInstance(TRUE);
 		rts::ClientInstance::skipPrimaryInstance();
 
+		return 2;
+	}
+	return 1;
+}
+
+// TheSuperHackers @feature -followReplay <file>: play a replay that another game is still writing, following it
+// (ReplayFollow.h). Like -replay, it lets this game run next to the writer on the same PC (another instance).
+Int parseFollowReplay(char *args[], int num)
+{
+	if (num > 1)
+	{
+		TheWritableGlobalData->m_loadReplayGame = args[1];
+		TheWritableGlobalData->m_shellMapOn = FALSE;
+		TheWritableGlobalData->m_playIntro = FALSE;
+		TheWritableGlobalData->m_playSizzle = FALSE;
+		ReplayFollow::configure(s_followDelaySeconds, s_followCatchUp);
+		s_followRequested = TRUE;
+		rts::ClientInstance::setMultiInstance(TRUE);
+		rts::ClientInstance::skipPrimaryInstance();
+		return 2;
+	}
+	return 1;
+}
+
+Int parseFollowDelay(char *args[], int num)
+{
+	if (num > 1)
+	{
+		s_followDelaySeconds = atoi(args[1]);
+		if (s_followRequested)
+			ReplayFollow::configure(s_followDelaySeconds, s_followCatchUp);
+		return 2;
+	}
+	return 1;
+}
+
+Int parseFollowCatchUp(char *args[], int num)
+{
+	if (num > 1)
+	{
+		s_followCatchUp = (Real)atof(args[1]);
+		if (s_followRequested)
+			ReplayFollow::configure(s_followDelaySeconds, s_followCatchUp);
 		return 2;
 	}
 	return 1;
@@ -1665,6 +1722,9 @@ static CommandLineParam paramsForStartup[] =
 	// You can pass this multiple times to play back multiple replays.
 	// You can also include wildcards. The file must be in the replay folder or in a subfolder.
 	{ "-replay", parseReplay },
+	{ "-followReplay", parseFollowReplay },
+	{ "-followDelay", parseFollowDelay },
+	{ "-followCatchUp", parseFollowCatchUp },
 
 	// TheSuperHackers @feature helmutbuhler 23/05/2025
 	// Simulate each replay in a separate process and use 1..N processes at the same time.

@@ -48,6 +48,7 @@ public:
 	// folder of the executable, as an absolute path; null when the file does not exist (the game then loads every *.big
 	// of its folder, and Zero Hour the archives of the base game from the registry, as before).
 	static const char * getArchiveListFile();
+	static Bool isWindowModeGiven();   ///< TheSuperHackers @feature -win or -fullscreen was on the command line
 
 	// TheSuperHackers @feature True with -noRegistry, and when the archive list exists (a self-contained folder): the
 	// game then neither reads nor writes its registry keys. Safe to call before the command line is parsed.

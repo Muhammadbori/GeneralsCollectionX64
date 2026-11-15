@@ -114,6 +114,7 @@ int								DX8Wrapper::ResolutionHeight							= DEFAULT_RESOLUTION_HEIGHT;
 int								DX8Wrapper::BitDepth										= DEFAULT_BIT_DEPTH;
 int								DX8Wrapper::TextureBitDepth							= DEFAULT_TEXTURE_BIT_DEPTH;
 bool								DX8Wrapper::IsWindowed									= false;
+int									DX8Wrapper::WindowPlacement							= 0;
 D3DFORMAT					DX8Wrapper::DisplayFormat	= D3DFMT_UNKNOWN;
 D3DMULTISAMPLE_TYPE DX8Wrapper::MultiSampleAntiAliasing	= DEFAULT_MSAA;
 
@@ -824,6 +825,16 @@ void DX8Wrapper::Resize_And_Position_Window()
 			GetMonitorInfo(MonitorFromWindow(_Hwnd, MONITOR_DEFAULTTOPRIMARY), &mi);
 			int left = (mi.rcWork.left + mi.rcWork.right - width) / 2;
 			int top  = (mi.rcWork.top + mi.rcWork.bottom - height) / 2;
+
+			// TheSuperHackers @feature A corner of the work area instead of its centre (WindowPosition of Options.ini).
+			if (WindowPlacement == 1 || WindowPlacement == 3)
+				left = mi.rcWork.left;
+			if (WindowPlacement == 2 || WindowPlacement == 4)
+				left = mi.rcWork.right - width;
+			if (WindowPlacement == 1 || WindowPlacement == 2)
+				top = mi.rcWork.top;
+			if (WindowPlacement == 3 || WindowPlacement == 4)
+				top = mi.rcWork.bottom - height;
 
 			// TheSuperHackers @feature helmutbuhler 14/04/2025
 			// Move the window to try fit it into the monitor area, if one of its dimensions is larger than the work area.

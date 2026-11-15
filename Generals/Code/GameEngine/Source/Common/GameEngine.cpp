@@ -40,6 +40,7 @@
 #include "Common/PlayerList.h"
 #include "Common/GameAudio.h"
 #include "Common/GameEngine.h"
+#include "Common/ReplayFollow.h"
 #include "Common/INI.h"
 #include "Common/INIException.h"
 #include "Common/MessageStream.h"
@@ -801,6 +802,13 @@ void GameEngine::update()
 		for (Int i = 0; i < logicUpdates; ++i)
 		{
 			if (i > 0 && !canContinueGameLogicUpdates(FramePacer::IgnoreFrozenTime))
+			{
+				break;
+			}
+
+			// TheSuperHackers @feature A followed replay holds the logic before a frame its writer has not finished
+			// (ReplayFollow.h); the drawing goes on.
+			if (TheGameLogic->isInReplayGame() && !ReplayFollow::mayRunFrame(TheGameLogic->getFrame()))
 			{
 				break;
 			}

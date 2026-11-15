@@ -25,6 +25,10 @@
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
 
 #include "Common/Recorder.h"
+#include "Common/ReplayFollow.h"
+
+// TheSuperHackers @feature m_nextFrame while a followed replay waits for more data (ReplayFollow.h).
+static const UnsignedInt FOLLOW_WAIT = 0xFFFFFFFE;
 #include "Common/file.h"
 #include "Common/FileSystem.h"
 #include "Common/PlayerList.h"
@@ -431,6 +435,14 @@ void RecorderClass::updatePlayback() {
 		// This is reached if there are no more commands to be executed.
 		return;
 	}
+	if (m_nextFrame == FOLLOW_WAIT)
+	{
+		// TheSuperHackers @feature A followed replay that reached the end of its data: try again (ReplayFollow.h).
+		readNextFrame();
+		if (m_nextFrame == FOLLOW_WAIT || m_nextFrame == -1) {
+			return;
+		}
+	}
 	UnsignedInt curFrame = TheGameLogic->getFrame();
 	if (m_doingAnalysis)
 		curFrame = m_nextFrame;
@@ -447,6 +459,7 @@ void RecorderClass::updatePlayback() {
  * reaching the end of the playback file.
  */
 void RecorderClass::stopPlayback() {
+	ReplayFollow::readerEnded();
 	if (m_file != nullptr) {
 		m_file->close();
 		m_file = nullptr;
@@ -511,6 +524,11 @@ void RecorderClass::updateRecord()
 		DEBUG_ASSERTCRASH(m_file != nullptr, ("RecorderClass::updateRecord() - unexpected call to fflush(m_file)"));
 		m_file->flush();
 	}
+
+	// TheSuperHackers @feature The commands of this frame are in the file now (flushed): a follower may run it.
+	if (m_file != nullptr) {
+		ReplayFollow::writerFrame(TheGameLogic->getFrame());
+	}
 }
 
 /**
@@ -537,6 +555,8 @@ void RecorderClass::startRecording(GameDifficulty diff, GameMode originalGameMod
 		DEBUG_ASSERTCRASH(m_file != nullptr, ("Failed to create replay file"));
 		return;
 	}
+	// TheSuperHackers @feature The side file that lets another game follow this replay while it is written.
+	ReplayFollow::writerStarted(filepath);
 	// TheSuperHackers @info the null terminator needs to be ignored to maintain retail replay file layout
 	m_file->writeFormat("%s", s_genrep);
 
@@ -684,6 +704,9 @@ void RecorderClass::startRecording(GameDifficulty diff, GameMode originalGameMod
 	*/
 
 	/// @todo Need to write game options when there are some to be written.
+
+	// TheSuperHackers @feature The header goes to the disk at once, so a follower can read it (ReplayFollow.h).
+	m_file->flush();
 }
 
 /**
@@ -692,6 +715,7 @@ void RecorderClass::startRecording(GameDifficulty diff, GameMode originalGameMod
  */
 void RecorderClass::stopRecording() {
 	logGameEnd();
+	ReplayFollow::writerEnded();
 	if (TheNetwork)
 	{
 		//if (TheLAN)
@@ -1228,6 +1252,9 @@ Bool RecorderClass::playbackFile(AsciiString filename)
 	// Otherwise a crc message remains and messes up the crc calculation on the restarted replay.
 	TheCommandList->reset();
 
+	// TheSuperHackers @feature -followReplay: follow this replay while its writer still records it (ReplayFollow.h).
+	ReplayFollow::readerStarted(header.filename, maxFPS);
+
 	m_nextFrame = 0;
 	readNextFrame();
 	// readNextFrame() closes m_file via stopPlayback() if the first frame cannot be read.
@@ -1327,9 +1354,20 @@ AsciiString RecorderClass::readAsciiString() {
  */
 void RecorderClass::readNextFrame()
 {
-	const UnsignedInt curFrame = m_nextFrame;
+	const UnsignedInt curFrame = (m_nextFrame == FOLLOW_WAIT) ? m_followResumeFrame : m_nextFrame;
 
+	// TheSuperHackers @feature A replay whose writer is still at it: at the end of its data, wait for more instead of
+	// stopping. The writer marks a frame done only after its commands are flushed, and the follower never runs a frame
+	// the writer has not done (ReplayFollow::mayRunFrame), so a record of a frame it reads is complete.
+	const Int recordStart = m_file->position();
 	Int bytesRead = m_file->read(&m_nextFrame, sizeof(m_nextFrame));
+	if (bytesRead != sizeof(m_nextFrame) && ReplayFollow::writerAlive())
+	{
+		m_file->seek(recordStart, File::START);
+		m_followResumeFrame = curFrame;
+		m_nextFrame = FOLLOW_WAIT;
+		return;
+	}
 	if (bytesRead == sizeof(m_nextFrame))
 	{
 		// TheSuperHackers @bugfix Check whether the next frame value is within a reasonable range

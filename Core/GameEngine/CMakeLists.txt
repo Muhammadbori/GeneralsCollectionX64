@@ -85,8 +85,10 @@ set(GAMEENGINE_SRC
 #    Include/Common/MultiplayerSettings.h
 #    Include/Common/NameKeyGenerator.h
     Include/Common/ObjectStatusTypes.h
+    Include/Common/AudioOutputDevices.h
     Include/Common/OptionPreferences.h
     Include/Common/Packs.h
+    Include/Common/ReplayFollow.h
 #    Include/Common/OSDisplay.h
 #    Include/Common/Overridable.h
 #    Include/Common/Override.h
@@ -638,8 +640,10 @@ set(GAMEENGINE_SRC
     Source/Common/MiniLog.cpp
 #    Source/Common/MultiplayerSettings.cpp
 #    Source/Common/NameKeyGenerator.cpp
+    Source/Common/AudioOutputDevices.cpp
     Source/Common/OptionPreferences.cpp
     Source/Common/Packs.cpp
+    Source/Common/ReplayFollow.cpp
 #    Source/Common/PartitionSolver.cpp
     Source/Common/PerfTimer.cpp
     Source/Common/RandomValue.cpp

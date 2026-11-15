@@ -130,6 +130,13 @@ public:
 	Int getCounterStyle() const;
 	/// TheSuperHackers @feature Optional key ScreenshotFormat: Jpeg (the default) or Png, the format of the screenshot key.
 	Int getScreenshotFormat() const;
+
+	// TheSuperHackers @feature Window, sound device, camera rotation and IP display options (plan 1, O8).
+	Int getWindowed() const;                 ///< Windowed: 1 yes, 0 no, -1 not set
+	AsciiString getWindowPosition() const;   ///< WindowPosition: Center (default), TopLeft, TopRight, BottomLeft, BottomRight
+	AsciiString getAudioOutputDevice() const;   ///< AudioOutputDevice: the device name (UTF-8), empty: the system default
+	Int getCameraRotateSpeedPercent() const; ///< CameraRotateSpeed: percent of the GameData value, 100 when not set
+	Bool getHideIPAddresses() const;         ///< HideIPAddresses: show *** instead of the IP addresses in the options
 	Bool getBuildingOcclusionEnabled();
 	Int getParticleCap();
 

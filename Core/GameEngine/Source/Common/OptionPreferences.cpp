@@ -816,12 +816,49 @@ static Bool parseOptionReal(const AsciiString &text, Real *value)
 	return TRUE;
 }
 
+//-------------------------------------------------------------------------------------------------
+Int OptionPreferences::getWindowed() const
+{
+	OptionPreferences::const_iterator it = find("Windowed");
+	if (it == end())
+		return -1;
+	return (stricmp(it->second.str(), "yes") == 0) ? 1 : 0;
+}
+
+AsciiString OptionPreferences::getWindowPosition() const
+{
+	OptionPreferences::const_iterator it = find("WindowPosition");
+	return it != end() ? it->second : AsciiString("Center");
+}
+
+AsciiString OptionPreferences::getAudioOutputDevice() const
+{
+	OptionPreferences::const_iterator it = find("AudioOutputDevice");
+	return it != end() ? it->second : AsciiString::TheEmptyString;
+}
+
+Int OptionPreferences::getCameraRotateSpeedPercent() const
+{
+	OptionPreferences::const_iterator it = find("CameraRotateSpeed");
+	if (it == end())
+		return 100;
+	const Int v = atoi(it->second.str());
+	return v < 10 ? 10 : (v > 500 ? 500 : v);
+}
+
+Bool OptionPreferences::getHideIPAddresses() const
+{
+	OptionPreferences::const_iterator it = find("HideIPAddresses");
+	return it != end() && stricmp(it->second.str(), "yes") == 0;
+}
+
 // The GameData.ini values, kept at the first call (at start, before any override), so that a key removed in the options
 // ("Standard") brings them back without a restart. Only the options do that: a map's GameData block keeps its own
 // values when the key is absent.
 static Bool s_cameraDefaultsKept = FALSE;
 static Real s_defaultCameraPitch = 0.0f;
 static Real s_defaultMaxCameraHeight = 0.0f;
+static Real s_defaultCameraRotateSpeed = 0.0f;
 
 void OptionPreferences::applyCameraOverrides(Bool resetAbsentKeys)
 {
@@ -830,6 +867,14 @@ void OptionPreferences::applyCameraOverrides(Bool resetAbsentKeys)
 		s_cameraDefaultsKept = TRUE;
 		s_defaultCameraPitch = TheGlobalData->m_cameraPitch;
 		s_defaultMaxCameraHeight = TheGlobalData->m_maxCameraHeight;
+		s_defaultCameraRotateSpeed = TheGlobalData->m_keyboardCameraRotateSpeed;
+	}
+
+	// TheSuperHackers @feature CameraRotateSpeed: the keyboard rotation speed in percent of the GameData value (client
+	// side only: the camera).
+	if (find("CameraRotateSpeed") != end() || resetAbsentKeys)
+	{
+		TheWritableGlobalData->m_keyboardCameraRotateSpeed = s_defaultCameraRotateSpeed * (Real)getCameraRotateSpeedPercent() / 100.0f;
 	}
 
 	OptionPreferences::const_iterator it = find("DrawEntireTerrain");
