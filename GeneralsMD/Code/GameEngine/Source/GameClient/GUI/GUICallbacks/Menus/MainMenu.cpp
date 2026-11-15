@@ -1488,17 +1488,27 @@ WindowMsgHandledType MainMenuSystem( GameWindow *window, UnsignedInt msg,
 				if(campaignSelected || dontAllowTransitions)
 					break;
 
-				// set up for the difficulty select into challenge menu
+				// TheSuperHackers @feature The challenge menu opens at once: its difficulty, game speed and "Continue" are on
+				// that screen (ChallengeExtras.h), so the difficulty screen of the main menu is no longer shown for it.
 				TheTransitionHandler->setGroup("MainMenuFactionTraining");
 				GameWindow *win = TheWindowManager->winGetWindowFromId(parentMainMenu, TheNameKeyGenerator->nameToKey("MainMenu.wnd:WinFactionTraining"));
 				if(win)
 					win->winHide(TRUE);
 				TheTransitionHandler->reverse("MainMenuSinglePlayerMenuBackTraining");
-				TheTransitionHandler->setGroup("MainMenuDifficultyMenuTraining");
 				campaignSelected = TRUE;
 				showLogo = FALSE;
 				showSide = SHOW_TRAINING;
-				launchChallengeMenu = TRUE;
+				launchChallengeMenu = FALSE;
+				dontAllowTransitions = TRUE;
+				buttonPushed = FALSE;
+				{
+					OptionPreferences pref;
+					const GameDifficulty diff = (GameDifficulty)pref.getCampaignDifficulty();
+					TheCampaignManager->setGameDifficulty(diff);
+					if (TheChallengeGenerals)
+						TheChallengeGenerals->setCurrentDifficulty(diff);
+				}
+				TheShell->push( "Menus/ChallengeMenu.wnd" );
 			}
 
 

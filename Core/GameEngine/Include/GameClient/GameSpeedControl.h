@@ -59,7 +59,7 @@ public:
 	/// is made right of the text, looking like 'checkBoxTemplate' (a check box of the same menu; the default look without
 	/// one). 'checkBoxName' is its window name for its id, e.g. "SkirmishGameOptionsMenu.wnd:CheckBoxGameSpeedNormal".
 	void init(GameWindow *parent, GameWindow *slider, GameWindow *text, GameWindow *checkBoxTemplate, const char *checkBoxName,
-		Int logicFps, Bool normal);
+		Int logicFps, Bool normal, Int checkBoxWidth = 160);   ///< checkBoxWidth: the room right of the text for the box
 	void reset();   ///< forget the windows (the menu's layout is going away)
 
 	Bool onSliderTrack(GameWindow *control, Int position);   ///< GSM_SLIDER_TRACK; TRUE when it was this slider

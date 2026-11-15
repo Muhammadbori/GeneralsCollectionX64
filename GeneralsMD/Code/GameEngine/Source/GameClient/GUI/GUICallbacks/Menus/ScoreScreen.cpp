@@ -100,6 +100,7 @@
 #include "GameNetwork/GameSpy/BuddyThread.h"
 #include "GameNetwork/GameSpy/PersistentStorageThread.h"
 #include "GameClient/InGameUI.h"
+#include "GameClient/ChallengeExtras.h"
 #include "GameClient/ChallengeGenerals.h"
 
 
@@ -196,7 +197,8 @@ void startNextCampaignGame()
 	TheShell->popImmediate();
 	TheShell->hideShell();
 	TheWritableGlobalData->m_pendingFile = TheCampaignManager->getCurrentMap();
-	if (TheCampaignManager->getCurrentCampaign() && TheCampaignManager->getCurrentCampaign()->isChallengeCampaign())
+	const Bool challenge = TheCampaignManager->getCurrentCampaign() && TheCampaignManager->getCurrentCampaign()->isChallengeCampaign();
+	if (challenge)
 	{
 		DEBUG_ASSERTCRASH( TheChallengeGameInfo, ("TheChallengeGameInfo doesn't exist.") );
 		TheChallengeGameInfo->init();
@@ -221,6 +223,11 @@ void startNextCampaignGame()
 	msg->appendIntegerArgument(GAME_SINGLE_PLAYER);
 	msg->appendIntegerArgument(TheCampaignManager->getGameDifficulty());
 	msg->appendIntegerArgument(TheCampaignManager->getRankPoints());
+	if (challenge)
+	{
+		// TheSuperHackers @feature The next challenge battle keeps the speed chosen on the challenge screen.
+		msg->appendIntegerArgument(ChallengeRun::getRunLogicFps());
+	}
 
 	InitRandom(0);
 }
@@ -837,6 +844,9 @@ void finishSinglePlayerInit()
 		}
 
 		TheCampaignManager->gotoNextMission();
+
+		// TheSuperHackers @feature A won challenge battle moves the run of "Continue" on (or ends it after the last).
+		ChallengeRun::onBattleWon();
 
 		if(TheCampaignManager->getCurrentMap().isEmpty())
 		{
