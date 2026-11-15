@@ -155,6 +155,8 @@ public:
 	Bool m_rightMouseAlwaysScrolls;
 	Int m_jpegQuality; // TheSuperHackers @feature Quality for JPEG screenshots.
 	SnowStyle m_snowStyle; // TheSuperHackers @feature How falling snow is drawn, from Options.ini SnowStyle.
+	Int m_counterStyle; // TheSuperHackers @feature The look of the top counters, Options.ini CounterStyle: 0 Hackers, 1 GenTool.
+	Int m_screenshotFormat; // TheSuperHackers @feature The screenshot key's ScreenshotFormat, Options.ini ScreenshotFormat.
 	// TheSuperHackers @feature -skirmish: m_initialFile is started as a skirmish of computer players watched by an observer.
 	Bool m_initialFileIsSkirmish;
 	Int m_skirmishSpeed;	///< -skirmishSpeed, game speed argument of the -skirmish MSG_NEW_GAME

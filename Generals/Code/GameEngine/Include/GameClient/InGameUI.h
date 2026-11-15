@@ -589,6 +589,7 @@ private:
 	void drawSystemTime(Int &x, Int &y);
 	void drawGameTime();
 	void drawPlayerInfoList();
+	void drawGenToolCounters(); ///< TheSuperHackers @feature The top counters in the GenTool look (Options.ini CounterStyle)
 
 public:
 	void registerWindowLayout(WindowLayout *layout); // register a layout for updates

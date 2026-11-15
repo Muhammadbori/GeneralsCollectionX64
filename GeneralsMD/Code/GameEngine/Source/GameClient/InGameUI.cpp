@@ -3759,6 +3759,17 @@ void InGameUI::postWindowDraw()
 	Int hudOffsetX = 0;
 	Int hudOffsetY = 0;
 
+	// TheSuperHackers @feature The GenTool look of the top counters, chosen in the options (Information).
+	if (TheGlobalData->m_counterStyle == 1)
+	{
+		drawGenToolCounters();
+		if (m_playerInfoListPointSize > 0 && TheGameLogic->isInGame() && TheControlBar->isObserverControlBarOn())
+		{
+			drawPlayerInfoList();
+		}
+		return;
+	}
+
 	if (m_networkLatencyPointSize > 0 && TheGameLogic->isInMultiplayerGame())
 	{
 		drawNetworkLatency(hudOffsetX, hudOffsetY);
@@ -6223,14 +6234,18 @@ void InGameUI::updateRenderFpsString()
 
 void InGameUI::drawNetworkLatency(Int &x, Int &y)
 {
-	const UnsignedInt networkLatencyFrames = TheNetwork->getRunAhead();
+	// TheSuperHackers @tweak The delay in milliseconds: the run-ahead (the frames a command waits before every player runs
+	// it) at the agreed network frame rate. It is the command delay the game plays with, which follows the measured
+	// latency of the players; it is not a ping.
+	const UnsignedInt frameRate = TheNetwork->getFrameRate() > 0 ? TheNetwork->getFrameRate() : LOGICFRAMES_PER_SECOND;
+	const UnsignedInt networkLatencyMs = (UnsignedInt)TheNetwork->getRunAhead() * 1000u / frameRate;
 
-	if (networkLatencyFrames != m_lastNetworkLatencyFrames)
+	if (networkLatencyMs != m_lastNetworkLatencyFrames)
 	{
 		UnicodeString latencyStr;
-		latencyStr.format(L"%u", networkLatencyFrames);
+		latencyStr.format(L"%ums", networkLatencyMs);
 		m_networkLatencyString->setText(latencyStr);
-		m_lastNetworkLatencyFrames = networkLatencyFrames;
+		m_lastNetworkLatencyFrames = networkLatencyMs;
 	}
 
 	// TheSuperHackers @info at the HUD anchor this draws inline and advances x otherwise uses configured position
@@ -6324,6 +6339,90 @@ void InGameUI::drawSystemTime(Int &x, Int &y)
 	else
 	{
 		m_systemTimeString->draw(m_systemTimePosition.x, m_systemTimePosition.y, m_systemTimeColor, m_systemTimeDropColor);
+	}
+}
+
+// TheSuperHackers @feature The GenTool look: one line at the very top. Left: the frame rate (yellow), the frame limit in
+// grey square brackets, the network delay in ms (light blue, in network games), the clock (white). Right: the game time
+// (white) with the frame within the second after a dot. Each part follows its own on/off and size setting.
+void InGameUI::drawGenToolCounters()
+{
+	const Color white = GameMakeColor(255, 255, 255, 255);
+	const Int top = 0;
+	Int x = 2;
+
+	if (m_renderFpsPointSize > 0 && m_renderFpsString != nullptr && m_renderFpsLimitString != nullptr)
+	{
+		const UnsignedInt nowMs = timeGetTime();
+		if (m_renderFpsRefreshMs == 0u || nowMs - m_lastRenderFpsUpdateMs >= m_renderFpsRefreshMs)
+		{
+			m_lastRenderFpsUpdateMs = nowMs;
+			updateRenderFpsString();
+		}
+
+		UnsignedInt renderFpsLimit = RenderFpsPreset::UncappedFpsValue;
+		if (TheGlobalData->m_useFpsLimit)
+		{
+			renderFpsLimit = (UnsignedInt)TheFramePacer->getFramesPerSecondLimit();
+		}
+		// the top bit marks the GenTool text, so the Hackers look sets its own text again after a switch
+		const UnsignedInt cacheKey = renderFpsLimit | 0x80000000u;
+		if (cacheKey != m_lastRenderFpsLimit)
+		{
+			UnicodeString limitStr;
+			if (renderFpsLimit == RenderFpsPreset::UncappedFpsValue)
+				limitStr.format(L"[X]");
+			else
+				limitStr.format(L"[%u]", renderFpsLimit);
+			m_renderFpsLimitString->setText(limitStr);
+			m_lastRenderFpsLimit = cacheKey;
+		}
+
+		m_renderFpsString->draw(x, top, m_renderFpsColor, m_renderFpsDropColor);
+		x += m_renderFpsString->getWidth() + kHudGapPx / 2;
+		m_renderFpsLimitString->draw(x, top, m_renderFpsLimitColor, m_renderFpsDropColor);
+		x += m_renderFpsLimitString->getWidth() + kHudGapPx;
+	}
+
+	if (m_networkLatencyPointSize > 0 && m_networkLatencyString != nullptr && TheGameLogic->isInMultiplayerGame() && TheNetwork != nullptr)
+	{
+		Int latencyX = x;
+		Int latencyY = 0;
+		// drawNetworkLatency draws at the HUD anchor (3, -1) plus the offsets; place it here instead
+		const Coord2D saved = m_networkLatencyPosition;
+		m_networkLatencyPosition.x = (Real)x;
+		m_networkLatencyPosition.y = (Real)top;
+		drawNetworkLatency(latencyX, latencyY);
+		m_networkLatencyPosition = saved;
+		x += m_networkLatencyString->getWidth() + kHudGapPx;
+	}
+
+	if (m_systemTimePointSize > 0 && m_systemTimeString != nullptr)
+	{
+		SYSTEMTIME systemTime;
+		GetLocalTime( &systemTime );
+		UnicodeString timeString;
+		timeString.format(L"%2.2d:%2.2d:%2.2d", systemTime.wHour, systemTime.wMinute, systemTime.wSecond);
+		m_systemTimeString->setText(timeString);
+		m_systemTimeString->draw(x, top, white, m_systemTimeDropColor);
+	}
+
+	if (m_gameTimePointSize > 0 && m_gameTimeString != nullptr && m_gameTimeFrameString != nullptr
+		&& !TheGameLogic->isInShellGame() && TheGameLogic->isInGame())
+	{
+		const Int currentFrame = TheGameLogic->getFrame();
+		const Int gameSeconds = (Int)(SECONDS_PER_LOGICFRAME_REAL * currentFrame);
+		UnicodeString gameTimeString;
+		gameTimeString.format(L"%2.2d:%2.2d:%2.2d", gameSeconds / 3600, (gameSeconds / 60) % 60, gameSeconds % 60);
+		m_gameTimeString->setText(gameTimeString);
+		UnicodeString frameString;
+		frameString.format(L".%2.2d", currentFrame % LOGICFRAMES_PER_SECOND);
+		m_gameTimeFrameString->setText(frameString);
+
+		const Int frameX = TheDisplay->getWidth() - 2 - m_gameTimeFrameString->getWidth();
+		const Int timeX = frameX - m_gameTimeString->getWidth();
+		m_gameTimeString->draw(timeX, top, white, m_gameTimeDropColor);
+		m_gameTimeFrameString->draw(frameX, top, white, m_gameTimeDropColor);
 	}
 }
 

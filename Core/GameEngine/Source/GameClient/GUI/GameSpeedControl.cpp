@@ -25,6 +25,7 @@
 
 #include "Common/NameKeyGenerator.h"
 #include "Common/Registry.h"
+#include "GameClient/LocalizedFallback.h"
 #include "GameClient/GadgetCheckBox.h"
 #include "GameClient/GadgetSlider.h"
 #include "GameClient/GadgetStaticText.h"
@@ -43,7 +44,7 @@ namespace
 //-------------------------------------------------------------------------------------------------
 const WideChar *GameSpeed::localized(const WideChar *english, const WideChar *russian)
 {
-	return stricmp(GetRegistryLanguage().str(), "russian") == 0 ? russian : english;
+	return localizedFallback(english, russian);
 }
 
 Int GameSpeed::stepToLogicFps(Int step)

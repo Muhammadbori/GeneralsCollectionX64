@@ -3810,8 +3810,9 @@ GameMessageDisposition CommandTranslator::translateGameMessage(const GameMessage
 		// --------------------------------------------------------------------------------------------
 		case GameMessage::MSG_META_TAKE_SCREENSHOT:
 		{
+			// TheSuperHackers @feature The format from the options (Options.ini ScreenshotFormat); JPG by default.
 			if (TheDisplay)
-				TheDisplay->takeScreenShot(SCREENSHOT_JPEG, TheGlobalData->m_jpegQuality);
+				TheDisplay->takeScreenShot((ScreenshotFormat)TheGlobalData->m_screenshotFormat, TheGlobalData->m_jpegQuality);
 			disp = DESTROY_MESSAGE;
 			break;
 		}

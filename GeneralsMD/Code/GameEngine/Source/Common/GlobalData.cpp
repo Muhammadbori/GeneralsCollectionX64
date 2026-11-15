@@ -660,6 +660,8 @@ GlobalData::GlobalData()
 	m_rightMouseAlwaysScrolls = FALSE;
 	m_jpegQuality = DEFAULT_JPEG_QUALITY;
 	m_snowStyle = SNOW_STYLE_DEFAULT;
+	m_counterStyle = 0;
+	m_screenshotFormat = 0;
 	m_initialFileIsSkirmish = FALSE;
 	m_skirmishSpeed = LOGICFRAMES_PER_SECOND;
 	m_skirmishAICount = 2;
@@ -1216,6 +1218,8 @@ void GlobalData::parseGameDataDefinition( INI* ini )
 	TheWritableGlobalData->m_doubleClickAttackMove = optionPref.getDoubleClickAttackMoveEnabled();
 	TheWritableGlobalData->m_jpegQuality = optionPref.getJpegQuality();
 	TheWritableGlobalData->m_snowStyle = optionPref.getSnowStyle();
+	TheWritableGlobalData->m_counterStyle = optionPref.getCounterStyle();
+	TheWritableGlobalData->m_screenshotFormat = optionPref.getScreenshotFormat();
 	TheWritableGlobalData->m_keyboardScrollFactor = optionPref.getScrollFactor();
 	TheWritableGlobalData->m_drawScrollAnchor = optionPref.getDrawScrollAnchor();
 	TheWritableGlobalData->m_moveScrollAnchor = optionPref.getMoveScrollAnchor();
