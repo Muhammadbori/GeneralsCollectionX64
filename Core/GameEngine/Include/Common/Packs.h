@@ -41,6 +41,7 @@
 //   Fallback                       another pack of the same kind, mounted after this one for what this one lacks
 //   Archive, ArchiveZeroHour, ArchiveGenerals    archives of the exe folder to mount as part of this pack
 //   Exclude, ExcludeZeroHour, ExcludeGenerals    lines of the archive list not to mount while this pack is in use
+//   Games                          the games that offer the pack ("ZeroHour", "Generals, ZeroHour"); default: both
 // Packs\<Kind>\default.ini: Default, ShowBase (yes/no), BaseNameEnglish, BaseNameRussian, and for Text BaseTextLanguage.
 
 #pragma once

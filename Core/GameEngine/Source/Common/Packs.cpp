@@ -274,8 +274,10 @@ namespace
 		return AsciiString(buffer);
 	}
 
-	void readPack(Packs::Kind kind, const AsciiString &kindFolder, const AsciiString &name, Packs::Pack &pack)
+	/// FALSE when the pack's Games line names only the other game.
+	Bool readPack(Packs::Kind kind, const AsciiString &kindFolder, const AsciiString &name, Packs::Pack &pack)
 	{
+		Bool forThisGame = TRUE;
 		pack.name = name;
 		pack.folder = kindFolder;
 		pack.folder.concat(name);
@@ -295,6 +297,15 @@ namespace
 			else if (keyIs(key, "Fallback")) pack.fallback = value;
 			else if (keyIs(key, "Archive", kGameFolder)) pack.archives.push_back(value);
 			else if (keyIs(key, "Exclude", kGameFolder)) pack.excludes.push_back(normalizedEntry(value));
+			else if (keyIs(key, "Games"))
+			{
+				// for example "ZeroHour" or "Generals, ZeroHour"
+				AsciiString games = value;
+				games.toLower();
+				AsciiString mine(kGameFolder);
+				mine.toLower();
+				forThisGame = strstr(games.str(), mine.str()) != nullptr;
+			}
 		});
 
 		// the preview picture: named in pack.ini, else preview.tga / preview.dds; the game's own folder first
@@ -317,6 +328,7 @@ namespace
 			const char *dot = strrchr(pack.previewFile.str(), '.');
 			pack.previewTexture = textureNameOf(kind, name, dot != nullptr ? dot : ".tga");
 		}
+		return forThisGame;
 	}
 
 	State &state()
@@ -491,8 +503,9 @@ void Packs::scan()
 				continue;   // reserved for the base data
 			}
 			Pack pack;
-			readPack((Kind)kind, kindFolderPath, names[i], pack);
-			k.packs.push_back(pack);
+			if (readPack((Kind)kind, kindFolderPath, names[i], pack)) {
+				k.packs.push_back(pack);
+			}
 		}
 		if (k.packs.empty()) {
 			k.showBase = TRUE;   // nothing else to choose
