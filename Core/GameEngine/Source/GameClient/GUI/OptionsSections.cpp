@@ -25,6 +25,7 @@
 
 #include "Common/AudioOutputDevices.h"
 #include "Common/FramePacer.h"
+#include "Common/FrameShots.h"
 #include "Common/FrameRateLimit.h"
 #include "Common/GameLOD.h"
 #include "Common/GlobalData.h"
@@ -361,7 +362,7 @@ namespace
 		{ SEC_SOUND, "SliderSFXVolume", "SFXVolumeLabel", nullptr, FALSE, FALSE },
 		{ SEC_SOUND, "SliderVoiceVolume", "VoiceVolumeLabel", nullptr, FALSE, FALSE },
 		{ SEC_CONTROLS, "CheckAlternateMouse", nullptr, nullptr, FALSE, FALSE },
-		{ SEC_CONTROLS, "SliderScrollSpeed", "ScrollSpeedLabel", nullptr, FALSE, FALSE },
+		{ SEC_CONTROLS, "SliderScrollSpeed", nullptr, "GUI:ScrollSpeed", FALSE, FALSE },   // O28 (item 6): own title
 		{ SEC_CONTROLS, "CheckBoxDrawAnchor", nullptr, nullptr, FALSE, FALSE },
 		{ SEC_CONTROLS, "CheckBoxMoveAnchor", nullptr, nullptr, FALSE, FALSE },
 		{ SEC_GAME, "Retaliation", nullptr, nullptr, FALSE, FALSE },
@@ -376,7 +377,7 @@ namespace
 	};
 	enum { EXISTING_COUNT = (Int)ARRAY_SIZE(kExisting) };
 
-	/// TheSuperHackers @bugfix O25 (row 29) The titles of the three old controls without a label window: our own texts in
+	/// TheSuperHackers @bugfix O25 (row 29) The titles of the old controls without a label window: our own texts in
 	/// both languages. The string file's are upper case ("TEXTURE RESOLUTION" wrapped to two lines in English).
 	UnicodeString existingTitle(const char *label)
 	{
@@ -385,8 +386,11 @@ namespace
 			{ "GUI:AntiAliasing", L"Anti-aliasing", L"\x0421\x0433\x043B\x0430\x0436\x0438\x0432\x0430\x043D\x0438\x0435" },
 			{ "GUI:LowResSlider", L"Texture resolution", L"\x0420\x0430\x0437\x0440\x0435\x0448\x0435\x043D\x0438\x0435 \x0442\x0435\x043A\x0441\x0442\x0443\x0440" },
 			{ "GUI:ParticleCap", L"Particle limit", L"\x041B\x0438\x043C\x0438\x0442 \x0447\x0430\x0441\x0442\x0438\x0446" },
+			// O28 (item 6): the Russian string file's is upper case ("SKOROST' PROKRUTKI", two lines in the column)
+			{ "GUI:ScrollSpeed", L"Scroll speed", L"\x0421\x043A\x043E\x0440\x043E\x0441\x0442\x044C \x043F\x0440\x043E\x043A\x0440\x0443\x0442\x043A\x0438" },
 		};
-		static const char *const ownLabels[] = { "GUI:OptionsAntiAliasing", "GUI:OptionsTextureResolution", "GUI:OptionsParticleLimit" };
+		static const char *const ownLabels[] = { "GUI:OptionsAntiAliasing", "GUI:OptionsTextureResolution", "GUI:OptionsParticleLimit",
+			"GUI:OptionsScrollSpeed" };
 		for (Int i = 0; i < (Int)ARRAY_SIZE(titles); ++i)
 		{
 			if (stricmp(label, titles[i].label) == 0)
@@ -784,6 +788,30 @@ namespace
 		return index == STATIC_GAME_LOD_CUSTOM;
 	}
 
+	/// O28 (item 8): a -uiScript step on a window of a hidden section or page shows that page (FrameShots::setRevealHook).
+	Bool revealWindow(GameWindow *window)
+	{
+		if (!s.active) {
+			return FALSE;
+		}
+		for (GameWindow *w = window; w != nullptr; w = w->winGetParent())
+		{
+			for (Int i = 0; i < SEC_COUNT; ++i)
+			{
+				for (Int k = 0; k < s.subPageCount[i]; ++k)
+				{
+					if (s.subPages[i][k] == w)
+					{
+						s.currentSub[i] = k;
+						showSection((Section)i);
+						return TRUE;
+					}
+				}
+			}
+		}
+		return FALSE;
+	}
+
 	/// The custom detail controls follow the detail level: usable only with "Custom", as the old panel was.
 	void updateCustomDetail()
 	{
@@ -1102,11 +1130,40 @@ namespace
 		return index;
 	}
 
+	/// O28 (item 4): the font the list's entries are drawn in (the edit box of the screen's detail list), not the label font.
+	GameFont *comboFont()
+	{
+		if (s.detailCombo != nullptr)
+		{
+			GameWindow *edit = GadgetComboBoxGetEditBox(s.detailCombo);
+			if (edit != nullptr && edit->winGetFont() != nullptr) {
+				return edit->winGetFont();
+			}
+			if (s.detailCombo->winGetFont() != nullptr) {
+				return s.detailCombo->winGetFont();
+			}
+		}
+		return labelFont();
+	}
+
+	Int comboTextWidth(const UnicodeString &text)
+	{
+		return textSize(comboFont(), text, 0).x;
+	}
+
+	/// O28 (item 4): the closed box width that shows 'longestText' whole: the edit box draws its text 5 + 2 pixels in and
+	/// keeps 5 at the right, then the arrow button, an inner margin on both sides, and 2 pixels of frame on each side.
+	Int comboNeed(Int longestText)
+	{
+		const Int margin = max(6, s.gap);
+		return longestText + (5 + 2) + 5 + arrowWidth() + margin * 2 + 4;
+	}
+
 	/// The box as wide as its longest entry needs (between half the column and the column); a longer entry opens a wider
 	/// list (up to the page's right edge, set when the row is placed).
 	Int comboWidthFor(Int longestText, Int colW)
 	{
-		const Int want = longestText + s.gap * 4 + arrowWidth() + 8;
+		const Int want = comboNeed(longestText);
 		return want < colW / 2 ? colW / 2 : (want > colW ? colW : want);
 	}
 
@@ -1126,8 +1183,8 @@ namespace
 		GameWindow *combo = makeCombo(page, 0, titleH, comboWidthFor(longestText, colW), h, id);
 		rowAdd(row, combo, 0, titleH);
 		row.height = titleH + h;
-		if (combo != nullptr && longestText + s.gap * 4 + arrowWidth() + 8 > colW) {
-			GadgetComboBoxSetListMinWidth(combo, longestText + s.gap * 4 + arrowWidth() + 8);
+		if (combo != nullptr && comboNeed(longestText) > colW) {
+			GadgetComboBoxSetListMinWidth(combo, comboNeed(longestText));
 		}
 		return combo;
 	}
@@ -1192,7 +1249,7 @@ namespace
 		for (Int c = 0; c < set.choiceCount; ++c)
 		{
 			texts.push_back(choiceText(set, c));
-			longest = max(longest, textSize(labelFont(), texts.back(), 0).x);
+			longest = max(longest, comboTextWidth(texts.back()));
 		}
 		st.combo = isListSetting(set);
 		if (st.combo)
@@ -1338,9 +1395,9 @@ namespace
 		AsciiString name("OptionsMenu.wnd:Sections.");
 		name.concat(Packs::kindKey(def.kind));
 		// the widest name of any choice of this kind (the hotkey row's list changes with the language)
-		Int longest = textSize(labelFont(), Packs::displayName(def.kind, nullptr), 0).x;
+		Int longest = comboTextWidth(Packs::displayName(def.kind, nullptr));
 		for (Int i = 0; i < Packs::count(def.kind); ++i) {
-			longest = max(longest, textSize(labelFont(), Packs::displayName(def.kind, Packs::get(def.kind, i)), 0).x);
+			longest = max(longest, comboTextWidth(Packs::displayName(def.kind, Packs::get(def.kind, i))));
 		}
 		st.combo = prepareComboRow(row, page, Packs::kindTitle(def.kind), windowId(name.str()), longest, colW, labelH, &st.label);
 		if (def.preview)
@@ -1438,7 +1495,7 @@ namespace
 	{
 		Int longest = 0;
 		for (size_t i = 0; i < names.size(); ++i) {
-			longest = max(longest, textSize(labelFont(), names[i], 0).x);
+			longest = max(longest, comboTextWidth(names[i]));
 		}
 		GameWindow *combo = prepareComboRow(row, page, title, windowId(windowName), longest, colW, labelH, label);
 		if (!names.empty())
@@ -1497,7 +1554,7 @@ namespace
 	//---------------------------------------------------------------------------------------------
 	// The existing controls of OptionsMenu.wnd
 	/// O25: the old sliders in the ticked look: which are continuous (volumes, brightness, scroll speed, particle limit;
-	/// marks at 0, 25, 50, 75 and 100 % of their range) and which have named steps (texture resolution).
+	/// marks at round points of their range, see TickSlider::attach) and which have named steps (texture resolution).
 	void attachExistingSlider(GameWindow *control, const char *name)
 	{
 		const Bool volume = stricmp(name, "SliderMusicVolume") == 0 || stricmp(name, "SliderSFXVolume") == 0 || stricmp(name, "SliderVoiceVolume") == 0;
@@ -1973,10 +2030,12 @@ void OptionsSections::init(OptionPreferences *pref)
 	s.active = TRUE;
 	updateCustomDetail();
 	showSection(SEC_DISPLAY);
+	FrameShots::setRevealHook(&revealWindow);
 }
 
 void OptionsSections::shutdown()
 {
+	FrameShots::setRevealHook(nullptr);
 	memset(&s, 0, sizeof(s));
 	s_devices.clear();
 	s_mics.clear();

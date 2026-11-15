@@ -1181,15 +1181,32 @@ void OptionsMenuInit( WindowLayout *layout, void *userData )
 	AsciiString selectedAliasingMode = (*pref)["AntiAliasing"];
 	GadgetComboBoxReset(comboBoxAntiAliasing);
 	AsciiString temp;
+	UnicodeString aaThird;
 	Int i=0;
 	for (; i < OptionPreferences::AntiAliasingMode_Count; ++i)
 	{
 		// TheSuperHackers @bugfix O25 (row 30) The fourth entry (8x) has no label in the string files ("MISSING:
 		// 'GUI:AntiAliasing3'"): every entry gets an English and a Russian fallback.
 		static const WideChar *const aaEnglish[OptionPreferences::AntiAliasingMode_Count] = { L"Off", L"Low", L"High", L"Very high" };
-		static const WideChar *const aaRussian[OptionPreferences::AntiAliasingMode_Count] = { L"\x0412\x044B\x043A\x043B.", L"\x041D\x0438\x0437\x043A\x043E\x0435", L"\x0412\x044B\x0441\x043E\x043A\x043E\x0435", L"\x041E\x0447\x0435\x043D\x044C \x0432\x044B\x0441\x043E\x043A\x043E\x0435" };
+		static const WideChar *const aaRussian[OptionPreferences::AntiAliasingMode_Count] = { L"\x0412\x044B\x043A\x043B.", L"\x041D\x0438\x0437\x043A\x0438\x0439", L"\x0412\x044B\x0441\x043E\x043A\x0438\x0439", L"\x041E\x0447\x0435\x043D\x044C \x0432\x044B\x0441\x043E\x043A\x0438\x0439" };
 		temp.format("GUI:AntiAliasing%d", i);
 		str = TheGameText->FETCH_OR_SUBSTITUTE( temp.str(), localizedFallback(aaEnglish[i], aaRussian[i]) );
+		// TheSuperHackers @bugfix O28 (item 5) The Russian string file names the first three ("Nizkiy", "Vysokiy"); the
+		// missing fourth is made from the third ("Ochen' " + the third in lower case), so its gender always agrees.
+		if (i == OptionPreferences::AntiAliasingMode_MSAA_8X && str.compare(aaRussian[i]) == 0 && aaThird.getLength() > 0)
+		{
+			UnicodeString veryHigh(L"\x041E\x0447\x0435\x043D\x044C ");
+			for (Int c = 0; c < aaThird.getLength(); ++c)
+			{
+				WideChar ch = aaThird.getCharAt(c);
+				if (c == 0 && ch >= 0x0410 && ch <= 0x042F)
+					ch = (WideChar)(ch + 0x20);
+				veryHigh.concat(ch);
+			}
+			str = veryHigh;
+		}
+		if (i == OptionPreferences::AntiAliasingMode_MSAA_4X)
+			aaThird = str;
 		index = GadgetComboBoxAddEntry(comboBoxAntiAliasing, str, color);
 	}
 	Int val = atoi(selectedAliasingMode.str());

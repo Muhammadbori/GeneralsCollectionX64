@@ -48,6 +48,14 @@ namespace GameSpeed
 	UnicodeString multiplierText(Int logicFps);
 	/// The fallback text of a label that is not in the game's string file: English, or Russian for a Russian game.
 	const WideChar *localized(const WideChar *english, const WideChar *russian);
+
+	// O28: helpers of the menus that lay out their speed rows
+	/// Places 'w' at x, y (screen pixels) with that size, in its parent's coordinates.
+	void placeOnScreen(GameWindow *w, Int x, Int y, Int width, Int height);
+	/// The drawn width of a static text's own text in its font.
+	Int textWidthOf(GameWindow *staticText);
+	/// The first static text under 'root' (any depth) that shows 'text'; nullptr: none.
+	GameWindow *findStaticText(GameWindow *root, const UnicodeString &text);
 }
 
 class GameSpeedControl
@@ -76,6 +84,7 @@ public:
 	Bool isNormal() const { return m_normal; }
 	/// O25: the slider draws the value above its handle, so the separate speed text is hidden (keep it hidden).
 	Bool isTextHidden() const { return m_textHidden; }
+	GameWindow *getCheckBox() const { return m_checkBox; }   ///< O28: for a menu that places the Normal box itself
 
 private:
 	void apply();
