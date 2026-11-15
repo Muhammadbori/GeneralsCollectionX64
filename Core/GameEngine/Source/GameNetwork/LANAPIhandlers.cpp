@@ -284,6 +284,26 @@ void LANAPI::handleRequestJoin( LANMessage *msg, UnsignedInt senderIP )
 			int player;
 			Bool canJoin = true;
 
+			// TheSuperHackers @bugfix O45 The same player asking again (its accept was lost on the way: the joiner repeats
+			// its request every second): the same answer with the slot it has, never a second slot ("duplicate name"
+			// before)
+			for (player = 1; player < MAX_SLOTS; ++player)
+			{
+				LANGameSlot *slot = m_currentGame->getLANSlot(player);
+				if (slot->isHuman() && slot->getIP() == senderIP && slot->getName().compare(msg->name) == 0)
+				{
+					reply.messageType = LANMessage::MSG_JOIN_ACCEPT;
+					wcslcpy(reply.GameJoined.gameName, m_currentGame->getName().str(), ARRAY_SIZE(reply.GameJoined.gameName));
+					reply.GameJoined.slotPosition = player;
+					reply.GameJoined.gameIP = m_localIP;
+					reply.GameJoined.playerIP = senderIP;
+					LanTest::joinLog("host: join request again from %d.%d.%d.%d: accepted again, slot %d", PRINTF_IP_AS_4_INTS(senderIP), player);
+					sendMessage(&reply, 0);   // as the first accept
+					RequestGameOptions(GenerateGameOptionsString(), true);
+					return;
+				}
+			}
+
 			// see if the CRCs match
 #if defined(RTS_DEBUG)
 			if (TheGlobalData->m_netMinPlayers > 0) {
@@ -417,6 +437,7 @@ void LANAPI::handleRequestJoin( LANMessage *msg, UnsignedInt senderIP )
 
 					OnPlayerJoin(player, UnicodeString(msg->name));
 					LanRoom::hostDropJoined(senderIP);   // O31: an observer who took a slot leaves the list
+					LanTest::joinLog("host: join request from %d.%d.%d.%d: accepted, slot %d", PRINTF_IP_AS_4_INTS(senderIP), player);
 					responseIP = 0;
 
 					break;
@@ -452,6 +473,7 @@ void LANAPI::handleJoinAccept( LANMessage *msg, UnsignedInt senderIP )
 		if (m_pendingAction == ACT_JOIN) // Are we trying to join?
 		{
 			m_currentGame = LookupGame(UnicodeString(msg->GameJoined.gameName));
+			LanTest::joinLog("joiner: accepted, slot %d", (Int)msg->GameJoined.slotPosition);
 
 			if (!m_currentGame)
 			{
@@ -501,6 +523,7 @@ void LANAPI::handleJoinDeny( LANMessage *msg, UnsignedInt senderIP )
 	{
 		if (m_pendingAction == ACT_JOIN) // Are we trying to join?
 		{
+			LanTest::joinLog("joiner: denied, reason %d", (Int)msg->GameNotJoined.reason);
 			OnGameJoin(msg->GameNotJoined.reason, LookupGame(UnicodeString(msg->GameNotJoined.gameName)));
 			m_pendingAction = ACT_NONE;
 			m_expiration = 0;

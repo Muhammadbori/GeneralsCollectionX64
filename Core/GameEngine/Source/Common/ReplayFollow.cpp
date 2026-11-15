@@ -65,6 +65,118 @@ namespace
 	UnsignedInt s_lastMessageMs = 0;
 	UnsignedInt s_holdSinceMs = 0;
 
+	//--- O44: the game key -------------------------------------------------------------------------------------------
+	// FNV-1a over the match's options string (the replay header's slot list) with what one computer fills in for itself
+	// left out, so every computer of the match gets the same key:
+	//   - "US=" (a host setting; left out to be safe);
+	//   - the two hex digits after "M=": the map contents mask, which GameInfo::setMap computes from the map files of the
+	//     computer itself, on the host only (joiners take the host's from its options string; NetLab sets each player's
+	//     game from its own command line, so only its host had it: S42 keys 619DFD30 and 2A9F4A1B); the map name is
+	//     taken in lower case;
+	//   - of each human slot ("H<name>,<ip>,<port>,<accepted>,..."): the port and the accepted flags.
+	// Kept: the map name, its CRC and size, the seed, the CRC interval, superweapons, money, old factions, and the slots
+	// (names, addresses, colours, armies, starts, teams). dx12-tools\replay_gamekey.py computes the same from replays.
+	struct KeyHash
+	{
+		UnsignedInt h;
+		KeyHash() : h(2166136261u) {}
+		void add(const char *p, size_t n)
+		{
+			for (size_t i = 0; i < n; ++i)
+			{
+				h ^= (unsigned char)p[i];
+				h *= 16777619u;
+			}
+		}
+		void addLower(const char *p, size_t n)
+		{
+			for (size_t i = 0; i < n; ++i)
+			{
+				const unsigned char c = (unsigned char)p[i];
+				h ^= (c >= 'A' && c <= 'Z') ? (unsigned char)(c - 'A' + 'a') : c;
+				h *= 16777619u;
+			}
+		}
+	};
+
+	/// A human slot "H<name>,<ip>,<port>,<accepted>,...": every part but the port (2) and the accepted flags (3).
+	void addSlot(KeyHash &k, const char *e, size_t n)
+	{
+		if (n == 0 || e[0] != 'H')
+		{
+			k.add(e, n);
+			return;
+		}
+		size_t start = 0;
+		Int part = 0;
+		Bool firstKept = TRUE;
+		for (;;)
+		{
+			size_t stop = start;
+			while (stop < n && e[stop] != ',') ++stop;
+			if (part != 2 && part != 3)
+			{
+				if (!firstKept) k.add(",", 1);
+				k.add(e + start, stop - start);
+				firstKept = FALSE;
+			}
+			if (stop >= n) break;
+			start = stop + 1;
+			++part;
+		}
+	}
+
+	UnsignedInt gameKeyOf(const AsciiString &options)
+	{
+		KeyHash k;
+		const char *s = options.str();
+		for (;;)
+		{
+			const char *end = strchr(s, ';');
+			const size_t len = end != nullptr ? (size_t)(end - s) : strlen(s);
+			const char *eq = len > 0 ? (const char *)memchr(s, '=', len) : nullptr;
+			if (eq != nullptr)
+			{
+				const size_t keyLen = (size_t)(eq - s);
+				const char *v = eq + 1;
+				const size_t vLen = len - keyLen - 1;
+				if (keyLen == 2 && strncmp(s, "US", 2) == 0)
+				{
+					// left out
+				}
+				else if (keyLen == 1 && s[0] == 'M')
+				{
+					k.add("M=", 2);
+					if (vLen > 2) k.addLower(v + 2, vLen - 2);
+					k.add(";", 1);
+				}
+				else if (keyLen == 1 && s[0] == 'S')
+				{
+					k.add("S=", 2);
+					size_t a = 0;
+					for (;;)
+					{
+						size_t b = a;
+						while (b < vLen && v[b] != ':') ++b;
+						addSlot(k, v + a, b - a);
+						if (b >= vLen) break;
+						k.add(":", 1);
+						a = b + 1;
+					}
+					k.add(";", 1);
+				}
+				else
+				{
+					k.add(s, len);
+					k.add(";", 1);
+				}
+			}
+			if (end == nullptr) break;
+			s = end + 1;
+		}
+		return k.h != 0 ? k.h : 1;   // never 0: 0 means "not known" on the wire
+	}
+
 	void livePathOf(const AsciiString &replayPath, char *out, Int size)
 	{
 		snprintf(out, size, "%s.live", replayPath.str());
@@ -174,16 +286,7 @@ void ReplayFollow::writerHeader(UnsignedInt headerEnd, const AsciiString &slotLi
 	if (s_index == INVALID_HANDLE_VALUE) {
 		return;
 	}
-	// the game key: FNV-1a of the slot list (never 0: 0 means "not known" on the wire)
-	UnsignedInt key = 2166136261u;
-	for (const char *p = slotList.str(); *p != '\0'; ++p)
-	{
-		key ^= (unsigned char)*p;
-		key *= 16777619u;
-	}
-	if (key == 0) {
-		key = 1;
-	}
+	const UnsignedInt key = gameKeyOf(slotList);   // O44
 	UnsignedInt head[3];
 	memcpy(&head[0], "GIDX", 4);
 	head[1] = key;
