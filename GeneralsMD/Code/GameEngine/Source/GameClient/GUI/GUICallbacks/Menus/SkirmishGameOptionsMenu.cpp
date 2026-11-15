@@ -1540,6 +1540,10 @@ void SkirmishGameOptionsMenuUpdate( WindowLayout * layout, void *userData)
 		stillNeedsToSetOptions = FALSE;
 	}
 
+	// TheSuperHackers @bugfix O24 (row 27) The Normal box of the speed row is made at run time and takes no part in the
+	// menu's fade: shown only once the fade is over; the shutdown destroys it before the fade back (GameSpeedControl::reset).
+	s_gameSpeed.setShown(!justEntered && !stillNeedsToSetOptions && TheShell->isAnimFinished() && TheTransitionHandler->isFinished());
+
 	if(TheShell->isAnimFinished() && TheTransitionHandler->isFinished())
 			TheShell->shutdownComplete( layout );
 }

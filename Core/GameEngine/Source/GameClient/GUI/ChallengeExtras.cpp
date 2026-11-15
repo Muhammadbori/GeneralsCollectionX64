@@ -210,6 +210,7 @@ namespace
 		Int chosenDifficulty;
 		Bool continueMode;
 		Bool hasRun;
+		Bool shown;   ///< O24: the controls are shown (only after the menu's enter transition)
 	};
 	State s;
 	ChallengeRun::Run s_run;   ///< kept apart from the plain state; emptied on shutdown
@@ -426,6 +427,24 @@ namespace
 	}
 }
 
+/// O24: shows or hides every control made here (not the hidden check box template). They take no part in the menu's
+/// transition (ChallengeMenuFade, defined by window names in the game's data), so they are shown only when it is over.
+static void setControlsShown(Bool shown)
+{
+	if (shown == s.shown) {
+		return;
+	}
+	GameWindow *const mine[] = { s.difficultyLabel, s.difficulty[0], s.difficulty[1], s.difficulty[2], s.speedLabel,
+		s.speedSlider, s.speedText, s.buttonContinue };
+	for (Int i = 0; i < (Int)ARRAY_SIZE(mine); ++i) {
+		if (mine[i] != nullptr) {
+			mine[i]->winHide(!shown);
+		}
+	}
+	s_speed.setShown(shown);
+	s.shown = shown;
+}
+
 void ChallengeExtras::init(GameWindow *parentMenu, GameWindow *buttonPlay, GameWindow *buttonBack, GameWindow *labelFontLook)
 {
 	shutdown();
@@ -558,10 +577,34 @@ void ChallengeExtras::init(GameWindow *parentMenu, GameWindow *buttonPlay, GameW
 		boxRight - boxLeft);
 
 	showDifficulty();
+
+	// O24: all hidden until the menu's enter transition is over (update)
+	s.shown = TRUE;
+	setControlsShown(FALSE);
+}
+
+void ChallengeExtras::update(Bool screenReady)
+{
+	if (s.parent != nullptr) {
+		setControlsShown(screenReady);
+	}
 }
 
 void ChallengeExtras::shutdown()
 {
+	// TheSuperHackers @bugfix O24 (row 27) The controls made here are destroyed here, before the menu's leave transition
+	// starts. Forgetting them was not enough: the shell keeps the menu's layout when it is hidden for a battle and runs the
+	// menu's init again afterwards, so a second set was made and the first, outside the transition, stayed on the shell.
+	if (TheWindowManager != nullptr)
+	{
+		GameWindow *const mine[] = { s.difficultyLabel, s.difficulty[0], s.difficulty[1], s.difficulty[2], s.speedLabel,
+			s.speedSlider, s.speedText, s.checkTemplate, s.buttonContinue };
+		for (Int i = 0; i < (Int)ARRAY_SIZE(mine); ++i) {
+			if (mine[i] != nullptr) {
+				TheWindowManager->winDestroy(mine[i]);
+			}
+		}
+	}
 	s_speed.reset();
 	memset(&s, 0, sizeof(s));
 	s_run.campaign.clear();

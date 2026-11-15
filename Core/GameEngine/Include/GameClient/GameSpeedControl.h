@@ -60,7 +60,13 @@ public:
 	/// one). 'checkBoxName' is its window name for its id, e.g. "SkirmishGameOptionsMenu.wnd:CheckBoxGameSpeedNormal".
 	void init(GameWindow *parent, GameWindow *slider, GameWindow *text, GameWindow *checkBoxTemplate, const char *checkBoxName,
 		Int logicFps, Bool normal, Int checkBoxWidth = 160, GameWindow *rightNeighbour = nullptr);   ///< checkBoxWidth: the room right of the text for the box; rightNeighbour: the next control of the row (its label's text must not be touched)
-	void reset();   ///< forget the windows (the menu's layout is going away)
+	/// The menu's shutdown: destroys the Normal box (made here, not by the layout) and forgets the windows. The layout is
+	/// not always destroyed after a shutdown (the shell only hides it when a game starts and runs its init again after
+	/// the game), so a box only forgotten stayed behind, outside the menu's transition, and the next init added another.
+	void reset();
+	/// O24: the Normal box is made hidden; the menu shows it once its own enter transition is over (it takes no part in
+	/// the transition) and it goes with reset() before the leave transition starts.
+	void setShown(Bool shown);
 
 	Bool onSliderTrack(GameWindow *control, Int position);   ///< GSM_SLIDER_TRACK; TRUE when it was this slider
 	Bool onSelected(GameWindow *control);                    ///< GBM_SELECTED; TRUE when it was the check box
@@ -77,4 +83,5 @@ private:
 	GameWindow *m_checkBox;
 	Int m_sliderStep;
 	Bool m_normal;
+	Bool m_shown;
 };

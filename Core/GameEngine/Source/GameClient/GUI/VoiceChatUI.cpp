@@ -212,7 +212,16 @@ void VoiceChatUI::update()
 	updateHud();
 	for (Int row = 0; row < VoiceChat::MAX_PEERS; ++row)
 	{
-		if (s_rowButton[row] != nullptr && TheWindowManager->winGetWindowFromId(nullptr, s_rowButton[row]->winGetWindowId()) != s_rowButton[row])
+		// TheSuperHackers @bugfix O24 Whether the Tab list's button still exists is asked by its name: the old test read
+		// the window id through the kept pointer, which after the list went away pointed at a freed window.
+		Bool gone = FALSE;
+		if (s_rowButton[row] != nullptr)
+		{
+			AsciiString rowName;
+			rowName.format("Diplomacy.wnd:VoiceVolume%d", row);
+			gone = TheWindowManager->winGetWindowFromId(nullptr, idOf(rowName.str())) != s_rowButton[row];
+		}
+		if (gone)
 		{
 			s_rowButton[row] = nullptr;   // the Tab list went away with its windows
 			s_rowShownVolume[row] = s_rowShownSpeaking[row] = -1;

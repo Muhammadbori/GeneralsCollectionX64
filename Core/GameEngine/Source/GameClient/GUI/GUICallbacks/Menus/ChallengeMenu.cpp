@@ -458,6 +458,10 @@ void ChallengeMenuUpdate( WindowLayout *layout, void *userData )
 
 	updateBio( TELETYPE_SKIP );
 
+	// TheSuperHackers @bugfix O24 (row 27) Difficulty, speed and "Continue" are made at run time and take no part in the
+	// menu's fade: they are shown only once it is over, and ChallengeMenuShutdown destroys them before the fade back.
+	ChallengeExtras::update( !justEntered && !isShuttingDown && TheShell->isAnimFinished() && TheTransitionHandler->isFinished() );
+
 	if(isShuttingDown && TheShell->isAnimFinished() && TheTransitionHandler->isFinished())
 	{
 		TheShell->shutdownComplete( layout );

@@ -141,6 +141,7 @@ GameSpeedControl::GameSpeedControl()
 	, m_checkBox(nullptr)
 	, m_sliderStep(GameSpeed::NormalStep)
 	, m_normal(TRUE)
+	, m_shown(FALSE)
 {
 }
 
@@ -260,12 +261,19 @@ void GameSpeedControl::init(GameWindow *parent, GameWindow *slider, GameWindow *
 				boxX -= shift;
 			}
 		}
+		// O24: a box of this name still in the menu (an init again without reset in between) goes first
+		if (GameWindow *old = TheWindowManager->winGetWindowFromId(parent->winGetChild(), instData.m_id)) {
+			TheWindowManager->winDestroy(old);
+		}
 		m_checkBox = TheWindowManager->gogoGadgetCheckbox(parent, status, boxX, y, boxW, boxHeight, &instData, font, FALSE);
 		if (m_checkBox != nullptr)
 		{
 			m_checkBox->winSetWindowId(instData.m_id);
 			GadgetCheckBoxSetText(m_checkBox, boxText);
 			GadgetCheckBoxSetChecked(m_checkBox, m_normal);
+			// O24: hidden until the menu's enter transition is over (setShown)
+			m_checkBox->winHide(TRUE);
+			m_shown = FALSE;
 		}
 	}
 	apply();
@@ -273,9 +281,25 @@ void GameSpeedControl::init(GameWindow *parent, GameWindow *slider, GameWindow *
 
 void GameSpeedControl::reset()
 {
+	// TheSuperHackers @bugfix O24 (row 27) The Normal box is ours, not the layout's: destroy it here. Only forgetting it
+	// left it in the layout when the shell hid the menu for a game, and the menu's init after the game made a second one;
+	// the old one, outside the menu's transition, showed over the shell while the menu faded in and out.
+	if (m_checkBox != nullptr && TheWindowManager != nullptr) {
+		TheWindowManager->winDestroy(m_checkBox);
+	}
 	m_slider = nullptr;
 	m_text = nullptr;
 	m_checkBox = nullptr;
+	m_shown = FALSE;
+}
+
+void GameSpeedControl::setShown(Bool shown)
+{
+	if (m_checkBox == nullptr || shown == m_shown) {
+		return;
+	}
+	m_checkBox->winHide(!shown);
+	m_shown = shown;
 }
 
 Bool GameSpeedControl::onSliderTrack(GameWindow *control, Int position)

@@ -69,7 +69,11 @@ namespace ChallengeExtras
 {
 	/// Called at the end of ChallengeMenuInit. 'labelFontLook' gives the small font (a bio line).
 	void init(GameWindow *parentMenu, GameWindow *buttonPlay, GameWindow *buttonBack, GameWindow *labelFontLook);
+	/// The menu's shutdown, before its leave transition: destroys the controls made by init.
 	void shutdown();
+	/// O24: every update of the challenge menu: the controls are made hidden and shown only while 'screenReady' (the
+	/// menu's enter transition is over and it is not shutting down); they take no part in the transition.
+	void update(Bool screenReady);
 
 	/// GBM_SELECTED of the challenge menu: TRUE when it was a difficulty button, the Normal box or "Continue".
 	/// "Continue" selects the run's general through 'selectGeneral' (the menu's own selection code).
