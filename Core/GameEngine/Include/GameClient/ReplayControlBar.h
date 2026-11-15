@@ -46,6 +46,8 @@ namespace ReplayControl
 	enum { SPEED_MAX = 0 };   ///< as fast as possible
 
 	void disableBar();   ///< -noReplayBar
+	/// -replaySpeed <1|2|4|8|max> (test): the speed a replay plays at from its first frame (O18 proof runs).
+	void configureStartSpeed(Int speed);
 
 	/// 1, 2, 4, 8 or SPEED_MAX.
 	Int speed();

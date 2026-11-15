@@ -3296,19 +3296,24 @@ void GameLogic::update()
 		// removing the need for the second parameter used to distinguish them. Older clients can still
 		// parse newer replays because GameMessage::getArgument returns false for the missing playback argument.
 		const bool isPlayback = TheRecorder && TheRecorder->isPlaybackMode();
-		const GameMessage::Type msgType = isPlayback ? GameMessage::MSG_LOGIC_CRC_PLAYBACK : GameMessage::MSG_LOGIC_CRC;
-		GameMessage *msg = newInstance(GameMessage)(msgType);
-		msg->appendIntegerArgument(m_CRC);
-
-		// TheSuperHackers @info helmutbuhler 13/04/2025
-		// During replay simulation, we bypass TheMessageStream and instead put the CRC message
-		// directly into TheCommandList because we don't update TheMessageStream during simulation.
-		GameMessageList *messageList = TheMessageStream;
-		if (TheRecorder && TheRecorder->getMode() == RECORDERMODETYPE_SIMULATION_PLAYBACK)
-			messageList = TheCommandList;
-		messageList->appendMessage(msg);
-
-		DEBUG_LOG(("Appended %sCRC on frame %d: %8.8X", isPlayback ? "Playback " : "", m_frame, m_CRC));
+		if (isPlayback)
+		{
+			// TheSuperHackers @bugfix (O18) In playback this computer's CRC goes straight into the recorder's queue, where
+			// the CRC recorded in the replay (executed at a later frame) is compared with it. Through TheMessageStream it
+			// reached the queue only at the next engine update; since an engine update may run several logic updates
+			// (the game speed, the replay speeds), the recorded CRC of the next frame could be compared first, with an
+			// empty queue ("CRC Mismatch", replay CRC 00000000). The logic was the same; only the comparison was early.
+			TheRecorder->handleCRCMessage(m_CRC, -1, TRUE);
+			DEBUG_LOG(("Queued playback CRC on frame %d: %8.8X", m_frame, m_CRC));
+		}
+		else
+		{
+			GameMessage *msg = newInstance(GameMessage)(GameMessage::MSG_LOGIC_CRC);
+			msg->appendIntegerArgument(m_CRC);
+			GameMessageList *messageList = TheMessageStream;
+			messageList->appendMessage(msg);
+			DEBUG_LOG(("Appended CRC on frame %d: %8.8X", m_frame, m_CRC));
+		}
 	}
 
 	// collect stats

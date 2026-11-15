@@ -958,6 +958,17 @@ Int parseMapPacksTest(char *args[], int num)
 }
 
 // TheSuperHackers @feature -noReplayBar: no replay control bar (the keys still work); for screenshot comparisons.
+// TheSuperHackers @feature -replaySpeed <1|2|4|8|max>: a replay plays at that speed from its first frame (test).
+Int parseReplaySpeed(char *args[], int num)
+{
+	if (num > 1)
+	{
+		ReplayControl::configureStartSpeed(stricmp(args[1], "max") == 0 ? ReplayControl::SPEED_MAX : atoi(args[1]));
+		return 2;
+	}
+	return 1;
+}
+
 Int parseNoReplayBar(char *args[], int num)
 {
 	ReplayControl::disableBar();
@@ -1880,6 +1891,7 @@ static CommandLineParam paramsForStartup[] =
 	{ "-followDelay", parseFollowDelay },
 	{ "-followCatchUp", parseFollowCatchUp },
 	{ "-noReplayBar", parseNoReplayBar },
+	{ "-replaySpeed", parseReplaySpeed },
 	{ "-mapPacksTest", parseMapPacksTest },
 	{ "-serveReplay", parseServeReplay },
 	{ "-serveReplayMax", parseServeReplayMax },

@@ -67,6 +67,9 @@ namespace
 	Int s_shownDelay = -2;
 	Int s_shownWidth = 0;
 	Int s_shownHeight = 0;
+	Int s_startSpeed = -1;            ///< -replaySpeed; -1: none
+	Bool s_startSpeedApplied = FALSE;
+	Bool s_barHasHours = FALSE;   ///< the time box was sized for h:mm:ss
 
 	NameKeyType idOf(const char *name)
 	{
@@ -329,8 +332,12 @@ namespace
 			speedsW += speedW[i] + (i > 0 ? gap : 0);
 		}
 		const Bool follow = ReplayFollow::isOn();
-		const Int timeW = measure(font, timeLine(10 * 3600 * LOGICFRAMES_PER_SECOND - 1, 10 * 3600 * LOGICFRAMES_PER_SECOND - 1,
-			follow ? 3599 : -1)) + 2 * pad;
+		// TheSuperHackers @tweak (O18, D4) The time box is as wide as the times need: m:ss up to an hour (the bar is made
+		// again when a time passes an hour), so the bar stays narrow at 800x600.
+		const UnsignedInt hourFrames = 3600 * LOGICFRAMES_PER_SECOND;
+		s_barHasHours = totalFrames() >= hourFrames || TheGameLogic->getFrame() >= hourFrames;
+		const UnsignedInt widest = s_barHasHours ? 10 * hourFrames - 1 : hourFrames - 1;
+		const Int timeW = measure(font, timeLine(widest, widest, follow ? 3599 : -1)) + 2 * pad;
 		const Int entryW = measure(font, UnicodeString(L"0:00:00")) + 2 * pad;
 		const UnicodeString goStr = text("GUI:ReplayBarGoTo", L"Go to", L"\x041F\x0435\x0440\x0435\x0439\x0442\x0438");
 		const Int goW = measure(font, goStr) + 2 * pad;
@@ -338,7 +345,13 @@ namespace
 		const Int innerW = pauseW + gap + stepW + groupGap + speedsW + groupGap + timeW + groupGap + entryW + gap + goW;
 		const Int barW = min(innerW + 2 * margin, screenW);
 		const Int barH = rowH + 2 * margin;
-		const Int barX = (screenW - barW) / 2;
+		// TheSuperHackers @bugfix (O18, D4) The top left belongs to the game's messages (the replay hints, the speed
+		// messages): the bar stays right of the left 30 % of the screen, centred when it fits there.
+		const Int keepLeft = screenW * 3 / 10;
+		Int barX = (screenW - barW) / 2;
+		if (barX < keepLeft) {
+			barX = max(0, min(keepLeft, screenW - barW - margin));
+		}
 		const Int barY = max(2, REAL_TO_INT(4.0f * scale));
 
 		WinInstanceData inst;
@@ -447,6 +460,11 @@ namespace
 			const UnsignedInt newest = ReplayFollow::newestFrame();
 			delay = newest > frame ? (Int)((newest - frame) / LOGICFRAMES_PER_SECOND) : 0;
 		}
+		if (!s_barHasHours && (total >= 3600u * LOGICFRAMES_PER_SECOND || frame >= 3600u * LOGICFRAMES_PER_SECOND))
+		{
+			destroyBar();   // made again, wider, at the next update
+			return;
+		}
 		if (seconds != s_shownSeconds || total / LOGICFRAMES_PER_SECOND != s_shownTotal || delay != s_shownDelay)
 		{
 			s_shownSeconds = seconds;
@@ -464,6 +482,11 @@ namespace
 void ReplayControl::disableBar()
 {
 	s_barDisabled = TRUE;
+}
+
+void ReplayControl::configureStartSpeed(Int speed)
+{
+	s_startSpeed = speed;
 }
 
 Int ReplayControl::speed()
@@ -592,6 +615,11 @@ UnicodeString ReplayControl::timeText(UnsignedInt frame)
 void ReplayControl::update()
 {
 	const Bool inReplay = TheGameLogic != nullptr && TheGameLogic->isInReplayGame();
+	if (inReplay && s_startSpeed >= 0 && !s_startSpeedApplied)
+	{
+		s_startSpeedApplied = TRUE;
+		setSpeed(s_startSpeed);
+	}
 	if (!inReplay)
 	{
 		// nothing of the bar acts outside replays
