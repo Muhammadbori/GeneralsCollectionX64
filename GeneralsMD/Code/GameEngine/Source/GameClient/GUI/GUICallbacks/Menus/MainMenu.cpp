@@ -1645,16 +1645,6 @@ WindowMsgHandledType MainMenuSystem( GameWindow *window, UnsignedInt msg,
 				diffReverseSide();
 				campaignSelected = FALSE;
 
-				// TheSuperHackers @bugfix Choosing Challenge plays "MainMenuSinglePlayerMenuBackTraining", whose
-				// WINFADE of MainMenu.wnd:Logo ends with the logo window hidden. The way back from the difficulty
-				// screen ("MainMenuSinglePlayerTrainingMenuFromDiff") has no logo entry, so the game logo stayed
-				// gone until the main menu was initialised again (for example after Skirmish). Show it again.
-				if (showSide == SHOW_TRAINING)
-				{
-					GameWindow *logo = TheWindowManager->winGetWindowFromId(parentMainMenu, TheNameKeyGenerator->nameToKey("MainMenu.wnd:Logo"));
-					if (logo)
-						logo->winHide(FALSE);
-				}
 			}
 
 
