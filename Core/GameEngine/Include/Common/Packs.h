@@ -91,6 +91,7 @@ namespace Packs
 	Bool baseShown(Kind kind);
 	UnicodeString baseName(Kind kind);
 	UnicodeString displayName(Kind kind, const Pack *pack);   ///< pack nullptr: the base data
+	UnicodeString kindTitle(Kind kind);                      ///< "Interface language", "Voices" ...
 
 	/// The language of the interface text with 'textPack' chosen (nullptr: the base text); empty when unknown.
 	AsciiString textLanguageOf(const Pack *textPack);

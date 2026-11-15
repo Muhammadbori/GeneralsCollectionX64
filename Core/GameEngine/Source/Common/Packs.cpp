@@ -426,7 +426,7 @@ namespace
 		return TheGameText->FETCH_OR_SUBSTITUTE(label, localizedFallback(english, russian));
 	}
 
-	UnicodeString kindTitle(Packs::Kind kind)
+	UnicodeString titleOf(Packs::Kind kind)
 	{
 		switch (kind)
 		{
@@ -534,6 +534,11 @@ UnicodeString Packs::displayName(Kind kind, const Pack *pack)
 	UnicodeString plain;
 	plain.translate(pack->name);
 	return plain;
+}
+
+UnicodeString Packs::kindTitle(Kind kind)
+{
+	return titleOf(kind);
 }
 
 AsciiString Packs::textLanguageOf(const Pack *textPack)
@@ -850,7 +855,7 @@ void Packs::showProblemsOnce()
 		UnicodeString name;
 		name.translate(e.name);
 		UnicodeString line;
-		line.format(L"\n%ls: %ls (%ls)", kindTitle(e.kind).str(), name.str(), reason.str());
+		line.format(L"\n%ls: %ls (%ls)", titleOf(e.kind).str(), name.str(), reason.str());
 		body.concat(line);
 	}
 	MessageBoxOk(text("GUI:PackProblemTitle", L"Packs", L"\x041F\x0430\x043A\x0435\x0442\x044B"), body, nullptr);

@@ -29,6 +29,7 @@
 #include "Common/GlobalData.h"
 #include "Common/NameKeyGenerator.h"
 #include "Common/OptionPreferences.h"
+#include "Common/Packs.h"
 #include "GameClient/Display.h"
 #include "GameClient/GadgetCheckBox.h"
 #include "GameClient/GadgetComboBox.h"
@@ -38,7 +39,10 @@
 #include "GameClient/GameText.h"
 #include "GameClient/GameWindow.h"
 #include "GameClient/GameWindowManager.h"
+#include "GameClient/Image.h"
 #include "GameClient/LocalizedFallback.h"
+#include "GameClient/MessageBox.h"
+#include "GameLogic/GameLogic.h"
 
 #include <vector>
 
@@ -318,12 +322,45 @@ namespace
 	const char *const kOldGroups[] = { "VideoParent", "AudioParent", "ScrollParent", "NetworkParent", "WinAdvancedDisplayOptions" };
 
 	//---------------------------------------------------------------------------------------------
+	// The data pack choosers (Packs.h): one row of steps per kind, some with a preview picture.
+	struct PackRowDef
+	{
+		Packs::Kind kind;
+		Section section;
+		Bool preview;
+	};
+
+	const PackRowDef kPackRows[] =
+	{
+		{ Packs::KIND_TEXT, SEC_LANGUAGE, FALSE },     // first: the hotkey row depends on it
+		{ Packs::KIND_VOICE, SEC_LANGUAGE, FALSE },
+		{ Packs::KIND_MOVIES, SEC_LANGUAGE, FALSE },
+		{ Packs::KIND_CONTROLBAR, SEC_INTERFACE, TRUE },
+		{ Packs::KIND_HOTKEYS, SEC_CONTROLS, TRUE },
+	};
+	enum { PACK_ROW_COUNT = (Int)ARRAY_SIZE(kPackRows), PACK_ROW_TEXT = 0, MAX_PACK_CHOICES = 32 };
+
+	//---------------------------------------------------------------------------------------------
 	struct SettingState
 	{
 		GameWindow *control;          ///< check box or slider
 		GameWindow *label;            ///< KIND_STEPS
 		GameWindow *value;            ///< KIND_STEPS
 		Int step;
+	};
+
+	struct PackRowState
+	{
+		GameWindow *label;
+		GameWindow *value;
+		GameWindow *slider;
+		GameWindow *preview;          ///< draws 'image' in a frame
+		GameWindow *previewText;      ///< "no picture", over the frame
+		const Packs::Pack *choices[MAX_PACK_CHOICES];   ///< nullptr: the base data
+		Int choiceCount;
+		Int step;
+		const Packs::Pack *initial;   ///< the choice when the screen opened
+		const Image *image;
 	};
 
 	struct State
@@ -338,6 +375,7 @@ namespace
 		GameWindow *existing[EXISTING_COUNT];
 		GameWindow *existingLabels[EXISTING_COUNT];
 		GameWindow *detailCombo;
+		PackRowState packRows[PACK_ROW_COUNT];
 		// looks
 		GameWindow *buttonLook;
 		GameWindow *frameLook;
@@ -691,6 +729,192 @@ namespace
 		st.step = found >= 0 ? found : defaultStep(set);
 		showStep(index);
 	}
+
+	//---------------------------------------------------------------------------------------------
+	// Data pack rows
+	const Packs::Pack *selectedPack(Int row)
+	{
+		const PackRowState &st = s.packRows[row];
+		return (st.choiceCount > 0 && st.step >= 0 && st.step < st.choiceCount) ? st.choices[st.step] : nullptr;
+	}
+
+	/// The choices of a row; the hotkey row offers only the sets that fit the chosen interface language.
+	void buildPackChoices(Int row, const Packs::Pack *keep)
+	{
+		PackRowState &st = s.packRows[row];
+		const Packs::Kind kind = kPackRows[row].kind;
+		const AsciiString textLanguage = (kind == Packs::KIND_HOTKEYS) ? Packs::textLanguageOf(selectedPack(PACK_ROW_TEXT)) : AsciiString::TheEmptyString;
+		st.choiceCount = 0;
+		if (Packs::baseShown(kind)) {
+			st.choices[st.choiceCount++] = nullptr;
+		}
+		const Int count = Packs::count(kind);
+		for (Int i = 0; i < count && st.choiceCount < MAX_PACK_CHOICES; ++i)
+		{
+			const Packs::Pack *pack = Packs::get(kind, i);
+			if (kind == Packs::KIND_HOTKEYS && !Packs::hotkeysFit(pack, textLanguage)) {
+				continue;
+			}
+			st.choices[st.choiceCount++] = pack;
+		}
+		if (st.choiceCount == 0) {
+			st.choices[st.choiceCount++] = nullptr;   // nothing fits: the base data, as the game would use
+		}
+		st.step = -1;
+		for (Int i = 0; i < st.choiceCount; ++i) {
+			if (st.choices[i] == keep) {
+				st.step = i;
+			}
+		}
+		if (st.step < 0)
+		{
+			// a choice that is gone (another interface language): the base data if offered, else the first
+			st.step = 0;
+			for (Int i = 0; i < st.choiceCount; ++i) {
+				if (st.choices[i] == nullptr) {
+					st.step = i;
+					break;
+				}
+			}
+		}
+	}
+
+	/// The image of a pack's preview picture, made once and kept by the mapped image collection.
+	const Image *previewImageOf(const Packs::Pack *pack)
+	{
+		if (pack == nullptr || pack->previewTexture.isEmpty() || TheMappedImageCollection == nullptr) {
+			return nullptr;
+		}
+		const Image *found = TheMappedImageCollection->findImageByName(pack->previewTexture);
+		if (found != nullptr) {
+			return found;
+		}
+		Image *image = newInstance(Image);
+		image->setName(pack->previewTexture);
+		image->setFilename(pack->previewTexture);
+		image->setStatus(IMAGE_STATUS_NONE);
+		Region2D uv;
+		uv.lo.x = 0.0f;
+		uv.lo.y = 0.0f;
+		uv.hi.x = 1.0f;
+		uv.hi.y = 1.0f;
+		image->setUV(&uv);
+		image->setTextureWidth(512);
+		image->setTextureHeight(256);
+		ICoord2D size = { 512, 256 };
+		image->setImageSize(&size);
+		TheMappedImageCollection->addImage(image);
+		return image;
+	}
+
+	void showPackRow(Int row, Bool moveSlider = TRUE)
+	{
+		PackRowState &st = s.packRows[row];
+		const Packs::Kind kind = kPackRows[row].kind;
+		if (st.slider != nullptr && moveSlider)
+		{
+			TheWindowManager->winSendSystemMsg(st.slider, GSM_SET_MIN_MAX, 0, st.choiceCount > 1 ? st.choiceCount - 1 : 1);
+			GadgetSliderSetPosition(st.slider, st.step);
+			st.slider->winEnable(st.choiceCount > 1);
+		}
+		if (st.value != nullptr) {
+			GadgetStaticTextSetText(st.value, Packs::displayName(kind, selectedPack(row)));
+		}
+		if (st.preview != nullptr)
+		{
+			st.image = previewImageOf(selectedPack(row));
+			if (st.previewText != nullptr) {
+				st.previewText->winHide(st.image != nullptr);
+			}
+		}
+	}
+
+	/// The preview frame: the picture stretched over the window, and a thin border.
+	void drawPackPreview(GameWindow *window, WinInstanceData *instData)
+	{
+		(void)instData;
+		Int x = 0, y = 0, w = 0, h = 0;
+		window->winGetScreenPosition(&x, &y);
+		window->winGetSize(&w, &h);
+		const Int row = (Int)(intptr_t)window->winGetUserData();
+		const Image *image = (row >= 0 && row < PACK_ROW_COUNT) ? s.packRows[row].image : nullptr;
+		if (image != nullptr) {
+			TheDisplay->drawImage(image, x, y, x + w, y + h);
+		} else {
+			TheDisplay->drawFillRect(x, y, w, h, GameMakeColor(0, 0, 0, 128));
+		}
+		TheDisplay->drawOpenRect(x, y, w, h, 1.0f, GameMakeColor(255, 255, 255, 96));
+	}
+
+	void placePackRow(Flow &flow, Int row, Int labelH, Int sliderH)
+	{
+		const PackRowDef &def = kPackRows[row];
+		PackRowState &st = s.packRows[row];
+		const Int previewH = def.preview ? flow.colW / 2 : 0;   // preview pictures are 2:1 (512 x 256)
+		const ICoord2D at = flow.next(labelH + sliderH + (def.preview ? flow.gap + previewH : 0));
+		AsciiString name("OptionsMenu.wnd:Sections.");
+		name.concat(Packs::kindKey(def.kind));
+		const Int id = windowId(name.str());
+		st.label = makeLabel(flow.page, s.labelLook, at.x, at.y, flow.colW * 2 / 3, labelH, Packs::kindTitle(def.kind), FALSE);
+		st.value = makeLabel(flow.page, s.labelLook, at.x + flow.colW / 3, at.y, flow.colW * 2 / 3, labelH, UnicodeString::TheEmptyString, TRUE);
+		st.slider = makeSlider(flow.page, at.x, at.y + labelH, flow.colW, sliderH, st.choiceCount > 1 ? st.choiceCount - 1 : 1, id);
+		if (def.preview)
+		{
+			const Int py = at.y + labelH + sliderH + flow.gap;
+			WinInstanceData inst;
+			inst.init();
+			inst.m_style = GWS_USER_WINDOW;
+			st.preview = TheWindowManager->winCreate(flow.page, WIN_STATUS_ENABLED, at.x, py, flow.colW, previewH,
+				PassMessagesToParentSystem, &inst);
+			if (st.preview != nullptr)
+			{
+				st.preview->winSetUserData((void *)(intptr_t)row);
+				st.preview->winSetDrawFunc(drawPackPreview);
+			}
+			st.previewText = makeLabel(flow.page, s.labelLook, at.x + flow.gap * 2, py + (previewH - labelH) / 2, flow.colW - flow.gap * 4, labelH,
+				TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackNoPreview", localizedFallback(L"No picture", L"\x041D\x0435\x0442 \x0438\x0437\x043E\x0431\x0440\x0430\x0436\x0435\x043D\x0438\x044F")), FALSE);
+		}
+		showPackRow(row);
+	}
+
+	void onRestartNow()
+	{
+		Packs::requestRestart();
+	}
+
+	/// After a save that changed a pack: the box that offers the restart (in a match: a note only).
+	void offerRestart()
+	{
+		const UnicodeString title = TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackRestartTitle",
+			localizedFallback(L"Restart to apply", L"\x041D\x0443\x0436\x0435\x043D \x043F\x0435\x0440\x0435\x0437\x0430\x043F\x0443\x0441\x043A"));
+		const Bool inMatch = TheGameLogic != nullptr && TheGameLogic->isInGame() && !TheGameLogic->isInShellGame();
+		if (inMatch)
+		{
+			MessageBoxOk(title, TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackRestartLater",
+				localizedFallback(L"The new language and pack choices take effect the next time the game starts.",
+					L"\x041D\x043E\x0432\x044B\x0435 \x044F\x0437\x044B\x043A \x0438 \x043F\x0430\x043A\x0435\x0442\x044B \x0437\x0430\x0440\x0430\x0431\x043E\x0442\x0430\x044E\x0442 \x043F\x0440\x0438 \x0441\x043B\x0435\x0434\x0443\x044E\x0449\x0435\x043C \x0437\x0430\x043F\x0443\x0441\x043A\x0435 \x0438\x0433\x0440\x044B.")),
+				nullptr);
+			return;
+		}
+		GameWindow *box = MessageBoxYesNo(title, TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackRestartBody",
+			localizedFallback(L"The new language and pack choices take effect after a restart of the game.",
+				L"\x041D\x043E\x0432\x044B\x0435 \x044F\x0437\x044B\x043A \x0438 \x043F\x0430\x043A\x0435\x0442\x044B \x0437\x0430\x0440\x0430\x0431\x043E\x0442\x0430\x044E\x0442 \x043F\x043E\x0441\x043B\x0435 \x043F\x0435\x0440\x0435\x0437\x0430\x043F\x0443\x0441\x043A\x0430 \x0438\x0433\x0440\x044B.")),
+			onRestartNow, nullptr);
+		if (box == nullptr) {
+			return;
+		}
+		// the buttons say what they do
+		GameWindow *yes = TheWindowManager->winGetWindowFromId(box, windowId("MessageBox.wnd:ButtonYes"));
+		GameWindow *no = TheWindowManager->winGetWindowFromId(box, windowId("MessageBox.wnd:ButtonNo"));
+		if (yes != nullptr) {
+			GadgetButtonSetText(yes, TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackRestartNow",
+				localizedFallback(L"Restart now", L"\x041F\x0435\x0440\x0435\x0437\x0430\x043F\x0443\x0441\x0442\x0438\x0442\x044C")));
+		}
+		if (no != nullptr) {
+			GadgetButtonSetText(no, TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackRestartLater2",
+				localizedFallback(L"Later", L"\x041F\x043E\x0437\x0436\x0435")));
+		}
+	}
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -831,6 +1055,20 @@ void OptionsSections::init(OptionPreferences *pref)
 	const Int sliderH = s.sliderLook != nullptr ? sizeOf(s.sliderLook).y : 16;
 	const Int contentTop = gap * 2 + titleH + gap;
 	const Int colW = (pageW - gap * 8) / 2;
+
+	// the pack rows start at the saved choice (it may wait for a restart), else at what this run uses
+	for (Int r = 0; r < PACK_ROW_COUNT; ++r)
+	{
+		const Packs::Kind kind = kPackRows[r].kind;
+		const AsciiString saved = Packs::chosenName(kind, *pref);
+		const Packs::Pack *keep = saved.isEmpty() ? nullptr : Packs::find(kind, saved);
+		if (saved.isNotEmpty() && keep == nullptr) {
+			keep = Packs::active(kind);
+		}
+		buildPackChoices(r, keep);
+		s.packRows[r].initial = selectedPack(r);
+	}
+
 	for (Int sec = 0; sec < SEC_COUNT; ++sec)
 	{
 		if (s.pages[sec] == nullptr) {
@@ -846,6 +1084,11 @@ void OptionsSections::init(OptionPreferences *pref)
 		for (Int i = 0; i < SETTING_COUNT; ++i) {
 			if (kSettings[i].section == sec) {
 				placeSetting(flow, i, labelH, checkH, sliderH);
+			}
+		}
+		for (Int r = 0; r < PACK_ROW_COUNT; ++r) {
+			if (kPackRows[r].section == sec) {
+				placePackRow(flow, r, labelH, sliderH);
 			}
 		}
 	}
@@ -881,11 +1124,6 @@ void OptionsSections::init(OptionPreferences *pref)
 				child->winHide(TRUE);
 			}
 		}
-	}
-
-	// the language section has nothing yet (language and pack switching come later)
-	if (s.buttons[SEC_LANGUAGE] != nullptr) {
-		s.buttons[SEC_LANGUAGE]->winEnable(FALSE);
 	}
 
 	s.active = TRUE;
@@ -940,6 +1178,33 @@ Bool OptionsSections::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgD
 					return TRUE;
 				}
 			}
+			for (Int r = 0; r < PACK_ROW_COUNT; ++r)
+			{
+				PackRowState &st = s.packRows[r];
+				if (st.slider == nullptr || control != st.slider) {
+					continue;
+				}
+				Int step = (Int)mData2;
+				step = step < 0 ? 0 : (step >= st.choiceCount ? st.choiceCount - 1 : step);
+				if (step != st.step)
+				{
+					st.step = step;
+					showPackRow(r, FALSE);   // the slider is where the player put it
+					if (r == PACK_ROW_TEXT)
+					{
+						// another interface language: the hotkey sets that fit it
+						for (Int h = 0; h < PACK_ROW_COUNT; ++h)
+						{
+							if (kPackRows[h].kind == Packs::KIND_HOTKEYS)
+							{
+								buildPackChoices(h, selectedPack(h));
+								showPackRow(h);
+							}
+						}
+					}
+				}
+				return TRUE;
+			}
 			return FALSE;
 		}
 		case GCM_SELECTED:
@@ -974,6 +1239,24 @@ void OptionsSections::save(OptionPreferences *pref)
 		}
 	}
 
+	// The pack choices: written when changed here, so a missing key keeps following Packs\<Kind>\default.ini.
+	// They take effect at the next start; the box offers the restart.
+	Bool packChanged = FALSE;
+	for (Int r = 0; r < PACK_ROW_COUNT; ++r)
+	{
+		const PackRowState &st = s.packRows[r];
+		if (st.slider == nullptr) {
+			continue;
+		}
+		const Packs::Pack *pack = selectedPack(r);
+		if (pack == st.initial) {
+			continue;
+		}
+		(*pref)[Packs::kindKey(kPackRows[r].kind)] = (pack != nullptr) ? pack->name : AsciiString(Packs::BaseValue);
+		s.packRows[r].initial = pack;
+		packChanged = TRUE;
+	}
+
 	// The keys the menu's save does not apply.
 	TheWritableGlobalData->m_renderFpsLimit = pref->getRenderFpsLimit();
 	TheWritableGlobalData->applyRenderFpsLimitOption();
@@ -984,6 +1267,12 @@ void OptionsSections::save(OptionPreferences *pref)
 	pref->applyCameraOverrides();
 	TheWritableGlobalData->m_counterStyle = pref->getCounterStyle();
 	TheWritableGlobalData->m_screenshotFormat = pref->getScreenshotFormat();
+
+	if (packChanged)
+	{
+		// the box comes after the menu has written Options.ini (it does so right after this call)
+		offerRestart();
+	}
 }
 
 void OptionsSections::setDefaults()
