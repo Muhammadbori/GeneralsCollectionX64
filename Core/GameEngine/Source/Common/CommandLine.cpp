@@ -900,6 +900,37 @@ Int parseWatchRoomObserver(char *args[], int num)
 	return 1;
 }
 
+// TheSuperHackers @feature O33 (test switches) -serveReplayDelay <seconds>: a -serveReplay source gives every viewer not
+// named by -serveReplayLiveFor nothing newer than that (0..180); -serveReplayLiveFor <ip[,ip...]>: the addresses it serves
+// live; -watchBind <ip>: a -watchReplay viewer connects from that local address (NetLab: 127.0.0.x).
+Int parseServeReplayDelay(char *args[], int num)
+{
+	if (num > 1)
+	{
+		ReplayStream::configureServeDelay(atoi(args[1]));
+		return 2;
+	}
+	return 1;
+}
+Int parseServeReplayLiveFor(char *args[], int num)
+{
+	if (num > 1)
+	{
+		ReplayStream::configureServeLiveFor(args[1]);
+		return 2;
+	}
+	return 1;
+}
+Int parseWatchBind(char *args[], int num)
+{
+	if (num > 1)
+	{
+		ReplayStream::configureWatchBind(args[1]);
+		return 2;
+	}
+	return 1;
+}
+
 // -watchReplay <host:port>[,<host:port>...]: follow a live replay from these sources, hopping to the next one when a
 // source is lost. Like -followReplay it may run next to the source on the same PC (another instance).
 Int parseWatchReplay(char *args[], int num)
@@ -1996,6 +2027,9 @@ static CommandLineParam paramsForStartup[] =
 	{ "-watchReplay", parseWatchReplay },
 	{ "-serveReplayOutsideMax", parseServeReplayOutsideMax },
 	{ "-watchRoomObserver", parseWatchRoomObserver },
+	{ "-serveReplayDelay", parseServeReplayDelay },
+	{ "-serveReplayLiveFor", parseServeReplayLiveFor },
+	{ "-watchBind", parseWatchBind },
 	{ "-voiceTest", parseVoiceTest },
 	{ "-netLab", parseNetLab },
 	{ "-netLabPlayers", parseNetLabPlayers },

@@ -440,6 +440,7 @@ void LANAPI::update()
 			}
 
 			LANMessage *msg = (LANMessage *)(m_transport->m_inBuffer[i].data);
+			terminateStrings(msg);   // O33 (review 7): every text field of the message ends inside the message
 			GuardLink::notePeer(senderIP, m_localIP);   // O30: every player heard from is checked now and then
 			//DEBUG_LOG(("LAN message type %s from %ls (%s@%s)", GetMessageTypeString(msg->messageType).str(),
 			//	msg->name, msg->userName, msg->hostName));
@@ -1456,6 +1457,54 @@ void LANAPI::sendGuardData(UnsignedInt ip, const UnsignedByte *data, Int length)
 	sendMessageOnly(&msg, ip);
 }
 
+/// TheSuperHackers @bugfix O33 (review 7) A text field of a received message may lack its terminator; the handlers copy
+/// them with wcslcpy/strlcpy or build strings from them, which read up to the terminator. Each field of the message's
+/// type gets one at its last character (the message buffer holds a whole LANMessage). The Room fields are copied with
+/// bounded copies (LanRoom.cpp) and are left as they are.
+void LANAPI::terminateStrings(LANMessage *msg)
+{
+	msg->name[ARRAY_SIZE(msg->name) - 1] = 0;
+	msg->userName[ARRAY_SIZE(msg->userName) - 1] = 0;
+	msg->hostName[ARRAY_SIZE(msg->hostName) - 1] = 0;
+	switch (msg->messageType)
+	{
+		case LANMessage::MSG_GAME_ANNOUNCE:
+			msg->GameInfo.gameName[ARRAY_SIZE(msg->GameInfo.gameName) - 1] = 0;
+			msg->GameInfo.options[ARRAY_SIZE(msg->GameInfo.options) - 1] = 0;
+			break;
+		case LANMessage::MSG_REQUEST_GAME_LEAVE:
+			msg->GameToLeave.gameName[ARRAY_SIZE(msg->GameToLeave.gameName) - 1] = 0;
+			break;
+		case LANMessage::MSG_REQUEST_GAME_INFO:
+			msg->PlayerInfo.playerName[ARRAY_SIZE(msg->PlayerInfo.playerName) - 1] = 0;
+			break;
+		case LANMessage::MSG_REQUEST_JOIN:
+			msg->GameToJoin.serial[ARRAY_SIZE(msg->GameToJoin.serial) - 1] = 0;
+			break;
+		case LANMessage::MSG_JOIN_ACCEPT:
+			msg->GameJoined.gameName[ARRAY_SIZE(msg->GameJoined.gameName) - 1] = 0;
+			break;
+		case LANMessage::MSG_JOIN_DENY:
+			msg->GameNotJoined.gameName[ARRAY_SIZE(msg->GameNotJoined.gameName) - 1] = 0;
+			break;
+		case LANMessage::MSG_SET_ACCEPT:
+			msg->Accept.gameName[ARRAY_SIZE(msg->Accept.gameName) - 1] = 0;
+			break;
+		case LANMessage::MSG_MAP_AVAILABILITY:
+			msg->MapStatus.gameName[ARRAY_SIZE(msg->MapStatus.gameName) - 1] = 0;
+			break;
+		case LANMessage::MSG_CHAT:
+			msg->Chat.gameName[ARRAY_SIZE(msg->Chat.gameName) - 1] = 0;
+			msg->Chat.message[ARRAY_SIZE(msg->Chat.message) - 1] = 0;
+			break;
+		case LANMessage::MSG_GAME_OPTIONS:
+			msg->GameOptions.options[ARRAY_SIZE(msg->GameOptions.options) - 1] = 0;
+			break;
+		default:
+			break;
+	}
+}
+
 void LANAPI::pumpGuard()
 {
 	static UnsignedInt s_lastPump = 0;
@@ -1472,11 +1521,23 @@ void LANAPI::pumpGuard()
 		}
 		const UnsignedInt senderIP = m_transport->m_inBuffer[i].addr;
 		const LANMessage *msg = (const LANMessage *)(m_transport->m_inBuffer[i].data);
-		if (senderIP != m_localIP && m_transport->m_inBuffer[i].length >= (Int)sizeof(LANMessage)
+		// O33 (review 5): during the match only the match's players are heard here (an observer or anybody else is not)
+		Bool fromPlayer = FALSE;
+		for (Int k = 0; m_currentGame != nullptr && k < MAX_SLOTS && !fromPlayer; ++k)
+		{
+			const LANGameSlot *slot = m_currentGame->getLANSlot(k);
+			fromPlayer = slot != nullptr && slot->isHuman() && slot->getIP() == senderIP;
+		}
+		if (fromPlayer && senderIP != m_localIP && m_transport->m_inBuffer[i].length >= (Int)sizeof(LANMessage)
 			&& msg->messageType == LANMessage::MSG_GUARD_DATA && msg->GuardData.magic == LANGuardDataMagic
 			&& msg->GuardData.length > 0 && msg->GuardData.length <= LANGuardDataMax)
 		{
 			GuardLink::onLanData(senderIP, m_localIP, msg->GuardData.data, msg->GuardData.length);
+		}
+		if (fromPlayer && senderIP != m_localIP && m_transport->m_inBuffer[i].length >= (Int)sizeof(LANMessage)
+			&& msg->messageType == LANMessage::MSG_ROOM && msg->Room.magic == LANRoomMagic)
+		{
+			LanRoom::onMatchMessage(msg, senderIP);   // O33: the other players' viewer counts (for the HUD)
 		}
 		m_transport->m_inBuffer[i].length = 0;   // lobby traffic during a match is stale: the lobby asks again later
 	}
@@ -1491,6 +1552,7 @@ void LANAPI::pumpGuard()
 			}
 		}
 	}
+	LanRoom::matchUpdate(m_localIP);   // O33: this player's viewer count to the other players
 	// O32: this player's own new finding, named, during the match too
 	{
 		UnicodeString own;

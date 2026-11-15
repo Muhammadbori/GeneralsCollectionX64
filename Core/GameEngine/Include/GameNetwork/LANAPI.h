@@ -313,6 +313,8 @@ struct LANMessage
 				WideChar names[12][g_lanPlayerNameLength+1];   ///< list
 				WideChar text[g_lanMaxChatLength+1];           ///< chat: one ready line
 			} u;
+			UnsignedShort delaySeconds; ///< O33: list, start: the host's delay for outside viewers (10..180 s)
+			UnsignedShort flags;        ///< O33: list, start: bit 0 outside viewers allowed; start: bit 1 sent to a player
 		} Room;
 		static_assert(sizeof(Room) <= sizeof(GameInfo), "MSG_ROOM must not make LANMessage larger");
 		static_assert(sizeof(GuardData) <= sizeof(GameInfo), "MSG_GUARD_DATA must not make LANMessage larger");
@@ -368,6 +370,8 @@ public:
 	void pumpGuard();
 	/// O30: opaque anti-cheat bytes to one player (GuardLink's sender).
 	void sendGuardData(UnsignedInt ip, const UnsignedByte *data, Int length);
+	/// O33: a received message's text fields end inside the message (review 7).
+	static void terminateStrings(LANMessage *msg);
 	/// O31: a MSG_ROOM message (its Room part filled) to one address, or to everybody with 0 (LanRoom.h).
 	void sendRoomMessage(LANMessage *msg, UnsignedInt ip);
 

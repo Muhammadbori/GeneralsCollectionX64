@@ -20,37 +20,41 @@
 // TheSuperHackers @feature The live replay over a connection (item 21, second step), built on ReplayFollow.h.
 //
 // Source: a game that records (a player) or a viewer that mirrors (a relay) serves its replay file and its side file
-// "<replay>.live" (GLIV, newest complete frame, ended, counter) to viewers over TCP: -serveReplay <port>.
+// "<replay>.live" (GLIV, newest complete frame, ended, counter) to viewers over TCP.
 //   - The server runs on a thread of its own (below normal priority, its ideal processor another core than the one that
-//     started it) and only reads the two files: the game never waits for it.
+//     started it) and only reads the two files: the game never waits for it, and never joins it (O33: a server or mirror
+//     is stopped by a generation number; it ends by itself within a fraction of a second).
 //   - At most -serveReplayMax viewers (default 16, at most 100), at most -serveReplayRate KB per second for all of them
-//     together (default 4096). A viewer whose data does not drain for 10 seconds is dropped, never waited for.
-//   - Tonight the sockets bind to 127.0.0.1 only (a listening socket on a real interface raises the Windows firewall
-//     dialog).
-// Viewer: -watchReplay <host:port>[,<host:port>...] mirrors the source's replay into <user data>\Replays\Watched_<pid>.rep
+//     together (default 4096). A viewer whose data does not drain for 10 seconds is dropped, never waited for. O33: a
+//     connection without a complete, valid hello within 3 seconds is closed; at most 3 connections per address.
+// O33 (the delay is the server's, not the viewer's):
+//   - A LAN match configures its serving at the match start (configureMatchServing): the LAN address, port 8090, the
+//     host's delay (10 s to 3 min, default 60 s), whether outside viewers are allowed, and the room observers' addresses
+//     (frozen at the start, from the host). Only those addresses get the stream live. Every other viewer gets nothing newer
+//     than (now - delay): the server keeps the size of the replay and its side file over time and serves each delayed
+//     viewer the state of that moment. A relay that itself receives a delayed stream forwards what it has (never faster
+//     than it received it); a room observer's relay delays outside viewers as a player does.
+//   - Serving ends when the recording ends (stopServing); a later game serves only when it is again a LAN match that
+//     allows viewers, or with -serveReplay.
+//   - -serveReplay <port> (test, no LAN): serves on 127.0.0.1 to everybody live, unless -serveReplayDelay <seconds> is
+//     given; -serveReplayLiveFor <ip,ip> names the live addresses. Both also apply to a LAN match's serving (NetLab has no
+//     lobby and so no START: these give its players a live list and a short delay). Server and mirror log their newest and
+//     delayed frame every 10 s.
+// Viewer: -watchReplay <host:port>[,<host:port>...] mirrors the source's replay into <user data>\Replays\Watched_<pid>_<n>.rep
 // and its .live on a thread of its own, and plays that file in the follow mode of ReplayFollow.h (-followDelay and
-// -followCatchUp work the same). With -serveReplay too it serves its mirror to further viewers: a relay.
-// Hop: when the source does not answer for 5 seconds, its newest frame does not move for 8 seconds, it drops the viewer
-// or rejects it, the viewer connects to the next source of its list and asks for the bytes after those it has; the
-// replay goes on from there, without a restart. A source is accepted only when the first bytes of its replay are the
-// viewer's (the same game).
+// -followCatchUp work the same, and only add to the server's delay). With -serveReplay too it serves its mirror: a relay.
+// -watchBind <ip> (test) makes its connections from that local address (the server tells room observers by address).
+// Hop: when the source does not answer for 5 seconds, its newest frame does not move for 8 seconds (live viewers), it
+// drops the viewer or rejects it, the viewer connects to the next source of its list and asks for the bytes after those
+// it has. A source is accepted only when the first bytes of its replay are the viewer's (the same game).
 //
-// Wire (little-endian 32-bit words): the viewer sends "GRSV", version 1, offset, idLength, idHash (FNV-1a of its first
-// idLength bytes, at most 1024). The source sends messages "DATA" length {offset, bytes}, "LIVE" 12 {frame, ended,
-// counter} (at least every half second), or "NOPE" 0 (rejected: another game, or full). The source sends LIVE for a frame
-// only after the bytes that were in its file when it read that frame's side file.
+// Wire (little-endian 32-bit words): the viewer sends "GRSV", version 2, offset, idLength, idHash (FNV-1a of its first
+// idLength bytes, at most 1024), flags (bit 0: it says it is a room observer; counted only, the address decides), relay
+// port (it serves its mirror there; 0: it does not): 28 bytes (version 1: the first 20). The source sends messages "DATA"
+// length {offset, bytes}, "LIVE" 12 {frame, ended, counter} (at least every half second), "HOLD" 0 (a delayed viewer: no
+// data allowed yet), "MORE" {count, count x (ip, port)} (full: relays), or "NOPE" 0 (rejected). The source sends LIVE for a
+// frame only after the bytes that were in its file when it read that frame's side file.
 // -serveReplayStopAfter <seconds> (test only): the server stops after that time (its game goes on): a forced source loss.
-//
-// TheSuperHackers @feature O31 (row 21, step 3) LAN observers and outside viewers:
-//   - The server can listen on the LAN address (configureServeAddress; a LAN match's players serve on their lobby address,
-//     port 8090) instead of 127.0.0.1.
-//   - Hello version 2 (28 bytes) adds u32 flags (bit 0: a room observer) and u32 relay port (the viewer serves its mirror
-//     on that port of its own address; 0: it does not). A server takes room observers up to its maximum, but outside
-//     viewers only up to configureServeOutsideMax (default 4): a further outside viewer gets "MORE" {count, count x (ip,
-//     port)}: the addresses of viewers that relay, then "NOPE". The viewer adds them to its sources and goes there, so
-//     viewers feed viewers. A version 1 hello is served as before.
-//   - The viewer tries its sources fastest first (a connect time probe at the start).
-//   - beginWatching starts the mirror without waiting (a LAN screen keeps running); headerReady says when to play.
 // Each game with a server or a mirror writes ReplayStream.log in its user data folder.
 
 #pragma once
@@ -65,29 +69,40 @@ namespace ReplayStream
 	void configureServeMax(Int viewers);
 	void configureServeRate(Int kilobytesPerSecond);
 	void configureServeStopAfter(Int seconds);
-	void configureWatch(const char *sources);
-	/// O31: the address the server listens on (host order; 0: 127.0.0.1) and the outside viewers one source serves itself.
-	void configureServeAddress(UnsignedInt ipHostOrder);
-	/// O31: serve on this port unless a port was given already (-serveReplay wins).
-	void configureServeDefault(Int port);
 	void configureServeOutsideMax(Int viewers);
-	/// O31 (-watchRoomObserver): a command line viewer's hello says "room observer".
-	void configureWatchRoomObserver();
-	/// O31: the sources as addresses (host order) and one port; 'roomObserver' marks the hello (bit 0 of its flags).
-	void configureWatchList(const UnsignedInt *ipsHostOrder, Int count, Int port, Bool roomObserver);
-	/// O31: starts the mirror without waiting for the header (FALSE: no source, or no thread); 'localPath' is the mirror.
+	void configureServeDelay(Int seconds);          ///< O33 (test): -serveReplay's delay for every viewer not listed live
+	void configureServeLiveFor(const char *ips);    ///< O33 (test): -serveReplayLiveFor a.b.c.d[,a.b.c.d...]
+	void configureWatch(const char *sources);
+	void configureWatchRoomObserver();              ///< -watchRoomObserver: the hello's flag (counting only)
+	void configureWatchBind(const char *ip);        ///< O33 (test): -watchBind a.b.c.d
+
+	/// O33: a LAN match's serving (players at the start; a viewer's relay): the address and port, the delay for viewers not
+	/// listed live, whether outside viewers are allowed at all, and the live addresses (host order). 'receivesDelayed': this
+	/// game's own copy is already delayed (an outside viewer's relay): it forwards what it has without a second delay.
+	void configureMatchServing(UnsignedInt bindIpHostOrder, Int port, Int delaySeconds, Bool outsideAllowed,
+		const UnsignedInt *liveIps, Int liveCount, Bool receivesDelayed);
+	/// O33: the recording (or the viewing) is over: the server closes its listener at once, gives the viewers it has the
+	/// rest (a delayed viewer the last 'delay' of the match) and ends by itself; the match settings are forgotten.
+	void stopServing();
+	/// O33: the viewers this game serves now (for the players' HUD).
+	void servingCounts(Int *roomObservers, Int *outsideViewers);
+
+	/// TRUE when -watchReplay was given or a LAN viewer set its sources (the replay to play comes from a source).
+	Bool isWatching();
+	/// O31: the sources as addresses (host order) and one port; 'roomObserver' marks the hello; 'localIp' (O33): the address
+	/// the viewer connects from (its LAN address: a server lets room observers in by address).
+	void configureWatchList(const UnsignedInt *ipsHostOrder, Int count, Int port, Bool roomObserver, UnsignedInt localIp);
+	/// O31: starts the mirror without waiting for the header; 'localPath' is the mirror file.
 	Bool beginWatching(AsciiString &localPath);
 	Bool headerReady();
-	/// O31: stops the mirror and forgets the sources (a LAN viewer is done); the server stays as it is.
+	/// O31/O33: stops the mirror (without waiting for it) and forgets the sources.
 	void stopWatching();
-
-	/// TRUE when -watchReplay was given (the replay to play comes from a source).
-	Bool isWatching();
-	/// Starts the mirror and waits (at most 60 seconds) until the replay's header is in the mirror file. FALSE: no source
-	/// gave it. 'localPath' is the mirror file to play.
+	/// Starts the mirror if needed and waits (at most 60 seconds) until the replay's header is in it (the command line
+	/// viewer at its start). FALSE: no source gave it.
 	Bool startWatching(AsciiString &localPath);
 
-	/// Serves this replay file (and its .live) when -serveReplay was given; a running server switches to it.
+	/// Serves this replay file (and its .live) when serving is configured (a LAN match, or -serveReplay); a running server
+	/// switches to it.
 	void serveFile(const AsciiString &replayPath);
 
 	/// TRUE once after every source was gone for 30 seconds (the stream is lost; the replay then plays to its end).

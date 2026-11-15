@@ -36,6 +36,7 @@
 
 #include "GameNetwork/LANAPICallbacks.h"
 #include "Common/GuardLink.h"
+#include "GameNetwork/LanRoom.h"
 
 extern DWORD TheMessageTime;
 
@@ -101,6 +102,8 @@ void Win32GameEngine::update()
 	if (TheLAN != nullptr && TheGameLogic != nullptr && TheGameLogic->isInLanGame()) {
 		TheLAN->pumpGuard();
 	}
+	// O33 (review 8): an observer's stream replay starts here, outside the LAN screen's update
+	LanRoom::pollStart();
 
 	extern HWND ApplicationHWnd;
 	if (ApplicationHWnd && ::IsIconic(ApplicationHWnd)) {

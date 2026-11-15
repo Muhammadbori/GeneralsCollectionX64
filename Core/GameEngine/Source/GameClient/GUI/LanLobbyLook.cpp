@@ -183,10 +183,11 @@ namespace
 			{ L"A1", 2, 0, 0, 1, -1 }, { L"A2", 2, 1, 1, 1, -1 }, { L"A3", 2, 2, 2, 1, -1 }, { L"A4", 2, 3, 0, 1, -1 },
 			{ L"B1", 2, 4, 1, 2, -1 }, { L"B2", 2, 5, 2, 2, -1 }, { L"B3", 2, 6, 0, 2, -1 }, { L"B4", 2, 7, 1, 2, -1 } } },
 	};
-	/// O31: the outside viewers' delay choices (seconds) and their labels
-	const Int kDelays[8] = { 10, 20, 30, 45, 60, 90, 120, 180 };
-	const WideChar *const kDelayEnglish[8] = { L"10s", L"20s", L"30s", L"45s", L"1m", L"1.5m", L"2m", L"3m" };
-	const WideChar *const kDelayRussian[8] = { L"10\x0441", L"20\x0441", L"30\x0441", L"45\x0441", L"1\x043C", L"1,5\x043C", L"2\x043C", L"3\x043C" };
+	/// O31: the outside viewers' delay choices (seconds) and their labels. O33: the players' servers keep the host's delay;
+	/// the viewer's choice only adds to it.
+	const Int kDelays[8] = { 0, 10, 20, 30, 60, 90, 120, 180 };
+	const WideChar *const kDelayEnglish[8] = { L"+0", L"+10s", L"+20s", L"+30s", L"+1m", L"+1.5m", L"+2m", L"+3m" };
+	const WideChar *const kDelayRussian[8] = { L"+0", L"+10\x0441", L"+20\x0441", L"+30\x0441", L"+1\x043C", L"+1,5\x043C", L"+2\x043C", L"+3\x043C" };
 
 	const WideChar *const kSampleLobby[] = { L"Vova", L"Alisher", L"Sardor_K", L"DESKTOP-IVQ416R", L"Timur", L"Lola", L"Bek" };
 	const Int kSampleLobbyFiles[] = { 1, 1, 1, 1, 0, 1, -1 };
@@ -1774,6 +1775,12 @@ void LanLobbyLook::update(Bool screenReady)
 		const Bool busy = st == LanRoom::STATE_STARTING || st == LanRoom::STATE_PLAYING;
 		const UnsignedInt host = have && rows[sel].game != nullptr ? rows[sel].game->getHostIP() : 0;
 		const Bool observingThis = host != 0 && LanRoom::observedHost() == host && (st == LanRoom::STATE_ASKED || st == LanRoom::STATE_IN_ROOM);
+		// O33: not one's own room; a running game whose host forbids outside viewers cannot be watched
+		const Bool ownRoom = host != 0 && TheLAN != nullptr && host == TheLAN->GetLocalIP();
+		Int hostDelay = 60;
+		Bool outsideAllowed = TRUE;
+		LanRoom::viewerRulesOf(host, &hostDelay, &outsideAllowed);
+		const Bool blocked = ownRoom || (running && !outsideAllowed);
 		if (s.actionButton != nullptr)
 		{
 			const Text &label = busy ? kWaiting : (running ? kWatch : (observingThis ? kStopObserving : kObserve));
@@ -1782,11 +1789,11 @@ void LanLobbyLook::update(Bool screenReady)
 				GadgetButtonSetText(s.actionButton, textOf(label));
 				s.actionLabel = &label;
 			}
-			s.actionButton->winHide(!have);
-			s.actionButton->winEnable(have && !busy);
+			s.actionButton->winHide(!have || ownRoom);
+			s.actionButton->winEnable(have && !busy && !blocked);
 		}
 		if (s.delaySlider != nullptr) {
-			s.delaySlider->winHide(!running || busy);
+			s.delaySlider->winHide(!running || busy || blocked);
 		}
 	}
 	// O30: this player's own anti-cheat check failed: said once in the chat (others see the red mark)
@@ -1843,8 +1850,10 @@ void LanLobbyLook::update(Bool screenReady)
 
 void LanLobbyLook::shutdown()
 {
-	// O31: leaving the LAN screen (main menu, or into a slot) ends observing a room; following a started stream goes on
+	// O31: leaving the LAN screen (main menu, or into a slot) ends observing a room; following a started stream goes on.
+	// O33: a stream whose replay has not started yet is given up (it would start a replay over another screen).
 	LanRoom::stopObserving();
+	LanRoom::cancelStarting();
 	teardown();
 }
 
