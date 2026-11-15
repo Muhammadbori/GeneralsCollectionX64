@@ -536,24 +536,29 @@ void ChallengeExtras::init(GameWindow *parentMenu, GameWindow *buttonPlay, GameW
 		L"\x041B\x0415\x0413\x041A\x041E", L"\x041D\x041E\x0420\x041C\x0410\x041B\x042C\x041D\x041E", L"\x0421\x041B\x041E\x0416\x041D\x041E" };
 	const Int colX = sx(left);
 	const Int colW = sx(150);
-	s.difficultyLabel = makeLabel(smallFont, colX, sy(405), max(colW, diffTitleW), sy(20), diffTitle);   // one line
+	// O36: the column starts 22 units higher than in O28 (over the backdrop's ocean; no general's button lies there), so the
+	// speed strip below it can put its title and Normal box on a line of their own and the slider gets the strip's whole width
+	s.difficultyLabel = makeLabel(smallFont, colX, sy(383), max(colW, diffTitleW), sy(20), diffTitle);   // one line
 	for (Int i = 0; i < DIFFICULTY_BUTTONS; ++i)
 	{
 		AsciiString name;
 		name.format("ChallengeMenu.wnd:ButtonDifficulty%d", i);
-		s.difficulty[i] = makeButton(buttonBack, smallFont, colX, sy(427 + 22 * i), colW, sy(20),
+		s.difficulty[i] = makeButton(buttonBack, smallFont, colX, sy(405 + 22 * i), colW, sy(20),
 			text(labels[i], english[i], russian[i]), name.str());
 	}
 
-	// the speed strip
+	// the speed strip. TheSuperHackers @tweak O36 Its title and the Normal box on the strip's first line, the slider under
+	// them over the strip's whole width (x 46..376: as long as the skirmish one, or longer); O28 had them left of it.
 	const UnicodeString normalText = text("GUI:GameSpeedNormal", L"Normal", L"\x041E\x0431\x044B\x0447\x043D\x0430\x044F");
-	const Int leftW = max(speedTitleW, textWidth(smallFont, normalText) + sy(20) + 10);
-	const Int stripTop = sy(499), stripBottom = sy(559);
-	const Int sliderX = colX + leftW + sx(8);
-	const Int sliderH = min(TickSlider::fullHeight(smallFont), stripBottom - stripTop);
-	s.speedLabel = makeLabel(smallFont, colX, stripTop, leftW, sy(20), speedTitle);
-	s.speedSlider = makeSpeedSlider(sliderX, stripTop + (stripBottom - stripTop - sliderH) / 2, sx(right) - sliderX, sliderH);
-	s.speedText = makeLabel(smallFont, colX, stripTop, sx(2), sy(20), UnicodeString::TheEmptyString);   // the Normal box's anchor
+	const Int leftW = textWidth(smallFont, normalText) + sy(20) + 10;   // the Normal box's width
+	const Int stripTop = sy(475), stripBottom = sy(559);
+	const Int lineH = sy(20);
+	const Int sliderX = colX;
+	const Int sliderTop = stripTop + lineH;
+	const Int sliderH = min(TickSlider::fullHeight(smallFont), stripBottom - sliderTop);
+	s.speedLabel = makeLabel(smallFont, colX, stripTop, speedTitleW, lineH, speedTitle);
+	s.speedSlider = makeSpeedSlider(sliderX, sliderTop + (stripBottom - sliderTop - sliderH) / 2, sx(right) - sliderX, sliderH);
+	s.speedText = makeLabel(smallFont, colX, stripTop, sx(2), lineH, UnicodeString::TheEmptyString);   // the Normal box's anchor
 	s.checkTemplate = makeCheckTemplate(smallFont);
 	Int fps = LOGICFRAMES_PER_SECOND;
 	Bool normal = TRUE;
@@ -561,26 +566,21 @@ void ChallengeExtras::init(GameWindow *parentMenu, GameWindow *buttonPlay, GameW
 	s_speed.init(s.parent, s.speedSlider, s.speedText, s.checkTemplate, "ChallengeMenu.wnd:CheckBoxGameSpeedNormal", fps, normal,
 		leftW);
 
-	// the title just above the track's line and the Normal box just under it, in the left column
+	// O36: the title at the strip's top left, the Normal box right of it on the same line
 	if (s.speedSlider != nullptr)
 	{
-		Int sx0 = 0, sy0 = 0;
-		s.speedSlider->winGetPosition(&sx0, &sy0);
-		const Int line = sy0 + TickSlider::trackCenter(s.speedSlider);
-		if (s.speedLabel != nullptr)
-		{
-			Int lw = 0, lh = 0;
-			s.speedLabel->winGetSize(&lw, &lh);
-			s.speedLabel->winSetPosition(colX, line - lh - 1);
+		if (s.speedLabel != nullptr) {
+			s.speedLabel->winSetPosition(colX, stripTop);
 		}
+		const Int boxX = colX + speedTitleW + sx(10);
 		if (GameWindow *box = s_speed.getCheckBox())
 		{
 			Int bw = 0, bh = 0;
 			box->winGetSize(&bw, &bh);
-			box->winSetPosition(colX, line + 2);
+			box->winSetPosition(boxX, stripTop + (lineH - bh) / 2);
 		}
 		if (s.speedText != nullptr && !s_speed.isTextHidden()) {
-			s.speedText->winSetPosition(colX + leftW - sx(32), line + 2);   // a low window: the value stays as a text
+			s.speedText->winSetPosition(boxX + leftW + sx(8), stripTop);   // a low window: the value stays as a text
 		}
 	}
 

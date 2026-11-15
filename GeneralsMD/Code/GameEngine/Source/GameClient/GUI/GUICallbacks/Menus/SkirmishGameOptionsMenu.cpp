@@ -32,6 +32,7 @@
 
 
 #include "Common/BattleHonors.h"
+#include "GameClient/Display.h"
 #include "Common/FileSystem.h"
 #include "Common/GameEngine.h"
 #include "Common/PlayerTemplate.h"
@@ -237,6 +238,8 @@ static void layoutSkirmishSpeedRows(GameWindow *parent, GameWindow *slider, Game
 	GameSpeed::placeOnScreen(medals, SX(303), pTop, SX(442), pBottom - pTop);
 	#undef SX
 	#undef SY
+	// O36: the medal rows' spacing follows the panel's new height (both rows whole)
+	populateSkirmishBattleHonors();
 }
 
 /// O28: the speed title on the slider's track line (after the slider took its look).
@@ -1970,8 +1973,19 @@ void populateSkirmishBattleHonors()
 		GadgetStaticTextSetText(lossesWindow, uStr);
 	}
 
+	// TheSuperHackers @bugfix O36 The O28 speed rows made the panel lower: the two spacer rows (10 pixels each above the
+	// two rows of medals) shrink so that both medal rows fit whole (S26: the second row was cut at the panel's bottom).
+	Int spacer = 10;
+	{
+		Int listW = 0, listH = 0;
+		list->winGetSize(&listW, &listH);
+		const Int imageH = (Int)((Real)MAX_BATTLE_HONOR_IMAGE_HEIGHT * (TheDisplay->getHeight() / (Real)DEFAULT_DISPLAY_HEIGHT));
+		const Int room = (listH - 2 * imageH - 8) / 2;   // 8: the list's border and a pixel of slack
+		spacer = room < 1 ? 1 : (room > 10 ? 10 : room);
+	}
+
 	ResetBattleHonorInsertion();
-	GadgetListBoxAddEntryImage(list, nullptr, 0, 0, 10, 10, TRUE, GameMakeColor(255,255,255,255));
+	GadgetListBoxAddEntryImage(list, nullptr, 0, 0, spacer, 10, TRUE, GameMakeColor(255,255,255,255));
 
 	// FIRST ROW OF HONORS
 	row = 1; column = 0;
@@ -2086,7 +2100,7 @@ void populateSkirmishBattleHonors()
 	// TEST FOR BATTLE TANK HONOR
 	InsertBattleHonor(list, TheMappedImageCollection->findImageByName("HonorBattleTank"), (honors & BATTLE_HONOR_BATTLE_TANK),
 		BATTLE_HONOR_BATTLE_TANK, row, column);
-	GadgetListBoxAddEntryImage(list, nullptr, 2, 0, 10, 10, TRUE, GameMakeColor(255,255,255,255));
+	GadgetListBoxAddEntryImage(list, nullptr, 2, 0, spacer, 10, TRUE, GameMakeColor(255,255,255,255));
 
 	// NEXT ROW OF HONORS
 	row = 3; column = 0;

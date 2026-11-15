@@ -88,17 +88,18 @@ namespace
 		{ 480, 440, 751, 462 },
 	};
 
-	// B: a wide games list and the chat under it on the left, the panel and the lobby (two columns) right
+	// B: a wide games list and the chat under it on the left, the panel and the lobby (two columns) right. O36: down to y 496
+	// (the buttons start at 505): the panel shows the slots and the observers, the lobby list three rows (S26 B at 800 x 600)
 	const Layout kLayoutB =
 	{
 		{ 52, 80, 208, 95 }, { 52, 96, 208, 120 },
 		{ 216, 80, 472, 95 }, { 216, 96, 386, 120 }, { 390, 96, 472, 120 },
 		{ 480, 80, 751, 95 }, { 480, 96, 636, 120 }, { 638, 96, 660, 120 }, { 664, 96, 751, 120 },
 		{ 52, 128, 460, 143 }, { 52, 145, 460, 300 },
-		{ 468, 128, 751, 143 }, { 468, 145, 751, 346 },
-		{ 468, 378, 751, 393 }, { 468, 395, 751, 462 },
-		{ 52, 306, 460, 321 }, { 52, 323, 460, 436 }, { 52, 440, 434, 462 }, { 438, 440, 460, 462 },
-		{ 468, 350, 751, 372 },
+		{ 468, 128, 751, 143 }, { 468, 145, 751, 378 },
+		{ 468, 404, 751, 419 }, { 468, 421, 751, 496 },
+		{ 52, 306, 460, 321 }, { 52, 323, 460, 470 }, { 52, 474, 434, 496 }, { 438, 474, 460, 496 },
+		{ 468, 380, 751, 400 },
 	};
 
 	//---------------------------------------------------------------------------------------------
@@ -515,7 +516,10 @@ namespace
 		if (font == nullptr || TheFontLibrary == nullptr || TheDisplay == nullptr || TheWindowManager == nullptr) {
 			return font;
 		}
-		const Int want = (Int)TheDisplay->getHeight() / 50;
+		// TheSuperHackers @tweak O36 A tall window (over 1000 lines) gets a larger share (1/44 instead of 1/50), nearer the
+		// menu's own buttons and titles (S26 c03 at 2256 x 1504); 800 x 600 and 1280 x 800 stay as they were
+		const Int screenH = (Int)TheDisplay->getHeight();
+		const Int want = screenH > 1000 ? screenH / 44 : screenH / 50;
 		const Int have = TheWindowManager->winFontHeight(font);
 		if (have <= 0 || have >= want - 1) {
 			return font;
@@ -915,9 +919,21 @@ namespace
 		}
 		if (s.chatList != nullptr)
 		{
-			UnicodeString t;
-			t.format(textOf(kGameFull).str(), r.players, r.maxPlayers);
-			GadgetListBoxAddEntryText(s.chatList, t, chatSystemColor, -1, 0);
+			// TheSuperHackers @tweak O36 Once per game and a few seconds: Join and a double click on the same full game (or
+			// the click pair of a double click) gave the line twice (S26 c05b/c05c)
+			static const void *s_lastGame = nullptr;
+			static Int s_lastRow = -1;
+			static UnsignedInt s_lastMs = 0;
+			const UnsignedInt now = timeGetTime();
+			if (s_lastGame != (const void *)r.game || s_lastRow != row || now - s_lastMs > 5000)
+			{
+				UnicodeString t;
+				t.format(textOf(kGameFull).str(), r.players, r.maxPlayers);
+				GadgetListBoxAddEntryText(s.chatList, t, chatSystemColor, -1, 0);
+			}
+			s_lastGame = (const void *)r.game;
+			s_lastRow = row;
+			s_lastMs = now;
 		}
 		return TRUE;
 	}

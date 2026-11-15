@@ -34,7 +34,7 @@
 //     4 SEND     guard -> game   u32 peer ip, opaque bytes (<= 200)  (give these bytes to that player)
 //     5 RECV     game -> guard   u32 from ip, u32 own ip, opaque bytes (that player sent these bytes)
 //     6 VERDICT  guard -> game   u32 peer ip, u32 verdict (0 no answer, 1 verified, 2 failed), u32 fail bits
-//     7 REASON   guard -> game   O32: u32 kind (0 none, 1 exe, 2 file, 3 module, 4 program), UTF-16 text: what this
+//     7 REASON   guard -> game   O32: u32 kind (0 none, 1 exe, 2 file, 3 module, 4 program, O38: 5 an unreadable file), UTF-16 text: what this
 //                                player's own check found (a path in the game folder or a file name), for this player's
 //                                own chat only; other players learn only the kind from the fail bits of a verdict
 // Fail bits (informational): 0x1 exe not official, 0x2 gameplay file changed, 0x4 override file, 0x8 foreign module,
