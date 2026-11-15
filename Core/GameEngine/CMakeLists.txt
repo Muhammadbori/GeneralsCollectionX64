@@ -93,6 +93,7 @@ set(GAMEENGINE_SRC
     Include/Common/Packs.h
     Include/Common/ReplayFollow.h
     Include/Common/ReplayStream.h
+    Include/Common/VoiceChat.h
 #    Include/Common/OSDisplay.h
 #    Include/Common/Overridable.h
 #    Include/Common/Override.h
@@ -201,6 +202,7 @@ set(GAMEENGINE_SRC
     Include/GameClient/GameWindowTransitions.h
     Include/GameClient/GameSpeedControl.h
     Include/GameClient/ReplayControlBar.h
+    Include/GameClient/VoiceChatUI.h
     Include/GameClient/LocalizedFallback.h
     Include/GameClient/OptionsSections.h
     Include/GameClient/PlayerTable.h
@@ -653,6 +655,7 @@ set(GAMEENGINE_SRC
     Source/Common/Packs.cpp
     Source/Common/ReplayFollow.cpp
     Source/Common/ReplayStream.cpp
+    Source/Common/VoiceChat.cpp
 #    Source/Common/PartitionSolver.cpp
     Source/Common/PerfTimer.cpp
     Source/Common/RandomValue.cpp
@@ -789,6 +792,7 @@ set(GAMEENGINE_SRC
     Source/GameClient/GUI/GameWindowTransitionsStyles.cpp
     Source/GameClient/GUI/GameSpeedControl.cpp
     Source/GameClient/GUI/ReplayControlBar.cpp
+    Source/GameClient/GUI/VoiceChatUI.cpp
     Source/GameClient/GUI/OptionsSections.cpp
     Source/GameClient/GUI/PlayerTable.cpp
     Source/GameClient/LocalizedFallback.cpp

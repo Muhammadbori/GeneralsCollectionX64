@@ -31,6 +31,7 @@
 #include "Common/NameKeyGenerator.h"
 #include "Common/OptionPreferences.h"
 #include "Common/Packs.h"
+#include "Common/VoiceChat.h"
 #include "GameClient/Display.h"
 #include "GameClient/DisplayString.h"
 #include "GameClient/DisplayStringManager.h"
@@ -174,6 +175,15 @@ namespace
 		{ "Hackers", { "GUI:CounterStyleHackers", L"Hackers", L"Hackers" } },
 		{ "GenTool", { "GUI:CounterStyleGenTool", L"GenTool", L"GenTool" } },
 	};
+	// TheSuperHackers @feature The voice chat's talk key (VoiceChat.h).
+	const Choice kTalkKey[] =
+	{
+		{ "CapsLock", { "GUI:VoiceKeyCapsLock", L"Caps Lock", L"Caps Lock" } },
+		{ "Mouse4", { "GUI:VoiceKeyMouse4", L"Mouse button 4", L"\x041A\x043D\x043E\x043F\x043A\x0430 \x043C\x044B\x0448\x0438 4" } },
+		{ "Mouse5", { "GUI:VoiceKeyMouse5", L"Mouse button 5", L"\x041A\x043D\x043E\x043F\x043A\x0430 \x043C\x044B\x0448\x0438 5" } },
+		{ "Grave", { "GUI:VoiceKeyGrave", L"` (the ~ key)", L"` (\x043A\x043B\x0430\x0432\x0438\x0448\x0430 ~)" } },
+		{ "RightCtrl", { "GUI:VoiceKeyRightCtrl", L"Right Ctrl", L"\x041F\x0440\x0430\x0432\x044B\x0439 Ctrl" } },
+	};
 	const Choice kWindowed[] =
 	{
 		{ "no", { "GUI:DisplayModeFullScreen", L"Full screen", L"\x041F\x043E\x043B\x043D\x044B\x0439 \x044D\x043A\x0440\x0430\x043D" } },
@@ -249,6 +259,9 @@ namespace
 	AsciiString curWindowPosition(OptionPreferences &p) { return p.getWindowPosition(); }
 	AsciiString curRotateSpeed(OptionPreferences &p) { return number(p.getCameraRotateSpeedPercent()); }
 	AsciiString curHideIP(OptionPreferences &p) { return yesNo(p.getHideIPAddresses()); }
+	AsciiString curTalkKey(OptionPreferences &p) { return keyOr(p, "VoicePushToTalk", "CapsLock"); }
+	AsciiString curMicOff(OptionPreferences &p) { return keyOr(p, "VoiceMicOff", "no"); }
+	AsciiString curVoiceVolume(OptionPreferences &p) { return keyOr(p, "VoiceVolume", "100"); }
 
 	/// Keys that take effect at the next start: a change of them brings the restart box.
 	Bool needsRestart(const char *key)
@@ -272,6 +285,9 @@ namespace
 		{ SEC_GRAPHICS, KIND_STEPS, "AnisotropyLevel", { "GUI:AnisotropyLevel", L"Anisotropy level", L"\x0423\x0440\x043E\x0432\x0435\x043D\x044C \x0430\x043D\x0438\x0437\x043E\x0442\x0440\x043E\x043F\x0438\x0438" }, STEPS(kAnisotropy), "x", "2", curAnisotropy },
 		{ SEC_GRAPHICS, KIND_STEPS, "SnowStyle", { "GUI:SnowStyle", L"Snow", L"\x0421\x043D\x0435\x0433" }, STEPS(kSnow), "", "Default", curSnow },
 		// Sound
+		{ SEC_SOUND, KIND_STEPS, "VoiceVolume", { "GUI:VoiceVolume", L"Team-mates' voice volume", L"\x0413\x0440\x043E\x043C\x043A\x043E\x0441\x0442\x044C \x0433\x043E\x043B\x043E\x0441\x0430 \x0441\x043E\x044E\x0437\x043D\x0438\x043A\x043E\x0432" }, STEPS(kPercent0To100), "%", "100", curVoiceVolume },
+		{ SEC_SOUND, KIND_STEPS, "VoicePushToTalk", { "GUI:VoicePushToTalk", L"Talk key (hold to talk)", L"\x041A\x043D\x043E\x043F\x043A\x0430 \x0440\x0430\x0446\x0438\x0438 (\x0443\x0434\x0435\x0440\x0436\x0438\x0432\x0430\x0442\x044C)" }, STEPS(kTalkKey), "", "CapsLock", curTalkKey },
+		{ SEC_SOUND, KIND_CHECK, "VoiceMicOff", { "GUI:VoiceMicOff", L"My microphone off", L"\x041C\x043E\x0439 \x043C\x0438\x043A\x0440\x043E\x0444\x043E\x043D \x0432\x044B\x043A\x043B\x044E\x0447\x0435\x043D" }, nullptr, 0, "", "no", curMicOff },
 		{ SEC_SOUND, KIND_STEPS, "MoneyTransactionVolume", { "GUI:MoneyTransactionVolume", L"Money sound volume", L"\x0413\x0440\x043E\x043C\x043A\x043E\x0441\x0442\x044C \x0437\x0432\x0443\x043A\x0430 \x0434\x0435\x043D\x0435\x0433" }, STEPS(kPercent0To100), "%", "50", curMoneyVolume },
 		// Controls
 		{ SEC_CONTROLS, KIND_CHECK, "UseRightMouseScrollWithAlternateMouse", { "GUI:RightMouseScrollAlternate", L"Right mouse scroll with alternate mouse", L"\x041F\x0440\x043E\x043A\x0440\x0443\x0442\x043A\x0430 \x043F\x0440\x0430\x0432\x043E\x0439 \x043A\x043D\x043E\x043F\x043A\x043E\x0439 (\x0430\x043B\x044C\x0442\x0435\x0440. \x043C\x044B\x0448\x044C)" }, nullptr, 0, "", kRightMouseDefault, curRightMouse },
@@ -408,6 +424,7 @@ namespace
 
 	/// The sound output devices of the device row: [0] is the system default (empty name); UTF-8 names.
 	std::vector<AsciiString> s_devices;
+	std::vector<AsciiString> s_mics;   ///< TheSuperHackers @feature the voice chat's microphones: "" (system default) first
 
 	struct State
 	{
@@ -427,6 +444,11 @@ namespace
 		GameWindow *deviceSlider;
 		Int deviceStep;
 		Int deviceInitial;
+		GameWindow *micLabel;        ///< the microphone row (VoiceInputDevice, VoiceChat.h)
+		GameWindow *micValue;
+		GameWindow *micSlider;
+		Int micStep;
+		Int micInitial;
 		Section current;
 		SettingState settings[SETTING_COUNT];
 		GameWindow *existing[EXISTING_COUNT];
@@ -1255,6 +1277,70 @@ namespace
 		}
 	}
 
+	//--- the microphone row (VoiceChat.h): the system default first, then the enumerated microphones -------------
+	UnicodeString micTitle()
+	{
+		return TheGameText->FETCH_OR_SUBSTITUTE("GUI:VoiceInputDevice", localizedFallback(L"Microphone", L"\x041C\x0438\x043A\x0440\x043E\x0444\x043E\x043D"));
+	}
+
+	UnicodeString micName(Int index)
+	{
+		if (index <= 0 || index >= (Int)s_mics.size()) {
+			return TheGameText->FETCH_OR_SUBSTITUTE("GUI:AudioDeviceDefault", localizedFallback(L"System default", L"\x0421\x0438\x0441\x0442\x0435\x043C\x043D\x043E\x0435 \x043F\x043E \x0443\x043C\x043E\x043B\x0447\x0430\x043D\x0438\x044E"));
+		}
+		WideChar buffer[256];
+		const int n = MultiByteToWideChar(CP_UTF8, 0, s_mics[index].str(), -1, buffer, ARRAY_SIZE(buffer));
+		if (n <= 0) {
+			UnicodeString plain;
+			plain.translate(s_mics[index]);
+			return plain;
+		}
+		return UnicodeString(buffer);
+	}
+
+	void loadMics()
+	{
+		s_mics.clear();
+		s_mics.push_back(AsciiString::TheEmptyString);
+		std::vector<AsciiString> names;
+		VoiceChat::listInputDevices(names);
+		s_mics.insert(s_mics.end(), names.begin(), names.end());
+	}
+
+	void placeMicRow(Flow &flow, Int labelH, Int sliderH)
+	{
+		if (s_mics.empty()) {
+			loadMics();
+		}
+		OptionPreferences::const_iterator it = s.pref->find("VoiceInputDevice");
+		const AsciiString chosen = it != s.pref->end() ? it->second : AsciiString::TheEmptyString;
+		s.micStep = 0;
+		for (size_t i = 1; i < s_mics.size(); ++i) {
+			if (s_mics[i] == chosen) {
+				s.micStep = (Int)i;
+			}
+		}
+		s.micInitial = s.micStep;
+		Int valueTextW = 0;
+		for (size_t i = 0; i < s_mics.size(); ++i) {
+			valueTextW = max(valueTextW, textSize(labelFont(), micName((Int)i), 0).x);
+		}
+		const Int count = (Int)s_mics.size();
+		placeStepRow(flow, countedTitle(micTitle(), count - 1, count), valueTextW, count > 1 ? count - 1 : 1,
+			windowId("OptionsMenu.wnd:Sections.VoiceInputDevice"), labelH, sliderH, 0, &s.micLabel, &s.micValue, &s.micSlider, nullptr);
+		if (s.micLabel != nullptr) {
+			GadgetStaticTextSetText(s.micLabel, countedTitle(micTitle(), s.micStep, count));
+		}
+		if (s.micSlider != nullptr)
+		{
+			GadgetSliderSetPosition(s.micSlider, s.micStep);
+			s.micSlider->winEnable(count > 1);
+		}
+		if (s.micValue != nullptr) {
+			GadgetStaticTextSetText(s.micValue, micName(s.micStep));
+		}
+	}
+
 	void onRestartNow()
 	{
 		Packs::requestRestart();
@@ -1484,6 +1570,10 @@ void OptionsSections::init(OptionPreferences *pref)
 			for (size_t d = 0; d < s_devices.size(); ++d) {
 				flow.valueW = max(flow.valueW, textSize(labelFont(), deviceName((Int)d), 0).x);
 			}
+			loadMics();
+			for (size_t d = 0; d < s_mics.size(); ++d) {
+				flow.valueW = max(flow.valueW, textSize(labelFont(), micName((Int)d), 0).x);
+			}
 		}
 		for (Int r = 0; r < PACK_ROW_COUNT; ++r)
 		{
@@ -1513,6 +1603,7 @@ void OptionsSections::init(OptionPreferences *pref)
 		}
 		if (sec == SEC_SOUND) {
 			placeDeviceRow(flow, labelH, sliderH);
+			placeMicRow(flow, labelH, sliderH);
 		}
 		if (flow.overflow) {
 			DEBUG_LOG(("OptionsSections: an item of section %d is taller than a column of the page.", sec));
@@ -1588,6 +1679,7 @@ void OptionsSections::shutdown()
 {
 	memset(&s, 0, sizeof(s));
 	s_devices.clear();
+	s_mics.clear();
 }
 
 Bool OptionsSections::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgData mData2)
@@ -1641,6 +1733,20 @@ Bool OptionsSections::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgD
 					}
 					return TRUE;
 				}
+			}
+			if (control == s.micSlider && s.micSlider != nullptr)
+			{
+				const Int count = (Int)s_mics.size();
+				Int step = (Int)mData2;
+				step = step < 0 ? 0 : (step >= count ? count - 1 : step);
+				s.micStep = step;
+				if (s.micValue != nullptr) {
+					GadgetStaticTextSetText(s.micValue, micName(step));
+				}
+				if (s.micLabel != nullptr) {
+					GadgetStaticTextSetText(s.micLabel, countedTitle(micTitle(), step, count));
+				}
+				return TRUE;
 			}
 			if (control == s.deviceSlider && s.deviceSlider != nullptr)
 			{
@@ -1734,6 +1840,19 @@ void OptionsSections::save(OptionPreferences *pref)
 		s.deviceInitial = s.deviceStep;
 		s.restartNeeded = TRUE;
 	}
+
+	// the microphone (VoiceInputDevice): opened at the next match
+	if (s.micSlider != nullptr && s.micStep != s.micInitial && s.micStep >= 0 && s.micStep < (Int)s_mics.size())
+	{
+		if (s.micStep == 0) {
+			pref->erase("VoiceInputDevice");
+		} else {
+			(*pref)["VoiceInputDevice"] = s_mics[s.micStep];
+		}
+		s.micInitial = s.micStep;
+	}
+	// the voice settings are read again after the menu has written Options.ini
+	VoiceChat::reloadSettings();
 
 	// The pack choices: written when changed here, so a missing key keeps following Packs\<Kind>\default.ini.
 	// They take effect at the next start; the box offers the restart.

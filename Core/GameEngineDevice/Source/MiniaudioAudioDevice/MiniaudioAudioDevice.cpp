@@ -47,6 +47,7 @@
 
 #include "AudioDevice/AudioDeviceCommon.h"
 #include "Common/AudioOutputDevices.h"
+#include "Common/VoiceChat.h"
 #include "Common/FileSystem.h"
 #include "Common/OptionPreferences.h"
 #include "Common/file.h"
@@ -480,6 +481,8 @@ namespace
 	{
 		MiniaudioDeviceState *s = (MiniaudioDeviceState *)device->pUserData;
 		ma_engine_read_pcm_frames(&s->engine, out, frameCount, nullptr);
+		// TheSuperHackers @feature The team-mates' voice on top of the game's sound (VoiceChat.h).
+		VoiceChat::mixOutput((float *)out, frameCount, kEngineChannels, kEngineRate);
 	}
 
 	/// On miniaudio's threads (the audio thread for started and stopped, its notification thread for rerouted).
@@ -495,6 +498,40 @@ namespace
 		} else if (n->type == ma_device_notification_type_rerouted) {
 			s->reroutes.fetch_add(1);
 		}
+	}
+
+	//--- TheSuperHackers @feature The microphone of the voice chat (VoiceChat.h): opened only in a network match ------
+	MiniaudioDeviceState *s_voiceOwner = nullptr;
+	ma_device s_captureDevice;
+	bool s_captureReady = false;
+
+	void captureData(ma_device *, void *, const void *in, ma_uint32 frameCount)
+	{
+		if (in != nullptr) {
+			VoiceChat::pushCapture((const Short *)in, frameCount);
+		}
+	}
+
+	Bool voiceCaptureOpen(const char *deviceName);
+	void voiceCaptureClose();
+
+	/// The microphone names (a context of its own, only enumerated: nothing is opened).
+	void voiceListInputs(std::vector<AsciiString> &names)
+	{
+		ma_context context;
+		ma_context_config cc = ma_context_config_init();
+		if (ma_context_init(nullptr, 0, &cc, &context) != MA_SUCCESS) {
+			return;
+		}
+		ma_device_info *infos = nullptr;
+		ma_uint32 count = 0;
+		if (ma_context_get_devices(&context, nullptr, nullptr, &infos, &count) == MA_SUCCESS)
+		{
+			for (ma_uint32 i = 0; i < count; ++i) {
+				names.push_back(AsciiString(infos[i].name));
+			}
+		}
+		ma_context_uninit(&context);
 	}
 
 	/// TheSuperHackers @feature AudioOutputDevice of Options.ini: the playback device of that name in the context.
@@ -1097,12 +1134,67 @@ namespace
 	}
 }
 
+namespace
+{
+	/// The microphone at 8 kHz mono 16 bit (miniaudio converts), the device of that name or the system default.
+	Bool voiceCaptureOpen(const char *deviceName)
+	{
+		voiceCaptureClose();
+		if (s_voiceOwner == nullptr || !s_voiceOwner->contextReady) {
+			return FALSE;
+		}
+		ma_device_config dc = ma_device_config_init(ma_device_type_capture);
+		dc.capture.format = ma_format_s16;
+		dc.capture.channels = 1;
+		dc.sampleRate = VoiceChat::SAMPLE_RATE;
+		dc.dataCallback = captureData;
+		ma_device_id chosen;
+		if (deviceName != nullptr && deviceName[0] != '\0')
+		{
+			ma_device_info *infos = nullptr;
+			ma_uint32 count = 0;
+			if (ma_context_get_devices(&s_voiceOwner->context, nullptr, nullptr, &infos, &count) == MA_SUCCESS)
+			{
+				for (ma_uint32 i = 0; i < count; ++i)
+				{
+					if (strcmp(infos[i].name, deviceName) == 0)
+					{
+						chosen = infos[i].id;
+						dc.capture.pDeviceID = &chosen;
+					}
+				}
+			}
+		}
+		if (ma_device_init(&s_voiceOwner->context, &dc, &s_captureDevice) != MA_SUCCESS) {
+			return FALSE;
+		}
+		if (ma_device_start(&s_captureDevice) != MA_SUCCESS)
+		{
+			ma_device_uninit(&s_captureDevice);
+			return FALSE;
+		}
+		s_captureReady = true;
+		return TRUE;
+	}
+
+	void voiceCaptureClose()
+	{
+		if (s_captureReady)
+		{
+			ma_device_uninit(&s_captureDevice);
+			s_captureReady = false;
+		}
+	}
+}
+
 //-------------------------------------------------------------------------------------------------
 MiniaudioAudioDevice::MiniaudioAudioDevice()
 	: m_state(new MiniaudioDeviceState)
 {
 	m_state->hasChosenId = false;
 	AudioOutputDevices::setLister(listOutputDevices);
+	s_voiceOwner = m_state;
+	VoiceChat::setCapture(voiceCaptureOpen, voiceCaptureClose, voiceListInputs);
 	m_state->options.noOutputDevice = FALSE;
 	m_state->options.endsInUpdate = FALSE;
 	m_state->options.noJobThread = FALSE;
@@ -1268,6 +1360,10 @@ AudioDevice::OpenResult MiniaudioAudioDevice::open(const AudioSettings *settings
 void MiniaudioAudioDevice::close()
 {
 	MiniaudioDeviceState *s = m_state;
+	// TheSuperHackers @feature The microphone goes with the device (VoiceChat.h); the list of microphones stays.
+	voiceCaptureClose();
+	VoiceChat::setCapture(nullptr, nullptr, voiceListInputs);
+	s_voiceOwner = nullptr;
 	if (s->endThread)
 	{
 		s->quit.store(1);

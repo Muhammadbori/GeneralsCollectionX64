@@ -38,6 +38,7 @@
 #include "Common/Recorder.h"
 #include "GameClient/AnimateWindowManager.h"
 #include "GameClient/PlayerTable.h"
+#include "GameClient/VoiceChatUI.h"
 #include "GameClient/Diplomacy.h"
 #include "GameClient/DisconnectMenu.h"
 #include "GameClient/GameWindow.h"
@@ -411,6 +412,11 @@ WindowMsgHandledType DiplomacySystem( GameWindow *window, UnsignedInt msg,
 			GameWindow *control = (GameWindow *)mData1;
 			NameKeyType controlID = (NameKeyType)control->winGetWindowId();
 			static NameKeyType buttonHideID = NAMEKEY( "Diplomacy.wnd:ButtonHide" );
+			// TheSuperHackers @feature A team-mate's voice volume (VoiceChatUI.h).
+			if (VoiceChatUI::onDiplomacySelected(control))
+			{
+				break;
+			}
 			if (controlID == buttonHideID)
 			{
 				HideDiplomacy( FALSE );
@@ -530,6 +536,8 @@ void PopulateInGameDiplomacyPopup()
 			}
 			// TheSuperHackers @feature The pictures of the lobby table: what is random to this client stays random (item 9).
 			PlayerTable::decorateRow(staticTextPlayer[rowNum], staticTextSide[rowNum], staticTextTeam[rowNum], slot);
+			// TheSuperHackers @feature The voice volume of a team-mate and its talk light (VoiceChatUI.h).
+			VoiceChatUI::decorateDiplomacyRow(rowNum, staticTextPlayer[rowNum], staticTextStatus[rowNum], slotNum);
 			if (staticTextStatus[rowNum])
 			{
 				staticTextStatus[rowNum]->winHide(FALSE);
@@ -589,6 +597,7 @@ void PopulateInGameDiplomacyPopup()
 			buttonMute[rowNum]->winHide(TRUE);
 		if (buttonUnMute[rowNum])
 			buttonUnMute[rowNum]->winHide(TRUE);
+		VoiceChatUI::decorateDiplomacyRow(rowNum, nullptr, nullptr, -1);
 
 		++rowNum;
 	}
