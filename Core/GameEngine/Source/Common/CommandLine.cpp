@@ -1085,6 +1085,17 @@ Int parseLanSample(char *args[], int num)
 	LanTest::setSampleData(TRUE);
 	return 1;
 }
+// TheSuperHackers @feature O45 (test switch) -lanTestLoss <percent>: this computer drops that share of the lobby messages
+// it receives and writes LanJoin.log (the join requests, repeats, answers and timeouts).
+Int parseLanTestLoss(char *args[], int num)
+{
+	if (num > 1)
+	{
+		LanTest::setLossPercent(atoi(args[1]));
+		return 2;
+	}
+	return 1;
+}
 
 // TheSuperHackers @feature O30 (row 15) Anti-cheat test switches (GuardLink.h): -lanNoGuard starts no anti-cheat and lets
 // this game into LAN without one (it shows no shield to others); -guardTest starts the anti-cheat in its test mode (an
@@ -2063,6 +2074,7 @@ static CommandLineParam paramsForStartup[] =
 	{ "-netLabSim", parseNetLabSim },
 	{ "-netLabQuitAfter", parseNetLabQuitAfter },
 	{ "-lanLoopback", parseLanLoopback },
+	{ "-lanTestLoss", parseLanTestLoss },
 	{ "-lanSample", parseLanSample },
 	{ "-lanNoGuard", parseLanNoGuard },
 	{ "-guardTest", parseGuardTest },

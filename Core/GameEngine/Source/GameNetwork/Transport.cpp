@@ -125,6 +125,11 @@ Bool Transport::init( UnsignedInt ip, UnsignedShort port )
 		return false;
 	}
 
+	// TheSuperHackers @bugfix O45 A larger socket receive buffer than the system's default: the LAN lobby reads its
+	// socket only every 200 ms, and a burst (announces, files info, room lists of several rooms) must not push a join
+	// answer out
+	m_udpsock->SetInputBuffer(256 * 1024);
+
 	// ------- Clear buffers --------
 	int i=0;
 	for (; i<MAX_MESSAGES; ++i)

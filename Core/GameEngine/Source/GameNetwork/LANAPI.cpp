@@ -208,6 +208,16 @@ namespace
 	std::map<UnsignedInt, UnsignedInt> s_filesFingerprints;   ///< sender ip -> fingerprint
 	Int s_loopbackSlot = -1;
 	Bool s_sampleData = FALSE;
+	// O45: the test loss and the join log
+	Int s_lossPercent = -1;
+	UnsignedInt s_lossSeed = 0x2545F491u;
+	// O45: the join request, repeated every second while no answer came (the request and its accept are single UDP
+	// packets; one lost made the join time out after 5 s). The host answers a repeat with the same slot.
+	const UnsignedInt kJoinRepeatMs = 1000;
+	LANMessage s_joinRequest;
+	UnsignedInt s_joinRequestIP = 0;
+	UnsignedInt s_joinSentMs = 0;
+	Int s_joinTries = 0;
 }
 
 Bool LanFiles::fingerprintOf(UnsignedInt ip, UnsignedInt *fingerprint)
@@ -232,6 +242,37 @@ Int LanTest::loopbackSlot() { return s_loopbackSlot; }
 UnsignedInt LanTest::loopbackIP() { return s_loopbackSlot >= 0 ? ((127u << 24) | (UnsignedInt)(10 + s_loopbackSlot)) : 0; }
 void LanTest::setSampleData(Bool on) { s_sampleData = on; }
 Bool LanTest::sampleData() { return s_sampleData; }
+void LanTest::setLossPercent(Int percent) { s_lossPercent = percent < 0 ? -1 : (percent > 90 ? 90 : percent); }
+Int LanTest::lossPercent() { return s_lossPercent; }
+
+Bool LanTest::dropForTest()
+{
+	if (s_lossPercent <= 0) {
+		return FALSE;
+	}
+	s_lossSeed = s_lossSeed * 1103515245u + 12345u;
+	return (Int)((s_lossSeed >> 16) % 100u) < s_lossPercent;
+}
+
+void LanTest::joinLog(const char *format, ...)
+{
+	if (s_lossPercent < 0 || TheGlobalData == nullptr) {
+		return;
+	}
+	char path[_MAX_PATH];
+	snprintf(path, sizeof(path), "%sLanJoin.log", TheGlobalData->getPath_UserData().str());
+	FILE *f = fopen(path, "a");
+	if (f == nullptr) {
+		return;
+	}
+	fprintf(f, "[%10u] ", (unsigned)timeGetTime());
+	va_list args;
+	va_start(args, format);
+	vfprintf(f, format, args);
+	va_end(args);
+	fputc('\n', f);
+	fclose(f);
+}
 
 void LANAPI::sendMessage(LANMessage *msg, UnsignedInt ip /* = 0 */)
 {
@@ -434,6 +475,13 @@ void LANAPI::update()
 			// Process the new message
 			UnsignedInt senderIP = m_transport->m_inBuffer[i].addr;
 			if (senderIP == m_localIP)
+			{
+				m_transport->m_inBuffer[i].length = 0;
+				continue;
+			}
+
+			// O45 (test): a lossy link (-lanTestLoss)
+			if (LanTest::dropForTest())
 			{
 				m_transport->m_inBuffer[i].length = 0;
 				continue;
@@ -685,12 +733,26 @@ void LANAPI::update()
 		OnGameList(m_games);
 	}
 
+	// O45: a join with no answer yet asks again every second, until the accept, a denial or the 5 s timeout
+	if (m_pendingAction == ACT_JOIN && s_joinTries > 0 && now - s_joinSentMs >= kJoinRepeatMs && now + 300 < m_expiration)
+	{
+		sendMessage(&s_joinRequest, s_joinRequestIP);
+		s_joinSentMs = now;
+		++s_joinTries;
+		LanTest::joinLog("joiner: join request again (try %d)", s_joinTries);
+	}
+	if (m_pendingAction != ACT_JOIN) {
+		s_joinTries = 0;
+	}
+
 	// Time out old actions
 	if (m_pendingAction != ACT_NONE && now > m_expiration)
 	{
 		switch (m_pendingAction)
 		{
 		case ACT_JOIN:
+			LanTest::joinLog("joiner: join TIMED OUT after %d tries", s_joinTries);
+			s_joinTries = 0;
 			OnGameJoin(RET_TIMEOUT, nullptr);
 			m_pendingAction = ACT_NONE;
 			m_currentGame = nullptr;
@@ -776,6 +838,12 @@ void LANAPI::RequestGameJoin( LANGameInfo *game, UnsignedInt ip /* = 0 */ )
 
 	m_pendingAction = ACT_JOIN;
 	m_expiration = timeGetTime() + m_actionTimeout;
+	// O45: kept for the repeats (LANAPI::update)
+	s_joinRequest = msg;
+	s_joinRequestIP = ip;
+	s_joinSentMs = timeGetTime();
+	s_joinTries = 1;
+	LanTest::joinLog("joiner: join request to %d.%d.%d.%d (try 1)", PRINTF_IP_AS_4_INTS(msg.GameToJoin.gameIP));
 }
 
 void LANAPI::RequestGameJoinDirectConnect(UnsignedInt ipaddress)

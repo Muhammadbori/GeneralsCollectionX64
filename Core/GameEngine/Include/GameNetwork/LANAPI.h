@@ -347,6 +347,13 @@ namespace LanTest
 	UnsignedInt loopbackIP();    ///< 0: off
 	void setSampleData(Bool on);
 	Bool sampleData();
+	/// O45 (test): -lanTestLoss <percent>: this computer drops that share of the lobby messages it receives (a lossy
+	/// link such as a VPN), and writes LanJoin.log in its user data folder (each join request, repeat, answer and
+	/// timeout, on the joiner and on the host). -1: off.
+	void setLossPercent(Int percent);
+	Int lossPercent();
+	Bool dropForTest();
+	void joinLog(const char *format, ...);
 }
 
 
