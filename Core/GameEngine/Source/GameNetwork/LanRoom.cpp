@@ -42,7 +42,8 @@
 
 namespace
 {
-	enum Kind { KIND_OBSERVE = 1, KIND_LEAVE = 2, KIND_LIST = 3, KIND_REMOVED = 4, KIND_CHAT = 5, KIND_START = 6, KIND_COUNT = 7 };
+	enum Kind { KIND_OBSERVE = 1, KIND_LEAVE = 2, KIND_LIST = 3, KIND_REMOVED = 4, KIND_CHAT = 5, KIND_START = 6, KIND_COUNT = 7,
+		KIND_RULES = 8 };
 	enum { FLAG_OUTSIDE_ALLOWED = 1, FLAG_TO_PLAYER = 2 };
 	const Int kDefaultDelay = 60;
 	const UnsignedInt kKnownKeepMs = 600000;    ///< O33: a room's LIST is kept this long (its delay and flag)
@@ -50,6 +51,9 @@ namespace
 	const UnsignedInt kCountMs = 3000;          ///< O33: COUNT during a match
 	enum { REASON_BY_HOST = 0, REASON_FULL = 1, REASON_NO_ROOM = 2 };
 	const UnsignedInt kHeartbeatMs = 4000;
+	const UnsignedInt kAskMs = 1000;            ///< O42: OBSERVE while the host's list does not have this observer yet
+	const UnsignedInt kRulesMs = 2000;          ///< O42: RULES during the match
+	const UnsignedInt kGoneMs = 10000;          ///< O42: no such game in the lobby and no LIST from its host for this long
 	const UnsignedInt kListMs = 2000;
 	const UnsignedInt kForgetMs = 15000;
 	const UnsignedInt kKnownMs = 6000;          ///< a room's list seen in the lobby counts this long
@@ -105,6 +109,11 @@ namespace
 	Bool s_layoutValid = FALSE;
 	Bool s_rematchRequested = FALSE;
 	Bool s_rematchApplyPending = FALSE;
+	// O42: the host's rules of the running match (RULES), frozen at Start
+	Bool s_hostRulesValid = FALSE;
+	Int s_hostRulesDelay = 60;
+	Bool s_hostRulesOutside = TRUE;
+	UnsignedInt s_lastRules = 0;
 
 	/// O39: the observers' channel writes what it sends, shows and drops into ObserverChat.log (user data folder), for the
 	/// tests (a picture shows a message line only for a few seconds)
@@ -247,6 +256,7 @@ namespace
 	UnsignedInt s_roomHost = 0;
 	UnsignedInt s_lastBeat = 0;
 	UnsignedInt s_stateSince = 0;
+	UnsignedInt s_lastHostList = 0;   ///< O42: the last LIST from the observed room's host
 	UnsignedInt s_pendingBecome = 0;
 	Bool s_watcher = FALSE;
 	AsciiString s_mirror;
@@ -324,6 +334,37 @@ namespace
 	}
 
 	Int clampDelay(Int d) { return d < 10 ? 10 : (d > 180 ? 180 : d); }
+
+	/// The remembered room of 'host' (O33 (low): old rooms are forgotten; at most kKnownMax are kept).
+	Known &knownRoom(UnsignedInt host, UnsignedInt now)
+	{
+		for (std::map<UnsignedInt, Known>::iterator it = s_known.begin(); it != s_known.end();)
+		{
+			if (now - it->second.seen > kKnownKeepMs) {
+				s_known.erase(it++);
+			} else {
+				++it;
+			}
+		}
+		if (s_known.size() >= kKnownMax && s_known.find(host) == s_known.end())
+		{
+			std::map<UnsignedInt, Known>::iterator oldest = s_known.begin();
+			for (std::map<UnsignedInt, Known>::iterator it = s_known.begin(); it != s_known.end(); ++it) {
+				if (now - it->second.seen > now - oldest->second.seen) oldest = it;
+			}
+			s_known.erase(oldest);
+		}
+		std::map<UnsignedInt, Known>::iterator found = s_known.find(host);
+		if (found == s_known.end())
+		{
+			Known fresh;
+			fresh.seen = now;
+			fresh.delay = kDefaultDelay;
+			fresh.outsideAllowed = TRUE;
+			found = s_known.insert(std::make_pair(host, fresh)).first;
+		}
+		return found->second;
+	}
 
 	void broadcastList(UnsignedInt localIP)
 	{
@@ -473,24 +514,7 @@ void LanRoom::onMessage(const LANMessage *msg, UnsignedInt senderIP, UnsignedInt
 			if (msg->Room.gameIP != senderIP) {
 				return;
 			}
-			// O33 (low): old rooms are forgotten; at most kKnownMax are kept
-			for (std::map<UnsignedInt, Known>::iterator it = s_known.begin(); it != s_known.end();)
-			{
-				if (now - it->second.seen > kKnownKeepMs) {
-					s_known.erase(it++);
-				} else {
-					++it;
-				}
-			}
-			if (s_known.size() >= kKnownMax && s_known.find(senderIP) == s_known.end())
-			{
-				std::map<UnsignedInt, Known>::iterator oldest = s_known.begin();
-				for (std::map<UnsignedInt, Known>::iterator it = s_known.begin(); it != s_known.end(); ++it) {
-					if (now - it->second.seen > now - oldest->second.seen) oldest = it;
-				}
-				s_known.erase(oldest);
-			}
-			Known &k = s_known[senderIP];
+			Known &k = knownRoom(senderIP, now);
 			k.list.clear();
 			k.seen = now;
 			// a list without the O33 fields (delay 0) means the defaults
@@ -507,11 +531,34 @@ void LanRoom::onMessage(const LANMessage *msg, UnsignedInt senderIP, UnsignedInt
 				k.list.push_back(o);
 				me = me || o.ip == localIP;
 			}
+			if (s_roomHost == senderIP) {
+				s_lastHostList = now;   // O42: the room is there
+			}
 			if (s_roomHost == senderIP && me && s_state == STATE_ASKED)
 			{
 				setState(STATE_IN_ROOM);
 				notice(textOf(kObserving));
 			}
+			else if (s_roomHost == senderIP && !me && s_state == STATE_IN_ROOM)
+			{
+				// O42: the host's list lost this observer (it had it while this computer still sat in a slot, or it missed a
+				// heartbeat): ask again at once; a removal by the host comes as REMOVED
+				s_state = STATE_ASKED;
+				s_lastBeat = now;
+				sendSimple(KIND_OBSERVE, s_roomHost, s_roomHost, 0);
+			}
+			break;
+		}
+		case KIND_RULES:
+		{
+			// O42: a running match's rules from its host: the lobby disables Watch when it allows no outside viewers
+			if (msg->Room.gameIP != senderIP || msg->Room.delaySeconds == 0) {
+				return;
+			}
+			Known &k = knownRoom(senderIP, now);
+			k.seen = now;
+			k.delay = clampDelay(msg->Room.delaySeconds);
+			k.outsideAllowed = (msg->Room.flags & FLAG_OUTSIDE_ALLOWED) != 0;
 			break;
 		}
 		case KIND_REMOVED:
@@ -641,7 +688,8 @@ void LanRoom::update(UnsignedInt localIP)
 			s_hosted.pop_back();
 			s_listDirty = TRUE;
 		}
-		if (s_listDirty || (!s_hosted.empty() && now - s_lastList >= kListMs)) {
+		// O42: also with no observers: the lobby learns the delay and the outside-viewers flag of every room
+		if (s_listDirty || now - s_lastList >= kListMs) {
 			broadcastList(localIP);
 		}
 	}
@@ -654,12 +702,17 @@ void LanRoom::update(UnsignedInt localIP)
 	// observer: "still here"; a room that vanished
 	if (s_state == STATE_ASKED || s_state == STATE_IN_ROOM)
 	{
-		if (now - s_lastBeat >= kHeartbeatMs)
+		// O42: every second until the host's list has this observer (the host ignores it while this computer still sits
+		// in one of its slots), then every 4 s
+		if (now - s_lastBeat >= (s_state == STATE_ASKED ? kAskMs : kHeartbeatMs))
 		{
 			s_lastBeat = now;
 			sendSimple(KIND_OBSERVE, s_roomHost, s_roomHost, 0);
 		}
-		if (TheLAN != nullptr && TheLAN->LookupGameByHost(s_roomHost) == nullptr && now - s_stateSince > 10000)
+		// O42: gone only when the lobby has no such game and its host's LIST has not come for 10 s (a player who just
+		// left a room gets that game back in its lobby only with the host's next announce, up to 10 s later)
+		if (TheLAN != nullptr && TheLAN->LookupGameByHost(s_roomHost) == nullptr && now - s_stateSince > kGoneMs
+			&& now - s_lastHostList > kGoneMs)
 		{
 			setState(STATE_NONE);
 			s_roomHost = 0;
@@ -676,9 +729,19 @@ void LanRoom::update(UnsignedInt localIP)
 	// the stream: lost, or too long without its header (O33, review 8: the replay itself starts in pollStart)
 	if (s_state == STATE_STARTING && !ReplayStream::headerReady())
 	{
-		if (ReplayStream::takeLostNotice() || now - s_stateSince > kStreamWaitMs)
+		Int hostDelay = kDefaultDelay;
+		Bool outside = TRUE;
+		const Bool rulesKnown = s_watcher && viewerRulesOf(s_roomHost, &hostDelay, &outside);
+		if (rulesKnown && !outside)
 		{
-			notice(textOf(kLost));
+			// O42: the host's RULES say no outside viewers (its players do not even listen): a clear text, no wait
+			notice(textOf(kNoOutside));
+			resetViewer();
+		}
+		else if (ReplayStream::takeLostNotice() || now - s_stateSince > kStreamWaitMs)
+		{
+			// O42: a source that refused because the host allows no outside viewers says so
+			notice(textOf(ReplayStream::lostBecauseNotAllowed() ? kNoOutside : kLost));
 			resetViewer();
 		}
 	}
@@ -786,6 +849,11 @@ void LanRoom::hostStart(LANGameInfo *game, UnsignedInt localIP)
 	s_matchStart.observers = observers;
 	s_matchStart.delay = delay;
 	s_matchStart.outsideAllowed = outside;
+	// O42: the rules the host repeats during the match (RULES)
+	s_hostRulesValid = TRUE;
+	s_hostRulesDelay = delay;
+	s_hostRulesOutside = outside;
+	s_lastRules = 0;
 
 	UnsignedInt ips[MAX_SLOTS];
 	const Int n = playerAddresses(game, ips, MAX_SLOTS);
@@ -880,6 +948,16 @@ void LanRoom::matchUpdate(UnsignedInt localIP)
 {
 	LANGameInfo *game = TheLAN != nullptr ? TheLAN->GetMyGame() : nullptr;
 	const UnsignedInt now = timeGetTime();
+	// O42: the host tells the lobby its rules while the match runs (also when nobody may watch and nothing serves)
+	if (game != nullptr && s_hostRulesValid && game->isGameInProgress() && game->getIP(0) == localIP && now - s_lastRules >= kRulesMs)
+	{
+		s_lastRules = now;
+		LANMessage rules;
+		prepare(rules, KIND_RULES, localIP);
+		rules.Room.delaySeconds = (UnsignedShort)s_hostRulesDelay;
+		rules.Room.flags = (UnsignedShort)(s_hostRulesOutside ? FLAG_OUTSIDE_ALLOWED : 0);
+		send(rules, 0);
+	}
 	if (!s_matchServing || game == nullptr || now - s_lastCount < kCountMs) {
 		return;
 	}
@@ -961,6 +1039,7 @@ void LanRoom::startObserving(UnsignedInt hostIP)
 	s_watcher = FALSE;
 	setState(STATE_ASKED);
 	s_lastBeat = timeGetTime();
+	s_lastHostList = s_lastBeat;   // O42: 10 s for its first LIST or the lobby's game
 	sendSimple(KIND_OBSERVE, hostIP, hostIP, 0);
 }
 

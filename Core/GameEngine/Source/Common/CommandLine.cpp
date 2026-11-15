@@ -921,6 +921,18 @@ Int parseServeReplayLiveFor(char *args[], int num)
 	}
 	return 1;
 }
+// TheSuperHackers @feature O42 (test switch) -serveReplayLagFor <ip>:<seconds>: this source serves that viewer address that
+// many seconds further behind (on top of its delay), as over a slow link (the replay grows by tens of bytes a second, so
+// -serveReplayRate cannot make one).
+Int parseServeReplayLagFor(char *args[], int num)
+{
+	if (num > 1)
+	{
+		ReplayStream::configureServeLagFor(args[1]);
+		return 2;
+	}
+	return 1;
+}
 // TheSuperHackers @feature O34 (test switch) -followReserve <seconds>: a -watchReplay viewer's play-out reserve (0..60;
 // LAN outside viewers use 12), which bridges the loss of a source while the mirror finds another.
 Int parseFollowReserve(char *args[], int num)
@@ -2040,6 +2052,7 @@ static CommandLineParam paramsForStartup[] =
 	{ "-watchRoomObserver", parseWatchRoomObserver },
 	{ "-serveReplayDelay", parseServeReplayDelay },
 	{ "-serveReplayLiveFor", parseServeReplayLiveFor },
+	{ "-serveReplayLagFor", parseServeReplayLagFor },
 	{ "-watchBind", parseWatchBind },
 	{ "-followReserve", parseFollowReserve },
 	{ "-voiceTest", parseVoiceTest },

@@ -46,9 +46,12 @@ namespace
 		OUT_BUFFER = 256 * 1024,      ///< per viewer, allocated after its hello
 		CHUNK = 32 * 1024,            ///< the most file bytes in one DATA message
 		IN_BUFFER = 2 * (CHUNK + 16),
-		ID_BYTES = 1024,
-		HELLO1_SIZE = 20,
-		HELLO2_SIZE = 28,
+		HELLO_SIZE = 28,              ///< O42: version 3 (by frame); older hellos are refused
+		HELLO_VERSION = 3,
+		FIDX_MAX = 64,                ///< O42: frame ends in one FIDX message
+		RESUME_WAIT_MS = 30000,       ///< O42: a viewer ahead of this source waits this long for the source to reach its frame
+		PEND_START = 256 * 1024,      ///< O42: a mirror's bytes not yet part of a whole frame
+		PEND_MAX = 64 * 1024 * 1024,
 		MAX_REDIRECTS = 8,            ///< relays named in one MORE
 		HELLO_MS = 3000,              ///< O33: a connection without a complete hello for this long is closed
 		DROP_MS = 10000,              ///< a viewer whose data does not drain for this long is dropped
@@ -63,6 +66,7 @@ namespace
 		HISTORY_MAX = 32768,          ///< O33: size/state samples a server keeps (one per change: 3 min of a match fit)
 		MAX_DELAY_S = 180,
 	};
+	const UnsignedInt ALL_FRAMES = 0xFFFFFFFFu;   ///< O42: a hello's "from the start" (the header and every frame)
 
 	struct LiveRecord
 	{
@@ -82,6 +86,8 @@ namespace
 	Int s_serveRateKB = 4096;
 	Int s_serveStopAfterSec = 0;
 	Int s_serveOutsideMax = 4;
+	UnsignedInt s_serveLagIp = 0;   ///< O42 (test): -serveReplayLagFor <ip>:<seconds>
+	Int s_serveLagMs = 0;
 
 	//--- a LAN match's serving (game thread) --------------------------------------------------------
 	Bool s_matchSet = FALSE;
@@ -148,17 +154,6 @@ namespace
 	}
 
 	//--- helpers ------------------------------------------------------------------------------------
-	UnsignedInt fnv(const unsigned char *data, Int length)
-	{
-		UnsignedInt h = 2166136261u;
-		for (Int i = 0; i < length; ++i)
-		{
-			h ^= data[i];
-			h *= 16777619u;
-		}
-		return h;
-	}
-
 	void put32(unsigned char *p, UnsignedInt v)
 	{
 		p[0] = (unsigned char)v; p[1] = (unsigned char)(v >> 8); p[2] = (unsigned char)(v >> 16); p[3] = (unsigned char)(v >> 24);
@@ -278,6 +273,7 @@ namespace
 	volatile LONG s_mirrorSourceIp = 0;      ///< O34: the address this game's mirror takes its data from now (host order)
 	volatile LONG s_mirrorConnected = 0;     ///< O34: the mirror gets data from a source now            ///< O33: that generation's recording is over: no new viewers, finish the ones there
 	volatile LONG s_countRoom = 0;
+	volatile LONG s_mirrorNotAllowed = 0;    ///< O42: the last loss: a source said the host does not allow outside viewers
 	volatile LONG s_countOutside = 0;
 
 	struct ServeConfig
@@ -291,29 +287,147 @@ namespace
 		UnsignedInt live[MAX_LIVE];
 		Int liveCount;
 		Int max, outsideMax, rateKB, stopAfterSec;
+		UnsignedInt lagIp;         ///< O42 (test, -serveReplayLagFor): this address is served lagMs further behind (a slow link)
+		Int lagMs;
 		char path[_MAX_PATH];
 		char livePath[_MAX_PATH];
+		char idxPath[_MAX_PATH];   ///< O42: the frame index beside the replay
 	};
+
+	//--- O42: the frame index ---------------------------------------------------------------------------------------------
+	// Beside every replay that is served (written by the recorder through ReplayFollow, or by a mirror) lies "<replay>.idx":
+	// "GIDX", the game key (FNV-1a of the match's slot list, the same on every computer of the match), the end of the
+	// header, then one (frame, end offset) per frame: the commands of every frame up to that one lie below that offset.
+	// The players' files differ in their headers (start time, local player), so a viewer that moves to another source asks
+	// "after frame F", never for a byte offset; the commands of a frame are the same in every player's file.
+	struct FrameIndex
+	{
+		UnsignedInt key;
+		UnsignedInt headerEnd;
+		Bool haveHeader;
+		UnsignedInt first;          ///< the first frame in 'ends'
+		UnsignedInt *ends;          ///< ends[f - first]
+		UnsignedInt count, cap;
+		UnsignedInt fileRead;       ///< bytes of the index file read so far
+	};
+
+	void indexFree(FrameIndex &x)
+	{
+		if (x.ends != nullptr) {
+			HeapFree(GetProcessHeap(), 0, x.ends);
+		}
+		memset(&x, 0, sizeof(x));
+	}
+
+	void indexPut(FrameIndex &x, UnsignedInt frame, UnsignedInt end)
+	{
+		if (x.count == 0) {
+			x.first = frame;
+		}
+		if (frame < x.first) {
+			return;
+		}
+		const UnsignedInt pos = frame - x.first;
+		if (pos < x.count)
+		{
+			x.ends[pos] = end;   // the same frame again (an update that did not advance the logic)
+			return;
+		}
+		while (x.count <= pos)
+		{
+			if (x.count == x.cap)
+			{
+				const UnsignedInt cap = x.cap == 0 ? 4096 : x.cap * 2;
+				UnsignedInt *grown = x.ends == nullptr ? (UnsignedInt *)HeapAlloc(GetProcessHeap(), 0, cap * sizeof(UnsignedInt))
+					: (UnsignedInt *)HeapReAlloc(GetProcessHeap(), 0, x.ends, cap * sizeof(UnsignedInt));
+				if (grown == nullptr) {
+					return;
+				}
+				x.ends = grown;
+				x.cap = cap;
+			}
+			// a frame without an entry of its own ends where the one before it ended
+			x.ends[x.count] = (x.count == pos || x.count == 0) ? end : x.ends[x.count - 1];
+			++x.count;
+		}
+	}
+
+	/// Reads what was added to the index file since the last call (whole entries only).
+	void indexRead(FrameIndex &x, const char *path)
+	{
+		HANDLE h = openShared(path, GENERIC_READ, OPEN_EXISTING);
+		if (h == INVALID_HANDLE_VALUE) {
+			return;
+		}
+		const UnsignedInt size = fileSize(h);
+		if (!x.haveHeader && size >= 12)
+		{
+			unsigned char head[12];
+			DWORD got = 0;
+			if (readAt(h, 0, head, 12, &got) && got == 12 && memcmp(head, "GIDX", 4) == 0)
+			{
+				x.key = get32(head + 4);
+				x.headerEnd = get32(head + 8);
+				x.haveHeader = TRUE;
+				x.fileRead = 12;
+			}
+		}
+		if (x.haveHeader && size >= x.fileRead + 8)
+		{
+			const UnsignedInt want = ((size - x.fileRead) / 8) * 8;
+			unsigned char *buf = (unsigned char *)HeapAlloc(GetProcessHeap(), 0, want);
+			DWORD got = 0;
+			if (buf != nullptr && readAt(h, x.fileRead, buf, want, &got))
+			{
+				const UnsignedInt whole = (got / 8) * 8;
+				for (UnsignedInt k = 0; k < whole; k += 8) {
+					indexPut(x, get32(buf + k), get32(buf + k + 4));
+				}
+				x.fileRead += whole;
+			}
+			if (buf != nullptr) {
+				HeapFree(GetProcessHeap(), 0, buf);
+			}
+		}
+		CloseHandle(h);
+	}
+
+	Bool indexHas(const FrameIndex &x, UnsignedInt frame)
+	{
+		return x.count > 0 && frame >= x.first && frame - x.first < x.count;
+	}
+
+	UnsignedInt indexLast(const FrameIndex &x)
+	{
+		return x.first + x.count - 1;
+	}
+
+	UnsignedInt indexEnd(const FrameIndex &x, UnsignedInt frame)
+	{
+		return x.ends[frame - x.first];
+	}
 
 	struct Viewer
 	{
 		SOCKET socket;
 		UnsignedInt ip;            ///< host order (the connection's source address)
-		unsigned char hello[HELLO2_SIZE];   ///< O33 (review 1): room for the whole version 2 hello
+		unsigned char hello[HELLO_SIZE];
 		Int helloLen;
-		Int helloWant;             ///< 20, or 28 for version 2; never more than the array
-		Bool ready;
+		Bool ready;                ///< its hello was accepted
+		Bool started;              ///< O42: its place in this file is known (it may wait for a frame this source has not yet)
+		UnsignedInt resume;        ///< O42: what it asked for: after this frame, or ALL_FRAMES
 		Bool live;                 ///< O33: a listed room observer: gets the newest data; else delayed
 		Bool roomFlag;             ///< what its hello said (counting only)
-		UnsignedInt sent;          ///< file bytes queued for this viewer so far
+		UnsignedInt sent;          ///< bytes of this file queued for this viewer so far
+		UnsignedInt nextFrame;     ///< O42: the next frame whose end it gets (FIDX)
 		unsigned char *out;
 		Int outLen, outPos;
 		DWORD acceptMs;
 		DWORD lastDrainMs;
 		DWORD lastLiveMs;
-		LiveRecord liveSent;
 		Int number;
 		unsigned short relayPort;  ///< 0: it does not relay
+		Int lagMs;                 ///< O42 (test): served this much further behind
 	};
 
 	struct Sample { DWORD ms; UnsignedInt size; LiveRecord live; Bool haveLive; };
@@ -377,6 +491,49 @@ namespace
 		}
 	}
 
+	/// Refuses a viewer with a reason (a buffer for the reply if it has none yet, then the drop).
+	void refuse(Viewer &v, UnsignedInt reason, const char *why)
+	{
+		if (v.out == nullptr) {
+			v.out = (unsigned char *)HeapAlloc(GetProcessHeap(), 0, OUT_BUFFER);
+		}
+		if (v.out != nullptr)
+		{
+			unsigned char r[4];
+			put32(r, reason);
+			queue(v, "NOPE", r, 4);
+			flushNow(v);
+		}
+		dropViewer(v, why);
+	}
+
+	/// O42: the frames whose commands the viewer has whole now, with their ends in this file's offsets.
+	void queueFrameEnds(Viewer &v, const FrameIndex &index, UnsignedInt allowFrame, unsigned char *fidx)
+	{
+		if (index.count == 0) {
+			return;
+		}
+		if (v.nextFrame < index.first) {
+			v.nextFrame = index.first;   // a viewer that came before the first frame was written
+		}
+		while (v.nextFrame <= allowFrame && roomOf(v) >= 8 + 4 + FIDX_MAX * 8)
+		{
+			UnsignedInt n = 0;
+			while (n < FIDX_MAX && v.nextFrame <= allowFrame && indexEnd(index, v.nextFrame) <= v.sent)
+			{
+				put32(fidx + 4 + n * 8, v.nextFrame);
+				put32(fidx + 8 + n * 8, indexEnd(index, v.nextFrame));
+				++n;
+				++v.nextFrame;
+			}
+			if (n == 0) {
+				break;
+			}
+			put32(fidx, n);
+			queue(v, "FIDX", fidx, (Int)(4 + n * 8));
+		}
+	}
+
 	DWORD WINAPI serverMain(LPVOID param)
 	{
 		ServeConfig *cfg = (ServeConfig *)param;
@@ -433,8 +590,15 @@ namespace
 		logLine("server: listening on %u.%u.%u.%u:%d for %s (at most %d viewers, %d outside ones%s, delay %d s for viewers not listed "
 			"live, %d live address(es), %d KB/s)", bindHost >> 24, (bindHost >> 16) & 255, (bindHost >> 8) & 255, bindHost & 255, c.port,
 			c.path, c.max, c.outsideMax, c.outsideAllowed ? "" : " (none allowed)", c.delayMs / 1000, c.liveCount, c.rateKB);
+		if (c.lagIp != 0)
+		{
+			logLine("server: test lag: %u.%u.%u.%u is served %d s further behind (-serveReplayLagFor)", c.lagIp >> 24, (c.lagIp >> 16) & 255,
+				(c.lagIp >> 8) & 255, c.lagIp & 255, c.lagMs / 1000);
+		}
 
 		HANDLE file = INVALID_HANDLE_VALUE;
+		FrameIndex index;
+		memset(&index, 0, sizeof(index));
 		const DWORD startMs = timeGetTime();
 		DWORD lastTickMs = startMs;
 		Bool draining = FALSE;
@@ -444,7 +608,23 @@ namespace
 		Int nextNumber = 1;
 		Int historyFirst = 0, historyCount = 0;   // ring
 		DWORD lastReportMs = startMs;
+		const DWORD keepMs = (DWORD)(c.delayMs + c.lagMs) + 2000;
 		unsigned char chunk[CHUNK + 4];
+		unsigned char fidx[4 + FIDX_MAX * 8];
+
+		// the newest sample at least 'ageMs' old (the state a viewer that far behind may have)
+		const auto sampleAt = [&](DWORD now, DWORD ageMs, Sample *out) -> Bool {
+			for (Int k = historyCount - 1; k >= 0; --k)
+			{
+				const Sample &s = history[(historyFirst + k) % HISTORY_MAX];
+				if (now - s.ms >= ageMs)
+				{
+					*out = s;
+					return TRUE;
+				}
+			}
+			return FALSE;
+		};
 
 		while (current())
 		{
@@ -464,7 +644,7 @@ namespace
 				drainStartMs = now;
 				closesocket(listener);
 				listener = INVALID_SOCKET;
-				logLine("server: the recording is over: no new viewers; the ones here get the rest (at most %d s)", c.delayMs / 1000 + 5);
+				logLine("server: the recording is over: no new viewers; the ones here get the rest (at most %d s)", (Int)keepMs / 1000 + 3);
 			}
 			if (draining)
 			{
@@ -472,7 +652,7 @@ namespace
 				for (Int i = 0; i < MAX_VIEWERS && !anyone; ++i) {
 					anyone = viewers[i].socket != INVALID_SOCKET && viewers[i].ready;
 				}
-				if (!anyone || now - drainStartMs > (DWORD)c.delayMs + 5000) {
+				if (!anyone || now - drainStartMs > keepMs + 3000) {
 					break;
 				}
 			}
@@ -509,22 +689,23 @@ namespace
 				v.acceptMs = now;
 				v.lastDrainMs = now;
 				v.number = nextNumber++;
-				v.helloWant = HELLO1_SIZE;
+				v.lagMs = (c.lagIp != 0 && ip == c.lagIp) ? c.lagMs : 0;
 			}
 
 			if (file == INVALID_HANDLE_VALUE) {
 				file = openShared(c.path, GENERIC_READ, OPEN_EXISTING);
 			}
-			// the side file first, then the size: the bytes of the side file's frame are all in the file
+			// the side file first, then the index and the size: the writer writes a frame's index entry before its side
+			// file, so the index read after the side file has every frame the side file names
 			Sample cur;
 			cur.ms = now;
 			cur.haveLive = readLive(c.livePath, &cur.live);
-			cur.size = (file != INVALID_HANDLE_VALUE) ? fileSize(file) : 0;
-			// O33: the history of (time, size, side file), one sample per change, for the delayed viewers
+			indexRead(index, c.idxPath);
+			cur.size = file != INVALID_HANDLE_VALUE ? fileSize(file) : 0;
+			// O33: the history of (time, side file), one sample per change, for the delayed viewers
 			{
 				const Sample *last = historyCount > 0 ? &history[(historyFirst + historyCount - 1) % HISTORY_MAX] : nullptr;
-				if (last == nullptr || last->size != cur.size || last->haveLive != cur.haveLive
-					|| (cur.haveLive && memcmp(&last->live, &cur.live, sizeof(cur.live)) != 0))
+				if (last == nullptr || last->haveLive != cur.haveLive || (cur.haveLive && memcmp(&last->live, &cur.live, sizeof(cur.live)) != 0))
 				{
 					if (historyCount == HISTORY_MAX)
 					{
@@ -538,23 +719,9 @@ namespace
 				while (historyCount > 1)
 				{
 					const Sample &second = history[(historyFirst + 1) % HISTORY_MAX];
-					if (now - second.ms <= (DWORD)c.delayMs + 2000) break;
+					if (now - second.ms <= keepMs) break;
 					historyFirst = (historyFirst + 1) % HISTORY_MAX;
 					--historyCount;
-				}
-			}
-			// what a delayed viewer may have now: the newest sample at least delayMs old
-			Sample delayed;
-			memset(&delayed, 0, sizeof(delayed));
-			Bool haveDelayed = FALSE;
-			for (Int k = historyCount - 1; k >= 0; --k)
-			{
-				const Sample &s = history[(historyFirst + k) % HISTORY_MAX];
-				if (now - s.ms >= (DWORD)c.delayMs)
-				{
-					delayed = s;
-					haveDelayed = TRUE;
-					break;
 				}
 			}
 
@@ -562,8 +729,11 @@ namespace
 			{
 				// O33: for the tests: what the live and the delayed viewers may have now
 				lastReportMs = now;
-				logLine("server: newest frame %u (%u bytes); delayed (%d s) frame %u (%u bytes)", cur.haveLive ? cur.live.frame : 0, cur.size,
-					c.delayMs / 1000, haveDelayed && delayed.haveLive ? delayed.live.frame : 0, haveDelayed ? delayed.size : 0);
+				Sample d;
+				const Bool haveD = sampleAt(now, (DWORD)c.delayMs, &d) && d.haveLive;
+				logLine("server: newest frame %u; delayed (%d s) frame %u; index: %u frames from %u, key %08X, header %u bytes",
+					cur.haveLive ? cur.live.frame : 0, c.delayMs / 1000, haveD ? d.live.frame : 0, index.count, index.first, index.key,
+					index.headerEnd);
 			}
 			Int roomCount = 0, outsideCount = 0;
 			for (Int i = 0; i < MAX_VIEWERS; ++i)
@@ -575,73 +745,67 @@ namespace
 				// the hello: read only what fits the array (O33, review 1: the length is checked before the read)
 				if (!v.ready)
 				{
-					const Int want = v.helloWant - v.helloLen;
-					if (want <= 0 || v.helloWant > (Int)sizeof(v.hello))
+					const Int want = HELLO_SIZE - v.helloLen;
+					if (want > 0)
 					{
-						dropViewer(v, "a broken hello");
-						continue;
-					}
-					const int got = recv(v.socket, (char *)v.hello + v.helloLen, want, 0);
-					if (got == 0 || (got < 0 && WSAGetLastError() != WSAEWOULDBLOCK)) {
-						dropViewer(v, "closed before its hello");
-						continue;
-					}
-					if (got > 0) {
-						v.helloLen += got;
-					}
-					// a version 2 hello has 8 more bytes (once its version word is in)
-					if (v.helloLen >= 8 && v.helloWant == HELLO1_SIZE && memcmp(v.hello, "GRSV", 4) == 0 && get32(v.hello + 4) == 2) {
-						v.helloWant = HELLO2_SIZE;
+						const int got = recv(v.socket, (char *)v.hello + v.helloLen, want, 0);
+						if (got == 0 || (got < 0 && WSAGetLastError() != WSAEWOULDBLOCK)) {
+							dropViewer(v, "closed before its hello");
+							continue;
+						}
+						if (got > 0) {
+							v.helloLen += got;
+						}
 					}
 					if (v.helloLen >= 4 && memcmp(v.hello, "GRSV", 4) != 0)
 					{
 						dropViewer(v, "not a viewer");
 						continue;
 					}
-					if (v.helloLen < v.helloWant)
+					if (v.helloLen >= 8 && get32(v.hello + 4) != HELLO_VERSION)
+					{
+						refuse(v, NOPE_OTHER_GAME, "another hello version");
+						continue;
+					}
+					if (v.helloLen < HELLO_SIZE)
 					{
 						if (now - v.acceptMs > HELLO_MS) {
 							dropViewer(v, "no hello within 3 seconds");
 						}
 						continue;
 					}
-					const UnsignedInt version = get32(v.hello + 4);
-					const UnsignedInt offset = get32(v.hello + 8);
-					const UnsignedInt idLength = get32(v.hello + 12);
-					const UnsignedInt idHash = get32(v.hello + 16);
-					Bool same = (version == 1 || version == 2) && idLength <= ID_BYTES;
-					if (same && idLength > 0)
+					// the recorder writes the index header right after the replay's header: a moment at the start
+					if (!index.haveHeader)
 					{
-						unsigned char id[ID_BYTES];
-						DWORD got2 = 0;
-						same = file != INVALID_HANDLE_VALUE && readAt(file, 0, id, idLength, &got2) && got2 == idLength && fnv(id, idLength) == idHash;
-					}
-					v.out = same ? (unsigned char *)HeapAlloc(GetProcessHeap(), 0, OUT_BUFFER) : nullptr;
-					if (!same || v.out == nullptr)
-					{
-						if (v.out == nullptr && same) {
-							dropViewer(v, "no memory");
-							continue;
+						if (now - v.acceptMs > HELLO_MS + 2000) {
+							refuse(v, NOPE_REFUSED, "no frame index beside the replay");
 						}
-						// O34: say why (the viewer does not come back soon); the reply needs the buffer for a moment
-						v.out = (unsigned char *)HeapAlloc(GetProcessHeap(), 0, 64);
-						if (v.out != nullptr)
-						{
-							unsigned char reason[4];
-							put32(reason, NOPE_OTHER_GAME);
-							memcpy(v.out, "NOPE", 4);
-							put32(v.out + 4, 4);
-							memcpy(v.out + 8, reason, 4);
-							v.outLen = 12;
-							flushNow(v);
-						}
-						dropViewer(v, "another game, or this source has less of it");
 						continue;
 					}
-					const UnsignedInt flags = version == 2 ? get32(v.hello + 20) : 0;
+					// O42 (hello version 3): "after frame F" (ALL_FRAMES: from the start, header included) and the game key
+					// the viewer knows (0: none yet); the place in this file comes from its own frame index
+					v.resume = get32(v.hello + 8);
+					const UnsignedInt key = get32(v.hello + 12);
+					const UnsignedInt flags = get32(v.hello + 20);
+					if (key != 0 && key != index.key)
+					{
+						refuse(v, NOPE_OTHER_GAME, "another game (game key)");
+						continue;
+					}
+					if (v.resume != ALL_FRAMES && index.count > 0 && v.resume < index.first)
+					{
+						refuse(v, NOPE_REFUSED, "it asks for a frame before this source's first one");
+						continue;
+					}
+					v.out = (unsigned char *)HeapAlloc(GetProcessHeap(), 0, OUT_BUFFER);
+					if (v.out == nullptr)
+					{
+						dropViewer(v, "no memory");
+						continue;
+					}
 					v.roomFlag = (flags & HELLO_ROOM) != 0;
 					const Bool lastResort = (flags & HELLO_LAST_RESORT) != 0;
-					v.relayPort = version == 2 ? (unsigned short)get32(v.hello + 24) : 0;
+					v.relayPort = (unsigned short)get32(v.hello + 24);
 					// O33 (review 2): live only for a listed room observer's address; everybody else is an outside viewer
 					v.live = isLive(c, v.ip);
 					Int rooms = 0, outs = 0;
@@ -690,19 +854,79 @@ namespace
 						continue;
 					}
 					v.ready = TRUE;
-					v.sent = offset;
-					logLine("server: viewer %d (%u.%u.%u.%u, %s%s) starts at byte %u", v.number, v.ip >> 24, (v.ip >> 16) & 255,
-						(v.ip >> 8) & 255, v.ip & 255, v.live ? "live: a room observer" : "delayed", v.relayPort != 0 ? ", relays" : "", offset);
+					v.lastLiveMs = now;
+					logLine("server: viewer %d (%u.%u.%u.%u, %s%s%s) asks after frame %d", v.number, v.ip >> 24, (v.ip >> 16) & 255,
+						(v.ip >> 8) & 255, v.ip & 255, v.live ? "live: a room observer" : "delayed", v.relayPort != 0 ? ", relays" : "",
+						v.lagMs > 0 ? ", test lag" : "", v.resume == ALL_FRAMES ? -1 : (Int)v.resume);
 				}
 				++(v.live ? roomCount : outsideCount);
-				// what this viewer may have: the newest state (live), or the state of delayMs ago
-				const UnsignedInt allowSize = v.live ? cur.size : (haveDelayed ? delayed.size : 0);
-				const Bool allowLive = v.live ? cur.haveLive : (haveDelayed && delayed.haveLive);
-				const LiveRecord &allowRecord = v.live ? cur.live : delayed.live;
-				compact(v);
-				while (v.sent < allowSize && roomOf(v) >= CHUNK + 16 && tokens >= 1.0)
+				// O42: its place in this file: after the frame it asked for, once this source has that frame (another player
+				// may be a few frames behind the one the viewer came from: it is held here for up to 30 seconds)
+				if (!v.started)
 				{
-					DWORD want = min((DWORD)CHUNK, (DWORD)(allowSize - v.sent));
+					if (v.resume == ALL_FRAMES || indexHas(index, v.resume))
+					{
+						v.started = TRUE;
+						v.sent = v.resume == ALL_FRAMES ? 0 : indexEnd(index, v.resume);
+						v.nextFrame = v.resume == ALL_FRAMES ? (index.count > 0 ? index.first : 0) : v.resume + 1;
+						unsigned char gkey[12];
+						put32(gkey, index.key);
+						put32(gkey + 4, index.headerEnd);
+						put32(gkey + 8, v.sent);
+						queue(v, "GKEY", gkey, 12);
+						logLine("server: viewer %d starts after frame %d at byte %u of this file", v.number,
+							v.resume == ALL_FRAMES ? -1 : (Int)v.resume, v.sent);
+					}
+					else if (now - v.acceptMs > RESUME_WAIT_MS)
+					{
+						refuse(v, NOPE_REFUSED, "this source did not reach the frame it asked for");
+						continue;
+					}
+					else if (now - v.lastLiveMs >= LIVE_EVERY_MS)
+					{
+						queue(v, "HOLD", nullptr, 0);
+						v.lastLiveMs = now;
+					}
+				}
+				// what this viewer may have: the newest frame (live), or the frame of delayMs ago (plus a test lag)
+				Sample allow;
+				Bool haveAllow = FALSE;
+				const DWORD age = (DWORD)((v.live ? 0 : c.delayMs) + v.lagMs);
+				if (age == 0)
+				{
+					allow = cur;
+					haveAllow = cur.haveLive;
+				}
+				else
+				{
+					haveAllow = sampleAt(now, age, &allow) && allow.haveLive;
+				}
+				UnsignedInt allowFrame = 0;
+				Bool frameAllowed = FALSE;
+				Bool endedAllowed = FALSE;
+				if (v.started && haveAllow && index.count > 0 && allow.live.frame >= index.first)
+				{
+					allowFrame = min(allow.live.frame, indexLast(index));
+					endedAllowed = allow.live.ended != 0 && allowFrame == allow.live.frame;
+					frameAllowed = v.resume == ALL_FRAMES || allowFrame > v.resume || (endedAllowed && allowFrame >= v.resume);
+				}
+				// nothing before its first allowed frame (a delayed viewer gets the header with it); then the commands up to
+				// the end of that frame, and once the recording is over the rest of the file
+				UnsignedInt allowEnd = v.sent;
+				if (frameAllowed)
+				{
+					allowEnd = max(allowEnd, max(index.headerEnd, indexEnd(index, allowFrame)));
+					if (endedAllowed) {
+						allowEnd = max(allowEnd, cur.size);
+					}
+				}
+				compact(v);
+				if (frameAllowed) {
+					queueFrameEnds(v, index, allowFrame, fidx);
+				}
+				while (v.sent < allowEnd && roomOf(v) >= CHUNK + 16 + 8 + 4 + FIDX_MAX * 8 && tokens >= 1.0)
+				{
+					DWORD want = min((DWORD)CHUNK, (DWORD)(allowEnd - v.sent));
 					want = min(want, (DWORD)tokens);
 					DWORD got = 0;
 					if (!readAt(file, v.sent, chunk + 4, want, &got) || got == 0) {
@@ -712,19 +936,20 @@ namespace
 					queue(v, "DATA", chunk, (Int)got + 4);
 					v.sent += got;
 					tokens -= got;
+					queueFrameEnds(v, index, allowFrame, fidx);
 				}
-				// the side file's state, once the viewer has the bytes it covers; a delayed viewer with nothing allowed yet
+				// the side file's state, once the viewer has every frame it covers; before its first allowed frame a viewer
 				// gets HOLD (it waits, it does not hop)
-				if (v.sent >= allowSize && roomOf(v) >= 24 && now - v.lastLiveMs >= LIVE_EVERY_MS)
+				if (v.started && v.sent >= allowEnd && (!frameAllowed || v.nextFrame > allowFrame) && roomOf(v) >= 24
+					&& now - v.lastLiveMs >= LIVE_EVERY_MS)
 				{
-					if (allowLive)
+					if (frameAllowed)
 					{
 						unsigned char payload[12];
-						put32(payload, allowRecord.frame);
-						put32(payload + 4, allowRecord.ended);
-						put32(payload + 8, allowRecord.counter);
+						put32(payload, allowFrame);
+						put32(payload + 4, endedAllowed ? 1 : 0);
+						put32(payload + 8, allow.live.counter);
 						queue(v, "LIVE", payload, 12);
-						v.liveSent = allowRecord;
 					}
 					else
 					{
@@ -788,6 +1013,7 @@ namespace
 			InterlockedExchange(&s_countOutside, 0);
 		}
 		logLine("server: stopped");
+		indexFree(index);
 		HeapFree(GetProcessHeap(), 0, viewers);
 		HeapFree(GetProcessHeap(), 0, history);
 		HeapFree(GetProcessHeap(), 0, cfg);
@@ -814,6 +1040,7 @@ namespace
 		Int relayPort;
 		char path[_MAX_PATH];
 		char livePath[_MAX_PATH];
+		char idxPath[_MAX_PATH];   ///< O42: the mirror's own frame index (it serves it as a relay)
 	};
 
 	/// O34: the source to ask next: the lowest rank, then the list order, among those not cooling down; when all cool
@@ -965,24 +1192,38 @@ namespace
 		const auto current = [&]() { return InterlockedCompareExchange(&s_mirrorGen, 0, 0) == m.gen; };
 		const auto setFlag = [&](volatile LONG *flag) { if (current()) InterlockedExchange(flag, 1); };
 		orderSourcesByConnectTime(m);
-		HANDLE file = openShared(m.path, GENERIC_READ | GENERIC_WRITE, OPEN_ALWAYS);
+		HANDLE file = openShared(m.path, GENERIC_READ | GENERIC_WRITE, CREATE_ALWAYS);
 		HANDLE liveFile = openShared(m.livePath, GENERIC_WRITE, CREATE_ALWAYS);
+		HANDLE idxFile = openShared(m.idxPath, GENERIC_WRITE, CREATE_ALWAYS);
 		unsigned char *in = (unsigned char *)HeapAlloc(GetProcessHeap(), 0, IN_BUFFER);
-		if (file == INVALID_HANDLE_VALUE || liveFile == INVALID_HANDLE_VALUE || in == nullptr)
+		UnsignedInt pendCap = PEND_START;
+		unsigned char *pend = (unsigned char *)HeapAlloc(GetProcessHeap(), 0, pendCap);
+		if (file == INVALID_HANDLE_VALUE || liveFile == INVALID_HANDLE_VALUE || idxFile == INVALID_HANDLE_VALUE || in == nullptr || pend == nullptr)
 		{
 			logLine("mirror: cannot create %s", m.path);
 			if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
 			if (liveFile != INVALID_HANDLE_VALUE) CloseHandle(liveFile);
+			if (idxFile != INVALID_HANDLE_VALUE) CloseHandle(idxFile);
 			if (in != nullptr) HeapFree(GetProcessHeap(), 0, in);
+			if (pend != nullptr) HeapFree(GetProcessHeap(), 0, pend);
 			HeapFree(GetProcessHeap(), 0, cfg);
 			return 0;
 		}
-		UnsignedInt have = fileSize(file);
+		// O42: the mirror file only ever holds the header and whole frames: a source's bytes wait in 'pend' until the source
+		// names the end of a frame (FIDX); then they are written, with the frame's end in the mirror's own index. So after a
+		// lost source the mirror asks the next one "after frame <lastFrame>": every player's file has the same commands per
+		// frame (only the headers differ), and the new source finds the place in its own file.
+		UnsignedInt have = 0;              // bytes written to the mirror file
+		Bool haveHeader = FALSE;
+		UnsignedInt gameKey = 0;           // 0: no source told it yet
+		Bool haveFrame = FALSE;
+		UnsignedInt lastFrame = 0;         // the newest frame written whole
+		UnsignedInt idxPos = 12;
+		UnsignedInt liveCounter = 0;
 		Bool ended = FALSE;
-		DWORD lastContactMs = timeGetTime();   // the last useful message (DATA, LIVE or HOLD)
+		DWORD lastContactMs = timeGetTime();   // the last useful message (GKEY, DATA, FIDX, LIVE or HOLD)
 		Bool everContact = FALSE;
-		// O33 (review 10): what a source says about the stream only moves forward
-		UnsignedInt maxFrameSeen = 0, maxCounterSeen = 0;
+		UnsignedInt maxFrameSeen = 0;      // the newest frame a source named (the log)
 		const auto setConnected = [&](Bool on, UnsignedInt ip) {
 			if (current())
 			{
@@ -990,12 +1231,22 @@ namespace
 				InterlockedExchange(&s_mirrorSourceIp, on ? (LONG)ip : 0);
 			}
 		};
+		const auto writeLive = [&](UnsignedInt endedFlag) {
+			writeLocalLive(liveFile, haveFrame ? lastFrame : 0, endedFlag, ++liveCounter);
+		};
+		const auto writeAt = [&](HANDLE h, UnsignedInt offset, const unsigned char *data, UnsignedInt length) -> Bool {
+			OVERLAPPED ov;
+			memset(&ov, 0, sizeof(ov));
+			ov.Offset = offset;
+			DWORD written = 0;
+			return length == 0 || (WriteFile(h, data, length, &written, &ov) && written == length);
+		};
 		const auto loseStream = [&](const char *why) {
-			writeLocalLive(liveFile, maxFrameSeen, 1, maxCounterSeen + 1);
+			writeLive(1);
 			ended = TRUE;
 			setFlag(&s_mirrorEnded);
 			setFlag(&s_mirrorLost);
-			logLine("mirror: %s: the stream is lost; the replay plays its %u bytes (frame %u) to the end", why, have, maxFrameSeen);
+			logLine("mirror: %s: the stream is lost; the replay plays its %u bytes (frame %u) to the end", why, have, lastFrame);
 		};
 
 		while (current() && !ended && m.sourceCount > 0)
@@ -1021,23 +1272,19 @@ namespace
 				src.retryAfterMs = timeGetTime() + COOLDOWN_MS;
 				continue;
 			}
-			// the hello: where we are, and the first bytes we have (the same game)
-			unsigned char hello[HELLO2_SIZE];
-			unsigned char id[ID_BYTES];
-			DWORD idLength = 0;
-			if (have > 0) {
-				readAt(file, 0, id, min((DWORD)ID_BYTES, (DWORD)have), &idLength);
-			}
+			// the hello (version 3): after which frame, and the game key we know
+			unsigned char hello[HELLO_SIZE];
+			const UnsignedInt resume = haveFrame ? lastFrame : ALL_FRAMES;
 			// O34: back at a source that sent us on not long ago: the relays did not take us
 			const Bool lastResort = src.redirectedMs != 0 && timeGetTime() - src.redirectedMs < REDIRECT_RECENT_MS;
 			memcpy(hello, "GRSV", 4);
-			put32(hello + 4, 2);
-			put32(hello + 8, have);
-			put32(hello + 12, idLength);
-			put32(hello + 16, idLength > 0 ? fnv(id, (Int)idLength) : 0);
+			put32(hello + 4, HELLO_VERSION);
+			put32(hello + 8, resume);
+			put32(hello + 12, gameKey);
+			put32(hello + 16, 0);
 			put32(hello + 20, m.flags | (lastResort ? HELLO_LAST_RESORT : 0));
 			put32(hello + 24, (UnsignedInt)m.relayPort);
-			if (!sendAll(s, hello, HELLO2_SIZE))
+			if (!sendAll(s, hello, HELLO_SIZE))
 			{
 				closesocket(s);
 				src.retryAfterMs = timeGetTime() + COOLDOWN_MS;
@@ -1045,16 +1292,24 @@ namespace
 			}
 			UnsignedInt srcIp = 0;
 			parseIPv4(src.host, &srcIp);
-			logLine("mirror: connected to %s:%u (rank %d%s), asking from byte %u", src.host, (unsigned)src.port, src.rank,
-				lastResort ? ", last resort" : "", have);
+			logLine("mirror: connected to %s:%u (rank %d%s), asking after frame %d (game key %08X)", src.host, (unsigned)src.port, src.rank,
+				lastResort ? ", last resort" : "", resume == ALL_FRAMES ? -1 : (Int)resume, gameKey);
 
+			// this connection: 'pend' holds the source's bytes from srcPos on that are not written yet
+			Bool started = FALSE;
+			UnsignedInt srcPos = 0, pendLen = 0, srcHeaderEnd = 0;
+			Bool skipSourceHeader = FALSE;
+			const auto consume = [&](UnsignedInt k) {
+				memmove(pend, pend + k, pendLen - k);
+				pendLen -= k;
+				srcPos += k;
+			};
 			Int inLen = 0;
 			DWORD lastReportMs = timeGetTime();
 			DWORD lastMessageMs = timeGetTime();
 			DWORD lastFrameMoveMs = lastMessageMs;
-			UnsignedInt lastFrame = 0xFFFFFFFF;
+			UnsignedInt lastSourceFrame = 0xFFFFFFFF;
 			Bool holding = FALSE;
-			Bool refused = FALSE;
 			Bool sentOn = FALSE;
 			const char *leaveWhy = nullptr;
 			while (current() && leaveWhy == nullptr && !ended)
@@ -1074,7 +1329,7 @@ namespace
 				}
 				// whole messages
 				Int at = 0;
-				while (inLen - at >= 8 && leaveWhy == nullptr)
+				while (inLen - at >= 8 && leaveWhy == nullptr && !ended)
 				{
 					const UnsignedInt length = get32(in + at + 4);
 					if (length > CHUNK + 4) { leaveWhy = "a broken message"; break; }
@@ -1082,65 +1337,140 @@ namespace
 					const unsigned char *type = in + at;
 					const unsigned char *payload = in + at + 8;
 					lastMessageMs = timeGetTime();
-					const Bool useful = memcmp(type, "DATA", 4) == 0 || memcmp(type, "LIVE", 4) == 0 || memcmp(type, "HOLD", 4) == 0;
+					const Bool useful = memcmp(type, "DATA", 4) == 0 || memcmp(type, "LIVE", 4) == 0 || memcmp(type, "HOLD", 4) == 0
+						|| memcmp(type, "FIDX", 4) == 0 || memcmp(type, "GKEY", 4) == 0;
 					if (useful)
 					{
 						lastContactMs = lastMessageMs;
 						everContact = TRUE;
 						setConnected(TRUE, srcIp);
 					}
-					if (memcmp(type, "DATA", 4) == 0 && length >= 4)
+					if (memcmp(type, "GKEY", 4) == 0 && length >= 12)
 					{
+						// O42: the game, the end of the source's header, and where its data starts (the end of our frame there)
+						const UnsignedInt key = get32(payload);
+						const UnsignedInt start = get32(payload + 8);
+						if (gameKey != 0 && key != gameKey) { leaveWhy = "another game (game key)"; break; }
+						if (resume == ALL_FRAMES && start != 0) { leaveWhy = "a start that is not the file's start"; break; }
+						gameKey = key;
+						srcHeaderEnd = get32(payload + 4);
+						srcPos = start;
+						pendLen = 0;
+						started = TRUE;
+						// a source asked from the start after we wrote our header (no frame yet): its own header is dropped
+						skipSourceHeader = haveHeader && start == 0;
+						logLine("mirror: %s:%u has the game (key %08X); its data starts at its byte %u", src.host, (unsigned)src.port, key, start);
+					}
+					else if (memcmp(type, "DATA", 4) == 0 && length >= 4)
+					{
+						if (!started) { leaveWhy = "data before the start"; break; }
 						const UnsignedInt offset = get32(payload);
 						const UnsignedInt bytes = length - 4;
-						if (offset > have) { leaveWhy = "a gap in the data"; break; }
-						const UnsignedInt skip = have - offset;   // bytes we have already
+						const UnsignedInt expect = srcPos + pendLen;
+						if (offset > expect) { leaveWhy = "a gap in the data"; break; }
+						const UnsignedInt skip = expect - offset;   // bytes we have already
 						if (skip < bytes)
 						{
-							OVERLAPPED ov;
-							memset(&ov, 0, sizeof(ov));
-							ov.Offset = have;
-							DWORD written = 0;
-							if (!WriteFile(file, payload + 4 + skip, bytes - skip, &written, &ov) || written != bytes - skip) {
+							const UnsignedInt add = bytes - skip;
+							if (pendLen + add > pendCap)
+							{
+								UnsignedInt cap = pendCap;
+								while (cap < pendLen + add && cap < PEND_MAX) cap *= 2;
+								unsigned char *grown = cap >= pendLen + add ? (unsigned char *)HeapReAlloc(GetProcessHeap(), 0, pend, cap) : nullptr;
+								if (grown == nullptr) { leaveWhy = "too much data without a frame end"; break; }
+								pend = grown;
+								pendCap = cap;
+							}
+							memcpy(pend + pendLen, payload + 4 + skip, add);
+							pendLen += add;
+						}
+						// the header (only from the start of the file)
+						if (srcPos == 0 && srcHeaderEnd > 0 && pendLen >= srcHeaderEnd)
+						{
+							if (!haveHeader)
+							{
+								unsigned char head[12];
+								memcpy(head, "GIDX", 4);
+								put32(head + 4, gameKey);
+								put32(head + 8, srcHeaderEnd);
+								if (!writeAt(file, 0, pend, srcHeaderEnd) || !writeAt(idxFile, 0, head, 12)) {
+									leaveWhy = "the mirror file cannot be written";
+									break;
+								}
+								have = srcHeaderEnd;
+								haveHeader = TRUE;
+							}
+							skipSourceHeader = FALSE;
+							consume(srcHeaderEnd);
+						}
+					}
+					else if (memcmp(type, "FIDX", 4) == 0 && length >= 4)
+					{
+						// O42: frame ends in the source's offsets: write the bytes of every whole frame
+						const UnsignedInt n = get32(payload);
+						if (!started || !haveHeader || skipSourceHeader || n > (length - 4) / 8) { leaveWhy = "a broken frame index"; break; }
+						for (UnsignedInt k = 0; k < n && leaveWhy == nullptr; ++k)
+						{
+							const UnsignedInt frame = get32(payload + 4 + k * 8);
+							const UnsignedInt srcEnd = get32(payload + 8 + k * 8);
+							if (haveFrame && frame <= lastFrame) {
+								continue;
+							}
+							if (srcEnd < srcPos || srcEnd - srcPos > pendLen) { leaveWhy = "a frame end outside the data"; break; }
+							const UnsignedInt k2 = srcEnd - srcPos;
+							unsigned char entry[8];
+							put32(entry, frame);
+							put32(entry + 4, have + k2);
+							if (!writeAt(file, have, pend, k2) || !writeAt(idxFile, idxPos, entry, 8)) {
 								leaveWhy = "the mirror file cannot be written";
 								break;
 							}
-							have += written;
+							have += k2;
+							idxPos += 8;
+							consume(k2);
+							lastFrame = frame;
+							haveFrame = TRUE;
+						}
+						if (leaveWhy == nullptr && haveFrame)
+						{
+							writeLive(0);
+							setFlag(&s_mirrorHeaderReady);   // the header and a first whole frame
 						}
 					}
 					else if (memcmp(type, "LIVE", 4) == 0 && length == 12)
 					{
 						holding = FALSE;
-						UnsignedInt frame = get32(payload);
+						const UnsignedInt frame = get32(payload);
 						const UnsignedInt endedFlag = get32(payload + 4);
-						UnsignedInt counter = get32(payload + 8);
-						// O33 (review 10): never backwards (another source may be behind); "ended" only at or past the newest
-						// frame seen
-						frame = frame < maxFrameSeen ? maxFrameSeen : frame;
-						counter = counter < maxCounterSeen ? maxCounterSeen : counter;
-						const Bool endNow = endedFlag != 0 && get32(payload) >= maxFrameSeen;
-						maxFrameSeen = frame;
-						maxCounterSeen = counter;
-						writeLocalLive(liveFile, frame, endNow ? 1 : 0, counter);
-						if (frame != lastFrame)
+						maxFrameSeen = max(maxFrameSeen, frame);
+						if (frame != lastSourceFrame)
 						{
-							lastFrame = frame;
+							lastSourceFrame = frame;
 							lastFrameMoveMs = timeGetTime();
 						}
-						// the header is complete once the source wrote its first frame (the counter moved past the start)
-						if (counter >= 2 || endNow) {
-							setFlag(&s_mirrorHeaderReady);
-						}
-						if (endNow)
+						// the source sends LIVE only after the frame ends it covers: "ended" for our newest frame is the end
+						if (endedFlag != 0 && haveFrame && frame <= lastFrame)
 						{
+							// the rest of the source's file (its last records after the last frame end)
+							if (pendLen > 0 && writeAt(file, have, pend, pendLen))
+							{
+								have += pendLen;
+								consume(pendLen);
+							}
+							writeLive(1);
 							ended = TRUE;
+							setFlag(&s_mirrorHeaderReady);
 							setFlag(&s_mirrorEnded);
-							logLine("mirror: the source's game ended at frame %u; %u bytes", frame, have);
+							logLine("mirror: the source's game ended at frame %u; %u bytes", lastFrame, have);
+						}
+						else
+						{
+							writeLive(0);   // the counter moves: the follower sees a live writer
 						}
 					}
 					else if (memcmp(type, "HOLD", 4) == 0)
 					{
-						holding = TRUE;   // a delayed viewer waits: no data allowed yet
+						holding = TRUE;   // a delayed viewer, or a source still short of our frame: it waits
 						lastFrameMoveMs = timeGetTime();
 					}
 					else if (memcmp(type, "MORE", 4) == 0 && length >= 4)
@@ -1167,9 +1497,10 @@ namespace
 					else if (memcmp(type, "NOPE", 4) == 0)
 					{
 						const UnsignedInt reason = length >= 4 ? get32(payload) : NOPE_REFUSED;
-						refused = TRUE;
 						if (reason == NOPE_NOT_ALLOWED)
 						{
+							// O42: the host's rule; the room's screen says so instead of "the stream did not come"
+							setFlag(&s_mirrorNotAllowed);
 							loseStream("the host does not allow outside viewers");
 							leaveWhy = "outside viewers are not allowed";
 						}
@@ -1180,7 +1511,7 @@ namespace
 						}
 						else
 						{
-							leaveWhy = reason == NOPE_OTHER_GAME ? "another game, or the source has less of it" : "the source refused";
+							leaveWhy = reason == NOPE_OTHER_GAME ? "another game (or another build)" : "the source refused (see its log)";
 						}
 					}
 					at += 8 + (Int)length;
@@ -1194,13 +1525,13 @@ namespace
 				if (now - lastReportMs >= 10000)
 				{
 					lastReportMs = now;
-					logLine("mirror: have %u bytes, frame %u from %s:%u%s", have, maxFrameSeen, src.host, (unsigned)src.port,
-						holding ? " (held: nothing allowed yet)" : "");
+					logLine("mirror: have %u bytes, frame %u (source names %u) from %s:%u%s", have, lastFrame, maxFrameSeen, src.host,
+						(unsigned)src.port, holding ? " (held)" : "");
 				}
-				if (leaveWhy == nullptr && now - lastMessageMs > SILENT_HOP_MS) {
+				if (leaveWhy == nullptr && !ended && now - lastMessageMs > SILENT_HOP_MS) {
 					leaveWhy = "the source is silent";
 				}
-				if (leaveWhy == nullptr && !holding && lastFrame != 0xFFFFFFFF && now - lastFrameMoveMs > STUCK_HOP_MS) {
+				if (leaveWhy == nullptr && !ended && !holding && lastSourceFrame != 0xFFFFFFFF && now - lastFrameMoveMs > STUCK_HOP_MS) {
 					leaveWhy = "the source's newest frame does not move";
 				}
 			}
@@ -1218,15 +1549,17 @@ namespace
 				{
 					src.retryAfterMs = now + COOLDOWN_MS;
 				}
-				logLine("mirror: leaving %s:%u (%s) at byte %u, frame %u", src.host, (unsigned)src.port, leaveWhy, have, maxFrameSeen);
-				(void)refused;
+				logLine("mirror: leaving %s:%u (%s) after frame %u at byte %u (%u bytes of a frame not finished dropped)", src.host,
+					(unsigned)src.port, leaveWhy, lastFrame, have, pendLen);
 			}
 		}
 		setConnected(FALSE, 0);
 		CloseHandle(file);
 		CloseHandle(liveFile);
+		CloseHandle(idxFile);
 		HeapFree(GetProcessHeap(), 0, in);
-		logLine("mirror: stopped with %u bytes", have);
+		HeapFree(GetProcessHeap(), 0, pend);
+		logLine("mirror: stopped with %u bytes, frame %u", have, lastFrame);
 		if (current()) {
 			InterlockedExchange(&s_mirrorRunning, 0);
 		}
@@ -1264,6 +1597,31 @@ void ReplayStream::configureServeStopAfter(Int seconds)
 void ReplayStream::configureServeOutsideMax(Int viewers)
 {
 	s_serveOutsideMax = viewers < 0 ? 0 : (viewers > MAX_VIEWERS ? MAX_VIEWERS : viewers);
+}
+
+void ReplayStream::configureServeLagFor(const char *spec)
+{
+	// O42 (test): "a.b.c.d:seconds": that viewer address is served as if its link were that many seconds behind
+	s_serveLagIp = 0;
+	s_serveLagMs = 0;
+	if (spec == nullptr) {
+		return;
+	}
+	char ip[32];
+	const char *colon = strrchr(spec, ':');
+	const size_t len = colon != nullptr ? (size_t)(colon - spec) : 0;
+	if (colon == nullptr || len == 0 || len >= sizeof(ip)) {
+		return;
+	}
+	memcpy(ip, spec, len);
+	ip[len] = '\0';
+	UnsignedInt v = 0;
+	const Int seconds = atoi(colon + 1);
+	if (parseIPv4(ip, &v) && seconds > 0)
+	{
+		s_serveLagIp = v;
+		s_serveLagMs = (seconds > MAX_DELAY_S ? MAX_DELAY_S : seconds) * 1000;
+	}
 }
 
 void ReplayStream::configureServeDelay(Int seconds)
@@ -1389,8 +1747,11 @@ Bool ReplayStream::beginWatching(AsciiString &localPath)
 		// O33: a file of its own per mirror (an old mirror may still close its file)
 		snprintf(m->path, sizeof(m->path), "%sWatched_%u_%ld.rep", dir.str(), (unsigned)GetCurrentProcessId(), (long)m->gen);
 		snprintf(m->livePath, sizeof(m->livePath), "%s.live", m->path);
+		snprintf(m->idxPath, sizeof(m->idxPath), "%s.idx", m->path);
 		DeleteFileA(m->path);
 		DeleteFileA(m->livePath);
+		DeleteFileA(m->idxPath);
+		InterlockedExchange(&s_mirrorNotAllowed, 0);
 		strlcpy(s_mirrorPath, m->path, sizeof(s_mirrorPath));
 		InterlockedExchange(&s_mirrorHeaderReady, 0);
 		InterlockedExchange(&s_mirrorEnded, 0);
@@ -1474,6 +1835,8 @@ void ReplayStream::serveFile(const AsciiString &replayPath)
 	c->outsideMax = s_serveOutsideMax;
 	c->rateKB = s_serveRateKB;
 	c->stopAfterSec = s_serveStopAfterSec;
+	c->lagIp = s_serveLagIp;
+	c->lagMs = s_serveLagIp != 0 ? s_serveLagMs : 0;
 	if (s_matchSet)
 	{
 		c->bind = s_matchBind;
@@ -1511,6 +1874,7 @@ void ReplayStream::serveFile(const AsciiString &replayPath)
 	}
 	strlcpy(c->path, replayPath.str(), sizeof(c->path));
 	snprintf(c->livePath, sizeof(c->livePath), "%s.live", c->path);
+	snprintf(c->idxPath, sizeof(c->idxPath), "%s.idx", c->path);
 	if (!startThread(serverMain, c)) {
 		HeapFree(GetProcessHeap(), 0, c);
 	}
@@ -1519,6 +1883,11 @@ void ReplayStream::serveFile(const AsciiString &replayPath)
 Bool ReplayStream::takeLostNotice()
 {
 	return InterlockedExchange(&s_mirrorLost, 0) != 0;
+}
+
+Bool ReplayStream::lostBecauseNotAllowed()
+{
+	return InterlockedCompareExchange(&s_mirrorNotAllowed, 0, 0) != 0;
 }
 
 void ReplayStream::shutdown()

@@ -32,10 +32,13 @@
 // does not listen at all.
 //
 // Messages: LANMessage::MSG_ROOM (appended; the size of LANMessage is unchanged; older builds ignore it):
-//   OBSERVE  observer -> host   a place (again every 4 s while observing: "still here")
+//   OBSERVE  observer -> host   a place (O42: every second until the host's list has it, then every 4 s: "still here")
 //   LEAVE    observer -> host   no longer observing
-//   LIST     host -> everybody  the observers (address, name), the delay and the outside-viewers flag: every 2 s while
-//                               there are any, and on each change
+//   LIST     host -> everybody  the observers (address, name), the delay and the outside-viewers flag: O42: every 2 s
+//                               while it hosts a room (also with no observers: the lobby shows "no viewers" by it), and
+//                               on each change
+//   RULES    host -> everybody  O42: during the match, every 2 s: the delay and the outside-viewers flag (a lobby that
+//                               came later disables Watch for a match that allows no viewers)
 //   REMOVED  host -> observer   removed by the host (count 0), the room is full (1), or no such room (2)
 //   CHAT     observer -> host, then host -> the room's players and observers (one ready line of text)
 //   START    host -> observers  the stream port, the players' addresses, the delay and the flag
@@ -53,7 +56,9 @@
 //     then from the players (ReplayStream ranks), and keep a play-out reserve of 12 s (ReplayFollow) that bridges a source
 //     change; with no source for longer they show "Reconnecting to the stream...".
 // The host forgets an observer not heard from for 15 s. A person who joins a slot leaves the list (the host drops them
-// when it accepts the join).
+// when it accepts the join). O42: an observer counts the room as gone only when the lobby has no such game and the host's
+// LIST has not come for 10 s (a player who just left a room has that game back in its lobby only with the host's next
+// announce, up to 10 s later); an observer missing from the host's list asks again.
 
 #pragma once
 

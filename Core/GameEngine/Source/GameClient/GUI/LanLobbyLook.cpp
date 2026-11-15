@@ -164,6 +164,9 @@ namespace
 	const Text kWatch = { "GUI:LanWatch", L"Watch", L"\x0421\x043C\x043E\x0442\x0440\x0435\x0442\x044C" };
 	const Text kWaiting = { "GUI:LanWaitingStream", L"Waiting...", L"\x041E\x0436\x0438\x0434\x0430\x043D\x0438\x0435..." };
 	const Text kInProgress = { "GUI:LanInProgress", L"in game", L"\x0438\x0434\x0451\x0442 \x0438\x0433\x0440\x0430" };
+	// O42: the host allows no outside viewers (its LIST, or its RULES during the match)
+	const Text kNoViewersTag = { "GUI:LanNoViewersTag", L"no viewers", L"\x0431\x0435\x0437 \x0437\x0440\x0438\x0442\x0435\x043B\x0435\x0439" };
+	const Text kNoViewersButton = { "GUI:LanNoViewersButton", L"No viewers", L"\x0411\x0435\x0437 \x0437\x0440\x0438\x0442\x0435\x043B\x0435\x0439" };
 
 	//---------------------------------------------------------------------------------------------
 	// Sample data for pictures without a network (-lanSample)
@@ -670,6 +673,7 @@ namespace
 		Int files;
 		Int shield;                ///< O30: the host's anti-cheat verdict
 		Bool inProgress;
+		Bool noViewers;            ///< O42: its host allows no outside viewers
 		LANGameInfo *game;
 		const SampleGame *sample;
 	};
@@ -717,6 +721,7 @@ namespace
 				r.files = g.files;
 				r.shield = sampleShield(g.files);
 				r.inProgress = FALSE;
+				r.noViewers = FALSE;
 				r.game = nullptr;
 				r.sample = &g;
 				rows.push_back(r);
@@ -763,6 +768,11 @@ namespace
 			r.files = filesMarkOfIP(game->getHostIP());
 			r.shield = shieldOfIP(game->getHostIP());
 			r.inProgress = game->isGameInProgress();
+			{
+				Int hostDelay = 60;
+				Bool outsideAllowed = TRUE;
+				r.noViewers = LanRoom::viewerRulesOf(game->getHostIP(), &hostDelay, &outsideAllowed) && !outsideAllowed;
+			}
 			rows.push_back(r);
 		}
 	}
@@ -885,10 +895,20 @@ namespace
 			const Color c = r.inProgress ? kTextDim : (sel ? kGreen : kText);
 			const Int ty = ry + (rh - fontHeight()) / 2;
 			UnicodeString name = r.name;
-			if (r.inProgress)
+			if (r.inProgress || r.noViewers)
 			{
 				name.concat(L" (");
-				name.concat(textOf(kInProgress));
+				if (r.inProgress) {
+					name.concat(textOf(kInProgress));
+				}
+				if (r.noViewers)
+				{
+					// O42: the host allows no outside viewers
+					if (r.inProgress) {
+						name.concat(L", ");
+					}
+					name.concat(textOf(kNoViewersTag));
+				}
 				name.concat(L")");
 			}
 			drawText(name, cols.x[COL_GAME] + 2, ty, cols.x[COL_MAP] - cols.x[COL_GAME] - 6, c);
@@ -1800,10 +1820,12 @@ void LanLobbyLook::update(Bool screenReady)
 		Int hostDelay = 60;
 		Bool outsideAllowed = TRUE;
 		LanRoom::viewerRulesOf(host, &hostDelay, &outsideAllowed);
-		const Bool blocked = ownRoom || (running && !outsideAllowed);
+		const Bool noViewers = running && !outsideAllowed;
+		const Bool blocked = ownRoom || noViewers;
 		if (s.actionButton != nullptr)
 		{
-			const Text &label = busy ? kWaiting : (running ? kWatch : (observingThis ? kStopObserving : kObserve));
+			// O42: a running match whose host allows no outside viewers: the button says so, disabled
+			const Text &label = busy ? kWaiting : (noViewers ? kNoViewersButton : (running ? kWatch : (observingThis ? kStopObserving : kObserve)));
 			if (&label != s.actionLabel)
 			{
 				GadgetButtonSetText(s.actionButton, textOf(label));
