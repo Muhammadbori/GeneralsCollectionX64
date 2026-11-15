@@ -41,6 +41,7 @@
 // USER INCLUDES //////////////////////////////////////////////////////////////
 #include "WinMain.h"
 #include "Common/CommandLine.h"
+#include "Common/OptionPreferences.h"
 #include "Common/CriticalSection.h"
 #include "Common/GlobalData.h"
 #include "Common/Packs.h"
@@ -840,6 +841,16 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 		initMemoryManager();
 
 		CommandLine::parseCommandLineForStartup();
+
+		// TheSuperHackers @feature Windowed of Options.ini chooses a window or the full screen (borderless); -win and
+		// -fullscreen on the command line win over it.
+		if (!CommandLine::isWindowModeGiven())
+		{
+			OptionPreferences pref;
+			const Int windowed = pref.getWindowed();
+			if (windowed >= 0)
+				TheWritableGlobalData->m_windowed = (windowed == 1);
+		}
 
 
 		#ifdef RTS_DEBUG

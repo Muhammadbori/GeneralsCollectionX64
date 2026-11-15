@@ -23,6 +23,7 @@
 
 #include "GameClient/OptionsSections.h"
 
+#include "Common/AudioOutputDevices.h"
 #include "Common/FramePacer.h"
 #include "Common/FrameRateLimit.h"
 #include "Common/GameLOD.h"
@@ -173,6 +174,20 @@ namespace
 		{ "Hackers", { "GUI:CounterStyleHackers", L"Hackers", L"Hackers" } },
 		{ "GenTool", { "GUI:CounterStyleGenTool", L"GenTool", L"GenTool" } },
 	};
+	const Choice kWindowed[] =
+	{
+		{ "no", { "GUI:DisplayModeFullScreen", L"Full screen", L"\x041F\x043E\x043B\x043D\x044B\x0439 \x044D\x043A\x0440\x0430\x043D" } },
+		{ "yes", { "GUI:DisplayModeWindow", L"Window", L"\x041E\x043A\x043D\x043E" } },
+	};
+	const Choice kWindowPosition[] =
+	{
+		{ "Center", { "GUI:WindowPositionCenter", L"Centre", L"\x041F\x043E \x0446\x0435\x043D\x0442\x0440\x0443" } },
+		{ "TopLeft", { "GUI:WindowPositionTopLeft", L"Top left", L"\x0421\x043B\x0435\x0432\x0430 \x0432\x0432\x0435\x0440\x0445\x0443" } },
+		{ "TopRight", { "GUI:WindowPositionTopRight", L"Top right", L"\x0421\x043F\x0440\x0430\x0432\x0430 \x0432\x0432\x0435\x0440\x0445\x0443" } },
+		{ "BottomLeft", { "GUI:WindowPositionBottomLeft", L"Bottom left", L"\x0421\x043B\x0435\x0432\x0430 \x0432\x043D\x0438\x0437\x0443" } },
+		{ "BottomRight", { "GUI:WindowPositionBottomRight", L"Bottom right", L"\x0421\x043F\x0440\x0430\x0432\x0430 \x0432\x043D\x0438\x0437\x0443" } },
+	};
+	const Choice kRotateSpeed[] = { PLAIN("50"), PLAIN("75"), PLAIN("100"), PLAIN("125"), PLAIN("150"), PLAIN("200"), PLAIN("300") };
 	const Choice kFontSize[] =
 	{
 		{ "0", { "GUI:CounterOff", L"Off", L"\x0412\x044B\x043A\x043B." } },
@@ -230,6 +245,16 @@ namespace
 	AsciiString curLatencySize(OptionPreferences &p) { return number(p.getNetworkLatencyFontSize()); }
 	AsciiString curPlayerListSize(OptionPreferences &p) { return number(p.getPlayerInfoListFontSize()); }
 	AsciiString curMoneyPerMinute(OptionPreferences &p) { return yesNo(p.getShowMoneyPerMinute()); }
+	AsciiString curWindowed(OptionPreferences &p) { const Int w = p.getWindowed(); return yesNo(w >= 0 ? w == 1 : TheGlobalData->m_windowed); }
+	AsciiString curWindowPosition(OptionPreferences &p) { return p.getWindowPosition(); }
+	AsciiString curRotateSpeed(OptionPreferences &p) { return number(p.getCameraRotateSpeedPercent()); }
+	AsciiString curHideIP(OptionPreferences &p) { return yesNo(p.getHideIPAddresses()); }
+
+	/// Keys that take effect at the next start: a change of them brings the restart box.
+	Bool needsRestart(const char *key)
+	{
+		return stricmp(key, "Windowed") == 0 || stricmp(key, "WindowPosition") == 0;
+	}
 
 	// The game's own defaults (the getters' values for an absent key): Zero Hour scrolls with the right mouse button
 	// with the alternate mouse, the base game does not (GlobalData).
@@ -274,6 +299,11 @@ namespace
 		{ SEC_INFO, KIND_STEPS, "GameTimeFontSize", { "GUI:GameTimeCounter", L"Game time", L"\x0412\x0440\x0435\x043C\x044F \x0438\x0433\x0440\x044B" }, STEPS(kFontSize), "", "8", curGameTimeSize },
 		{ SEC_INFO, KIND_STEPS, "NetworkLatencyFontSize", { "GUI:NetworkLatencyCounter", L"Network delay (ms)", L"\x0421\x0435\x0442\x0435\x0432\x0430\x044F \x0437\x0430\x0434\x0435\x0440\x0436\x043A\x0430 (\x043C\x0441)" }, STEPS(kFontSize), "", "8", curLatencySize },
 		{ SEC_INFO, KIND_STEPS, "PlayerInfoListFontSize", { "GUI:PlayerInfoListCounter", L"Observer money list", L"\x0421\x043F\x0438\x0441\x043E\x043A \x0434\x0435\x043D\x0435\x0433 (\x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x044C)" }, STEPS(kFontSize), "", "8", curPlayerListSize },
+		// Display, controls, network (O8)
+		{ SEC_DISPLAY, KIND_STEPS, "Windowed", { "GUI:DisplayMode", L"Display mode", L"\x0420\x0435\x0436\x0438\x043C \x044D\x043A\x0440\x0430\x043D\x0430" }, STEPS(kWindowed), "", "no", curWindowed },
+		{ SEC_DISPLAY, KIND_STEPS, "WindowPosition", { "GUI:WindowPosition", L"Window position", L"\x041F\x043E\x043B\x043E\x0436\x0435\x043D\x0438\x0435 \x043E\x043A\x043D\x0430" }, STEPS(kWindowPosition), "", "Center", curWindowPosition },
+		{ SEC_CONTROLS, KIND_STEPS, "CameraRotateSpeed", { "GUI:CameraRotateSpeed", L"Camera rotation speed", L"\x0421\x043A\x043E\x0440\x043E\x0441\x0442\x044C \x043F\x043E\x0432\x043E\x0440\x043E\x0442\x0430 \x043A\x0430\x043C\x0435\x0440\x044B" }, STEPS(kRotateSpeed), "%", "100", curRotateSpeed },
+		{ SEC_NETWORK, KIND_CHECK, "HideIPAddresses", { "GUI:HideIPAddresses", L"Hide IP addresses", L"\x0421\x043A\x0440\x044B\x0432\x0430\x0442\x044C IP-\x0430\x0434\x0440\x0435\x0441\x0430" }, nullptr, 0, "", "no", curHideIP },
 		{ SEC_INFO, KIND_CHECK, "ShowMoneyPerMinute", { "GUI:ShowMoneyPerMinute", L"Money per minute", L"\x0414\x0435\x043D\x044C\x0433\x0438 \x0432 \x043C\x0438\x043D\x0443\x0442\x0443" }, nullptr, 0, "", "no", curMoneyPerMinute },
 	};
 	enum { SETTING_COUNT = (Int)ARRAY_SIZE(kSettings) };
@@ -376,6 +406,9 @@ namespace
 
 	enum { MAX_SUB_PAGES = 4 };
 
+	/// The sound output devices of the device row: [0] is the system default (empty name); UTF-8 names.
+	std::vector<AsciiString> s_devices;
+
 	struct State
 	{
 		Bool active;
@@ -388,6 +421,12 @@ namespace
 		Int subPageCount[SEC_COUNT];
 		Int currentSub[SEC_COUNT];
 		Int pageX, pageY, pageW, pageH, gap, titleH;      ///< where the pages are, for the pages made while filling
+		Bool restartNeeded;          ///< a key that takes effect at the next start changed in this save
+		GameWindow *deviceLabel;     ///< the sound output device row (AudioOutputDevice)
+		GameWindow *deviceValue;
+		GameWindow *deviceSlider;
+		Int deviceStep;
+		Int deviceInitial;
 		Section current;
 		SettingState settings[SETTING_COUNT];
 		GameWindow *existing[EXISTING_COUNT];
@@ -1112,6 +1151,56 @@ namespace
 		showPackRow(row);
 	}
 
+	UnicodeString deviceName(Int index)
+	{
+		if (index <= 0 || index >= (Int)s_devices.size()) {
+			return TheGameText->FETCH_OR_SUBSTITUTE("GUI:AudioDeviceDefault", localizedFallback(L"System default", L"\x0421\x0438\x0441\x0442\x0435\x043C\x043D\x043E\x0435 \x043F\x043E \x0443\x043C\x043E\x043B\x0447\x0430\x043D\x0438\x044E"));
+		}
+		WideChar buffer[256];
+		const int n = MultiByteToWideChar(CP_UTF8, 0, s_devices[index].str(), -1, buffer, ARRAY_SIZE(buffer));
+		if (n <= 0) {
+			UnicodeString plain;
+			plain.translate(s_devices[index]);
+			return plain;
+		}
+		return UnicodeString(buffer);
+	}
+
+	/// The sound output device row: the devices the audio device lists, the system default first. Takes effect at the
+	/// next start (the restart box).
+	void placeDeviceRow(Flow &flow, Int labelH, Int sliderH)
+	{
+		s_devices.clear();
+		s_devices.push_back(AsciiString::TheEmptyString);
+		std::vector<AsciiString> names;
+		AudioOutputDevices::list(names);
+		s_devices.insert(s_devices.end(), names.begin(), names.end());
+		const AsciiString chosen = s.pref->getAudioOutputDevice();
+		s.deviceStep = 0;
+		for (size_t i = 1; i < s_devices.size(); ++i) {
+			if (s_devices[i] == chosen) {
+				s.deviceStep = (Int)i;
+			}
+		}
+		s.deviceInitial = s.deviceStep;
+		Int valueTextW = 0;
+		for (size_t i = 0; i < s_devices.size(); ++i) {
+			valueTextW = max(valueTextW, textSize(labelFont(), deviceName((Int)i), 0).x);
+		}
+		const Int count = (Int)s_devices.size();
+		placeStepRow(flow, TheGameText->FETCH_OR_SUBSTITUTE("GUI:AudioOutputDevice", localizedFallback(L"Sound output device", L"\x0423\x0441\x0442\x0440\x043E\x0439\x0441\x0442\x0432\x043E \x0432\x044B\x0432\x043E\x0434\x0430 \x0437\x0432\x0443\x043A\x0430")),
+			valueTextW, count > 1 ? count - 1 : 1, windowId("OptionsMenu.wnd:Sections.AudioOutputDevice"), labelH, sliderH, 0,
+			&s.deviceLabel, &s.deviceValue, &s.deviceSlider, nullptr);
+		if (s.deviceSlider != nullptr)
+		{
+			GadgetSliderSetPosition(s.deviceSlider, s.deviceStep);
+			s.deviceSlider->winEnable(count > 1);
+		}
+		if (s.deviceValue != nullptr) {
+			GadgetStaticTextSetText(s.deviceValue, deviceName(s.deviceStep));
+		}
+	}
+
 	void onRestartNow()
 	{
 		Packs::requestRestart();
@@ -1126,14 +1215,14 @@ namespace
 		if (inMatch)
 		{
 			MessageBoxOk(title, TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackRestartLater",
-				localizedFallback(L"The new language and pack choices take effect the next time the game starts.",
-					L"\x041D\x043E\x0432\x044B\x0435 \x044F\x0437\x044B\x043A \x0438 \x043F\x0430\x043A\x0435\x0442\x044B \x0437\x0430\x0440\x0430\x0431\x043E\x0442\x0430\x044E\x0442 \x043F\x0440\x0438 \x0441\x043B\x0435\x0434\x0443\x044E\x0449\x0435\x043C \x0437\x0430\x043F\x0443\x0441\x043A\x0435 \x0438\x0433\x0440\x044B.")),
+				localizedFallback(L"These changes take effect the next time the game starts.",
+					L"\x042D\x0442\x0438 \x0438\x0437\x043C\x0435\x043D\x0435\x043D\x0438\x044F \x0432\x0441\x0442\x0443\x043F\x044F\x0442 \x0432 \x0441\x0438\x043B\x0443 \x043F\x0440\x0438 \x0441\x043B\x0435\x0434\x0443\x044E\x0449\x0435\x043C \x0437\x0430\x043F\x0443\x0441\x043A\x0435 \x0438\x0433\x0440\x044B.")),
 				nullptr);
 			return;
 		}
 		GameWindow *box = MessageBoxYesNo(title, TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackRestartBody",
-			localizedFallback(L"The new language and pack choices take effect after a restart of the game.",
-				L"\x041D\x043E\x0432\x044B\x0435 \x044F\x0437\x044B\x043A \x0438 \x043F\x0430\x043A\x0435\x0442\x044B \x0437\x0430\x0440\x0430\x0431\x043E\x0442\x0430\x044E\x0442 \x043F\x043E\x0441\x043B\x0435 \x043F\x0435\x0440\x0435\x0437\x0430\x043F\x0443\x0441\x043A\x0430 \x0438\x0433\x0440\x044B.")),
+			localizedFallback(L"These changes take effect after a restart of the game.",
+				L"\x042D\x0442\x0438 \x0438\x0437\x043C\x0435\x043D\x0435\x043D\x0438\x044F \x0432\x0441\x0442\x0443\x043F\x044F\x0442 \x0432 \x0441\x0438\x043B\x0443 \x043F\x043E\x0441\x043B\x0435 \x043F\x0435\x0440\x0435\x0437\x0430\x043F\x0443\x0441\x043A\x0430 \x0438\x0433\x0440\x044B.")),
 			onRestartNow, nullptr);
 		if (box == nullptr) {
 			return;
@@ -1349,6 +1438,9 @@ void OptionsSections::init(OptionPreferences *pref)
 				placePackRow(flow, r, labelH, sliderH);
 			}
 		}
+		if (sec == SEC_SOUND) {
+			placeDeviceRow(flow, labelH, sliderH);
+		}
 		if (flow.overflow) {
 			DEBUG_LOG(("OptionsSections: an item of section %d is taller than a column of the page.", sec));
 		}
@@ -1420,6 +1512,7 @@ void OptionsSections::init(OptionPreferences *pref)
 void OptionsSections::shutdown()
 {
 	memset(&s, 0, sizeof(s));
+	s_devices.clear();
 }
 
 Bool OptionsSections::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgData mData2)
@@ -1474,6 +1567,17 @@ Bool OptionsSections::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgD
 					return TRUE;
 				}
 			}
+			if (control == s.deviceSlider && s.deviceSlider != nullptr)
+			{
+				const Int count = (Int)s_devices.size();
+				Int step = (Int)mData2;
+				step = step < 0 ? 0 : (step >= count ? count - 1 : step);
+				s.deviceStep = step;
+				if (s.deviceValue != nullptr) {
+					GadgetStaticTextSetText(s.deviceValue, deviceName(step));
+				}
+				return TRUE;
+			}
 			for (Int r = 0; r < PACK_ROW_COUNT; ++r)
 			{
 				PackRowState &st = s.packRows[r];
@@ -1526,6 +1630,7 @@ void OptionsSections::save(OptionPreferences *pref)
 		if (st.control == nullptr) {
 			continue;
 		}
+		const AsciiString before = set.current(*pref);
 		if (set.kind == KIND_CHECK) {
 			(*pref)[set.key] = GadgetCheckBoxIsChecked(st.control) ? "yes" : "no";
 		} else if (!st.touched) {
@@ -1535,6 +1640,21 @@ void OptionsSections::save(OptionPreferences *pref)
 		} else {
 			(*pref)[set.key] = set.choices[st.step].value;
 		}
+		if (needsRestart(set.key) && stricmp(before.str(), set.current(*pref).str()) != 0) {
+			s.restartNeeded = TRUE;
+		}
+	}
+
+	// the sound output device (AudioOutputDevice), opened at the start
+	if (s.deviceSlider != nullptr && s.deviceStep != s.deviceInitial && s.deviceStep >= 0 && s.deviceStep < (Int)s_devices.size())
+	{
+		if (s.deviceStep == 0) {
+			pref->erase("AudioOutputDevice");
+		} else {
+			(*pref)["AudioOutputDevice"] = s_devices[s.deviceStep];
+		}
+		s.deviceInitial = s.deviceStep;
+		s.restartNeeded = TRUE;
 	}
 
 	// The pack choices: written when changed here, so a missing key keeps following Packs\<Kind>\default.ini.
@@ -1566,9 +1686,10 @@ void OptionsSections::save(OptionPreferences *pref)
 	TheWritableGlobalData->m_counterStyle = pref->getCounterStyle();
 	TheWritableGlobalData->m_screenshotFormat = pref->getScreenshotFormat();
 
-	if (packChanged)
+	if (packChanged || s.restartNeeded)
 	{
 		// the box comes after the menu has written Options.ini (it does so right after this call)
+		s.restartNeeded = FALSE;
 		offerRestart();
 	}
 }

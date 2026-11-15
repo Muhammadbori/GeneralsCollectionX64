@@ -1088,6 +1088,8 @@ void OptionsMenuInit( WindowLayout *layout, void *userData )
 	{
 		count++;
 		str.translate(IPlist->getIPstring());
+		if (pref->getHideIPAddresses())
+			str = UnicodeString(L"***.***.***.***");	// TheSuperHackers @feature HideIPAddresses (the item keeps the address)
 		index = GadgetComboBoxAddEntry(comboBoxLANIP, str, color);
 		GadgetComboBoxSetItemData(comboBoxLANIP, index, (void *)(IPlist->getIP()));
 		if (selectedIP == IPlist->getIP())
@@ -1124,6 +1126,8 @@ void OptionsMenuInit( WindowLayout *layout, void *userData )
 		{
 			count++;
 			str.translate(IPlist->getIPstring());
+			if (pref->getHideIPAddresses())
+				str = UnicodeString(L"***.***.***.***");	// TheSuperHackers @feature HideIPAddresses (the item keeps the address)
 			index = GadgetComboBoxAddEntry(comboBoxOnlineIP, str, color);
 			GadgetComboBoxSetItemData(comboBoxOnlineIP, index, (void *)(IPlist->getIP()));
 			if (selectedIP == IPlist->getIP())

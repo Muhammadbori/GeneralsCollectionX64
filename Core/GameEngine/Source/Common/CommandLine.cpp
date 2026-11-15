@@ -137,9 +137,17 @@ Int parseNoLogOrCrash(char *args[], int)
 
 //=============================================================================
 //=============================================================================
+// TheSuperHackers @feature -win / -fullscreen win over the Windowed key of Options.ini.
+static Bool s_windowModeGiven = FALSE;
+Bool CommandLine::isWindowModeGiven()
+{
+	return s_windowModeGiven;
+}
+
 Int parseWin(char *args[], int)
 {
 	TheWritableGlobalData->m_windowed = true;
+	s_windowModeGiven = TRUE;
 
 	return 1;
 }
@@ -700,6 +708,7 @@ Int parseNoAudio(char *args[], int)
 Int parseNoWin(char *args[], int)
 {
 	TheWritableGlobalData->m_windowed = false;
+	s_windowModeGiven = TRUE;
 
 	return 1;
 }
