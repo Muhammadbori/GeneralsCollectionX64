@@ -52,7 +52,7 @@
 
 #include <windows.h>
 #include <d3d12.h>
-#include <dxgi1_4.h>
+#include <dxgi1_5.h>
 #include <d3dcompiler.h>
 #include <wrl/client.h>
 
@@ -77,6 +77,7 @@ bool DX12Device_Stats = false;
 bool DX12Device_NoShaderCache = false;
 
 bool DX12Device::Requested = false;
+bool DX12Device::UnlockedPresent = false;
 ID3D12Device * DX12Device::Device = nullptr;
 unsigned DX12Device::Width = 0;
 unsigned DX12Device::Height = 0;
@@ -306,6 +307,11 @@ HANDLE FenceEvent = nullptr;
 UINT64 NextFenceValue = 1;
 
 ComPtr<IDXGISwapChain3> SwapChain;
+// TheSuperHackers @performance Tearing-allowed presents (DXGI 1.5). A flip-model swap chain presented with sync interval 0
+// but without this waits in Present once its queue is full, so a window never runs faster than about twice the
+// display's refresh rate. With it, Present returns at once and the compositor shows the newest frame.
+bool TearingSupported = false;
+UINT SwapChainFlags = 0;
 ComPtr<ID3D12Resource> BackBuffers[BACK_BUFFER_COUNT];
 UINT BackBufferIndex = 0;
 ComPtr<ID3D12Resource> DepthBuffer;
@@ -2681,8 +2687,8 @@ void Write_Counters(const char * label, unsigned long long frame_number)
 	}
 	if (length > 0 && length < (int)sizeof(line))
 	{
-		length += snprintf(line + length, sizeof(line) - length, " present_ms=%.3f present_ms_max=%.3f",
-			s.PresentTicks * ms_per_tick / frames, period.Max.PresentTicks * ms_per_tick);
+		length += snprintf(line + length, sizeof(line) - length, " present_ms=%.3f present_ms_max=%.3f present_unlocked=%.2f",
+			s.PresentTicks * ms_per_tick / frames, period.Max.PresentTicks * ms_per_tick, s.UnlockedPresents / frames);
 	}
 
 	// Frame times and the sections of the frame: per-frame average, largest single frame, and the
@@ -3363,6 +3369,8 @@ void Release_All()
 	}
 	DepthBuffer.Reset();
 	SwapChain.Reset();
+	TearingSupported = false;
+	SwapChainFlags = 0;
 
 	for (int i = 0; i < FRAME_COUNT; ++i)
 	{
@@ -3850,7 +3858,16 @@ bool DX12Device::Set_Resolution(unsigned width, unsigned height)
 		// reads between frames (screenshots).
 		desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
 		desc.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
-		desc.Flags = 0;
+		{
+			ComPtr<IDXGIFactory5> factory5;
+			BOOL allow_tearing = FALSE;
+			TearingSupported = SUCCEEDED(Factory.As(&factory5))
+				&& SUCCEEDED(factory5->CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allow_tearing, sizeof(allow_tearing)))
+				&& allow_tearing;
+			SwapChainFlags = TearingSupported ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
+			Debug_Log("present: tearing-allowed presents %s", TearingSupported ? "supported" : "not supported (the present rate stays at the compositor's pace)");
+		}
+		desc.Flags = SwapChainFlags;
 
 		ComPtr<IDXGISwapChain1> swap_chain;
 		hr = Factory->CreateSwapChainForHwnd(Queue.Get(), Window, &desc, nullptr, nullptr, &swap_chain);
@@ -3871,7 +3888,7 @@ bool DX12Device::Set_Resolution(unsigned width, unsigned height)
 	}
 	else
 	{
-		hr = SwapChain->ResizeBuffers(BACK_BUFFER_COUNT, width, height, DXGI_FORMAT_B8G8R8A8_UNORM, 0);
+		hr = SwapChain->ResizeBuffers(BACK_BUFFER_COUNT, width, height, DXGI_FORMAT_B8G8R8A8_UNORM, SwapChainFlags);
 		if (FAILED(hr))
 		{
 			Log_Failure("ResizeBuffers", hr);
@@ -4023,7 +4040,14 @@ void DX12Device::Submit_Frame(bool present)
 		// Report each new Present error once instead of every frame.
 		static HRESULT last_present_error = S_OK;
 		const UINT64 present_start = Query_Ticks();
-		hr = SwapChain->Present(0, 0);
+		// Sync interval 0 always; the tearing flag only while the game asks for more frames than the display shows
+		// (Set_Unlocked_Present), so limits at or below the refresh rate look as before.
+		const bool unlocked = UnlockedPresent && TearingSupported;
+		hr = SwapChain->Present(0, unlocked ? DXGI_PRESENT_ALLOW_TEARING : 0);
+		if (unlocked)
+		{
+			++DX12Device_Counters.UnlockedPresents;
+		}
 		DX12Device_Counters.PresentTicks += Query_Ticks() - present_start;
 		if (FAILED(hr) && hr != last_present_error)
 		{

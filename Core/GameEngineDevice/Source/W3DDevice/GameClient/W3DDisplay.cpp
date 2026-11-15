@@ -44,6 +44,7 @@ static void drawFramerateBar();
 
 // USER INCLUDES //////////////////////////////////////////////////////////////
 #include "Common/FramePacer.h"
+#include "Common/FrameRateLimit.h"
 #include "Common/FrameShots.h"
 #include "Common/ThingFactory.h"
 #include "Common/GlobalData.h"
@@ -1971,6 +1972,18 @@ void W3DDisplay::draw()
 
 	if (TheGlobalData->m_headless)
 		return;
+
+	// TheSuperHackers @performance A render limit above the display's refresh rate (or none) needs presents that do not wait
+	// for the compositor; at or below it the presents stay as they were (no tearing). Checked when the limit changes.
+	{
+		static Int lastLimit = -1;
+		const Int limit = TheFramePacer != nullptr ? TheFramePacer->getActualFramesPerSecondLimit() : 0;
+		if (limit != lastLimit)
+		{
+			lastLimit = limit;
+			DX12Device::Set_Unlocked_Present(limit > RenderFpsPreset::getDisplayRefreshRate());
+		}
+	}
 
 	// TheSuperHackers @feature bobtista 10/07/2026 Show messages for screenshots finished by the screenshot thread.
 	W3D_UpdateScreenshotMessages();

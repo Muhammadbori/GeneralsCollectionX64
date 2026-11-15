@@ -92,6 +92,7 @@ struct DX12FrameCounters
 	unsigned long long FenceWaits[DX12_WAIT_SITE_COUNT];
 	unsigned long long FenceWaitTicks[DX12_WAIT_SITE_COUNT];
 	unsigned long long PresentTicks;
+	unsigned long long UnlockedPresents;	// presents with DXGI_PRESENT_ALLOW_TEARING
 
 	// Main thread time of sections of the frame (DX12StatsScope).
 	unsigned long long TextureLoadTicks;	// TextureLoader on the main thread: file reads, decoding, creation and upload
@@ -293,6 +294,10 @@ public:
 	static bool Is_Requested() { return Requested; }
 	static void Set_Requested(bool requested) { Requested = requested; }
 	static bool Is_Active() { return Device != nullptr; }
+	// TheSuperHackers @performance TRUE while the render limit is above the display's refresh rate (or off): presents
+	// then allow tearing where the system supports it, so the frame rate is not held at the compositor's pace.
+	static void Set_Unlocked_Present(bool unlocked) { UnlockedPresent = unlocked; }
+	static bool Is_Unlocked_Present() { return UnlockedPresent; }
 
 	static bool Init(void * hwnd);
 	// Why the last Init or Set_Resolution failed, for the message the game shows: the first failure since
@@ -402,6 +407,7 @@ private:
 	static void Submit_Frame(bool present);
 
 	static bool Requested;
+	static bool UnlockedPresent;
 	static ID3D12Device * Device;
 	static unsigned Width;
 	static unsigned Height;
