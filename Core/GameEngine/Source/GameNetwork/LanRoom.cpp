@@ -52,9 +52,10 @@ namespace
 	enum { REASON_BY_HOST = 0, REASON_FULL = 1, REASON_NO_ROOM = 2 };
 	const UnsignedInt kHeartbeatMs = 4000;
 	const UnsignedInt kAskMs = 1000;            ///< O42: OBSERVE while the host's list does not have this observer yet
-	const UnsignedInt kRulesMs = 2000;          ///< O42: RULES during the match
+	const UnsignedInt kRulesMs = 5000;          ///< O42: RULES during the match (O46: every 5 s, not 2)
 	const UnsignedInt kGoneMs = 10000;          ///< O42: no such game in the lobby and no LIST from its host for this long
 	const UnsignedInt kListMs = 2000;
+	const UnsignedInt kEmptyListMs = 5000;      ///< O46: a room without observers sends its (empty) list this often
 	const UnsignedInt kForgetMs = 15000;
 	const UnsignedInt kKnownMs = 6000;          ///< a room's list seen in the lobby counts this long
 	const UnsignedInt kStreamWaitMs = 180000;   ///< the players load the map before the stream has its first frame
@@ -689,7 +690,9 @@ void LanRoom::update(UnsignedInt localIP)
 			s_listDirty = TRUE;
 		}
 		// O42: also with no observers: the lobby learns the delay and the outside-viewers flag of every room
-		if (s_listDirty || now - s_lastList >= kListMs) {
+		// O46: with no observers only every 5 s (the lobby needs only the delay and the flag from it); each LIST is one
+		// packet per lobby, in the loopback test eight of them
+		if (s_listDirty || now - s_lastList >= (s_hosted.empty() ? kEmptyListMs : kListMs)) {
 			broadcastList(localIP);
 		}
 	}
