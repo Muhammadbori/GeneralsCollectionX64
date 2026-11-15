@@ -45,6 +45,7 @@ public:
 	/// pictures, exit), with no OS input: the real mouse and keyboard are cut off as for every frame shot run. See
 	/// FrameShots.cpp (runUiScript) for the step format. Test only.
 	static void setUiScript(const char *path);
+	static Bool isUiScriptRunning(); ///< O27: a -uiScript is playing (its mouse button states are not the real mouse's)
 
 	static Bool isEnabled() { return s_enabled; }
 

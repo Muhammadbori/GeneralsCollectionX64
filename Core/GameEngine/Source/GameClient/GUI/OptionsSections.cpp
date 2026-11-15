@@ -823,6 +823,18 @@ namespace
 		{
 			const Bool orphanNext = col == 1 && y > y0 && leftAfter == 1 && y + height <= bottom
 				&& y + height + gap + nextHeight > bottom;
+			// O27: a row taller than a whole column gets a page of its own (the pack rows shrink their picture so none
+			// is that tall; any other row is a few lines)
+			if (height > bottom - y0 && (y > y0 || col > 0))
+			{
+				GameWindow *more = makePage(sec);
+				if (more != nullptr)
+				{
+					page = more;
+					col = 0;
+					y = y0;
+				}
+			}
 			if (y + height > bottom && y > y0 && col == 0) {
 				col = 1;
 				y = y0;
@@ -1333,8 +1345,13 @@ namespace
 		st.combo = prepareComboRow(row, page, Packs::kindTitle(def.kind), windowId(name.str()), longest, colW, labelH, &st.label);
 		if (def.preview)
 		{
-			// preview pictures are 2:1 (512 x 256), under the list, following the chosen entry
-			const Int previewH = colW / 2;
+			// preview pictures are 2:1 (512 x 256), under the list, following the chosen entry; O27: no taller than what
+			// is left of a column under the list (a row is never taller than a column)
+			const Int columnH = s.pageH - s.gap * 2 - (s.gap * 3 + s.titleH);
+			Int previewH = colW / 2;
+			if (row.height + s.gap + previewH > columnH) {
+				previewH = max(s.gap * 4, columnH - row.height - s.gap);
+			}
 			const Int py = row.height + s.gap;
 			WinInstanceData inst;
 			inst.init();
@@ -1628,8 +1645,9 @@ namespace
 			const Int rowH = TheWindowManager->winFontHeight(combo->winGetFont()) + 6;
 			const Int room = menuBottom - (cy + sizeOf(combo).y) - 4;
 			const Int count = GadgetComboBoxGetLength(combo);
+			// O27: never past the bottom of the menu: fewer rows (and the scroll bar) where the room is short
 			Int show = rowH > 0 ? room / rowH : 8;
-			show = show < 3 ? 3 : show;
+			show = show < 1 ? 1 : show;
 			show = show > count ? count : show;
 			GadgetComboBoxSetMaxDisplay(combo, show > 0 ? show : 1);
 		}
@@ -2027,7 +2045,8 @@ Bool OptionsSections::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgD
 			{
 				if (control == s.settings[i].control && s.settings[i].combo)
 				{
-					if (!s.quiet && index >= 0 && index < kSettings[i].choiceCount)
+					// O27: picking the entry that is already chosen changes nothing (a hand-written value stays)
+					if (!s.quiet && index >= 0 && index < kSettings[i].choiceCount && index != s.settings[i].step)
 					{
 						s.settings[i].step = index;
 						s.settings[i].touched = TRUE;

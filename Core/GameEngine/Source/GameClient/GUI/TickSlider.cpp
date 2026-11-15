@@ -31,6 +31,7 @@
 #include "GameClient/GameWindow.h"
 #include "GameClient/GameWindowManager.h"
 #include "GameClient/KeyDefs.h"
+#include "Common/FrameShots.h"
 
 #include <map>
 #include <math.h>
@@ -193,7 +194,13 @@ namespace
 		}
 		for (size_t i = 0; i < in->markPositions.size(); ++i)
 		{
-			UnicodeString text = i < in->labels.size() ? in->labels[i] : numberText(in->markPositions[i], UnicodeString::TheEmptyString);
+			// O27: labels are one per step; with five marks (a long or continuous range) a mark takes the label of its
+			// own position when there is one per step, else the i-th label (one per mark), else the number
+			size_t li = i;
+			if (in->markPositions.size() != in->labels.size()) {
+				li = (size_t)(in->markPositions[i] - sd->minVal);
+			}
+			UnicodeString text = li < in->labels.size() ? in->labels[li] : numberText(in->markPositions[i], UnicodeString::TheEmptyString);
 			DisplayString *ds = TheDisplayStringManager != nullptr ? TheDisplayStringManager->newDisplayString() : nullptr;
 			if (ds != nullptr)
 			{
@@ -324,6 +331,17 @@ namespace
 		in->held = FALSE;   // the handle is drawn at the position again: a stepped slider snaps to its step
 	}
 
+	/// O27: the real left button is up (a release the window did not get: focus lost, alt-tab, a dialog took the
+	/// mouse-up). Not while a -uiScript plays: its held button is not the real mouse's.
+	Bool leftButtonReallyUp()
+	{
+		if (FrameShots::isUiScriptRunning()) {
+			return FALSE;
+		}
+		const Int vk = GetSystemMetrics(SM_SWAPBUTTON) ? VK_RBUTTON : VK_LBUTTON;
+		return (GetAsyncKeyState(vk) & 0x8000) == 0;
+	}
+
 	void step(GameWindow *window, SliderData *sd, Int delta)
 	{
 		Int pos = sd->position + delta;
@@ -384,7 +402,11 @@ namespace
 
 			case GWM_LEFT_DRAG:
 			{
-				if (in->held)
+				if (in->held && leftButtonReallyUp())
+				{
+					release(in);
+				}
+				else if (in->held)
 				{
 					ensureBuilt(in, sd);
 					const Geo g = geometry(window, in, sd);
@@ -444,7 +466,7 @@ namespace
 			return;
 		}
 		// a release outside the window does not reach it: it is no longer the window the mouse holds
-		if (in->held && TheWindowManager->winGetGrabWindow() != window) {
+		if (in->held && (TheWindowManager->winGetGrabWindow() != window || leftButtonReallyUp())) {
 			release(in);
 		}
 		ensureBuilt(in, sd);
@@ -573,6 +595,12 @@ void TickSlider::attach(GameWindow *slider, GameFont *font, Bool continuous)
 		in->grabDX = 0.0f;
 		s_infos[slider] = in;
 	}
+	// O27: every attach starts from a clean setting (a kept entry of a reused window address keeps nothing)
+	in->labels.clear();
+	in->func = nullptr;
+	in->context = nullptr;
+	in->suffix.clear();
+	in->held = FALSE;
 	in->font = font != nullptr ? font : slider->winGetFont();
 	in->fontH = fontHeightOf(in->font);
 	in->continuous = continuous;

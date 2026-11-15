@@ -283,6 +283,11 @@ void FrameShots::updateEnabled()
 	s_enabled = !s_frames.empty() || !s_saveFrames.empty() || !s_uiSteps.empty();
 }
 
+Bool FrameShots::isUiScriptRunning()
+{
+	return !s_uiSteps.empty() && s_uiNext < s_uiSteps.size();
+}
+
 void FrameShots::setUiScript(const char *path)
 {
 	s_uiSteps.clear();

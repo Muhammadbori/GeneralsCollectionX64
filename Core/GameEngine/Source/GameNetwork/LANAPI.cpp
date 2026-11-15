@@ -494,7 +494,8 @@ void LANAPI::update()
 				handleInActive( msg, senderIP );
 				break;
 			case LANMessage::MSG_FILES_INFO:	// O26: the sender's files fingerprint
-				if (msg->FilesInfo.magic == LANFilesInfoMagic) {
+				// O27: only from a packet that holds the whole message, and with the right magic
+				if (m_transport->m_inBuffer[i].length >= (Int)sizeof(LANMessage) && msg->FilesInfo.magic == LANFilesInfoMagic) {
 					s_filesFingerprints[senderIP] = msg->FilesInfo.fingerprint;
 				}
 				break;
