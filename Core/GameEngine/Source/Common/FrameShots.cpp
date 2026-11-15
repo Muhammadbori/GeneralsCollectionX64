@@ -250,6 +250,8 @@ namespace
 			msg->appendIntegerArgument((Int)timeGetTime());
 	}
 
+	GameWindow *s_uiFocusAtKeyDown = nullptr;   ///< O39: the focused window when a script key went down
+
 	void uiKey(Int key, Bool down)
 	{
 		GameMessage *msg = TheMessageStream->appendMessage(down ? GameMessage::MSG_RAW_KEY_DOWN : GameMessage::MSG_RAW_KEY_UP);
@@ -789,6 +791,8 @@ void FrameShots::runUiScript()
 			done = FALSE;
 			if (s_uiPhase == 0)
 			{
+				// O39: the focus at the moment the key goes down (see the Enter character below)
+				s_uiFocusAtKeyDown = TheWindowManager != nullptr ? TheWindowManager->winGetFocus() : nullptr;
 				uiKey(key, TRUE);
 				s_uiPhase = 1;
 			}
@@ -797,9 +801,14 @@ void FrameShots::runUiScript()
 				uiKey(key, FALSE);
 				// TheSuperHackers @fix (O18, D2) A real Enter also gives Windows a character (WM_CHAR '\r') that the IME
 				// manager hands to the focused text entry as GWM_IME_CHAR; that ends an edit (GEM_EDIT_DONE). Do the same.
-				if (key == KEY_ENTER && TheWindowManager != nullptr && TheWindowManager->winGetFocus() != nullptr) {
+				// TheSuperHackers @fix O39 Windows hands that character to the window that had the focus when the key went
+				// down. A window the key itself opened (the in-game chat: Enter opens it and gives it the focus) never gets
+				// it; before, it did and the new chat box closed at once (S28: "text: no window has the keyboard focus").
+				if (key == KEY_ENTER && TheWindowManager != nullptr && TheWindowManager->winGetFocus() != nullptr
+					&& TheWindowManager->winGetFocus() == s_uiFocusAtKeyDown) {
 					TheWindowManager->winSendInputMsg(TheWindowManager->winGetFocus(), GWM_IME_CHAR, (WindowMsgData)VK_RETURN, 0);
 				}
+				s_uiFocusAtKeyDown = nullptr;
 				uiLog("key %s", step.text.str());
 				done = TRUE;
 			}

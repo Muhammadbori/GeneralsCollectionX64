@@ -45,6 +45,7 @@
 #include "GameClient/InGameUI.h"
 #include "GameClient/LocalizedFallback.h"
 #include "GameLogic/GameLogic.h"
+#include "GameNetwork/LanRoom.h"
 
 namespace
 {
@@ -498,6 +499,9 @@ namespace
 		{
 			const UnsignedInt newest = ReplayFollow::newestFrame();
 			delay = newest > frame ? (Int)((newest - frame) / LOGICFRAMES_PER_SECOND) : 0;
+			// TheSuperHackers @tweak O39 An outside viewer's sources hold the stream back by the host's delay; the bar shows
+			// the whole delay behind the match (that plus this viewer's own lag: its play-out reserve, a catch-up)
+			delay += LanRoom::upstreamDelaySeconds();
 		}
 		if (!s_barHasHours && (total >= 3600u * LOGICFRAMES_PER_SECOND || frame >= 3600u * LOGICFRAMES_PER_SECOND))
 		{

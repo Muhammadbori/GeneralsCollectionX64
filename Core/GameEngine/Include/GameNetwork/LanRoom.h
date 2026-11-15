@@ -138,6 +138,9 @@ namespace LanRoom
 	/// The room's observers for the voice roster, this game included, in the same order on every observer (by address);
 	/// 0 when this game is not a room observer in its stream.
 	Int observerVoicePeers(UnsignedInt *ips, UnicodeString *names, Int maxCount, Int *localIndex);
+	/// O39: an outside viewer: the delay its sources keep (the host's), which the replay bar adds to the viewer's own lag
+	/// so it shows the whole delay behind the match; 0 for everybody else.
+	Int upstreamDelaySeconds();
 	/// The LAN screen opens again: a viewer that played its stream goes back to normal (follow mode off, no mirror).
 	void resetViewer();
 	/// A line for the screen's chat (removed, full, waiting, lost ...); FALSE when none.

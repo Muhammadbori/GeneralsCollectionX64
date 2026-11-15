@@ -98,6 +98,26 @@ namespace
 	SOCKET s_chatSocket = INVALID_SOCKET;
 	Bool s_chatHinted = FALSE;
 	const UnsignedInt kChatMagic = 0x3148434F;   ///< "OCH1"
+	Int s_upstreamDelay = 0;                     ///< O39: an outside viewer's sources' delay (the host's)
+
+	/// O39: the observers' channel writes what it sends, shows and drops into ObserverChat.log (user data folder), for the
+	/// tests (a picture shows a message line only for a few seconds)
+	void chatLog(const char *what, UnsignedInt ip, const UnicodeString &text)
+	{
+		if (TheGlobalData == nullptr) {
+			return;
+		}
+		AsciiString path = TheGlobalData->getPath_UserData();
+		path.concat("ObserverChat.log");
+		if (FILE *f = fopen(path.str(), "a"))
+		{
+			AsciiString line;
+			line.translate(text);
+			fprintf(f, "[%10u] %s %u.%u.%u.%u: %s\n", (unsigned)timeGetTime(), what, ip >> 24, (ip >> 16) & 255, (ip >> 8) & 255, ip & 255,
+				line.str());
+			fclose(f);
+		}
+	}
 
 	void closeObserverChannel()
 	{
@@ -189,6 +209,7 @@ namespace
 			UnsignedInt magic = 0;
 			memcpy(&magic, packet, 4);
 			if (peer == nullptr || ip == s_peerLocalIP || ntohs(from.sin_port) != LanRoom::OBSERVER_CHAT_PORT || got < 6 || magic != kChatMagic) {
+				chatLog("DROPPED from", ip, UnicodeString::TheEmptyString);
 				continue;   // not a room observer of this match: dropped unseen
 			}
 			WideChar line[g_lanMaxChatLength + 1];
@@ -212,6 +233,7 @@ namespace
 				shown.format(textOf(kObserverLine).str(), peer->name.str(), textLine.str());
 				TheInGameUI->messageNoFormat(shown);
 			}
+			chatLog("SHOWN from", ip, textLine);
 		}
 	}
 	// this game as an observer / viewer
@@ -1000,6 +1022,7 @@ void LanRoom::startWatching(LANGameInfo *game, Int extraSeconds)
 	t.format(textOf(kWatchingTotal).str(), hostDelay + extraSeconds, hostDelay, extraSeconds);
 	notice(t);
 	beginStream(ips, n, STREAM_PORT, TheLAN->GetLocalIP(), FALSE, extraSeconds, hostDelay, TRUE, nullptr, 0, observerIps, observerCount);
+	s_upstreamDelay = hostDelay;   // O39
 }
 
 void LanRoom::resetViewer()
@@ -1009,11 +1032,17 @@ void LanRoom::resetViewer()
 		ReplayStream::stopWatching();
 		ReplayStream::stopServing();   // O33: the relay ends with the viewing
 		closeObserverChannel();        // O34
+		s_upstreamDelay = 0;           // O39
 		ReplayFollow::turnOff();
 		setState(STATE_NONE);
 		s_roomHost = 0;
 		s_watcher = FALSE;
 	}
+}
+
+Int LanRoom::upstreamDelaySeconds()
+{
+	return (s_watcher && (s_state == STATE_STARTING || s_state == STATE_PLAYING)) ? s_upstreamDelay : 0;
 }
 
 Bool LanRoom::observerChannelOpen()
@@ -1046,6 +1075,7 @@ void LanRoom::sendObserverChat(const UnicodeString &text)
 		to.sin_port = htons((unsigned short)OBSERVER_CHAT_PORT);
 		to.sin_addr.s_addr = htonl(s_peers[i].ip);
 		sendto(s_chatSocket, (const char *)packet, length, 0, (sockaddr *)&to, sizeof(to));
+		chatLog("SENT to", s_peers[i].ip, text);
 	}
 	if (TheInGameUI != nullptr)
 	{
