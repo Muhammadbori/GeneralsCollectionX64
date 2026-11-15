@@ -92,8 +92,9 @@ namespace
 	//   move X Y               move the pointer to X Y (it stays there for the next steps)
 	//   click X Y [HOVER HOLD] move to X Y, wait HOVER ms (default 500), left button down, HOLD ms (default 200), up
 	//   rclick X Y [HOVER HOLD] the same with the right button
-	//   clickwin NAME [FX]     click the window NAME (for example OptionsMenu.wnd:Sections.TextPack) at FX/1000 of its
-	//                          width (default 500: the middle), half its height; skipped with a log line when not found
+	//   clickwin NAME [FX] [FY] click the window NAME (for example OptionsMenu.wnd:Sections.TextPack) at FX/1000 of its
+	//                          width and FY/1000 of its height (default 500 500: the middle); skipped with a log line
+	//                          when not found. An open combo box list is part of its combo box window.
 	//   key NAME               press and release a key: ESC TAB ENTER SPACE BACKSPACE UP DOWN LEFT RIGHT F1..F12 A..Z 0..9
 	//   text WORDS             type the rest of the line into the window that has the keyboard focus
 	//   shot NAME              save <shot folder>\NAME.png after the next drawn frame (the -shotDir folder)
@@ -298,11 +299,11 @@ void FrameShots::setUiScript(const char *path)
 		{
 			step.op = UiStep::OP_CLICKWIN;
 			char name[256] = {};
-			Int fx = 500;
-			const Int got = sscanf(rest, " %255s %d", name, &fx);
+			Int fx = 500, fy = 500;
+			const Int got = sscanf(rest, " %255s %d %d", name, &fx, &fy);
 			ok = got >= 1;
 			step.text = name;
-			a = fx; b = 0; c = 500; d = 200;
+			a = fx; b = fy; c = 500; d = 200;
 		}
 		else if (stricmp(word, "key") == 0 || stricmp(word, "text") == 0 || stricmp(word, "shot") == 0)
 		{
@@ -429,8 +430,9 @@ void FrameShots::runUiScript()
 					win->winGetScreenPosition(&x, &y);
 					win->winGetSize(&w, &h);
 					const Int fx = step.a < 0 ? 0 : (step.a > 1000 ? 1000 : step.a);
+					const Int fy = step.b < 0 ? 0 : (step.b > 1000 ? 1000 : step.b);
 					s_uiPointer.x = x + (w > 1 ? (w - 1) * fx / 1000 : 0);
-					s_uiPointer.y = y + h / 2;
+					s_uiPointer.y = y + (h > 1 ? (h - 1) * fy / 1000 : 0);
 				}
 				else
 				{
