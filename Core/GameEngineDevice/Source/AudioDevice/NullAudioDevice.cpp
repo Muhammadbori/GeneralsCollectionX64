@@ -103,8 +103,8 @@ void NullAudioDevice::update(UnsignedInt logicFrame, Bool logicIsRunning)
 		if (!v->playing || v->paused || v->dead) {
 			continue;
 		}
-		if (v->kind == AVK_Stream && v->loopCount <= 0) {
-			continue;	// loops for ever
+		if ((v->kind == AVK_Stream && v->loopCount <= 0) || v->loopsNatively) {
+			continue;	// loops for ever (O72: or a sample looping in the device)
 		}
 		const UnsignedInt64 passes = v->kind == AVK_Stream ? (UnsignedInt64)v->loopCount : 1;
 		if (now >= v->startTick + v->passTicks * passes)
@@ -158,6 +158,7 @@ NullAudioDevice::Voice *NullAudioDevice::newVoice(AudioVoiceKind kind)
 	v->kind = kind;
 	v->debugIndex = 0;
 	v->generation = ++m_generationCounter;   // O71
+	v->loopsNatively = FALSE;
 	v->playing = FALSE;
 	v->ended = FALSE;
 	v->paused = FALSE;
@@ -176,6 +177,7 @@ NullAudioDevice::Voice *NullAudioDevice::newVoice(AudioVoiceKind kind)
 void NullAudioDevice::startVoice(Voice *v, Real ms)
 {
 	v->generation = ++m_generationCounter;
+	v->loopsNatively = FALSE;   // O72
 	v->playing = TRUE;
 	v->ended = FALSE;
 	v->paused = FALSE;
@@ -210,11 +212,42 @@ void NullAudioDevice::freeVoice(AudioVoice voice, AudioVoiceKind kind)
 {
 	Voice *v = toVoice(voice);
 	v->generation = ++m_generationCounter;
+	v->loopsNatively = FALSE;   // O72
 	v->playing = FALSE;
 	v->dead = TRUE;
 }
 
 //-------------------------------------------------------------------------------------------------
+Bool NullAudioDevice::setVoiceLooping(AudioVoice voice, AudioVoiceKind kind, Bool loop)
+{
+	// O72: as miniaudio: looping, no end; set FALSE, the end comes at the end of the pass now playing
+	Voice *v = toVoice(voice);
+	if (kind == AVK_Stream || !v->playing || v->dead) {
+		return FALSE;
+	}
+	if (loop) {
+		v->loopsNatively = TRUE;
+	} else if (v->loopsNatively) {
+		const UnsignedInt64 now = v->paused ? v->pausedTick : m_clock.ticks();
+		if (now > v->startTick && v->passTicks > 0) {
+			v->startTick += ((now - v->startTick) / v->passTicks) * v->passTicks;
+		}
+		v->loopsNatively = FALSE;
+	}
+	return TRUE;
+}
+
+Int NullAudioDevice::playingVoiceCount() const
+{
+	Int n = 0;
+	for (size_t i = 0; i < m_voices.size(); ++i) {
+		if (m_voices[i]->playing && !m_voices[i]->dead) {
+			++n;
+		}
+	}
+	return n;
+}
+
 UnsignedInt NullAudioDevice::voiceGeneration(AudioVoice voice, AudioVoiceKind kind) const
 {
 	return ((const Voice *)voice)->generation;
@@ -232,6 +265,7 @@ void NullAudioDevice::prepare2D(AudioVoice voice, Real volume, Real pitchShift, 
 {
 	Voice *v = toVoice(voice);
 	v->generation = ++m_generationCounter;
+	v->loopsNatively = FALSE;   // O72
 	v->playing = FALSE;
 	v->ended = FALSE;
 	v->paused = FALSE;
@@ -301,6 +335,7 @@ void NullAudioDevice::release(AudioVoice voice, AudioVoiceKind kind)
 {
 	Voice *v = toVoice(voice);
 	v->generation = ++m_generationCounter;
+	v->loopsNatively = FALSE;   // O72
 	v->playing = FALSE;
 	v->paused = FALSE;
 	if (kind == AVK_Stream) {
