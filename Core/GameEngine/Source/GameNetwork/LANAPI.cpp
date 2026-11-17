@@ -34,6 +34,7 @@
 #include "Common/RandomValue.h"
 #include "GameClient/GameText.h"
 #include "GameClient/LocalizedFallback.h"
+#include "Common/version.h"
 #include "GameClient/MapUtil.h"
 #include "Common/UserPreferences.h"
 #include "GameLogic/GameLogic.h"
@@ -851,9 +852,10 @@ void LANAPI::RequestGameJoin( LANGameInfo *game, UnsignedInt ip /* = 0 */ )
 		return;
 	}
 	// O62: another version's room is not joined (the lobby says so first; this also covers a direct connect)
-	if (game->getLanProtocol() != LANProtocolVersion)
+	if (!LanSameVersion(game))   // O63: the build identity too
 	{
-		LanTest::joinLog("joiner: the room is protocol %d, this build %d: not joined", game->getLanProtocol(), LANProtocolVersion);
+		LanTest::joinLog("joiner: the room is protocol %d build '%s', this one %d '%s': not joined", game->getLanProtocol(),
+			game->getLanBuild().str(), LANProtocolVersion, LanBuildIdentity().str());
 		m_pendingAction = ACT_NONE;
 		OnGameJoin( RET_CRC_MISMATCH, nullptr );
 		return;
@@ -866,6 +868,7 @@ void LANAPI::RequestGameJoin( LANGameInfo *game, UnsignedInt ip /* = 0 */ )
 	wcslcpy(msg.GameToJoin.gameName, game->getName().str(), ARRAY_SIZE(msg.GameToJoin.gameName));   // O62
 	msg.GameToJoin.protocolMagic = LANProtocolMagic;
 	msg.GameToJoin.protocol = LANProtocolVersion;
+	strlcpy(msg.GameToJoin.build, LanBuildIdentity().str(), ARRAY_SIZE(msg.GameToJoin.build));   // O63
 	msg.GameToJoin.exeCRC = TheGlobalData->m_exeCRC;
 	msg.GameToJoin.iniCRC = TheGlobalData->m_iniCRC;
 
@@ -1036,6 +1039,27 @@ void LANAPI::RequestChat( UnicodeString message, ChatType format )
 	sendMessage(&msg);
 
 	OnChat(m_name, m_localIP, message, format);
+}
+
+AsciiString LanBuildIdentity()
+{
+	static AsciiString s_id;
+	static Bool s_made = FALSE;
+	if (!s_made && TheVersion != nullptr)
+	{
+		s_made = TRUE;
+		// letters, digits and '~' only: it travels in the room's options ("BV=") and in the join
+		const AsciiString full = TheVersion->getAsciiGitShortHash();
+		for (const char *c = full.str(); c != nullptr && *c != 0 && s_id.getLength() < 15; ++c) {
+			if (isalnum((unsigned char)*c) || *c == '~') s_id.concat(*c);
+		}
+	}
+	return s_id;
+}
+
+Bool LanSameVersion(const GameInfo *game)
+{
+	return game != nullptr && game->getLanProtocol() == LANProtocolVersion && game->getLanBuild().compare(LanBuildIdentity()) == 0;
 }
 
 void LANAPI::RequestGameStart()
@@ -1250,6 +1274,7 @@ void LANAPI::RequestGameCreate( UnicodeString gameName, Bool isDirectConnect )
 //	myGame->setInProgress(false);
 	myGame->enterGame();
 	myGame->setLanProtocol(LANProtocolVersion);   // O62: this build's rooms carry its protocol
+	myGame->setLanBuild(LanBuildIdentity());       // O63: and its build identity
 	UnicodeString s;
 	s.format(L"%8.8X%8.8X", m_localIP, myGame->getSeed());
 	if (gameName.isEmpty())

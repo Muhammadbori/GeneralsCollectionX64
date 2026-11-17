@@ -784,7 +784,7 @@ namespace
 			r.files = filesMarkOfIP(game->getHostIP());
 			r.shield = shieldOfIP(game->getHostIP());
 			r.inProgress = game->isGameInProgress();
-			r.otherVersion = game->getLanProtocol() != LANProtocolVersion;   // O62
+			r.otherVersion = !LanSameVersion(game);   // O62: another protocol number; O63: or another build
 			{
 				Int hostDelay = 60;
 				Bool outsideAllowed = TRUE;

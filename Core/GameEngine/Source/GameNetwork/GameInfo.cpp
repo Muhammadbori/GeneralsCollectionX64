@@ -322,6 +322,7 @@ void GameInfo::reset()
   m_oldFactionsOnly = FALSE;
 	m_hostObserves = FALSE;   // O60
 	m_lanProtocol = 0;        // O62
+	m_lanBuild.clear();       // O63
 //	m_localIP = 0; // BGC - actually we don't want this to be reset since the m_localIP is
 										// set properly in the constructor of LANGameInfo which uses this as a base class.
 	m_mapCRC = 0;
@@ -1122,6 +1123,13 @@ static AsciiString buildGameInfoAsciiString(const GameInfo& game, const AsciiStr
 		AsciiString pv;
 		pv.format("PV=%d;", game.getLanProtocol());
 		optionsString.concat(pv);
+		// O63: the build identity
+		if (!game.getLanBuild().isEmpty())
+		{
+			AsciiString bv;
+			bv.format("BV=%s;", game.getLanBuild().str());
+			optionsString.concat(bv);
+		}
 	}
 	// O60 (row 46): the admin watches from outside the seats
 	if (game.getHostObserves())
@@ -1250,6 +1258,7 @@ Bool ParseAsciiStringToGameInfo(GameInfo *game, AsciiString options)
   Bool oldFactionsOnly = FALSE;
 	Bool hostObserves = FALSE;   // O60
 	Int lanProtocol = 0;         // O62
+	AsciiString lanBuild;        // O63
 	Int useStats = TRUE;
   Money startingCash = TheGlobalData->m_defaultStartingCash;
   UnsignedShort restriction = 0; // Always the default
@@ -1375,6 +1384,10 @@ Bool ParseAsciiStringToGameInfo(GameInfo *game, AsciiString options)
 		else if (key.compare("PV") == 0)
 		{
 			lanProtocol = atoi(val.str());   // O62
+		}
+		else if (key.compare("BV") == 0)
+		{
+			lanBuild = val;   // O63
 		}
 		else if (key.compare("HO") == 0)
 		{
@@ -1750,6 +1763,7 @@ Bool ParseAsciiStringToGameInfo(GameInfo *game, AsciiString options)
 		game->setOldFactionsOnly(oldFactionsOnly);
 		game->setHostObserves(hostObserves);   // O60
 		game->setLanProtocol(lanProtocol);     // O62
+		game->setLanBuild(lanBuild);           // O63
 
 		return true;
 	}

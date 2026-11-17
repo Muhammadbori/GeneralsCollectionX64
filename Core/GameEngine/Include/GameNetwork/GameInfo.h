@@ -261,6 +261,9 @@ public:
 	/// O62: the LAN protocol of the room ("PV=n;" in the options; 0: none, an older build's room)
 	Int getLanProtocol() const { return m_lanProtocol; }
 	void setLanProtocol( Int protocol ) { m_lanProtocol = protocol; }
+	/// O63: the build identity of the room ("BV=<hash>;"; empty: none)
+	const AsciiString &getLanBuild() const { return m_lanBuild; }
+	void setLanBuild( const AsciiString &build ) { m_lanBuild = build; }
 
 protected:
 	Int m_preorderMask;
@@ -285,6 +288,7 @@ protected:
   Bool m_oldFactionsOnly; // Only USA, China, GLA -- not USA Air Force General, GLA Toxic General, et al
 	Bool m_hostObserves;    ///< O60
 	Int m_lanProtocol;      ///< O62
+	AsciiString m_lanBuild; ///< O63
 };
 
 extern GameInfo *TheGameInfo;

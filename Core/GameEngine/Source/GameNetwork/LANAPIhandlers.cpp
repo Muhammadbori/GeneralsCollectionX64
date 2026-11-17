@@ -322,7 +322,9 @@ void LANAPI::handleRequestJoin( LANMessage *msg, UnsignedInt senderIP )
 	}
 	// TheSuperHackers @feature O62 Another version's join (no protocol number, or another one) is refused with the
 	// version line (an older build shows its own "version" text for RET_CRC_MISMATCH), never seated
-	if (msg->GameToJoin.protocolMagic != LANProtocolMagic || msg->GameToJoin.protocol != LANProtocolVersion)
+	msg->GameToJoin.build[ARRAY_SIZE(msg->GameToJoin.build) - 1] = 0;
+	if (msg->GameToJoin.protocolMagic != LANProtocolMagic || msg->GameToJoin.protocol != LANProtocolVersion
+		|| LanBuildIdentity().compare(msg->GameToJoin.build) != 0)   // O63: another build of the same number too
 	{
 		LanTest::joinLog("host: join request from %d.%d.%d.%d of another protocol: refused", PRINTF_IP_AS_4_INTS(senderIP));
 		LANMessage deny;
@@ -378,6 +380,7 @@ void LANAPI::handleRequestJoin( LANMessage *msg, UnsignedInt senderIP )
 					reply.GameJoined.playerIP = senderIP;
 					reply.GameJoined.protocolMagic = LANProtocolMagic;   // O62
 					reply.GameJoined.protocol = LANProtocolVersion;
+					strlcpy(reply.GameJoined.build, LanBuildIdentity().str(), ARRAY_SIZE(reply.GameJoined.build));   // O63
 					LanTest::joinLog("host: join request again from %d.%d.%d.%d: accepted again, slot %d", PRINTF_IP_AS_4_INTS(senderIP), player);
 					sendMessage(&reply, 0);   // as the first accept
 					RequestGameOptions(GenerateGameOptionsString(), true);
@@ -508,6 +511,7 @@ void LANAPI::handleRequestJoin( LANMessage *msg, UnsignedInt senderIP )
 					reply.GameJoined.playerIP = senderIP;
 					reply.GameJoined.protocolMagic = LANProtocolMagic;   // O62
 					reply.GameJoined.protocol = LANProtocolVersion;
+					strlcpy(reply.GameJoined.build, LanBuildIdentity().str(), ARRAY_SIZE(reply.GameJoined.build));   // O63
 
 					LANGameSlot newSlot;
 					newSlot.setState(SLOT_PLAYER, UnicodeString(msg->name));
@@ -563,7 +567,9 @@ void LANAPI::handleJoinAccept( LANMessage *msg, UnsignedInt senderIP )
 				return;
 			}
 			// O62: an accept of another protocol (an older host) is no join
-			if (msg->GameJoined.protocolMagic != LANProtocolMagic || msg->GameJoined.protocol != LANProtocolVersion)
+			msg->GameJoined.build[ARRAY_SIZE(msg->GameJoined.build) - 1] = 0;
+			if (msg->GameJoined.protocolMagic != LANProtocolMagic || msg->GameJoined.protocol != LANProtocolVersion
+				|| LanBuildIdentity().compare(msg->GameJoined.build) != 0)   // O63
 			{
 				LanTest::joinLog("joiner: an accept of another protocol: not joined");
 				m_pendingAction = ACT_NONE;

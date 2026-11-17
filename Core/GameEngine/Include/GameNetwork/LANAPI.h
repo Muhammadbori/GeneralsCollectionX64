@@ -241,6 +241,7 @@ struct LANMessage
 			WideChar gameName[g_lanGameNameLength+1];   ///< O62 (H5 #2): the room asked for (the host checks it is his)
 			UnsignedInt protocolMagic;                  ///< O62: LANProtocolMagic
 			Int protocol;                               ///< O62: LANProtocolVersion
+			char build[16];                             ///< O63: LanBuildIdentity
 		} GameToJoin;
 
 		// GameJoined is sent with JOIN_ACCEPT
@@ -252,6 +253,7 @@ struct LANMessage
 			Int slotPosition;
 			UnsignedInt protocolMagic;   ///< O62: LANProtocolMagic
 			Int protocol;                ///< O62: LANProtocolVersion
+			char build[16];              ///< O63: LanBuildIdentity
 		} GameJoined;
 
 		// GameNotJoined is sent with JOIN_DENY
@@ -351,9 +353,18 @@ static const UnsignedInt LANStartMagic = 0x53545231;       ///< "STR1" (O62)
 // request and accept (GameToJoin, GameJoined, with LANProtocolMagic); a different number is another version: its room
 // is listed as "другая версия" and cannot be joined or watched, a join of it is refused with the version line. Bump it
 // whenever the wire of the room, the start, the observers' channel or the stream changes. 1 = O59..O62 (plan3/plan4 and
-// older have none: 0).
+// older have none: 0); 2 = O63 (the build identity in the join).
+// TheSuperHackers @feature O63 Next to the number, the BUILD IDENTITY: the git commit of the build (Version's short hash,
+// "~" first when it was built with uncommitted changes), the same for every exe of one build (the product and the
+// uitest exe) and not changed by any pack. A room carries it ("BV=<hash>;"), and so do the join request and accept; a
+// different identity is "другая версия" as a different number. (The exe CRC differs between the product and uitest
+// exes of one build; the ini CRC is the original's and stays unused, see plan1-o63-report.md.)
 static const UnsignedInt LANProtocolMagic = 0x3156504C;    ///< "LPV1"
-static const Int LANProtocolVersion = 1;
+static const Int LANProtocolVersion = 2;
+/// O63: this build's identity (letters, digits and '~', at most 15).
+AsciiString LanBuildIdentity();
+/// O63: the room is this build's: the same protocol number and the same build identity.
+Bool LanSameVersion(const GameInfo *game);
 static const UnsignedInt LANGuardDataMagic = 0x31445247;   ///< "GRD1" (O30)
 static const UnsignedInt LANRoomMagic = 0x324D4F52;        ///< "ROM2" (O31; O62: the room messages of protocol 1, so an older build's and this build's ignore each other)
 namespace LanFiles

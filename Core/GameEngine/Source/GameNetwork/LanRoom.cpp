@@ -1278,7 +1278,7 @@ void LanRoom::startObserving(UnsignedInt hostIP)
 		return;
 	}
 	if (TheLAN != nullptr && TheLAN->LookupGameByHost(hostIP) != nullptr
-		&& TheLAN->LookupGameByHost(hostIP)->getLanProtocol() != LANProtocolVersion)
+		&& !LanSameVersion(TheLAN->LookupGameByHost(hostIP)))   // O62/O63
 	{
 		notice(textOf(kOtherVersion));   // O62: another version's room is not observed
 		return;
@@ -1332,9 +1332,9 @@ void LanRoom::startWatching(LANGameInfo *game, Int extraSeconds)
 	if (game == nullptr || TheLAN == nullptr || s_state == STATE_STARTING || s_state == STATE_PLAYING) {
 		return;
 	}
-	if (game->getLanProtocol() != LANProtocolVersion)
+	if (!LanSameVersion(game))
 	{
-		notice(textOf(kOtherVersion));   // O62: another version's match is not watched
+		notice(textOf(kOtherVersion));   // O62/O63: another version's (or build's) match is not watched
 		return;
 	}
 	if (game->getHostIP() == TheLAN->GetLocalIP()) {
