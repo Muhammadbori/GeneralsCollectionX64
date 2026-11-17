@@ -1123,6 +1123,31 @@ void Packs::writeLog(const std::vector<AsciiString> &files, const std::vector<As
 	for (size_t i = 0; i < st.leftOut.size(); ++i) {
 		fprintf(fp, "left out of the list: %s\n", st.leftOut[i].str());
 	}
+	// TheSuperHackers @feature O50 An Exclude of a pack in use that no line of the archive list matched: a wrong path in
+	// pack.ini shows here (as read: a cut value shows cut, for example by a NUL written for "\00" by a script).
+	for (Int kind = 0; kind < KIND_COUNT; ++kind)
+	{
+		const KindState &k = st.kinds[kind];
+		const Int used[2] = { k.active, k.active >= 0 ? k.fallback : -1 };
+		for (Int u = 0; u < 2; ++u)
+		{
+			if (used[u] < 0 || (u == 1 && used[1] == used[0])) {
+				continue;
+			}
+			const Pack &pack = k.packs[used[u]];
+			for (size_t x = 0; x < pack.excludes.size(); ++x)
+			{
+				Bool matched = FALSE;
+				for (size_t i = 0; i < st.leftOut.size() && !matched; ++i) {
+					matched = stricmp(normalizedEntry(st.leftOut[i]).str(), pack.excludes[x].str()) == 0;
+				}
+				if (!matched) {
+					fprintf(fp, "Exclude of the %s pack '%s' matches no line of the archive list: '%s'\n", kFolders[kind],
+						pack.name.str(), pack.excludes[x].str());
+				}
+			}
+		}
+	}
 	for (size_t i = 0; i < st.problems.size(); ++i)
 	{
 		const ProblemEntry &e = st.problems[i];

@@ -807,6 +807,8 @@ namespace
 		}
 	}
 
+	void setListenStatus(const UnicodeString &status);   // O50, below
+
 	void showSection(Section section)
 	{
 		// O47: a voice line played by the listen buttons ends when the section is left
@@ -814,7 +816,7 @@ namespace
 		{
 			VoicePreview::stop();
 			if (s.listenStatus != nullptr) {
-				GadgetStaticTextSetText(s.listenStatus, UnicodeString::TheEmptyString);
+				setListenStatus(UnicodeString::TheEmptyString);
 			}
 		}
 		s.current = section;
@@ -1029,7 +1031,9 @@ namespace
 	// screen's own detail list; numbers and continuous values are the ticked slider (TickSlider.h). A row is prepared first
 	// (its windows made on the section's first page at places relative to the row, its height known) and then placed by
 	// the flow, which can so look one row ahead (no page with a single row left over).
-	enum { MAX_ROW_WINDOWS = 4 };
+	// TheSuperHackers @bugfix O50 was 4: the listen row (a title, three buttons and the status line) lost its status line,
+	// which then stayed where it was made, in the left column over the movie language box
+	enum { MAX_ROW_WINDOWS = 8 };
 	struct Row
 	{
 		Int height;              ///< -1: takes no room (a control the .wnd hides)
@@ -1467,14 +1471,50 @@ namespace
 		TheDisplay->drawOpenRect(x, y, w, h, 1.0f, GameMakeColor(255, 255, 255, 96));
 	}
 
+	/// O50: the listen status in one line: shortened with "..." when it is wider than the line, the whole text as tooltip.
+	void setListenStatus(const UnicodeString &status)
+	{
+		if (s.listenStatus == nullptr) {
+			return;
+		}
+		Int lineW = 0, lineH = 0;
+		s.listenStatus->winGetSize(&lineW, &lineH);
+		const Int room = lineW - 10;
+		UnicodeString shown = status;
+		GameFont *font = labelFont();
+		if (font != nullptr && room > 0 && textSize(font, status, 0).x > room)
+		{
+			const WideChar *all = status.str();
+			Int n = status.getLength();
+			while (n > 0)
+			{
+				--n;
+				UnicodeString part;
+				for (Int i = 0; i < n; ++i) {
+					part.concat(all[i]);
+				}
+				part.trim();
+				part.concat(L"...");
+				if (textSize(font, part, 0).x <= room) {
+					shown = part;
+					break;
+				}
+			}
+		}
+		GadgetStaticTextSetText(s.listenStatus, shown);
+		s.listenStatus->winSetTooltip(shown == status ? UnicodeString::TheEmptyString : status);
+	}
+
 	/// O47 (row 32): "Listen to the voices:", the three buttons (in one row when their texts fit a third of the column
 	/// each, else one under another) and a status line (the line that plays, or why nothing does).
 	void prepareListenRow(Row &row, GameWindow *page, Int colW, Int labelH)
 	{
 		Int y = 0;
-		s.listenTitle = makeLabel(page, s.labelLook, 0, y, colW, labelH, VoicePreview::title(), FALSE);
+		// O50: the room the title needs (it wrapped onto the voices box at 800x600 in Russian)
+		const Int titleH = labelHeightFor(labelFont(), VoicePreview::title(), colW, labelH);
+		s.listenTitle = makeLabel(page, s.labelLook, 0, y, colW, titleH, VoicePreview::title(), FALSE);
 		rowAdd(row, s.listenTitle, 0, y);
-		y += labelH + s.gap / 2;
+		y += titleH + s.gap / 2;
 		WinInstanceData look;
 		copyLook(look, s.buttonLook, GWS_PUSH_BUTTON | GWS_MOUSE_TRACK);
 		GameFont *font = labelFont() != nullptr ? labelFont() : look.m_font;
@@ -1510,9 +1550,8 @@ namespace
 		}
 		y += oneRow ? buttonH : VoicePreview::UNIT_COUNT * buttonH + (VoicePreview::UNIT_COUNT - 1) * (s.gap / 2);
 		y += s.gap / 2;
-		// room for two lines (a missing line names the file)
-		const Int statusH = max(labelH * 2, labelHeightFor(labelFont(),
-			UnicodeString(L"WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW (vdousea)"), colW, labelH));
+		// O50: one line under the buttons; a longer text is shortened, the whole of it is the tooltip (setListenStatus)
+		const Int statusH = labelH;
 		s.listenStatus = makeLabel(page, s.labelLook, 0, y, colW, statusH, UnicodeString::TheEmptyString, FALSE);
 		rowAdd(row, s.listenStatus, 0, y);
 		row.height = y + statusH;
@@ -2389,9 +2428,7 @@ Bool OptionsSections::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgD
 					const Int r = voicePackRow();
 					UnicodeString status;
 					VoicePreview::play(u, r >= 0 ? selectedPack(r) : nullptr, &status);
-					if (s.listenStatus != nullptr) {
-						GadgetStaticTextSetText(s.listenStatus, status);
-					}
+					setListenStatus(status);   // O50
 					return TRUE;
 				}
 			}
@@ -2483,7 +2520,7 @@ Bool OptionsSections::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgD
 						// O47: another voice pack: the line of the one before stops
 						VoicePreview::stop();
 						if (s.listenStatus != nullptr) {
-							GadgetStaticTextSetText(s.listenStatus, UnicodeString::TheEmptyString);
+							setListenStatus(UnicodeString::TheEmptyString);
 						}
 					}
 					if (r == PACK_ROW_TEXT)
