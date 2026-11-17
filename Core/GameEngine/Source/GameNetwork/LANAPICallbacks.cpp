@@ -385,6 +385,7 @@ void LANAPI::OnGameOptions( UnsignedInt playerIP, Int playerSlot, AsciiString op
 		// Parse player requests (side, color, etc)
 		if( AmIHost() && m_localIP != playerIP)
 		{
+			m_seatJoinedMs[playerSlot] = 0;   // O70: heard from: the seat is confirmed
 			if (options.compare("HELLO") == 0)
 			{
 				m_currentGame->setPlayerLastHeard(playerSlot, timeGetTime());
