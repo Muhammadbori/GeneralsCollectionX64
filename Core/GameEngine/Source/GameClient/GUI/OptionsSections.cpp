@@ -1482,7 +1482,8 @@ namespace
 		const Int room = lineW - 10;
 		UnicodeString shown = status;
 		GameFont *font = labelFont();
-		if (font != nullptr && room > 0 && textSize(font, status, 0).x > room)
+		// O51: shortened only when the wrapped text is taller than the status' room (two lines)
+		if (font != nullptr && room > 0 && textSize(font, status, room).y > lineH)
 		{
 			const WideChar *all = status.str();
 			Int n = status.getLength();
@@ -1495,7 +1496,7 @@ namespace
 				}
 				part.trim();
 				part.concat(L"...");
-				if (textSize(font, part, 0).x <= room) {
+				if (textSize(font, part, room).y <= lineH) {
 					shown = part;
 					break;
 				}
@@ -1550,8 +1551,9 @@ namespace
 		}
 		y += oneRow ? buttonH : VoicePreview::UNIT_COUNT * buttonH + (VoicePreview::UNIT_COUNT - 1) * (s.gap / 2);
 		y += s.gap / 2;
-		// O50: one line under the buttons; a longer text is shortened, the whole of it is the tooltip (setListenStatus)
-		const Int statusH = labelH;
+		// O51: room for two lines under the buttons (the longest status of both languages wraps once at 800x600); a text
+		// that needs more is shortened, the whole of it is the tooltip (setListenStatus)
+		const Int statusH = max(labelH * 2, textSize(labelFont(), UnicodeString(L"Wg"), 0).y * 2 + 6);
 		s.listenStatus = makeLabel(page, s.labelLook, 0, y, colW, statusH, UnicodeString::TheEmptyString, FALSE);
 		rowAdd(row, s.listenStatus, 0, y);
 		row.height = y + statusH;

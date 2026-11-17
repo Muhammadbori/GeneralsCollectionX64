@@ -167,6 +167,11 @@ WindowMsgHandledType GadgetComboBoxInput( GameWindow *window, UnsignedInt msg,
 					// If the Listbox isn't showing, Show it.
 					if(listBox->winIsHidden())
 					{
+						// TheSuperHackers @bugfix O51 (row 38) The opened list is drawn over, and takes the clicks of, the windows
+						// beside its box: the box goes to the top of its parent's windows (a list that dropped onto a panel
+						// that came later in the .wnd, like the skirmish statistics under the moved Starting cash row, lay
+						// behind it and could not be clicked).
+						window->winBringToTop();
 						listBox->winHide(FALSE);
 						window->winGetSize(&winSize.x, &winSize.y);
 						WinInstanceData *listInstData = listBox->winGetInstanceData();
@@ -664,6 +669,11 @@ WindowMsgHandledType GadgetComboBoxSystem( GameWindow *window, UnsignedInt msg,
 					// If the Listbox isn't showing, Show it.
 					if(listBox->winIsHidden())
 					{
+						// TheSuperHackers @bugfix O51 (row 38) The opened list is drawn over, and takes the clicks of, the windows
+						// beside its box: the box goes to the top of its parent's windows (a list that dropped onto a panel
+						// that came later in the .wnd, like the skirmish statistics under the moved Starting cash row, lay
+						// behind it and could not be clicked).
+						window->winBringToTop();
 						listBox->winHide(FALSE);
 						window->winGetSize(&winSize.x, &winSize.y);
 						WinInstanceData *listInstData = listBox->winGetInstanceData();

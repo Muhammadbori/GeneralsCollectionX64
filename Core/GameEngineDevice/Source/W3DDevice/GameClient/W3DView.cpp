@@ -1415,7 +1415,9 @@ void W3DView::update()
 		const Bool inMatch = cameraOptionsApply();
 		const Real pitch = inMatch ? OptionPreferences::optionCameraPitch() : 0.0f;
 		const Real height = inMatch ? OptionPreferences::optionMaxCameraHeight() : 0.0f;
-		if (inMatch != m_optionsCameraInMatch || pitch != m_optionsCameraPitch || height != m_optionsCameraHeight)
+		// O51: only a change of what acts (both 0 = "Standard": nothing is touched, also when a match starts or ends)
+		m_optionsCameraInMatch = inMatch;
+		if (pitch != m_optionsCameraPitch || height != m_optionsCameraHeight)
 		{
 			const Bool pitchChanged = pitch != m_optionsCameraPitch;
 			m_optionsCameraInMatch = inMatch;

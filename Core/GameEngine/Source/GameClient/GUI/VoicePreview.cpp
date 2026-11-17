@@ -45,9 +45,11 @@ namespace
 	const Text kTitle = { "GUI:VoicePreviewTitle", L"Listen to the voices:", L"\x041F\x0440\x043E\x0441\x043B\x0443\x0448\x0430\x0442\x044C \x0433\x043E\x043B\x043E\x0441\x0430:" };
 	const Text kButtons[VoicePreview::UNIT_COUNT] = { { "GUI:VoicePreviewUSADozer", L"USA dozer", L"\x0411\x0443\x043B\x044C\x0434\x043E\x0437\x0435\x0440 \x0421\x0428\x0410" }, { "GUI:VoicePreviewChinaDozer", L"China dozer", L"\x0411\x0443\x043B\x044C\x0434\x043E\x0437\x0435\x0440 \x041A\x0438\x0442\x0430\x044F" }, { "GUI:VoicePreviewGLAWorker", L"GLA worker", L"\x0420\x0430\x0431\x043E\x0447\x0438\x0439 GLA" } };
 	const Text kTips[VoicePreview::UNIT_COUNT] = { { "GUI:VoicePreviewUSADozerTip", L"Listen: USA dozer (select voice)", L"\x041F\x0440\x043E\x0441\x043B\x0443\x0448\x0430\x0442\x044C: \x0431\x0443\x043B\x044C\x0434\x043E\x0437\x0435\x0440 \x0421\x0428\x0410 (\x0433\x043E\x043B\x043E\x0441 \x043F\x0440\x0438 \x0432\x044B\x0431\x043E\x0440\x0435)" }, { "GUI:VoicePreviewChinaDozerTip", L"Listen: China dozer (select voice)", L"\x041F\x0440\x043E\x0441\x043B\x0443\x0448\x0430\x0442\x044C: \x0431\x0443\x043B\x044C\x0434\x043E\x0437\x0435\x0440 \x041A\x0438\x0442\x0430\x044F (\x0433\x043E\x043B\x043E\x0441 \x043F\x0440\x0438 \x0432\x044B\x0431\x043E\x0440\x0435)" }, { "GUI:VoicePreviewGLAWorkerTip", L"Listen: GLA worker (select voice)", L"\x041F\x0440\x043E\x0441\x043B\x0443\x0448\x0430\x0442\x044C: \x0440\x0430\x0431\x043E\x0447\x0438\x0439 GLA (\x0433\x043E\x043B\x043E\x0441 \x043F\x0440\x0438 \x0432\x044B\x0431\x043E\x0440\x0435)" } };
-	const Text kPlaying = { "GUI:VoicePreviewPlaying", L"Playing: %hs (%d.%d s)", L"\x0417\x0432\x0443\x0447\x0438\x0442: %hs (%d,%d \x0441)" };
-	const Text kMissing = { "GUI:VoicePreviewMissing", L"This voice pack has no such line (%hs).", L"\x0412 \x044D\x0442\x043E\x043C \x043F\x0430\x043A\x0435\x0442\x0435 \x043E\x0437\x0432\x0443\x0447\x043A\x0438 \x043D\x0435\x0442 \x044D\x0442\x043E\x0439 \x0440\x0435\x043F\x043B\x0438\x043A\x0438 (%hs)." };
-	const Text kNoSound = { "GUI:VoicePreviewNoSound", L"Found (%hs), but the sound is off or not available.", L"\x041D\x0430\x0439\x0434\x0435\x043D\x043E (%hs), \x043D\x043E \x0437\x0432\x0443\x043A \x0432\x044B\x043A\x043B\x044E\x0447\x0435\x043D \x0438\x043B\x0438 \x043D\x0435\x0434\x043E\x0441\x0442\x0443\x043F\x0435\x043D." };
+	// O51 (row 32): the player never sees a file name: the unit and "line n of m", or the phrase from the pack's phrases.txt
+	const Text kPlaying = { "GUI:VoicePreviewPlayingLine", L"%ls: line %d of %d (%d.%d s)", L"%ls: \x0440\x0435\x043F\x043B\x0438\x043A\x0430 %d \x0438\x0437 %d (%d,%d \x0441)" };
+	const Text kPlayingPhrase = { "GUI:VoicePreviewPlayingPhrase", L"%ls: \x201C%ls\x201D (%d.%d s)", L"%ls: \x00AB%ls\x00BB (%d,%d \x0441)" };
+	const Text kMissing = { "GUI:VoicePreviewMissingLine", L"This voice pack has no such line (%ls, line %d of %d).", L"\x0412 \x044D\x0442\x043E\x043C \x043F\x0430\x043A\x0435\x0442\x0435 \x043E\x0437\x0432\x0443\x0447\x043A\x0438 \x043D\x0435\x0442 \x044D\x0442\x043E\x0439 \x0440\x0435\x043F\x043B\x0438\x043A\x0438 (%ls, \x0440\x0435\x043F\x043B\x0438\x043A\x0430 %d \x0438\x0437 %d)." };
+	const Text kNoSound = { "GUI:VoicePreviewNoSoundLine", L"Found (%ls, line %d of %d), but the sound is off or not available.", L"\x041D\x0430\x0439\x0434\x0435\x043D\x043E (%ls, \x0440\x0435\x043F\x043B\x0438\x043A\x0430 %d \x0438\x0437 %d), \x043D\x043E \x0437\x0432\x0443\x043A \x0432\x044B\x043A\x043B\x044E\x0447\x0435\x043D \x0438\x043B\x0438 \x043D\x0435\x0434\x043E\x0441\x0442\x0443\x043F\x0435\x043D." };
 	const Text kNoUnit = { "GUI:VoicePreviewNoUnit", L"This unit's voice is not in the game data.", L"\x0413\x043E\x043B\x043E\x0441\x0430 \x044D\x0442\x043E\x0433\x043E \x044E\x043D\x0438\x0442\x0430 \x043D\x0435\x0442 \x0432 \x0434\x0430\x043D\x043D\x044B\x0445 \x0438\x0433\x0440\x044B." };
 
 	/// The units by their object names in the game's data (the plain ones, not a general's).
@@ -202,6 +204,72 @@ namespace
 	{
 		return pack != nullptr ? pack->name : AsciiString("(base data)");
 	}
+
+	/// TheSuperHackers @feature O51 (row 32) The phrase a voice line says, from the voice pack's phrases.txt
+	/// (Packs\Voice\<Pack>\phrases.txt; the base data's: Packs\Voice\phrases.txt): UTF-8 lines "<sound name> = <phrase>",
+	/// ';' or '#' starts a comment line, an empty phrase or a missing file or name: none (the status says "line n of m").
+	UnicodeString phraseOf(const Packs::Pack *pack, const AsciiString &sound)
+	{
+		AsciiString path;
+		if (pack != nullptr) {
+			path = pack->folder;
+		} else {
+			char exe[_MAX_PATH];
+			const DWORD n = GetModuleFileNameA(nullptr, exe, ARRAY_SIZE(exe));
+			if (n == 0 || n >= ARRAY_SIZE(exe)) {
+				return UnicodeString::TheEmptyString;
+			}
+			char *slash = strrchr(exe, '\\');
+			if (slash != nullptr) {
+				slash[1] = '\0';
+			}
+			path = exe;
+			path.concat("Packs\\");
+			path.concat(Packs::kindFolder(Packs::KIND_VOICE));
+			path.concat("\\");
+		}
+		path.concat("phrases.txt");
+		FILE *f = fopen(path.str(), "rb");
+		if (f == nullptr) {
+			return UnicodeString::TheEmptyString;
+		}
+		UnicodeString found;
+		char line[1024];
+		Bool first = TRUE;
+		while (found.isEmpty() && fgets(line, sizeof(line), f) != nullptr)
+		{
+			char *text = line;
+			if (first && (unsigned char)text[0] == 0xEF && (unsigned char)text[1] == 0xBB && (unsigned char)text[2] == 0xBF) {
+				text += 3;
+			}
+			first = FALSE;
+			AsciiString all(text);
+			all.trim();
+			if (all.isEmpty() || all.getCharAt(0) == ';' || all.getCharAt(0) == '#') {
+				continue;
+			}
+			const char *eq = strchr(all.str(), '=');
+			if (eq == nullptr) {
+				continue;
+			}
+			AsciiString key;
+			key.set(all.str(), (Int)(eq - all.str()));
+			key.trim();
+			if (stricmp(key.str(), sound.str()) != 0) {
+				continue;
+			}
+			AsciiString value(eq + 1);
+			value.trim();
+			WideChar wide[512];
+			const int w = MultiByteToWideChar(CP_UTF8, 0, value.str(), -1, wide, ARRAY_SIZE(wide));
+			if (w > 1) {
+				found = wide;
+			}
+			break;
+		}
+		fclose(f);
+		return found;
+	}
 }
 
 UnicodeString VoicePreview::title()
@@ -283,7 +351,7 @@ Bool VoicePreview::play(Int unit, const Packs::Pack *pack, UnicodeString *status
 		logLine("%s: pack %s: line %d/%d %s: NOT FOUND in %d archive(s) (%s)", kTags[unit], packName(pack).str(), index + 1, count,
 			sound.str(), (Int)archives.size(), localized.str());
 		if (status != nullptr) {
-			status->format(textOf(kMissing).str(), sound.str());
+			status->format(textOf(kMissing).str(), textOf(kButtons[unit]).str(), index + 1, count);
 		}
 		return FALSE;
 	}
@@ -297,10 +365,14 @@ Bool VoicePreview::play(Int unit, const Packs::Pack *pack, UnicodeString *status
 		played ? "PLAYED" : "NOT PLAYED (no audio device or an unknown format)");
 	if (status != nullptr)
 	{
-		if (played) {
-			status->format(textOf(kPlaying).str(), sound.str(), lengthMS / 1000, (lengthMS % 1000) / 100);
+		const UnicodeString unitName = textOf(kButtons[unit]);
+		const UnicodeString phrase = played ? phraseOf(pack, sound) : UnicodeString::TheEmptyString;
+		if (played && !phrase.isEmpty()) {
+			status->format(textOf(kPlayingPhrase).str(), unitName.str(), phrase.str(), lengthMS / 1000, (lengthMS % 1000) / 100);
+		} else if (played) {
+			status->format(textOf(kPlaying).str(), unitName.str(), index + 1, count, lengthMS / 1000, (lengthMS % 1000) / 100);
 		} else {
-			status->format(textOf(kNoSound).str(), sound.str());
+			status->format(textOf(kNoSound).str(), unitName.str(), index + 1, count);
 		}
 	}
 	return played;

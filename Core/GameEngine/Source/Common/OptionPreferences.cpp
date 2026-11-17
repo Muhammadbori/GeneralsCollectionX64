@@ -856,9 +856,8 @@ Bool OptionPreferences::getHideIPAddresses() const
 // ("Standard") brings them back without a restart. Only the options do that: a map's GameData block keeps its own
 // values when the key is absent.
 static Bool s_cameraDefaultsKept = FALSE;
-static Real s_defaultCameraPitch = 0.0f;
-static Real s_defaultMaxCameraHeight = 0.0f;
 static Real s_defaultCameraRotateSpeed = 0.0f;
+static Real s_cameraRotateSpeedWritten = 0.0f;   ///< O51: the rotate speed this function last put into GlobalData
 static Real s_optionCameraPitch = 0.0f;       ///< O49: 0 = the game's own
 static Real s_optionMaxCameraHeight = 0.0f;   ///< O49: 0 = the game's own
 
@@ -868,11 +867,13 @@ Real OptionPreferences::partialTerrainMaxCameraHeight() { return MAX_OPTION_CAME
 
 void OptionPreferences::applyCameraOverrides(Bool resetAbsentKeys)
 {
-	if (!s_cameraDefaultsKept)
+	// TheSuperHackers @bugfix O51 This runs after each GameData file: Data\INI\Default\GameData.ini first (in Zero Hour 39
+	// bytes, no camera keys), then Data\INI\GameData.ini. The GameData value is the last one an INI file gave, not the
+	// first: a value differing from what this function wrote last came from an INI file. (Before, the first call kept the
+	// GlobalData constructor's values, and O49 wrote its pitch 0 back over GameData's 37.5: a flat camera.)
+	if (!s_cameraDefaultsKept || TheGlobalData->m_keyboardCameraRotateSpeed != s_cameraRotateSpeedWritten)
 	{
 		s_cameraDefaultsKept = TRUE;
-		s_defaultCameraPitch = TheGlobalData->m_cameraPitch;
-		s_defaultMaxCameraHeight = TheGlobalData->m_maxCameraHeight;
 		s_defaultCameraRotateSpeed = TheGlobalData->m_keyboardCameraRotateSpeed;
 	}
 
@@ -882,6 +883,7 @@ void OptionPreferences::applyCameraOverrides(Bool resetAbsentKeys)
 	{
 		TheWritableGlobalData->m_keyboardCameraRotateSpeed = s_defaultCameraRotateSpeed * (Real)getCameraRotateSpeedPercent() / 100.0f;
 	}
+	s_cameraRotateSpeedWritten = TheGlobalData->m_keyboardCameraRotateSpeed;
 
 	OptionPreferences::const_iterator it = find("DrawEntireTerrain");
 	if (it != end())
@@ -905,7 +907,7 @@ void OptionPreferences::applyCameraOverrides(Bool resetAbsentKeys)
 	{
 		s_optionCameraPitch = 0.0f;
 	}
-	TheWritableGlobalData->m_cameraPitch = s_defaultCameraPitch;   // O49: an earlier build may have changed it
+	// O51: GlobalData's camera pitch is GameData's, untouched ("Standard" is the game's own camera, bit for bit)
 
 	it = find("MaxCameraHeight");
 	if (it != end() && parseOptionReal(it->second, &value))
@@ -925,7 +927,7 @@ void OptionPreferences::applyCameraOverrides(Bool resetAbsentKeys)
 	{
 		s_optionMaxCameraHeight = 0.0f;
 	}
-	TheWritableGlobalData->m_maxCameraHeight = s_defaultMaxCameraHeight;
+	// O51: GlobalData's highest camera is GameData's, untouched
 }
 
 void OptionPreferences::getResolution(Int *xres, Int *yres)
