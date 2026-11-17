@@ -52,6 +52,7 @@
 #include "GameClient/GameWindowGlobal.h"
 #include "GameClient/GameWindowManager.h"
 #include "GameClient/GadgetPushButton.h"
+#include "GameClient/HotkeyLetters.h"
 #include "GameClient/Display.h"
 #include "W3DDevice/GameClient/W3DGameWindow.h"
 #include "W3DDevice/GameClient/W3DDisplay.h"
@@ -271,6 +272,8 @@ void W3DGadgetPushButtonDraw( GameWindow *window, WinInstanceData *instData )
 		}
 	}
 
+	// TheSuperHackers @feature O49 (row 36) the command button's hotkey letter (HotkeyLetters.h)
+	HotkeyLetters::draw( window, origin.x, origin.y, size.x, size.y );
 }
 
 
@@ -481,6 +484,8 @@ void W3DGadgetPushButtonImageDrawOne( GameWindow *window,
 			}
 		}
 	}
+	// TheSuperHackers @feature O49 (row 36) the command button's hotkey letter (HotkeyLetters.h)
+	HotkeyLetters::draw( window, start.x, start.y, size.x, size.y );
 }
 
 
@@ -698,4 +703,6 @@ void W3DGadgetPushButtonImageDrawThree(GameWindow *window, WinInstanceData *inst
 			TheDisplay->drawOpenRect(start.x - 1, start.y - 1, size.x + 2, size.y + 2, 1, pData->colorBorder);
 		}
 	}
+	// TheSuperHackers @feature O49 (row 36) the command button's hotkey letter (HotkeyLetters.h)
+	HotkeyLetters::draw( window, origin.x, origin.y, size.x, size.y );
 }

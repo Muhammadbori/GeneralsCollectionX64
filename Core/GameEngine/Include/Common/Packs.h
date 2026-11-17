@@ -150,6 +150,9 @@ namespace Packs
 	void getMovieRoots(std::vector<AsciiString> &roots);     ///< folders to try first for a movie, each ends with '\'
 	AsciiString findFontFile(const AsciiString &fileName);   ///< a font of the packs in use, empty: none
 	const char *findPreviewPath(const char *textureName);    ///< the picture of a preview texture name, or nullptr
+	/// O49 (row 35): the base data's preview texture name of 'kind' (default.ini "Preview = <file>", else
+	/// base_preview.tga / .dds, in Packs\<Kind>\<Game>\ or Packs\<Kind>\); empty: none.
+	AsciiString basePreviewTexture(Kind kind);
 
 	/// The splash picture of the chosen text pack (before the engine starts); FALSE when the pack has none.
 	Bool findSplash(const char *fileName, char *path, Int pathSize);

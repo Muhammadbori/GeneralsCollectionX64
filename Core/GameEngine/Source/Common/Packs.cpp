@@ -71,6 +71,8 @@ namespace
 		UnicodeString baseEnglish;
 		UnicodeString baseRussian;
 		AsciiString baseTextLanguage;
+		AsciiString basePreviewFile;      ///< O49 (row 35): the base data's preview picture, empty: none
+		AsciiString basePreviewTexture;
 		AsciiString baseLanguage;    ///< O26: Voice, Movies: the spoken language of the base data (lower case)
 		Int active;                  ///< index into packs, -1: the base data
 		Int fallback;                ///< index into packs, -1: none
@@ -566,15 +568,40 @@ void Packs::scan()
 
 		AsciiString defaultIni = kindFolderPath;
 		defaultIni.concat("default.ini");
+		AsciiString basePreview;
 		readKeyValues(defaultIni.str(), [&](const AsciiString &key, const AsciiString &value)
 		{
-			if (keyIs(key, "Default")) k.defaultName = value;
+			if (keyIs(key, "Preview")) basePreview = value;
+			else if (keyIs(key, "Default")) k.defaultName = value;
 			else if (keyIs(key, "ShowBase")) k.showBase = isYes(value);
 			else if (keyIs(key, "BaseNameEnglish")) k.baseEnglish = fromUtf8(value);
 			else if (keyIs(key, "BaseNameRussian")) k.baseRussian = fromUtf8(value);
 			else if (keyIs(key, "BaseTextLanguage")) { k.baseTextLanguage = value; k.baseTextLanguage.toLower(); }
 			else if (keyIs(key, "BaseLanguage")) { k.baseLanguage = value; k.baseLanguage.toLower(); }
 		});
+
+		// O49 (row 35): the base data's preview, by the rules of a pack's (in <Kind>\<Game>\ first, then <Kind>\)
+		{
+			const char *const defaults[] = { "base_preview.tga", "base_preview.dds" };
+			const Int tries = basePreview.isEmpty() ? 2 : 1;
+			for (Int t = 0; t < tries && k.basePreviewFile.isEmpty(); ++t)
+			{
+				const AsciiString file = basePreview.isEmpty() ? AsciiString(defaults[t]) : basePreview;
+				AsciiString inGame = kindFolderPath;
+				inGame.concat(kGameFolder);
+				inGame.concat("\\");
+				inGame.concat(file);
+				AsciiString inKind = kindFolderPath;
+				inKind.concat(file);
+				if (fileExists(inGame.str())) k.basePreviewFile = inGame;
+				else if (fileExists(inKind.str())) k.basePreviewFile = inKind;
+			}
+			if (k.basePreviewFile.isNotEmpty())
+			{
+				const char *dot = strrchr(k.basePreviewFile.str(), '.');
+				k.basePreviewTexture = textureNameOf((Kind)kind, AsciiString("base"), dot != nullptr ? dot : ".tga");
+			}
+		}
 
 		std::vector<AsciiString> names;
 		listFolders(kindFolderPath, names);
@@ -664,6 +691,12 @@ AsciiString Packs::chosenName(Kind kind, OptionPreferences &pref)
 	AsciiString value = (it != pref.end()) ? it->second : (kind == KIND_MOVIES ? AsciiString(AutoValue) : state().kinds[kind].defaultName);
 	value.trim();
 	if (value.isEmpty() || stricmp(value.str(), BaseValue) == 0) {
+		return AsciiString::TheEmptyString;
+	}
+	// TheSuperHackers @feature O49 (row 36) "Original + letters on icons" is gone: the game draws each button's real hotkey
+	// letter itself (HotkeyLetters.h, Settings -> Controls). A saved choice of it means the original set, without the box
+	// about a missing pack.
+	if (kind == KIND_HOTKEYS && stricmp(value.str(), "HotkeyLetters") == 0) {
 		return AsciiString::TheEmptyString;
 	}
 	return value;
@@ -987,8 +1020,16 @@ const char *Packs::findPreviewPath(const char *textureName)
 				return k.packs[i].previewFile.str();
 			}
 		}
+		if (k.basePreviewTexture.isNotEmpty() && stricmp(k.basePreviewTexture.str(), textureName) == 0) {
+			return k.basePreviewFile.str();   // O49 (row 35)
+		}
 	}
 	return nullptr;
+}
+
+AsciiString Packs::basePreviewTexture(Kind kind)
+{
+	return (kind >= 0 && kind < KIND_COUNT) ? state().kinds[kind].basePreviewTexture : AsciiString::TheEmptyString;
 }
 
 Bool Packs::findSplash(const char *fileName, char *path, Int pathSize)

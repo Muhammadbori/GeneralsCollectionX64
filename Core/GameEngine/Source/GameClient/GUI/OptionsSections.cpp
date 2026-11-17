@@ -50,6 +50,7 @@
 #include "GameClient/MessageBox.h"
 #include "GameClient/TickSlider.h"
 #include "GameClient/VoicePreview.h"
+#include "GameClient/HotkeyLetters.h"
 #include "GameLogic/GameLogic.h"
 
 #include <vector>
@@ -85,9 +86,15 @@ namespace
 		{ "GUI:OptionsSectionControls", L"Controls", L"\x0423\x043F\x0440\x0430\x0432\x043B\x0435\x043D\x0438\x0435" },
 		{ "GUI:OptionsSectionGame", L"Game", L"\x0418\x0433\x0440\x0430" },
 		{ "GUI:OptionsSectionInterface", L"Interface", L"\x0418\x043D\x0442\x0435\x0440\x0444\x0435\x0439\x0441" },
-		{ "GUI:OptionsSectionInfo", L"Information", L"\x0418\x043D\x0444\x043E\x0440\x043C\x0430\x0446\x0438\x044F" },
+		{ "GUI:OptionsSectionCounters", L"Counters", L"\x0421\x0447\x0451\x0442\x0447\x0438\x043A\x0438" },   // O49 (row 34): was "Information"
 		{ "GUI:OptionsSectionNetwork", L"Network", L"\x0421\x0435\x0442\x044C" },
 	};
+
+	// O49 (row 34): the counters section explains itself
+	const Text kInfoPageTitle = { "GUI:OptionsCountersTitle", L"On-screen counters", L"\x0421\x0447\x0451\x0442\x0447\x0438\x043A\x0438 \x043D\x0430 \x044D\x043A\x0440\x0430\x043D\x0435" };
+	const Text kInfoExplain = { "GUI:OptionsCountersExplain", L"The small numbers at the top of the screen: the text size of each one; \"Off\" hides it. The sample below shows your choice.", L"\x041D\x0435\x0431\x043E\x043B\x044C\x0448\x0438\x0435 \x0447\x0438\x0441\x043B\x0430 \x0432\x0432\x0435\x0440\x0445\x0443 \x044D\x043A\x0440\x0430\x043D\x0430: \x0440\x0430\x0437\x043C\x0435\x0440 \x0442\x0435\x043A\x0441\x0442\x0430 \x043A\x0430\x0436\x0434\x043E\x0433\x043E; \x00AB\x0412\x044B\x043A\x043B.\x00BB \x0441\x043A\x0440\x044B\x0432\x0430\x0435\x0442 \x0435\x0433\x043E. \x041F\x0440\x0438\x043C\x0435\x0440 \x043D\x0438\x0436\x0435 \x043F\x043E\x043A\x0430\x0437\x044B\x0432\x0430\x0435\x0442 \x0432\x0430\x0448 \x0432\x044B\x0431\x043E\x0440." };
+	const Text kInfoSample = { "GUI:OptionsCountersSample", L"Sample:", L"\x041F\x0440\x0438\x043C\x0435\x0440:" };
+	const Text kInfoSampleNames[5] = { { "GUI:CounterSampleFps", L"frame rate", L"\x043A\x0430\x0434\x0440\x044B" }, { "GUI:CounterSampleClock", L"clock", L"\x0447\x0430\x0441\x044B" }, { "GUI:CounterSampleGameTime", L"game time", L"\x0432\x0440\x0435\x043C\x044F \x0438\x0433\x0440\x044B" }, { "GUI:CounterSampleLatency", L"network delay", L"\x0437\x0430\x0434\x0435\x0440\x0436\x043A\x0430 \x0441\x0435\x0442\x0438" }, { "GUI:CounterSampleMoney", L"observer money list", L"\x0434\x0435\x043D\x044C\x0433\x0438 (\x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x044C)" } };
 
 	//---------------------------------------------------------------------------------------------
 	// The settings that were Options.ini keys only.
@@ -242,6 +249,7 @@ namespace
 	AsciiString curCaptureFM(OptionPreferences &p) { return yesNo(p.getCursorCaptureEnabledInFullscreenMenu()); }
 	AsciiString curCameraHeight(OptionPreferences &p) { return keyOr(p, "MaxCameraHeight", ""); }
 	AsciiString curCameraPitch(OptionPreferences &p) { return keyOr(p, "CameraPitch", ""); }
+	AsciiString curHotkeyLetters(OptionPreferences &p) { return stricmp(keyOr(p, "ShowHotkeyLetters", "yes").str(), "no") == 0 ? AsciiString("no") : AsciiString("yes"); }
 	AsciiString curEntireTerrain(OptionPreferences &p) { (void)p; return yesNo(TheGlobalData->m_drawEntireTerrain); }
 	AsciiString curArchiveReplays(OptionPreferences &p) { return yesNo(p.getArchiveReplaysEnabled()); }
 	AsciiString curPlayerObserver(OptionPreferences &p) { return yesNo(p.getPlayerObserverEnabled()); }
@@ -306,6 +314,7 @@ namespace
 		{ SEC_CONTROLS, KIND_CHECK, "CursorCaptureEnabledInWindowedMenu", { "GUI:CursorCaptureWindowedMenu", L"Keep the cursor in the window: menus", L"\x041A\x0443\x0440\x0441\x043E\x0440 \x0432 \x043E\x043A\x043D\x0435: \x0432 \x043C\x0435\x043D\x044E" }, nullptr, 0, "", "no", curCaptureWM },
 		{ SEC_CONTROLS, KIND_CHECK, "CursorCaptureEnabledInFullscreenGame", { "GUI:CursorCaptureFullscreenGame", L"Keep the cursor on screen: game", L"\x041A\x0443\x0440\x0441\x043E\x0440 \x043D\x0430 \x044D\x043A\x0440\x0430\x043D\x0435: \x0432 \x0438\x0433\x0440\x0435" }, nullptr, 0, "", "yes", curCaptureFG },
 		{ SEC_CONTROLS, KIND_CHECK, "CursorCaptureEnabledInFullscreenMenu", { "GUI:CursorCaptureFullscreenMenu", L"Keep the cursor on screen: menus", L"\x041A\x0443\x0440\x0441\x043E\x0440 \x043D\x0430 \x044D\x043A\x0440\x0430\x043D\x0435: \x0432 \x043C\x0435\x043D\x044E" }, nullptr, 0, "", "yes", curCaptureFM },
+		{ SEC_CONTROLS, KIND_CHECK, "ShowHotkeyLetters", { "GUI:ShowHotkeyLetters", L"Show hotkey letters on buttons", L"\x041F\x043E\x043A\x0430\x0437\x044B\x0432\x0430\x0442\x044C \x043A\x043B\x0430\x0432\x0438\x0448\x0438 \x043D\x0430 \x043A\x043D\x043E\x043F\x043A\x0430\x0445" }, nullptr, 0, "", "yes", curHotkeyLetters },
 		{ SEC_CONTROLS, KIND_CHECK, "DrawEntireTerrain", { "GUI:DrawEntireTerrain", L"Draw the entire terrain", L"\x0420\x0438\x0441\x043E\x0432\x0430\x0442\x044C \x0432\x0441\x044E \x043C\x0435\x0441\x0442\x043D\x043E\x0441\x0442\x044C" }, nullptr, 0, "", "no", curEntireTerrain },
 		{ SEC_CONTROLS, KIND_STEPS, "MaxCameraHeight", { "GUI:MaxCameraHeight", L"Highest camera", L"\x041C\x0430\x043A\x0441\x0438\x043C\x0430\x043B\x044C\x043D\x0430\x044F \x0432\x044B\x0441\x043E\x0442\x0430 \x043A\x0430\x043C\x0435\x0440\x044B" }, STEPS(kCameraHeight), "", "", curCameraHeight },
 		{ SEC_CONTROLS, KIND_STEPS, "CameraPitch", { "GUI:CameraPitch", L"Camera pitch", L"\x041D\x0430\x043A\x043B\x043E\x043D \x043A\x0430\x043C\x0435\x0440\x044B" }, STEPS(kCameraPitch), "", "", curCameraPitch },
@@ -318,12 +327,12 @@ namespace
 		{ SEC_INTERFACE, KIND_STEPS, "JpegQuality", { "GUI:JpegQuality", L"JPG quality", L"\x041A\x0430\x0447\x0435\x0441\x0442\x0432\x043E JPG" }, STEPS(kJpegQuality), "", "80", curJpeg },
 		{ SEC_INTERFACE, KIND_STEPS, "ResolutionFontAdjustment", { "GUI:ResolutionFontAdjustment", L"Text size with resolution", L"\x0420\x0430\x0437\x043C\x0435\x0440 \x0442\x0435\x043A\x0441\x0442\x0430 \x043F\x043E \x0440\x0430\x0437\x0440\x0435\x0448\x0435\x043D\x0438\x044E" }, STEPS(kFontAdjust), "%", "-100", curFontAdjust },
 		// Information
-		{ SEC_INFO, KIND_STEPS, "CounterStyle", { "GUI:CounterStyle", L"Top counter look", L"\x0412\x0438\x0434 \x0432\x0435\x0440\x0445\x043D\x0435\x0433\x043E \x0441\x0447\x0451\x0442\x0447\x0438\x043A\x0430" }, STEPS(kCounterStyle), "", "Hackers", curCounterStyle },
-		{ SEC_INFO, KIND_STEPS, "RenderFpsFontSize", { "GUI:RenderFpsCounter", L"Frame rate (FPS)", L"\x0427\x0430\x0441\x0442\x043E\x0442\x0430 \x043A\x0430\x0434\x0440\x043E\x0432 (FPS)" }, STEPS(kFontSize), "", "8", curFpsSize },
-		{ SEC_INFO, KIND_STEPS, "SystemTimeFontSize", { "GUI:SystemTimeCounter", L"Clock", L"\x0427\x0430\x0441\x044B" }, STEPS(kFontSize), "", "8", curClockSize },
-		{ SEC_INFO, KIND_STEPS, "GameTimeFontSize", { "GUI:GameTimeCounter", L"Game time", L"\x0412\x0440\x0435\x043C\x044F \x0438\x0433\x0440\x044B" }, STEPS(kFontSize), "", "8", curGameTimeSize },
-		{ SEC_INFO, KIND_STEPS, "NetworkLatencyFontSize", { "GUI:NetworkLatencyCounter", L"Network delay (ms)", L"\x0421\x0435\x0442\x0435\x0432\x0430\x044F \x0437\x0430\x0434\x0435\x0440\x0436\x043A\x0430 (\x043C\x0441)" }, STEPS(kFontSize), "", "8", curLatencySize },
-		{ SEC_INFO, KIND_STEPS, "PlayerInfoListFontSize", { "GUI:PlayerInfoListCounter", L"Observer money list", L"\x0421\x043F\x0438\x0441\x043E\x043A \x0434\x0435\x043D\x0435\x0433 (\x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x044C)" }, STEPS(kFontSize), "", "8", curPlayerListSize },
+		{ SEC_INFO, KIND_STEPS, "CounterStyle", { "GUI:CounterStyleLook", L"Look of the counters", L"\x0412\x0438\x0434 \x0441\x0447\x0451\x0442\x0447\x0438\x043A\x043E\x0432" }, STEPS(kCounterStyle), "", "Hackers", curCounterStyle },
+		{ SEC_INFO, KIND_STEPS, "RenderFpsFontSize", { "GUI:RenderFpsCounterSize", L"Frame rate (FPS): text size", L"\x041A\x0430\x0434\x0440\x044B \x0432 \x0441\x0435\x043A\x0443\x043D\x0434\x0443 (FPS): \x0440\x0430\x0437\x043C\x0435\x0440" }, STEPS(kFontSize), "", "8", curFpsSize },
+		{ SEC_INFO, KIND_STEPS, "SystemTimeFontSize", { "GUI:SystemTimeCounterSize", L"Clock: text size", L"\x0427\x0430\x0441\x044B: \x0440\x0430\x0437\x043C\x0435\x0440 \x0442\x0435\x043A\x0441\x0442\x0430" }, STEPS(kFontSize), "", "8", curClockSize },
+		{ SEC_INFO, KIND_STEPS, "GameTimeFontSize", { "GUI:GameTimeCounterSize", L"Game time: text size", L"\x0412\x0440\x0435\x043C\x044F \x0438\x0433\x0440\x044B: \x0440\x0430\x0437\x043C\x0435\x0440 \x0442\x0435\x043A\x0441\x0442\x0430" }, STEPS(kFontSize), "", "8", curGameTimeSize },
+		{ SEC_INFO, KIND_STEPS, "NetworkLatencyFontSize", { "GUI:NetworkLatencyCounterSize", L"Network delay: text size", L"\x0421\x0435\x0442\x0435\x0432\x0430\x044F \x0437\x0430\x0434\x0435\x0440\x0436\x043A\x0430: \x0440\x0430\x0437\x043C\x0435\x0440" }, STEPS(kFontSize), "", "8", curLatencySize },
+		{ SEC_INFO, KIND_STEPS, "PlayerInfoListFontSize", { "GUI:PlayerInfoListCounterSize", L"Observer money list: text size", L"\x0421\x043F\x0438\x0441\x043E\x043A \x0434\x0435\x043D\x0435\x0433 (\x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x044C): \x0440\x0430\x0437\x043C\x0435\x0440" }, STEPS(kFontSize), "", "8", curPlayerListSize },
 		// Display, controls, network (O8)
 		{ SEC_DISPLAY, KIND_STEPS, "Windowed", { "GUI:DisplayMode", L"Display mode", L"\x0420\x0435\x0436\x0438\x043C \x044D\x043A\x0440\x0430\x043D\x0430" }, STEPS(kWindowed), "", "no", curWindowed },
 		{ SEC_DISPLAY, KIND_STEPS, "WindowPosition", { "GUI:WindowPosition", L"Window position", L"\x041F\x043E\x043B\x043E\x0436\x0435\x043D\x0438\x0435 \x043E\x043A\x043D\x0430" }, STEPS(kWindowPosition), "", "Center", curWindowPosition },
@@ -333,7 +342,7 @@ namespace
 		{ SEC_NETWORK, KIND_STEPS, "LanWatchDelay", { "GUI:LanWatchDelay", L"LAN host: delay for outside viewers", L"\x0425\x043E\x0441\x0442 LAN: \x0437\x0430\x0434\x0435\x0440\x0436\x043A\x0430 \x0434\x043B\x044F \x043F\x043E\x0441\x0442\x043E\x0440\x043E\x043D\x043D\x0438\x0445 \x0437\x0440\x0438\x0442\x0435\x043B\x0435\x0439" }, STEPS(kWatchDelay), " s", "60", curWatchDelay },
 		{ SEC_NETWORK, KIND_CHECK, "LanRequireGuard", { "GUI:LanRequireGuard", L"LAN host: only players with a verified anti-cheat", L"\x0425\x043E\x0441\x0442 LAN: \x0442\x043E\x043B\x044C\x043A\x043E \x0438\x0433\x0440\x043E\x043A\x0438 \x0441 \x043F\x0440\x043E\x0432\x0435\x0440\x0435\x043D\x043D\x044B\x043C \x0430\x043D\x0442\x0438\x0447\x0438\x0442\x043E\x043C" }, nullptr, 0, "", "yes", curRequireGuard },
 		{ SEC_NETWORK, KIND_CHECK, "HideIPAddresses", { "GUI:HideIPAddresses", L"Hide IP addresses", L"\x0421\x043A\x0440\x044B\x0432\x0430\x0442\x044C IP-\x0430\x0434\x0440\x0435\x0441\x0430" }, nullptr, 0, "", "no", curHideIP },
-		{ SEC_INFO, KIND_CHECK, "ShowMoneyPerMinute", { "GUI:ShowMoneyPerMinute", L"Money per minute", L"\x0414\x0435\x043D\x044C\x0433\x0438 \x0432 \x043C\x0438\x043D\x0443\x0442\x0443" }, nullptr, 0, "", "no", curMoneyPerMinute },
+		{ SEC_INFO, KIND_CHECK, "ShowMoneyPerMinute", { "GUI:ShowMoneyPerMinuteCounter", L"Money per minute (with the money)", L"\x0414\x0435\x043D\x044C\x0433\x0438 \x0432 \x043C\x0438\x043D\x0443\x0442\x0443 (\x0440\x044F\x0434\x043E\x043C \x0441 \x0434\x0435\x043D\x044C\x0433\x0430\x043C\x0438)" }, nullptr, 0, "", "no", curMoneyPerMinute },
 	};
 	enum { SETTING_COUNT = (Int)ARRAY_SIZE(kSettings) };
 
@@ -491,6 +500,10 @@ namespace
 		GameWindow *existingLabels[EXISTING_COUNT];
 		GameWindow *detailCombo;
 		PackRowState packRows[PACK_ROW_COUNT];
+		// O49 (row 34): the counters' sample
+		GameWindow *counterSample;
+		DisplayString *sampleText[6];
+		Int sampleSize[6];
 		// O47 (row 32): the voices' "listen" buttons under the voice pack list
 		GameWindow *listen[VoicePreview::UNIT_COUNT];
 		GameWindow *listenTitle;
@@ -521,7 +534,7 @@ namespace
 	UnicodeString packRowTitle(Packs::Kind kind, Bool forSize)
 	{
 		UnicodeString title = Packs::kindTitle(kind);
-		if (inMatch()) {
+		if (inMatch() && kind != Packs::KIND_MOVIES) {   // O49: the movies change live, in a match too
 			title.concat(TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackMainMenuOnly", localizedFallback(L" (main menu only)", L" (\x0442\x043E\x043B\x044C\x043A\x043E \x0432 \x0433\x043B\x0430\x0432\x043D\x043E\x043C \x043C\x0435\x043D\x044E)")));
 		}
 		if (forSize || Packs::isPending(kind)) {
@@ -1003,7 +1016,8 @@ namespace
 		if (s.frameLook != nullptr) {
 			page->winSetDrawFunc(s.frameLook->winGetDrawFunc());
 		}
-		makeLabel(page, s.titleLook, s.gap * 3, s.gap, s.pageW - s.gap * 6, s.titleH, textOf(kSectionNames[sec]), FALSE);
+		makeLabel(page, s.titleLook, s.gap * 3, s.gap, s.pageW - s.gap * 6, s.titleH,
+			textOf(sec == SEC_INFO ? kInfoPageTitle : kSectionNames[sec]), FALSE);   // O49 (row 34)
 		page->winHide(TRUE);
 		s.subPages[sec][s.subPageCount[sec]++] = page;
 		updatePagers(sec);
@@ -1375,18 +1389,20 @@ namespace
 	}
 
 	/// The image of a pack's preview picture, made once and kept by the mapped image collection.
-	const Image *previewImageOf(const Packs::Pack *pack)
+	const Image *previewImageOf(Packs::Kind kind, const Packs::Pack *pack)
 	{
-		if (pack == nullptr || pack->previewTexture.isEmpty() || TheMappedImageCollection == nullptr) {
+		// O49 (row 35): the base data has a preview too (default.ini "Preview")
+		const AsciiString texture = pack != nullptr ? pack->previewTexture : Packs::basePreviewTexture(kind);
+		if (texture.isEmpty() || TheMappedImageCollection == nullptr) {
 			return nullptr;
 		}
-		const Image *found = TheMappedImageCollection->findImageByName(pack->previewTexture);
+		const Image *found = TheMappedImageCollection->findImageByName(texture);
 		if (found != nullptr) {
 			return found;
 		}
 		Image *image = newInstance(Image);
-		image->setName(pack->previewTexture);
-		image->setFilename(pack->previewTexture);
+		image->setName(texture);
+		image->setFilename(texture);
 		image->setStatus(IMAGE_STATUS_NONE);
 		Region2D uv;
 		uv.lo.x = 0.0f;
@@ -1415,7 +1431,7 @@ namespace
 			}
 			fillCombo(st.combo, texts, st.choiceCount, st.step);
 			// O48: a pack cannot change under a running match
-			st.combo->winEnable(st.choiceCount > 1 && !inMatch());
+			st.combo->winEnable(st.choiceCount > 1 && (!inMatch() || kind == Packs::KIND_MOVIES));
 		}
 		if (st.label != nullptr)
 		{
@@ -1425,12 +1441,11 @@ namespace
 		}
 		if (st.preview != nullptr)
 		{
-			st.image = previewImageOf(selectedPack(row));
-			// TheSuperHackers @bugfix (H6) The base data has no preview: no frame and no "No picture" for it.
-			const Bool base = selectedPack(row) == nullptr;
-			st.preview->winHide(base);
+			st.image = previewImageOf(kind, selectedPack(row));
+			// O49 (row 35): the box for every choice, the base data's too; "No picture" when there is none
+			st.preview->winHide(FALSE);
 			if (st.previewText != nullptr) {
-				st.previewText->winHide(st.image != nullptr || base);
+				st.previewText->winHide(st.image != nullptr);
 			}
 		}
 	}
@@ -1501,6 +1516,134 @@ namespace
 		s.listenStatus = makeLabel(page, s.labelLook, 0, y, colW, statusH, UnicodeString::TheEmptyString, FALSE);
 		rowAdd(row, s.listenStatus, 0, y);
 		row.height = y + statusH;
+	}
+
+	//---------------------------------------------------------------------------------------------
+	// O49 (row 34): the counters' sample: each counter at the text size chosen now (the steps on screen, before Apply),
+	// in the chosen look: "Hackers" one under another, "GenTool" side by side in one line; a small grey name beside each.
+	Int settingIndex(const char *key)
+	{
+		for (Int i = 0; i < SETTING_COUNT; ++i) {
+			if (stricmp(kSettings[i].key, key) == 0) return i;
+		}
+		return -1;
+	}
+
+	/// The value of a KIND_STEPS setting as chosen on the screen now.
+	const char *chosenValue(const char *key)
+	{
+		const Int i = settingIndex(key);
+		if (i < 0 || kSettings[i].choices == nullptr) {
+			return "";
+		}
+		const Int step = s.settings[i].step;
+		return (step >= 0 && step < kSettings[i].choiceCount) ? kSettings[i].choices[step].value : "";
+	}
+
+	void drawCounterSample(GameWindow *window, WinInstanceData *)
+	{
+		Int x = 0, y = 0, w = 0, h = 0;
+		window->winGetScreenPosition(&x, &y);
+		window->winGetSize(&w, &h);
+		TheDisplay->drawFillRect(x, y, w, h, GameMakeColor(0, 0, 0, 200));
+		TheDisplay->drawOpenRect(x, y, w, h, 1.0f, GameMakeColor(120, 120, 120, 255));
+		static const char *const keys[5] = { "RenderFpsFontSize", "SystemTimeFontSize", "GameTimeFontSize", "NetworkLatencyFontSize", "PlayerInfoListFontSize" };
+		static const WideChar *const values[5] = { L"60 [X]", L"21:45", L"00:12:34", L"80 ms", L"Player 1   $10000" };
+		const Bool genTool = stricmp(chosenValue("CounterStyle"), "GenTool") == 0;
+		const Color colors[5] = { GameMakeColor(255, 255, 0, 255), GameMakeColor(255, 255, 255, 255), GameMakeColor(255, 255, 255, 255),
+			GameMakeColor(128, 255, 128, 255), GameMakeColor(255, 255, 255, 255) };
+		const Color grey = GameMakeColor(160, 160, 160, 255);
+		const Color drop = GameMakeColor(0, 0, 0, 255);
+		// the title "Sample:" in slot 5
+		const Int pad = 4;
+		Int cx = x + pad, cy = y + pad;
+		if (s.sampleText[5] == nullptr)
+		{
+			s.sampleText[5] = TheDisplayStringManager->newDisplayString();
+			s.sampleText[5]->setFont(labelFont());
+			s.sampleText[5]->setText(textOf(kInfoSample));
+		}
+		Int tw = 0, th = 0;
+		s.sampleText[5]->getSize(&tw, &th);
+		s.sampleText[5]->draw(cx, cy, grey, drop);
+		cy += th + pad;
+		const Int lineTop = cy;
+		Int lineH = 0;
+		for (Int k = 0; k < 5; ++k)
+		{
+			const Int size = atoi(chosenValue(keys[k]));
+			if (size <= 0) {
+				continue;   // "Off": not drawn, as in the game
+			}
+			if (s.sampleText[k] == nullptr) {
+				s.sampleText[k] = TheDisplayStringManager->newDisplayString();
+			}
+			if (s.sampleSize[k] != size)
+			{
+				s.sampleText[k]->setFont(TheWindowManager->winFindFont(AsciiString("Arial"), size, TRUE));
+				s.sampleText[k]->setText(UnicodeString(values[k]));
+				s.sampleSize[k] = size;
+			}
+			Int vw = 0, vh = 0;
+			s.sampleText[k]->getSize(&vw, &vh);
+			// the name in the label font, grey, after the value
+			DisplayString *name = TheDisplayStringManager->newDisplayString();
+			name->setFont(labelFont());
+			name->setText(textOf(kInfoSampleNames[k]));
+			Int nw = 0, nh = 0;
+			name->getSize(&nw, &nh);
+			if (genTool)
+			{
+				if (cx + vw > x + w - pad) {
+					TheDisplayStringManager->freeDisplayString(name);
+					break;
+				}
+				s.sampleText[k]->draw(cx, lineTop, colors[k], drop);
+				name->draw(cx, lineTop + vh, grey, drop);
+				cx += max(vw, nw) + pad * 3;
+				lineH = max(lineH, vh + nh);
+			}
+			else
+			{
+				if (cy + max(vh, nh) > y + h - pad) {
+					TheDisplayStringManager->freeDisplayString(name);
+					break;
+				}
+				s.sampleText[k]->draw(x + pad, cy, colors[k], drop);
+				name->draw(x + pad + vw + pad * 3, cy + (vh - nh) / 2, grey, drop);
+				cy += max(vh, nh) + 2;
+			}
+			TheDisplayStringManager->freeDisplayString(name);
+		}
+		(void)lineH;
+	}
+
+	void prepareCounterSample(Row &row, GameWindow *page, Int colW, Int labelH)
+	{
+		// room for the title and five lines at the largest size (16)
+		const Int lineH = max(labelH, textSize(TheWindowManager->winFindFont(AsciiString("Arial"), 16, TRUE), UnicodeString(L"Wg"), 0).y + 2);
+		const Int height = labelH + lineH * 5 + 16;
+		WinInstanceData inst;
+		inst.init();
+		inst.m_style = GWS_USER_WINDOW;
+		s.counterSample = TheWindowManager->winCreate(page, WIN_STATUS_ENABLED, 0, 0, colW, height, PassMessagesToParentSystem, &inst);
+		if (s.counterSample != nullptr) {
+			s.counterSample->winSetDrawFunc(drawCounterSample);
+		}
+		rowAdd(row, s.counterSample, 0, 0);
+		row.height = height;
+	}
+
+	void freeCounterSample()
+	{
+		for (Int k = 0; k < 6; ++k)
+		{
+			if (s.sampleText[k] != nullptr && TheDisplayStringManager != nullptr) {
+				TheDisplayStringManager->freeDisplayString(s.sampleText[k]);
+			}
+			s.sampleText[k] = nullptr;
+			s.sampleSize[k] = 0;
+		}
 	}
 
 	Int voicePackRow()
@@ -2086,6 +2229,16 @@ void OptionsSections::init(OptionPreferences *pref)
 				rows.push_back(row);
 			}
 		}
+		if (sec == SEC_INFO)
+		{
+			// O49 (row 34): the explanation over the counters' rows
+			rowClear(row);
+			const UnicodeString explain = textOf(kInfoExplain);
+			const Int h = labelHeightFor(labelFont(), explain, colW, labelH);
+			rowAdd(row, makeLabel(s.pages[sec], s.labelLook, 0, 0, colW, h, explain, FALSE), 0, 0);
+			row.height = h;
+			rows.insert(rows.begin(), row);
+		}
 		Int voiceRowAt = -1;
 		for (Int r = 0; r < PACK_ROW_COUNT; ++r) {
 			if (kPackRows[r].section == sec) {
@@ -2107,6 +2260,13 @@ void OptionsSections::init(OptionPreferences *pref)
 			rows.push_back(voice);
 			rowClear(row);
 			prepareListenRow(row, s.pages[sec], colW, labelH);
+			rows.push_back(row);
+		}
+		if (sec == SEC_INFO)
+		{
+			// O49 (row 34): the live sample of the counters
+			rowClear(row);
+			prepareCounterSample(row, s.pages[sec], colW, labelH);
 			rows.push_back(row);
 		}
 		if (sec == SEC_SOUND)
@@ -2201,6 +2361,7 @@ void OptionsSections::init(OptionPreferences *pref)
 void OptionsSections::shutdown()
 {
 	VoicePreview::stop();   // O47: nothing plays on after the screen
+	freeCounterSample();    // O49 (row 34)
 	FrameShots::setRevealHook(nullptr);
 	memset(&s, 0, sizeof(s));
 	s_devices.clear();
@@ -2414,7 +2575,7 @@ void OptionsSections::save(OptionPreferences *pref)
 		}
 		(*pref)[Packs::kindKey(kPackRows[r].kind)] = (pack != nullptr) ? pack->name : AsciiString(Packs::BaseValue);
 		s.packRows[r].initial = pack;
-		if (!inMatch() && Packs::applyLive(kPackRows[r].kind, pack)) {
+		if (Packs::applyLive(kPackRows[r].kind, pack)) {   // O49: the movies, in a match too
 			continue;   // in use now
 		}
 		Packs::markPending(kPackRows[r].kind);
@@ -2429,6 +2590,8 @@ void OptionsSections::save(OptionPreferences *pref)
 		TheFramePacer->setFramesPerSecondLimit(TheGlobalData->getDefaultRenderFpsLimit());
 	}
 	TheWritableGlobalData->m_snowStyle = pref->getSnowStyle();
+	// O49 (row 36): the hotkey letters on the command buttons, at once (also in a match)
+	HotkeyLetters::setEnabled(stricmp(curHotkeyLetters(*pref).str(), "no") != 0);
 	pref->applyCameraOverrides(TRUE);   // "Standard" (no key) goes back to the GameData values
 	TheWritableGlobalData->m_counterStyle = pref->getCounterStyle();
 	TheWritableGlobalData->m_screenshotFormat = pref->getScreenshotFormat();

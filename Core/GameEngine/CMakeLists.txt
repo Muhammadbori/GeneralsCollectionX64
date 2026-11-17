@@ -160,6 +160,7 @@ set(GAMEENGINE_SRC
 #    Include/GameClient/CampaignManager.h
     Include/GameClient/ChallengeExtras.h
     Include/GameClient/VoicePreview.h
+    Include/GameClient/HotkeyLetters.h
     Include/GameClient/ChallengeGenerals.h
     Include/GameClient/ClientInstance.h
     Include/GameClient/ClientRandomValue.h
@@ -768,6 +769,7 @@ set(GAMEENGINE_SRC
     Source/GameClient/GUI/AnimateWindowManager.cpp
     Source/GameClient/GUI/ChallengeExtras.cpp
     Source/GameClient/GUI/VoicePreview.cpp
+    Source/GameClient/GUI/HotkeyLetters.cpp
     Source/GameClient/GUI/ChallengeGenerals.cpp
     Source/GameClient/GUI/ControlBar/ControlBar.cpp
     Source/GameClient/GUI/ControlBar/ControlBarBeacon.cpp
