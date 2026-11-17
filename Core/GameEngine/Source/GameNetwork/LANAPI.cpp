@@ -45,6 +45,7 @@
 #include "GameClient/InGameUI.h"
 
 #include <map>
+#include "Common/LanClock.h"   // O75
 
 
 static const UnsignedShort lobbyPort = 8086; ///< This is the UDP port used by all LANAPI communication
@@ -300,7 +301,7 @@ void LanTest::joinLog(const char *format, ...)
 	if (f == nullptr) {
 		return;
 	}
-	fprintf(f, "[%10u] ", (unsigned)timeGetTime());
+	fprintf(f, "[%10u] ", (unsigned)LanClock::now());
 	va_list args;
 	va_start(args, format);
 	vfprintf(f, format, args);
@@ -490,7 +491,7 @@ void LANAPI::update()
 		return;
 	}
 	static const UnsignedInt LANAPIUpdateDelay = 200;
-	UnsignedInt now = timeGetTime();
+	UnsignedInt now = LanClock::now();
 
 	// TheSuperHackers @bugfix O71 (H8) Time in which this computer's own loop did not run (a window dragged, a long
 	// frame, a modal box) is not silence of the others: their packets wait in the socket and nobody's clock is read.
@@ -511,7 +512,7 @@ void LANAPI::update()
 				}
 			}
 		}
-		m_lastLoopMs = now;
+		m_lastLoopMs = now;   // never 0 (LanClock::now)
 	}
 	else
 	{
@@ -519,7 +520,7 @@ void LANAPI::update()
 	}
 
 	// O73: every time test below is a signed difference: right across timeGetTime's wrap (every 49.7 days)
-	if( (Int)(now - m_lastUpdate) > (Int)LANAPIUpdateDelay)
+	if( LanClock::due(now, m_lastUpdate, LANAPIUpdateDelay))   // O75: 0 = never: due (not a negative difference)
 	{
 		m_lastUpdate = now;
 	}
@@ -695,7 +696,7 @@ void LANAPI::update()
 	// HELLO (the host takes the seat for alive by it)
 	pumpRoomBeat(now);
 	// Send out periodic I'm Here messages
-	if ((Int)(now - m_lastResendTime) > (Int)s_resendDelta)
+	if (LanClock::due(now, m_lastResendTime, s_resendDelta))
 	{
 		m_lastResendTime = now;
 
@@ -736,7 +737,7 @@ void LANAPI::update()
 	LANPlayer *player = m_lobbyPlayers;
 	while (player)
 	{
-		if ((Int)(now - player->getLastHeard()) > (Int)(s_resendDelta*2))
+		if (LanClock::silentFor(now, player->getLastHeard(), s_resendDelta*2))
 		{
 			// He's gone!
 			removePlayer(player);
@@ -755,7 +756,7 @@ void LANAPI::update()
 	LANGameInfo *game = m_games;
 	while (game)
 	{
-		if (game != m_currentGame && (Int)(now - game->getLastHeard()) > (Int)(s_resendDelta*2))
+		if (game != m_currentGame && LanClock::silentFor(now, game->getLastHeard(), s_resendDelta*2))
 		{
 			// He's gone!
 			removeGame(game);
@@ -774,7 +775,7 @@ void LANAPI::update()
 		// O70/O71: 30 s without the host's slot list (it comes every 2 s now: 15 lost in a row) instead of 160 s; not
 		// while a start is under way (the host's start check or countdown came in the last 30 s)
 		const Bool startUnderWay = m_startSeenMs != 0 && (Int)(now - m_startSeenMs) < 30000;
-		if ( !AmIHost() && !startUnderWay && ((Int)(now - m_currentGame->getLastHeard()) > 30000) )
+		if ( !AmIHost() && !startUnderWay && LanClock::silentFor(now, m_currentGame->getLastHeard(), 30000) )
 		{
 			// We haven't heard from the host in a while.  Bail.
 			// Actually, fake a host leaving message. :)
@@ -803,7 +804,7 @@ void LANAPI::update()
 					continue;
 				// O70/O71: a joiner says HELLO every 2 s now: 30 s of silence (15 lost in a row; was 80 s), or a seat given at a
 				// join and never heard from after it for 10 s (its accept was lost and the joiner gave up: S41 hs11), frees it
-				const Bool silent = (Int)(now - m_currentGame->getPlayerLastHeard(p)) > 30000;   // O73: signed
+				const Bool silent = LanClock::silentFor(now, m_currentGame->getPlayerLastHeard(p), 30000);   // O75
 				// O71 (addendum): signed: the seat is given inside this update, after its "now" was read (S41 ww30_01/_04:
 				// now - joined wrapped round to about 4e9 and freed the seat 0-2 ms after its join)
 				const Bool unconfirmed = m_seatJoinedMs[p] != 0 && (Int)(now - m_seatJoinedMs[p]) > 10000;
@@ -912,7 +913,7 @@ void LANAPI::update()
 	// Check for an MOTD every few seconds
 	static UnsignedInt lastMOTDCheck = 0;
 	static const UnsignedInt motdInterval = 30000;
-	if ((Int)(now - lastMOTDCheck) > (Int)motdInterval)
+	if (LanClock::due(now, lastMOTDCheck, motdInterval))
 	{
 		checkMOTD();
 		lastMOTDCheck = now;
@@ -977,11 +978,11 @@ void LANAPI::RequestGameJoin( LANGameInfo *game, UnsignedInt ip /* = 0 */ )
 	sendMessage(&msg, ip);
 
 	m_pendingAction = ACT_JOIN;
-	m_expiration = timeGetTime() + m_actionTimeout;
+	m_expiration = LanClock::stamp(LanClock::now() + m_actionTimeout);
 	// O45: kept for the repeats (LANAPI::update)
 	s_joinRequest = msg;
 	s_joinRequestIP = ip;
-	s_joinSentMs = timeGetTime();
+	s_joinSentMs = LanClock::now();
 	s_joinTries = 1;
 	LanTest::joinLog("joiner: join request to %d.%d.%d.%d (try 1)", PRINTF_IP_AS_4_INTS(msg.GameToJoin.gameIP));
 }
@@ -1011,7 +1012,7 @@ void LANAPI::RequestGameJoinDirectConnect(UnsignedInt ipaddress)
 	sendMessage(&msg, ipaddress);
 
 	m_pendingAction = ACT_JOINDIRECTCONNECT;
-	m_expiration = timeGetTime() + m_actionTimeout;
+	m_expiration = LanClock::stamp(LanClock::now() + m_actionTimeout);
 }
 
 void LANAPI::RequestGameLeave()
@@ -1035,7 +1036,7 @@ void LANAPI::RequestGameLeave()
 	else
 	{
 		m_pendingAction = ACT_LEAVE;
-		m_expiration = timeGetTime() + m_actionTimeout;
+		m_expiration = LanClock::stamp(LanClock::now() + m_actionTimeout);
 	}
 }
 
@@ -1082,7 +1083,7 @@ void LANAPI::RequestAccept()
 		m_convergeGame = m_currentGame;
 		m_acceptWanted = TRUE;
 		m_acceptDigest = LanStartDigest(m_currentGame);
-		m_acceptSince = timeGetTime();
+		m_acceptSince = LanClock::now();
 		m_acceptLastSent = m_acceptSince;
 	}
 	sendAcceptOnly();
@@ -1215,7 +1216,7 @@ void LANAPI::RequestGameStart()
 	{
 		m_startChecking = TRUE;
 		m_startDigest = LanStartDigest(m_currentGame);
-		m_startCheckSince = timeGetTime();
+		m_startCheckSince = LanClock::now();
 		m_lastStartCheck = 0;
 		for (Int i = 0; i < MAX_SLOTS; ++i) {
 			m_startReady[i] = FALSE;
@@ -1235,7 +1236,7 @@ void LANAPI::pumpStartCheck()
 		m_startChecking = FALSE;
 		return;
 	}
-	const UnsignedInt now = timeGetTime();
+	const UnsignedInt now = LanClock::now();
 	const UnsignedInt digest = LanStartDigest(m_currentGame);
 	if (digest != m_startDigest)
 	{
@@ -1280,7 +1281,7 @@ void LANAPI::pumpStartCheck()
 		LANEnableStartButton(true);
 		return;
 	}
-	if ((Int)(now - m_lastStartCheck) >= 250)
+	if (LanClock::due(now, m_lastStartCheck, 250))
 	{
 		m_lastStartCheck = now;
 		RequestGameOptions(GenerateGameOptionsString(), true);
@@ -1314,10 +1315,11 @@ void LANAPI::finishStart()
 	// acknowledged it (MSG_START_ACK, sent before the player leaves for its match) every 200 ms, for at most
 	// kStartDeliverMs; then the host starts in any case, as the players that have it are already loading.
 	m_startDelivering = TRUE;
-	m_startDeliverSince = timeGetTime();
+	m_startDeliverSince = LanClock::now();
 	m_lastStartSend = 0;
 	for (Int i = 0; i < MAX_SLOTS; ++i) {
 		m_startAcked[i] = FALSE;
+		m_startCannot[i] = FALSE;
 	}
 	sendStartMessage(0);   // O62: to everybody once, then to each seat (pumpStartDelivery)
 	pumpStartDelivery();
@@ -1345,9 +1347,42 @@ void LANAPI::pumpStartDelivery()
 		m_startDelivering = FALSE;
 		return;
 	}
-	const UnsignedInt now = timeGetTime();
+	const UnsignedInt now = LanClock::now();
+	// O75 (H10): the room changed during START (only the host's own option change can: requests, joins and leaves are
+	// held meanwhile). Nobody has started yet: the start is stopped. Somebody has: it cannot be called back, the host
+	// starts with the room as he has it, and says so.
+	if (LanStartDigest(m_currentGame) != m_startDigest)
+	{
+		Bool anyAcked = FALSE;
+		for (Int i = 0; i < MAX_SLOTS; ++i) {
+			anyAcked = anyAcked || (m_startAcked[i] && !m_startCannot[i]);
+		}
+		if (!anyAcked)
+		{
+			m_startDelivering = FALSE;
+			LanTest::joinLog("host: the room changed during START, nobody started yet: start stopped");
+			OnChat(L"SYSTEM", m_localIP, TheGameText->FETCH_OR_SUBSTITUTE("GUI:LanStartRoomChanged", localizedFallback(
+				L"The room changed during the start: start stopped. Press Start again.",
+				L"\x041A\x043E\x043C\x043D\x0430\x0442\x0430 \x0438\x0437\x043C\x0435\x043D\x0438\x043B\x0430\x0441\x044C \x0432\x043E \x0432\x0440\x0435\x043C\x044F \x0441\x0442\x0430\x0440\x0442\x0430: \x0441\x0442\x0430\x0440\x0442 \x043E\x0442\x043C\x0435\x043D\x0451\x043D. \x041D\x0430\x0436\x043C\x0438\x0442\x0435 \x00AB\x0421\x0442\x0430\x0440\x0442\x00BB \x0435\x0449\x0451 \x0440\x0430\x0437.")), LANCHAT_SYSTEM);
+			LANEnableStartButton(true);
+			return;
+		}
+		LanTest::joinLog("host: the room changed during START after a player started: starting as it is");
+	}
 	UnicodeString missing;
+	UnicodeString cannot;
 	Bool allAcked = TRUE;
+	for (Int i = 0; i < MAX_SLOTS; ++i)
+	{
+		const LANGameSlot *slot = m_currentGame->getConstLANSlot(i);
+		if (slot != nullptr && slot->isHuman() && slot->getIP() != m_localIP && m_startCannot[i])
+		{
+			if (!cannot.isEmpty()) {
+				cannot.concat(L", ");
+			}
+			cannot.concat(slot->getName());
+		}
+	}
 	for (Int i = 0; i < MAX_SLOTS; ++i)
 	{
 		const LANGameSlot *slot = m_currentGame->getConstLANSlot(i);
@@ -1378,11 +1413,20 @@ void LANAPI::pumpStartDelivery()
 			OnChat(L"SYSTEM", m_localIP, text, LANCHAT_SYSTEM);
 			LanRoom::postNotice(text);   // shown in the lobby after the match too
 		}
+		if (!cannot.isEmpty())
+		{
+			UnicodeString text;
+			text.format(TheGameText->FETCH_OR_SUBSTITUTE("GUI:LanCannotStartNamed", localizedFallback(
+				L"Cannot start (the map is missing on it): %ls.",
+				L"\x041D\x0435 \x043C\x043E\x0436\x0435\x0442 \x043D\x0430\x0447\x0430\x0442\x044C (\x043D\x0430 \x043D\x0451\x043C \x043D\x0435\x0442 \x043A\x0430\x0440\x0442\x044B): %ls.")).str(), cannot.str());
+			OnChat(L"SYSTEM", m_localIP, text, LANCHAT_SYSTEM);
+			LanRoom::postNotice(text);
+		}
 		m_transport->update(); // force a send
 		OnGameStart();
 		return;
 	}
-	if ((Int)(now - m_lastStartSend) >= 200)
+	if (LanClock::due(now, m_lastStartSend, 200))
 	{
 		m_lastStartSend = now;
 		for (Int i = 0; i < MAX_SLOTS; ++i)
@@ -1400,7 +1444,7 @@ void LANAPI::pumpRoomBeat(UnsignedInt now)
 {
 	// O70: the room's keep-alive every 2 s: the host's slot list (the joiners take the host for alive by it), a joiner's
 	// HELLO (the host takes the seat for alive by it)
-	if (!m_inLobby && m_currentGame != nullptr && !m_currentGame->isGameInProgress() && (Int)(now - m_lastRoomBeat) >= 2000)
+	if (!m_inLobby && m_currentGame != nullptr && !m_currentGame->isGameInProgress() && LanClock::due(now, m_lastRoomBeat, 2000))
 	{
 		m_lastRoomBeat = now;
 		if (AmIHost()) {
@@ -1421,7 +1465,7 @@ void LANAPI::keepRoomAlive()
 	if (m_inLobby || m_currentGame == nullptr || m_currentGame->isGameInProgress() || m_transport == nullptr) {
 		return;
 	}
-	pumpRoomBeat(timeGetTime());
+	pumpRoomBeat(LanClock::now());
 	m_transport->doSend();
 }
 
@@ -1442,7 +1486,7 @@ void LANAPI::noteHeardFrom(UnsignedInt senderIP, Int messageType)
 	default:
 		return;
 	}
-	const UnsignedInt t = timeGetTime();
+	const UnsignedInt t = LanClock::now();
 	if (m_currentGame->amIHost())
 	{
 		for (Int p = 0; p < MAX_SLOTS; ++p)
@@ -1482,7 +1526,7 @@ void LANAPI::noteHostView(const AsciiString &options)
 				for (Int k = 0; k < CONVERGE_COUNT; ++k) m_optionPending[k] = FALSE;
 				m_mapLastSent = 0;
 			}
-			m_hostViewMs = timeGetTime();
+			m_hostViewMs = LanClock::now();
 			m_hostSeesAccepted = slot->isAccepted();
 			m_hostSeesMap = slot->hasMap();
 			m_hostSeesValue[CONVERGE_COLOR] = slot->getColor();
@@ -1505,7 +1549,7 @@ void LANAPI::pumpConvergence()
 	if (mine == nullptr) {
 		return;
 	}
-	const UnsignedInt now = timeGetTime();
+	const UnsignedInt now = LanClock::now();
 	// accept: again every 0.7 s until the host's list (newer than the last send) shows it; a change of the room by the
 	// host resets every accept by design, and then this one is not wanted any more; at most 30 s
 	if (m_acceptWanted)
@@ -1524,7 +1568,7 @@ void LANAPI::pumpConvergence()
 		}
 	}
 	// has the map: this computer's own check (GameInfo::setMapCRC/setMapSize) against what the host's list says
-	if (mine->hasMap() != m_hostSeesMap && (Int)(now - m_mapLastSent) >= 1500 && (Int)(now - m_hostViewMs) < 5000)
+	if (mine->hasMap() != m_hostSeesMap && LanClock::due(now, m_mapLastSent, 1500) && (Int)(now - m_hostViewMs) < 5000)
 	{
 		m_mapLastSent = now;
 		LanTest::joinLog("player: map status again (mine %d, the host's list %d)", mine->hasMap() ? 1 : 0, m_hostSeesMap ? 1 : 0);
@@ -1570,8 +1614,8 @@ void LANAPI::RequestGameStartTimer( Int seconds )
 	if (m_inLobby || !m_currentGame || m_currentGame->getHostIP() != m_localIP)
 		return;
 
-	UnsignedInt now = timeGetTime();
-	m_gameStartTime = now + 1000;
+	UnsignedInt now = LanClock::now();
+	m_gameStartTime = LanClock::stamp(now + 1000);   // O75: 0 means "no countdown"
 	m_gameStartSeconds = (seconds) ? seconds - 1 : 0;
 
 	LANMessage msg;
@@ -1610,7 +1654,7 @@ void LANAPI::RequestGameOptions( AsciiString gameOptions, Bool isPublic, Unsigne
 				}
 				m_optionPending[k] = TRUE;
 				m_optionWanted[k] = atoi(gameOptions.str() + keyLength + 1);
-				m_optionSince[k] = timeGetTime();
+				m_optionSince[k] = LanClock::now();
 				m_optionLastSent[k] = m_optionSince[k];
 			}
 		}
@@ -1717,7 +1761,7 @@ void LANAPI::RequestGameCreate( UnicodeString gameName, Bool isDirectConnect )
 	myGame->setMap(mapName);
 	myGame->setIsDirectConnect(isDirectConnect);
 
-	myGame->setLastHeard(timeGetTime());
+	myGame->setLastHeard(LanClock::now());
 	m_currentGame = myGame;
 
 /// @todo: Need to initialize the players elsewere.
@@ -1833,7 +1877,7 @@ void LANAPI::RequestSetName( UnicodeString newName )
 	}
 
 	// Set up timer
-	m_lastResendTime = timeGetTime();
+	m_lastResendTime = LanClock::now();
 
 	if (m_inLobby && m_pendingAction == ACT_NONE)
 	{
@@ -1857,7 +1901,7 @@ void LANAPI::RequestSetName( UnicodeString newName )
 		player->setName(m_name);
 		player->setHost(m_hostName);
 		player->setLogin(m_userName);
-		player->setLastHeard(timeGetTime());
+		player->setLastHeard(LanClock::now());
 
 		addPlayer(player);
 
@@ -2190,7 +2234,7 @@ void LANAPI::terminateStrings(LANMessage *msg)
 void LANAPI::pumpGuard()
 {
 	static UnsignedInt s_lastPump = 0;
-	const UnsignedInt now = timeGetTime();
+	const UnsignedInt now = LanClock::now();
 	if (now - s_lastPump < 200) {
 		return;
 	}

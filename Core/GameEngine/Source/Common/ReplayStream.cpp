@@ -34,6 +34,7 @@
 
 #include <stdio.h>
 #include <stdarg.h>
+#include "Common/LanClock.h"   // O75
 
 namespace
 {
@@ -124,7 +125,7 @@ namespace
 		{
 			InitializeCriticalSection(&s_logLock);
 			s_logLockReady = TRUE;
-			s_startMs = timeGetTime();
+			s_startMs = LanClock::now();
 		}
 		EnterCriticalSection(&s_logLock);
 		if (s_log == nullptr && TheGlobalData != nullptr)
@@ -144,7 +145,7 @@ namespace
 		EnterCriticalSection(&s_logLock);
 		if (s_log != nullptr)
 		{
-			fprintf(s_log, "[%8.3f] ", (timeGetTime() - s_startMs) / 1000.0);
+			fprintf(s_log, "[%8.3f] ", (LanClock::now() - s_startMs) / 1000.0);
 			va_list args;
 			va_start(args, format);
 			vfprintf(s_log, format, args);
@@ -569,7 +570,7 @@ namespace
 		// moment (it ends by its generation), so the bind is retried for up to 3 seconds
 		SOCKET listener = INVALID_SOCKET;
 		const UnsignedInt bindHost = c.bind != 0 ? c.bind : 0x7F000001u;
-		const DWORD bindStart = timeGetTime();
+		const DWORD bindStart = LanClock::now();
 		while (current())
 		{
 			listener = socket(AF_INET, SOCK_STREAM, 0);
@@ -585,7 +586,7 @@ namespace
 				closesocket(listener);
 			}
 			listener = INVALID_SOCKET;
-			if (timeGetTime() - bindStart > 3000) {
+			if (LanClock::now() - bindStart > 3000) {
 				break;
 			}
 			Sleep(100);
@@ -612,7 +613,7 @@ namespace
 		HANDLE file = INVALID_HANDLE_VALUE;
 		FrameIndex index;
 		memset(&index, 0, sizeof(index));
-		const DWORD startMs = timeGetTime();
+		const DWORD startMs = LanClock::now();
 		DWORD lastTickMs = startMs;
 		Bool draining = FALSE;
 		DWORD drainStartMs = 0;
@@ -641,7 +642,7 @@ namespace
 
 		while (current())
 		{
-			const DWORD now = timeGetTime();
+			const DWORD now = LanClock::now();
 			if (c.stopAfterSec > 0 && now - startMs > (DWORD)c.stopAfterSec * 1000)
 			{
 				logLine("server: stopping after %d seconds (-serveReplayStopAfter, a forced source loss)", c.stopAfterSec);
@@ -1183,13 +1184,13 @@ namespace
 	Bool sendAll(SOCKET s, const unsigned char *data, Int length)
 	{
 		Int done = 0;
-		const DWORD start = timeGetTime();
+		const DWORD start = LanClock::now();
 		while (done < length)
 		{
 			const int n = send(s, (const char *)data + done, length - done, 0);
 			if (n > 0) {
 				done += n;
-			} else if (n < 0 && WSAGetLastError() == WSAEWOULDBLOCK && timeGetTime() - start < 2000) {
+			} else if (n < 0 && WSAGetLastError() == WSAEWOULDBLOCK && LanClock::now() - start < 2000) {
 				Sleep(5);
 			} else {
 				return FALSE;
@@ -1223,9 +1224,9 @@ namespace
 			if (InterlockedCompareExchange(&s_mirrorGen, 0, 0) != m.gen) {
 				return;
 			}
-			const DWORD t0 = timeGetTime();
+			const DWORD t0 = LanClock::now();
 			SOCKET s = connectTo(m.sources[i], m.bind, 500);
-			cost[i] = s == INVALID_SOCKET ? 0xFFFFFFFFu : timeGetTime() - t0;
+			cost[i] = s == INVALID_SOCKET ? 0xFFFFFFFFu : LanClock::now() - t0;
 			if (s != INVALID_SOCKET) {
 				closesocket(s);
 			}
@@ -1304,7 +1305,7 @@ namespace
 		UnsignedInt idxPos = 12;
 		UnsignedInt liveCounter = 0;
 		Bool ended = FALSE;
-		DWORD lastContactMs = timeGetTime();   // the last useful message (GKEY, DATA, FIDX, LIVE or HOLD)
+		DWORD lastContactMs = LanClock::now();   // the last useful message (GKEY, DATA, FIDX, LIVE or HOLD)
 		Bool everContact = FALSE;
 		UnsignedInt maxFrameSeen = 0;      // the newest frame a source named (the log)
 		const auto setConnected = [&](Bool on, UnsignedInt ip) {
@@ -1335,13 +1336,13 @@ namespace
 		while (current() && !ended && m.sourceCount > 0)
 		{
 			// O34: no data for too long (a reserve bridges the first seconds; "reconnecting" shows meanwhile)
-			if (timeGetTime() - lastContactMs > (everContact ? (DWORD)NO_SOURCE_END_MS : (DWORD)FIRST_CONTACT_MS))
+			if (LanClock::now() - lastContactMs > (everContact ? (DWORD)NO_SOURCE_END_MS : (DWORD)FIRST_CONTACT_MS))
 			{
 				loseStream("no source has given data");
 				break;
 			}
-			const Int source = pickSource(m, timeGetTime());
-			while (current() && (LONG)(m.sources[source].retryAfterMs - timeGetTime()) > 0) {
+			const Int source = pickSource(m, LanClock::now());
+			while (current() && (LONG)(m.sources[source].retryAfterMs - LanClock::now()) > 0) {
 				Sleep(100);   // every source cools down: wait for the first free one
 			}
 			if (!current()) {
@@ -1352,14 +1353,14 @@ namespace
 			if (s == INVALID_SOCKET)
 			{
 				logLine("mirror: no answer from %s:%u", src.host, (unsigned)src.port);
-				src.retryAfterMs = timeGetTime() + COOLDOWN_MS;
+				src.retryAfterMs = LanClock::now() + COOLDOWN_MS;
 				continue;
 			}
 			// the hello (version 3): after which frame, and the game key we know
 			unsigned char hello[HELLO_SIZE];
 			const UnsignedInt resume = haveFrame ? lastFrame : ALL_FRAMES;
 			// O34: back at a source that sent us on not long ago: the relays did not take us
-			const Bool lastResort = src.redirectedMs != 0 && timeGetTime() - src.redirectedMs < REDIRECT_RECENT_MS;
+			const Bool lastResort = src.redirectedMs != 0 && LanClock::now() - src.redirectedMs < REDIRECT_RECENT_MS;
 			memcpy(hello, "GRSV", 4);
 			put32(hello + 4, HELLO_VERSION);
 			put32(hello + 8, resume);
@@ -1370,7 +1371,7 @@ namespace
 			if (!sendAll(s, hello, HELLO_SIZE))
 			{
 				closesocket(s);
-				src.retryAfterMs = timeGetTime() + COOLDOWN_MS;
+				src.retryAfterMs = LanClock::now() + COOLDOWN_MS;
 				continue;
 			}
 			UnsignedInt srcIp = 0;
@@ -1388,8 +1389,8 @@ namespace
 				srcPos += k;
 			};
 			Int inLen = 0;
-			DWORD lastReportMs = timeGetTime();
-			DWORD lastMessageMs = timeGetTime();
+			DWORD lastReportMs = LanClock::now();
+			DWORD lastMessageMs = LanClock::now();
 			DWORD lastFrameMoveMs = lastMessageMs;
 			UnsignedInt lastSourceFrame = 0xFFFFFFFF;
 			Bool holding = FALSE;
@@ -1419,7 +1420,7 @@ namespace
 					if (inLen - at < 8 + (Int)length) break;
 					const unsigned char *type = in + at;
 					const unsigned char *payload = in + at + 8;
-					lastMessageMs = timeGetTime();
+					lastMessageMs = LanClock::now();
 					const Bool useful = memcmp(type, "DATA", 4) == 0 || memcmp(type, "LIVE", 4) == 0 || memcmp(type, "HOLD", 4) == 0
 						|| memcmp(type, "FIDX", 4) == 0 || memcmp(type, "GKEY", 4) == 0;
 					if (useful)
@@ -1529,7 +1530,7 @@ namespace
 						if (frame != lastSourceFrame)
 						{
 							lastSourceFrame = frame;
-							lastFrameMoveMs = timeGetTime();
+							lastFrameMoveMs = LanClock::now();
 						}
 						// the source sends LIVE only after the frame ends it covers: "ended" for our newest frame is the end
 						if (endedFlag != 0 && haveFrame && frame <= lastFrame)
@@ -1554,7 +1555,7 @@ namespace
 					else if (memcmp(type, "HOLD", 4) == 0)
 					{
 						holding = TRUE;   // a delayed viewer, or a source still short of our frame: it waits
-						lastFrameMoveMs = timeGetTime();
+						lastFrameMoveMs = LanClock::now();
 					}
 					else if (memcmp(type, "MORE", 4) == 0 && length >= 4)
 					{
@@ -1611,7 +1612,7 @@ namespace
 					memmove(in, in + at, inLen - at);
 					inLen -= at;
 				}
-				const DWORD now = timeGetTime();
+				const DWORD now = LanClock::now();
 				if (now - lastReportMs >= 10000)
 				{
 					lastReportMs = now;
@@ -1629,7 +1630,7 @@ namespace
 			setConnected(FALSE, 0);
 			if (leaveWhy != nullptr)
 			{
-				const DWORD now = timeGetTime();
+				const DWORD now = LanClock::now();
 				if (sentOn)
 				{
 					src.redirectedMs = now;   // it may be asked again at once, as the last resort, once the relays failed
@@ -1901,9 +1902,9 @@ Bool ReplayStream::startWatching(AsciiString &localPath)
 	}
 	// the command line viewer's own start waits for the replay's header (its game is not running yet); a LAN viewer comes
 	// here only once the header is there
-	const DWORD start = timeGetTime();
+	const DWORD start = LanClock::now();
 	while (InterlockedCompareExchange(&s_mirrorHeaderReady, 0, 0) == 0 && InterlockedCompareExchange(&s_mirrorLost, 0, 0) == 0
-		&& timeGetTime() - start < HEADER_WAIT_MS) {
+		&& LanClock::now() - start < HEADER_WAIT_MS) {
 		Sleep(50);
 	}
 	if (InterlockedCompareExchange(&s_mirrorHeaderReady, 0, 0) == 0)
@@ -2019,7 +2020,7 @@ void ReplayStream::pumpDeletes()
 	if (s_pendingDeleteCount == 0) {
 		return;
 	}
-	const UnsignedInt now = timeGetTime();
+	const UnsignedInt now = LanClock::now();
 	if (now - s_lastDeleteTry < 1000) {
 		return;
 	}

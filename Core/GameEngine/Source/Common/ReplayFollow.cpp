@@ -29,6 +29,7 @@
 #include "GameClient/GameText.h"
 
 #include <windows.h>
+#include "Common/LanClock.h"   // O75
 
 namespace
 {
@@ -200,7 +201,7 @@ namespace
 	/// Reads the side file (at most every 50 ms). FALSE when there is none.
 	Bool poll()
 	{
-		const UnsignedInt now = timeGetTime();
+		const UnsignedInt now = LanClock::now();
 		if (s_haveLast && now - s_lastPollMs < 50) {
 			return TRUE;
 		}
@@ -227,7 +228,7 @@ namespace
 
 	void showWaiting()
 	{
-		const UnsignedInt now = timeGetTime();
+		const UnsignedInt now = LanClock::now();
 		if (TheInGameUI == nullptr || now - s_lastMessageMs < 5000) {
 			return;
 		}
@@ -388,7 +389,7 @@ Bool ReplayFollow::writerAlive()
 	}
 	// a writer that stopped writing (closed, crashed) for 10 seconds counts as ended; O34: a stream viewer's mirror that is
 	// still looking for a source does not (it gives up by itself after 2 minutes and marks the end)
-	return timeGetTime() - s_lastChangeMs < 10000 || ReplayStream::mirrorTrying();
+	return LanClock::now() - s_lastChangeMs < 10000 || ReplayStream::mirrorTrying();
 }
 
 Bool ReplayFollow::mayRunFrame(UnsignedInt frame)
@@ -408,7 +409,7 @@ Bool ReplayFollow::mayRunFrame(UnsignedInt frame)
 	{
 		// the writer has not finished this frame (or it lies within the delay): hold, and say so after a second
 		setCatchUp(FALSE);
-		const UnsignedInt now = timeGetTime();
+		const UnsignedInt now = LanClock::now();
 		if (s_holdSinceMs == 0) {
 			s_holdSinceMs = now;
 		}

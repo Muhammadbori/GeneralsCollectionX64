@@ -31,6 +31,7 @@
 
 #include <map>
 #include <vector>
+#include "Common/LanClock.h"   // O75
 
 // O32: random bytes for the pipe name (advapi32's RtlGenRandom; no new library for the game)
 extern "C" BOOLEAN NTAPI SystemFunction036(PVOID buffer, ULONG length);
@@ -291,13 +292,13 @@ namespace
 						if (++peer.misses >= 2 || !peer.asked) {
 							peer.verdict = GuardLink::VERDICT_NONE;
 						}
-						peer.lastCheck = timeGetTime() - (kRecheckMs - kRetryMs);   // ask again in kRetryMs
+						peer.lastCheck = LanClock::now() - (kRecheckMs - kRetryMs);   // ask again in kRetryMs
 					}
 					else
 					{
 						peer.misses = 0;
 						peer.verdict = v;
-						peer.verdictMs = timeGetTime();
+						peer.verdictMs = LanClock::now();
 					}
 					peer.bits = bits;
 					peer.asked = TRUE;
@@ -401,7 +402,7 @@ void GuardLink::start()
 	s_process = pi.hProcess;
 	s_childPid = pi.dwProcessId;
 	s_started = TRUE;
-	s_startMs = timeGetTime();
+	s_startMs = LanClock::now();
 }
 
 void GuardLink::update()
@@ -409,7 +410,7 @@ void GuardLink::update()
 	if (!s_started || s_dead) {
 		return;
 	}
-	const UnsignedInt now = timeGetTime();
+	const UnsignedInt now = LanClock::now();
 	if (WaitForSingleObject(s_process, 0) == WAIT_OBJECT_0)
 	{
 		lost("the guard process ended");
@@ -667,7 +668,7 @@ GuardLink::Verdict GuardLink::verdictOf(UnsignedInt ip)
 		return VERDICT_NONE;
 	}
 	// O32 (review 20): a verdict counts only while it is renewed (an address another player takes later starts empty)
-	return timeGetTime() - it->second.verdictMs <= kVerdictLifeMs ? it->second.verdict : VERDICT_NONE;
+	return LanClock::now() - it->second.verdictMs <= kVerdictLifeMs ? it->second.verdict : VERDICT_NONE;
 }
 
 void GuardLink::notePeer(UnsignedInt ip, UnsignedInt ownIp)
@@ -677,7 +678,7 @@ void GuardLink::notePeer(UnsignedInt ip, UnsignedInt ownIp)
 	}
 	Peer &p = s_peers[ip];
 	p.ownIp = ownIp;
-	p.lastSeen = timeGetTime();
+	p.lastSeen = LanClock::now();
 }
 
 void GuardLink::onLanData(UnsignedInt fromIp, UnsignedInt ownIp, const UnsignedByte *data, Int length)

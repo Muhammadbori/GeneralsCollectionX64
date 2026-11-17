@@ -368,6 +368,22 @@ bool CommandLine::isAudioIgnoreFocus()
 	return s_state == 1;
 }
 
+namespace LanClock { UnsignedInt g_testOffsetMs = 0; }
+
+// O75: -testClockOffset <ms> (tests, *uitest*.exe only): added to the LAN, room, anti-cheat link and stream clock
+// (LanClock::now), e.g. 2200000000 (26 days of uptime) or 4294900000 (the 49.7-day wrap 67 s later)
+Int parseTestClockOffset(char *args[], int num)
+{
+	if (num > 1)
+	{
+		if (CommandLine::isTestExe()) {
+			LanClock::g_testOffsetMs = (UnsignedInt)strtoul(args[1], nullptr, 10);
+		}
+		return 2;
+	}
+	return 1;
+}
+
 // O68: -testDefeatAtFrame <frame> (tests, *uitest*.exe only; DefeatedPlayer::configureTestDefeat)
 Int parseTestDefeatAtFrame(char *args[], int num)
 {
@@ -2120,6 +2136,7 @@ static CommandLineParam paramsForStartup[] =
 	{ "-audioLog", parseAudioLog },
 	{ "-audioIgnoreFocus", parseAudioIgnoreFocus },   // O57 (tests, *uitest*.exe only)
 	{ "-testDefeatAtFrame", parseTestDefeatAtFrame },   // O68 (tests, *uitest*.exe only)
+	{ "-testClockOffset", parseTestClockOffset },       // O75 (tests, *uitest*.exe only)
 	{ "-stateTrace", parseStateTrace },
 	{ "-stateTraceCalls", parseStateTraceCalls },
 	{ "-audioLenDump", parseAudioLenDump },

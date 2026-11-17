@@ -562,6 +562,8 @@ protected:
 	UnsignedInt					m_startDeliverSince;
 	UnsignedInt					m_lastStartSend;
 	Bool								m_startAcked[MAX_SLOTS];
+	Bool								m_startCannot[MAX_SLOTS];   ///< O75: acknowledged with "cannot start" (no map)
+	enum { kStartAckCannotStart = 0xFFFFFFFFu };          ///< O75: MSG_START_ACK's revision for "cannot start"
 	Bool								m_inLobby;											///< Are we in the lobby (not in a game)?
 	LANGameInfo *				m_currentGame;							///< Pointer to game (setup screen) we are currently in (null for lobby)
 	//LANGameInfo *m_currentGameInfo;			///< Pointer to game setup info we are currently in.
