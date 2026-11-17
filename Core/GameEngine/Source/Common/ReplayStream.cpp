@@ -1051,9 +1051,46 @@ namespace
 	Bool s_mirrorOutside = FALSE;            ///< O61 (row 49): the mirror is an outside viewer's (its files go at the end)
 
 	// O61 (row 49): files still to delete (another handle held them at the first try)
-	enum { MAX_PENDING_DELETES = 24 };
+	enum { MAX_PENDING_DELETES = 24, MAX_DELETE_TRIES = 10 };
 	char s_pendingDeletes[MAX_PENDING_DELETES][_MAX_PATH];
+	Int s_pendingDeleteTries[MAX_PENDING_DELETES];   ///< O64: a file that cannot be deleted is given up after a few tries
 	Int s_pendingDeleteCount = 0;
+
+	/// O64 (H6 #1): the folder of the outside viewers' mirrors: only the game writes there (never the replay folder).
+	AsciiString viewerFolder()
+	{
+		AsciiString dir = TheGlobalData != nullptr ? TheGlobalData->getPath_UserData() : AsciiString::TheEmptyString;
+		dir.concat("ViewerStreams\\");
+		return dir;
+	}
+
+	/// O64 (H6 #1): exactly "Viewer_<digits>_<digits>.rep", ".rep.live" or ".rep.idx" (any case); 'pid' the first number.
+	Bool isViewerFileName(const char *name, unsigned long *pid)
+	{
+		if (_strnicmp(name, "Viewer_", 7) != 0) {
+			return FALSE;
+		}
+		const char *p = name + 7;
+		unsigned long value = 0;
+		Int digits = 0;
+		for (; *p >= '0' && *p <= '9' && digits < 10; ++p, ++digits) {
+			value = value * 10 + (unsigned long)(*p - '0');
+		}
+		if (digits == 0 || *p != '_') {
+			return FALSE;
+		}
+		++p;
+		digits = 0;
+		for (; *p >= '0' && *p <= '9' && digits < 10; ++p, ++digits) {}
+		if (digits == 0) {
+			return FALSE;
+		}
+		if (_stricmp(p, ".rep") != 0 && _stricmp(p, ".rep.live") != 0 && _stricmp(p, ".rep.idx") != 0) {
+			return FALSE;
+		}
+		*pid = value;
+		return TRUE;
+	}
 	UnsignedInt s_lastDeleteTry = 0;
 
 	/// Deletes 'path' now, or keeps it for a later try when another handle still holds it.
@@ -1068,7 +1105,9 @@ namespace
 		for (Int i = 0; i < s_pendingDeleteCount; ++i) {
 			if (_stricmp(s_pendingDeletes[i], path) == 0) return;
 		}
-		if (s_pendingDeleteCount < MAX_PENDING_DELETES) {
+		if (s_pendingDeleteCount < MAX_PENDING_DELETES)
+		{
+			s_pendingDeleteTries[s_pendingDeleteCount] = 1;
 			strlcpy(s_pendingDeletes[s_pendingDeleteCount++], path, _MAX_PATH);
 		}
 	}
@@ -1789,12 +1828,13 @@ Bool ReplayStream::beginWatching(AsciiString &localPath)
 		m->flags = s_watchFlags;
 		m->bind = s_watchBind;
 		m->relayPort = s_matchSet ? s_matchPort : s_cmdPort;
-		AsciiString dir = TheGlobalData->getPath_UserData();
-		dir.concat("Replays\\");
-		CreateDirectoryA(dir.str(), nullptr);
 		// O33: a file of its own per mirror (an old mirror may still close its file). O61 (row 49): an outside viewer's is
-		// "Viewer_...", deleted when the viewing ends (discardViewerFiles) or at the next start after a crash
+		// "Viewer_...", deleted when the viewing ends (discardViewerFiles) or at the next start after a crash; O64 (H6 #1):
+		// in a folder of its own (ViewerStreams), never in the replay folder
 		s_mirrorOutside = (s_watchFlags & 1) == 0;
+		AsciiString dir = TheGlobalData->getPath_UserData();
+		dir.concat(s_mirrorOutside ? "ViewerStreams\\" : "Replays\\");
+		CreateDirectoryA(dir.str(), nullptr);
 		snprintf(m->path, sizeof(m->path), "%s%s_%u_%ld.rep", dir.str(), s_mirrorOutside ? "Viewer" : "Watched",
 			(unsigned)GetCurrentProcessId(), (long)m->gen);
 		snprintf(m->livePath, sizeof(m->livePath), "%s.live", m->path);
@@ -1975,13 +2015,21 @@ void ReplayStream::pumpDeletes()
 	{
 		const Bool gone = DeleteFileA(s_pendingDeletes[i]) || GetLastError() == ERROR_FILE_NOT_FOUND
 			|| GetLastError() == ERROR_PATH_NOT_FOUND;
-		if (!gone)
-		{
-			if (kept != i) {
-				strlcpy(s_pendingDeletes[kept], s_pendingDeletes[i], _MAX_PATH);
-			}
-			++kept;
+		if (gone) {
+			continue;
 		}
+		// O64: a file that cannot be deleted (a read-only folder) is given up after a few tries, said once
+		if (++s_pendingDeleteTries[i] > MAX_DELETE_TRIES)
+		{
+			logLine("mirror: %s could not be deleted (error %lu): given up", s_pendingDeletes[i], (unsigned long)GetLastError());
+			continue;
+		}
+		if (kept != i)
+		{
+			strlcpy(s_pendingDeletes[kept], s_pendingDeletes[i], _MAX_PATH);
+			s_pendingDeleteTries[kept] = s_pendingDeleteTries[i];
+		}
+		++kept;
 	}
 	s_pendingDeleteCount = kept;
 }
@@ -1991,8 +2039,8 @@ void ReplayStream::sweepViewerLeftovers()
 	if (TheGlobalData == nullptr) {
 		return;
 	}
-	AsciiString dir = TheGlobalData->getPath_UserData();
-	dir.concat("Replays\\");
+	// O64 (H6 #1): the viewers' own folder only, never the replay folder
+	const AsciiString dir = viewerFolder();
 	AsciiString pattern = dir;
 	pattern.concat("Viewer_*");
 	WIN32_FIND_DATAA found;
@@ -2006,9 +2054,13 @@ void ReplayStream::sweepViewerLeftovers()
 		if ((found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
 			continue;
 		}
-		const unsigned long pid = strtoul(found.cFileName + 7, nullptr, 10);   // "Viewer_<pid>_<n>.rep[.live|.idx]"
+		// O64 (H6 #1): exactly "Viewer_<pid>_<n>.rep[.live|.idx]" with a pid; any other name is left alone
+		unsigned long pid = 0;
+		if (!isViewerFileName(found.cFileName, &pid) || pid == 0) {
+			continue;
+		}
 		Bool running = pid == GetCurrentProcessId();
-		if (!running && pid != 0)
+		if (!running)
 		{
 			HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)pid);
 			if (process != nullptr)

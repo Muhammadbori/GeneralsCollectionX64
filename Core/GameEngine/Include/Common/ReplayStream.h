@@ -140,10 +140,12 @@ namespace ReplayStream
 	/// O42: the last stream was lost because the host does not allow outside viewers (the room's text says so).
 	Bool lostBecauseNotAllowed();
 	/// TheSuperHackers @feature O61 (row 49) Nothing of a watched match stays on an outside viewer's disk. Its mirror is
-	/// "<user data>\Replays\Viewer_<pid>_<n>.rep" with its .live and .idx (a room observer's stays "Watched_..." and is
-	/// kept, as before). discardViewerFiles (the viewing is over: LanRoom::resetViewer, the program's end) deletes them;
-	/// a file another handle still holds is deleted as soon as it can be (pumpDeletes, every frame); the files of a viewer
-	/// that crashed are deleted at the next start (sweepViewerLeftovers: "Viewer_*" of a process that no longer runs).
+	/// "<user data>\ViewerStreams\Viewer_<pid>_<n>.rep" with its .live and .idx (O64, H6 #1: a folder of its own that only
+	/// the game writes, never the replay folder; a room observer's mirror stays "Replays\Watched_..." and is kept, as
+	/// before). discardViewerFiles (the viewing is over: LanRoom::resetViewer, the program's end) deletes them; a file
+	/// another handle still holds is deleted as soon as it can be (pumpDeletes, every frame, at most 10 tries); the files
+	/// of a viewer that crashed are deleted at the next start (sweepViewerLeftovers: in that folder only, and only names
+	/// that are exactly "Viewer_<pid>_<n>.rep", ".rep.live" or ".rep.idx" of a process (pid not 0) that no longer runs).
 	void discardViewerFiles();
 	void pumpDeletes();
 	void sweepViewerLeftovers();
