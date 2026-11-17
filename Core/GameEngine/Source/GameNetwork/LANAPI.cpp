@@ -292,7 +292,10 @@ Bool LanTest::dropForTest()
 
 void LanTest::joinLog(const char *format, ...)
 {
-	if (s_lossPercent < 0 || TheGlobalData == nullptr) {
+	// O82 (H14): only with -lanTestLoss; at most 8 MB a run (a LAN peer can make a line per message)
+	static UnsignedInt s_joinLogBytes = 0;
+	const UnsignedInt kJoinLogMaxBytes = 8u << 20;
+	if (s_lossPercent < 0 || TheGlobalData == nullptr || s_joinLogBytes > kJoinLogMaxBytes) {
 		return;
 	}
 	char path[_MAX_PATH];
@@ -301,6 +304,14 @@ void LanTest::joinLog(const char *format, ...)
 	if (f == nullptr) {
 		return;
 	}
+	if (s_joinLogBytes + 512 > kJoinLogMaxBytes)
+	{
+		fprintf(f, "[%10u] log full (8 MB this run): nothing more is written\n", (unsigned)LanClock::now());
+		fclose(f);
+		s_joinLogBytes = kJoinLogMaxBytes + 1;
+		return;
+	}
+	s_joinLogBytes += 160;   // about one line
 	fprintf(f, "[%10u] ", (unsigned)LanClock::now());
 	va_list args;
 	va_start(args, format);

@@ -676,6 +676,10 @@ void GuardLink::notePeer(UnsignedInt ip, UnsignedInt ownIp)
 	if (!s_started || s_dead || ip == 0 || ip == ownIp) {
 		return;   // O32 (review 21): nothing is collected once the guard is gone
 	}
+	// O82 (H14): at most 256 addresses at a time (any LAN packet's source lands here; old ones are forgotten after 2 min)
+	if (s_peers.size() >= 256 && s_peers.find(ip) == s_peers.end()) {
+		return;
+	}
 	Peer &p = s_peers[ip];
 	p.ownIp = ownIp;
 	p.lastSeen = LanClock::now();

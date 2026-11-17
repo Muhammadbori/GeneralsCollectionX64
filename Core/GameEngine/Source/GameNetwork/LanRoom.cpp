@@ -86,6 +86,7 @@ namespace
 	const Text kAdminNobody = { "GUI:LanRoomAdminNobody", L"Nobody sits in a seat: a match needs at least one player.", L"\x041D\x0438\x043A\x0442\x043E \x043D\x0435 \x0441\x0438\x0434\x0438\x0442 \x043D\x0430 \x043C\x0435\x0441\x0442\x0435: \x0434\x043B\x044F \x043C\x0430\x0442\x0447\x0430 \x043D\x0443\x0436\x0435\x043D \x0445\x043E\x0442\x044F \x0431\x044B \x043E\x0434\x0438\x043D \x0438\x0433\x0440\x043E\x043A." };
 	const Text kOtherVersion = { "GUI:LanOtherVersion", L"This game is another version of the game: it cannot be joined or watched.", L"\x042D\x0442\x0430 \x0438\x0433\x0440\x0430 \x0434\x0440\x0443\x0433\x043E\x0439 \x0432\x0435\x0440\x0441\x0438\x0438: \x0432\x043E\x0439\x0442\x0438 \x0432 \x043D\x0435\x0451 \x0438\x043B\x0438 \x0441\x043C\x043E\x0442\x0440\x0435\x0442\x044C \x0435\x0451 \x043D\x0435\x043B\x044C\x0437\x044F." };
 	const Text kThisPcPlays = { "GUI:LanRoomThisPcPlays", L"This computer is a player of this match: it cannot watch it (a second game on a player's computer is refused).", L"\x042D\x0442\x043E\x0442 \x043A\x043E\x043C\x043F\x044C\x044E\x0442\x0435\x0440 \x2014 \x0438\x0433\x0440\x043E\x043A \x044D\x0442\x043E\x0433\x043E \x043C\x0430\x0442\x0447\x0430: \x0441\x043C\x043E\x0442\x0440\x0435\x0442\x044C \x0435\x0433\x043E \x043E\x0442\x0441\x044E\x0434\x0430 \x043D\x0435\x043B\x044C\x0437\x044F (\x0432\x0442\x043E\x0440\x0430\x044F \x0438\x0433\x0440\x0430 \x043D\x0430 \x043A\x043E\x043C\x043F\x044C\x044E\x0442\x0435\x0440\x0435 \x0438\x0433\x0440\x043E\x043A\x0430 \x043D\x0435 \x0434\x043E\x043F\x0443\x0441\x043A\x0430\x0435\x0442\x0441\x044F)." };   // O64
+	const Text kChatPortBusy = { "GUI:LanObserverChatPortBusy", L"The observers' chat could not open (port 8091 is in use on this computer): no text or voice with the other observers in this match.", L"\x0427\x0430\x0442 \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x0435\x0439 \x043D\x0435 \x043E\x0442\x043A\x0440\x044B\x043B\x0441\x044F (\x043F\x043E\x0440\x0442 8091 \x043D\x0430 \x044D\x0442\x043E\x043C \x043A\x043E\x043C\x043F\x044C\x044E\x0442\x0435\x0440\x0435 \x0437\x0430\x043D\x044F\x0442): \x0432 \x044D\x0442\x043E\x043C \x043C\x0430\x0442\x0447\x0435 \x043D\x0435\x0442 \x0442\x0435\x043A\x0441\x0442\x0430 \x0438 \x0433\x043E\x043B\x043E\x0441\x0430 \x0441 \x0434\x0440\x0443\x0433\x0438\x043C\x0438 \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x044F\x043C\x0438." };   // O82
 	const Text kLeft = { "GUI:LanRoomLeft", L"You no longer observe that game.", L"\x0412\x044B \x0431\x043E\x043B\x044C\x0448\x0435 \x043D\x0435 \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0435\x0442\x0435 \x0437\x0430 \x044D\x0442\x043E\x0439 \x0438\x0433\x0440\x043E\x0439." };
 
 	struct Entry { UnsignedInt ip; UnicodeString name; UnsignedInt lastHeard; };
@@ -133,21 +134,86 @@ namespace
 
 	/// O39: the observers' channel writes what it sends, shows and drops into ObserverChat.log (user data folder), for the
 	/// tests (a picture shows a message line only for a few seconds)
+	// TheSuperHackers @bugfix O82 (H14) A LAN peer can send this socket packets at any rate: the log stays open (no open
+	// and close per line), stops at 1 MB a run, and names each dropping address once (a count per address at the close).
+	FILE *s_chatLogFile = nullptr;
+	UnsignedInt s_chatLogBytes = 0;
+	const UnsignedInt kChatLogMaxBytes = 1u << 20;
+	enum { MAX_TRACKED_ADDRESSES = 64 };
+	struct DropCount { UnsignedInt ip; UnsignedInt count; };
+	std::vector<DropCount> s_dropped;            ///< at most MAX_TRACKED_ADDRESSES; the rest counted in s_droppedOther
+	UnsignedInt s_droppedOther = 0;
+	std::vector<UnsignedInt> s_refusedJoins;     ///< O81/O82: JOINs refused, one line per address, at most 64 kept
+
 	void chatLog(const char *what, UnsignedInt ip, const UnicodeString &text)
 	{
-		if (TheGlobalData == nullptr) {
+		if (TheGlobalData == nullptr || s_chatLogBytes > kChatLogMaxBytes) {
 			return;
 		}
-		AsciiString path = TheGlobalData->getPath_UserData();
-		path.concat("ObserverChat.log");
-		if (FILE *f = fopen(path.str(), "a"))
+		if (s_chatLogFile == nullptr)
 		{
-			AsciiString line;
-			line.translate(text);
-			fprintf(f, "[%10u] %s %u.%u.%u.%u: %s\n", (unsigned)LanClock::now(), what, ip >> 24, (ip >> 16) & 255, (ip >> 8) & 255, ip & 255,
-				line.str());
-			fclose(f);
+			AsciiString path = TheGlobalData->getPath_UserData();
+			path.concat("ObserverChat.log");
+			s_chatLogFile = fopen(path.str(), "a");
+			if (s_chatLogFile == nullptr) {
+				return;
+			}
 		}
+		if (s_chatLogBytes + 512 > kChatLogMaxBytes)
+		{
+			fprintf(s_chatLogFile, "[%10u] log full (1 MB this run): nothing more is written\n", (unsigned)LanClock::now());
+			fflush(s_chatLogFile);
+			s_chatLogBytes = kChatLogMaxBytes + 1;
+			return;
+		}
+		AsciiString line;
+		line.translate(text);
+		const int n = fprintf(s_chatLogFile, "[%10u] %s %u.%u.%u.%u: %s\n", (unsigned)LanClock::now(), what, ip >> 24, (ip >> 16) & 255,
+			(ip >> 8) & 255, ip & 255, line.str());
+		fflush(s_chatLogFile);
+		s_chatLogBytes += n > 0 ? (UnsignedInt)n : 64;
+	}
+
+	/// O82: a packet dropped from 'ip': the first one of each address is logged, the rest counted
+	void noteDropped(UnsignedInt ip)
+	{
+		for (size_t i = 0; i < s_dropped.size(); ++i)
+		{
+			if (s_dropped[i].ip == ip) {
+				++s_dropped[i].count;
+				return;
+			}
+		}
+		if (s_dropped.size() >= (size_t)MAX_TRACKED_ADDRESSES) {
+			++s_droppedOther;
+			return;
+		}
+		DropCount d = { ip, 1 };
+		s_dropped.push_back(d);
+		chatLog("DROPPED from (further packets of this address are counted)", ip, UnicodeString::TheEmptyString);
+	}
+
+	/// O82: the counts, when the channel closes
+	void flushDropCounts()
+	{
+		for (size_t i = 0; i < s_dropped.size(); ++i)
+		{
+			if (s_dropped[i].count > 1)
+			{
+				UnicodeString n;
+				n.format(L"%u packets", s_dropped[i].count);
+				chatLog("DROPPED in all from", s_dropped[i].ip, n);
+			}
+		}
+		if (s_droppedOther > 0)
+		{
+			UnicodeString n;
+			n.format(L"%u packets from further addresses", s_droppedOther);
+			chatLog("DROPPED in all", 0, n);
+		}
+		s_dropped.clear();
+		s_droppedOther = 0;
+		s_refusedJoins.clear();
 	}
 
 	// O59 (row 47): a defeated player's channel; the room's observers of the match this game plays (the host's START)
@@ -163,6 +229,7 @@ namespace
 			closesocket(s_chatSocket);
 			s_chatSocket = INVALID_SOCKET;
 		}
+		flushDropCounts();   // O82
 		s_peers.clear();
 		s_peerLocalIP = 0;
 		s_chatHinted = FALSE;
@@ -188,6 +255,9 @@ namespace
 		}
 		u_long on = 1;
 		ioctlsocket(s, FIONBIO, &on);
+		// O82: 16 KB of receive buffer: 32 packets are read a frame (pumpObserverChat), the system drops what does not fit
+		int bufferBytes = 16 * 1024;
+		setsockopt(s, SOL_SOCKET, SO_RCVBUF, (const char *)&bufferBytes, sizeof(bufferBytes));
 		s_chatSocket = s;
 		return TRUE;
 	}
@@ -214,6 +284,8 @@ namespace
 		}
 		return FALSE;
 	}
+
+	void notice(const UnicodeString &t);   // O82: defined below
 
 	/// The observers of the host's last list, without the players; this game included.
 	/// O60 (row 46): 'adminIP' (the host, who then is no player) watches from outside the seats and is one of them.
@@ -258,7 +330,14 @@ namespace
 		std::sort(s_peers.begin(), s_peers.end(), [](const Peer &a, const Peer &b) { return a.ip < b.ip; });
 		s_peerLocalIP = localIP;
 		// the text socket: this game's LAN address only, never the wildcard address
-		bindChatSocket(localIP);
+		if (!bindChatSocket(localIP))
+		{
+			// O82 (H14): no socket, no channel (observerChannelOpen() would have said yes and dropped the text); said
+			s_peers.clear();
+			s_peerLocalIP = 0;
+			notice(textOf(kChatPortBusy));
+			chatLog("NOT OPENED (port 8091 in use)", localIP, UnicodeString::TheEmptyString);
+		}
 	}
 
 	const Peer *peerOf(UnsignedInt ip)
@@ -296,12 +375,19 @@ namespace
 				if (peer == nullptr && ip != s_peerLocalIP && ntohs(from.sin_port) == LanRoom::OBSERVER_CHAT_PORT
 					&& !defeatedMatchPlayer(ip, &name))
 				{
-					// O81: said once per address in ObserverChat.log (a player who is not defeated, an unknown address)
-					static std::vector<UnsignedInt> s_refusedJoins;
+					// O81: said once per address in ObserverChat.log (a player who is not defeated, an unknown address); O82: at
+					// most 64 addresses kept (then counted as dropped), cleared when the channel closes
 					if (std::find(s_refusedJoins.begin(), s_refusedJoins.end(), ip) == s_refusedJoins.end())
 					{
-						s_refusedJoins.push_back(ip);
-						chatLog("JOIN REFUSED (not a defeated player of this match)", ip, UnicodeString::TheEmptyString);
+						if (s_refusedJoins.size() < (size_t)MAX_TRACKED_ADDRESSES)
+						{
+							s_refusedJoins.push_back(ip);
+							chatLog("JOIN REFUSED (not a defeated player of this match)", ip, UnicodeString::TheEmptyString);
+						}
+						else
+						{
+							noteDropped(ip);
+						}
 					}
 				}
 				else if (peer == nullptr && ip != s_peerLocalIP && ntohs(from.sin_port) == LanRoom::OBSERVER_CHAT_PORT)
@@ -316,7 +402,7 @@ namespace
 				continue;
 			}
 			if (peer == nullptr || ip == s_peerLocalIP || ntohs(from.sin_port) != LanRoom::OBSERVER_CHAT_PORT || got < 6 || magic != kChatMagic) {
-				chatLog("DROPPED from", ip, UnicodeString::TheEmptyString);
+				noteDropped(ip);   // O82: logged once per address
 				continue;   // not a room observer of this match: dropped unseen
 			}
 			WideChar line[g_lanMaxChatLength + 1];
@@ -1691,6 +1777,10 @@ void LanRoom::openDefeatedObserverChannel(UnsignedInt localIP)
 	{
 		s_peers.clear();
 		s_peerLocalIP = 0;
+		if (TheInGameUI != nullptr) {
+			TheInGameUI->messageNoFormat(textOf(kChatPortBusy));   // O82
+		}
+		chatLog("NOT OPENED (port 8091 in use)", localIP, UnicodeString::TheEmptyString);
 		return;
 	}
 	s_defeatedChannel = TRUE;
