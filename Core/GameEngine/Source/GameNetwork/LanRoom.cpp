@@ -849,6 +849,15 @@ void LanRoom::update(UnsignedInt localIP)
 
 void LanRoom::pollStart()
 {
+	// O61 (row 49): an outside viewer's files: the ones still held are deleted when they can be; an earlier crashed
+	// viewer's at the start
+	static Bool s_swept = FALSE;
+	if (!s_swept && TheGlobalData != nullptr)
+	{
+		s_swept = TRUE;
+		ReplayStream::sweepViewerLeftovers();
+	}
+	ReplayStream::pumpDeletes();
 	pumpObserverChat();
 	if (s_state == STATE_STARTING)
 	{
@@ -1350,6 +1359,7 @@ void LanRoom::resetViewer()
 		s_adminStarting = FALSE;
 		ReplayStream::stopWatching();
 		ReplayStream::stopServing();   // O33: the relay ends with the viewing
+		ReplayStream::discardViewerFiles();   // O61 (row 49): nothing of the match stays on an outside viewer's disk
 		closeObserverChannel();        // O34
 		s_upstreamDelay = 0;           // O39
 		ReplayFollow::turnOff();

@@ -1029,6 +1029,30 @@ namespace
 	volatile LONG s_mirrorEnded = 0;
 	volatile LONG s_mirrorLost = 0;          ///< every source was gone for NO_SOURCE_END_MS (the game thread tells the watcher once)
 	char s_mirrorPath[_MAX_PATH] = { 0 };
+	Bool s_mirrorOutside = FALSE;            ///< O61 (row 49): the mirror is an outside viewer's (its files go at the end)
+
+	// O61 (row 49): files still to delete (another handle held them at the first try)
+	enum { MAX_PENDING_DELETES = 24 };
+	char s_pendingDeletes[MAX_PENDING_DELETES][_MAX_PATH];
+	Int s_pendingDeleteCount = 0;
+	UnsignedInt s_lastDeleteTry = 0;
+
+	/// Deletes 'path' now, or keeps it for a later try when another handle still holds it.
+	void deleteOrKeep(const char *path)
+	{
+		if (path == nullptr || path[0] == 0) {
+			return;
+		}
+		if (DeleteFileA(path) || GetLastError() == ERROR_FILE_NOT_FOUND || GetLastError() == ERROR_PATH_NOT_FOUND) {
+			return;
+		}
+		for (Int i = 0; i < s_pendingDeleteCount; ++i) {
+			if (_stricmp(s_pendingDeletes[i], path) == 0) return;
+		}
+		if (s_pendingDeleteCount < MAX_PENDING_DELETES) {
+			strlcpy(s_pendingDeletes[s_pendingDeleteCount++], path, _MAX_PATH);
+		}
+	}
 
 	struct MirrorConfig
 	{
@@ -1744,8 +1768,11 @@ Bool ReplayStream::beginWatching(AsciiString &localPath)
 		AsciiString dir = TheGlobalData->getPath_UserData();
 		dir.concat("Replays\\");
 		CreateDirectoryA(dir.str(), nullptr);
-		// O33: a file of its own per mirror (an old mirror may still close its file)
-		snprintf(m->path, sizeof(m->path), "%sWatched_%u_%ld.rep", dir.str(), (unsigned)GetCurrentProcessId(), (long)m->gen);
+		// O33: a file of its own per mirror (an old mirror may still close its file). O61 (row 49): an outside viewer's is
+		// "Viewer_...", deleted when the viewing ends (discardViewerFiles) or at the next start after a crash
+		s_mirrorOutside = (s_watchFlags & 1) == 0;
+		snprintf(m->path, sizeof(m->path), "%s%s_%u_%ld.rep", dir.str(), s_mirrorOutside ? "Viewer" : "Watched",
+			(unsigned)GetCurrentProcessId(), (long)m->gen);
 		snprintf(m->livePath, sizeof(m->livePath), "%s.live", m->path);
 		snprintf(m->idxPath, sizeof(m->idxPath), "%s.idx", m->path);
 		DeleteFileA(m->path);
@@ -1890,11 +1917,110 @@ Bool ReplayStream::lostBecauseNotAllowed()
 	return InterlockedCompareExchange(&s_mirrorNotAllowed, 0, 0) != 0;
 }
 
+void ReplayStream::discardViewerFiles()
+{
+	if (!s_mirrorOutside || s_mirrorPath[0] == 0) {
+		return;
+	}
+	char live[_MAX_PATH];
+	char idx[_MAX_PATH];
+	snprintf(live, sizeof(live), "%s.live", s_mirrorPath);
+	snprintf(idx, sizeof(idx), "%s.idx", s_mirrorPath);
+	deleteOrKeep(s_mirrorPath);
+	deleteOrKeep(live);
+	deleteOrKeep(idx);
+	logLine("mirror: the viewer's files of %s deleted (%d still held, deleted later)", s_mirrorPath, s_pendingDeleteCount);
+	s_mirrorPath[0] = 0;
+	s_mirrorOutside = FALSE;
+}
+
+void ReplayStream::pumpDeletes()
+{
+	if (s_pendingDeleteCount == 0) {
+		return;
+	}
+	const UnsignedInt now = timeGetTime();
+	if (now - s_lastDeleteTry < 1000) {
+		return;
+	}
+	s_lastDeleteTry = now;
+	Int kept = 0;
+	for (Int i = 0; i < s_pendingDeleteCount; ++i)
+	{
+		const Bool gone = DeleteFileA(s_pendingDeletes[i]) || GetLastError() == ERROR_FILE_NOT_FOUND
+			|| GetLastError() == ERROR_PATH_NOT_FOUND;
+		if (!gone)
+		{
+			if (kept != i) {
+				strlcpy(s_pendingDeletes[kept], s_pendingDeletes[i], _MAX_PATH);
+			}
+			++kept;
+		}
+	}
+	s_pendingDeleteCount = kept;
+}
+
+void ReplayStream::sweepViewerLeftovers()
+{
+	if (TheGlobalData == nullptr) {
+		return;
+	}
+	AsciiString dir = TheGlobalData->getPath_UserData();
+	dir.concat("Replays\\");
+	AsciiString pattern = dir;
+	pattern.concat("Viewer_*");
+	WIN32_FIND_DATAA found;
+	HANDLE h = FindFirstFileA(pattern.str(), &found);
+	if (h == INVALID_HANDLE_VALUE) {
+		return;
+	}
+	Int deleted = 0;
+	do
+	{
+		if ((found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+			continue;
+		}
+		const unsigned long pid = strtoul(found.cFileName + 7, nullptr, 10);   // "Viewer_<pid>_<n>.rep[.live|.idx]"
+		Bool running = pid == GetCurrentProcessId();
+		if (!running && pid != 0)
+		{
+			HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)pid);
+			if (process != nullptr)
+			{
+				DWORD code = 0;
+				running = GetExitCodeProcess(process, &code) && code == STILL_ACTIVE;
+				CloseHandle(process);
+			}
+			else
+			{
+				running = GetLastError() == ERROR_ACCESS_DENIED;   // a process we may not look at: leave its files
+			}
+		}
+		if (!running)
+		{
+			AsciiString path = dir;
+			path.concat(found.cFileName);
+			deleteOrKeep(path.str());
+			++deleted;
+		}
+	} while (FindNextFileA(h, &found));
+	FindClose(h);
+	if (deleted > 0) {
+		logLine("mirror: %d file(s) of an earlier viewer deleted at the start", deleted);
+	}
+}
+
 void ReplayStream::shutdown()
 {
 	InterlockedIncrement(&s_serverGen);
 	InterlockedIncrement(&s_mirrorGen);
 	Sleep(300);   // at the end of the program only: the threads see their generation and close their sockets
+	// O61 (row 49): an outside viewer's files go with the program (a file the replay still holds: at the next start)
+	discardViewerFiles();
+	for (Int i = 0; i < s_pendingDeleteCount; ++i) {
+		DeleteFileA(s_pendingDeletes[i]);
+	}
+	s_pendingDeleteCount = 0;
 	if (s_logLockReady)
 	{
 		EnterCriticalSection(&s_logLock);

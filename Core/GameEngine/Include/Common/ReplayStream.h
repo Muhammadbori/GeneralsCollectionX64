@@ -41,6 +41,7 @@
 //     lobby and so no START: these give its players a live list and a short delay). Server and mirror log their newest and
 //     delayed frame every 10 s.
 // Viewer: -watchReplay <host:port>[,<host:port>...] mirrors the source's replay into <user data>\Replays\Watched_<pid>_<n>.rep
+// (O61, row 49: an outside viewer's is Viewer_<pid>_<n>.rep, deleted when the viewing ends)
 // and its .live on a thread of its own, and plays that file in the follow mode of ReplayFollow.h (-followDelay and
 // -followCatchUp work the same, and only add to the server's delay). With -serveReplay too it serves its mirror: a relay.
 // -watchBind <ip> (test) makes its connections from that local address (the server tells room observers by address).
@@ -135,6 +136,14 @@ namespace ReplayStream
 	Bool takeLostNotice();
 	/// O42: the last stream was lost because the host does not allow outside viewers (the room's text says so).
 	Bool lostBecauseNotAllowed();
+	/// TheSuperHackers @feature O61 (row 49) Nothing of a watched match stays on an outside viewer's disk. Its mirror is
+	/// "<user data>\Replays\Viewer_<pid>_<n>.rep" with its .live and .idx (a room observer's stays "Watched_..." and is
+	/// kept, as before). discardViewerFiles (the viewing is over: LanRoom::resetViewer, the program's end) deletes them;
+	/// a file another handle still holds is deleted as soon as it can be (pumpDeletes, every frame); the files of a viewer
+	/// that crashed are deleted at the next start (sweepViewerLeftovers: "Viewer_*" of a process that no longer runs).
+	void discardViewerFiles();
+	void pumpDeletes();
+	void sweepViewerLeftovers();
 
 	void shutdown();
 }
