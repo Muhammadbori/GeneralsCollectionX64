@@ -49,6 +49,10 @@ namespace
 	// O51 (row 32): the player never sees a file name: the unit and "line n of m", or the phrase from the pack's phrases.txt
 	const Text kPlaying = { "GUI:VoicePreviewPlayingLine", L"%ls: line %d of %d (%d.%d s)", L"%ls: \x0440\x0435\x043F\x043B\x0438\x043A\x0430 %d \x0438\x0437 %d (%d,%d \x0441)" };
 	const Text kPlayingPhrase = { "GUI:VoicePreviewPlayingPhrase", L"%ls: \x201C%ls\x201D (%d.%d s)", L"%ls: \x00AB%ls\x00BB (%d,%d \x0441)" };
+	const Text kPhraseNoUnit = { "GUI:VoicePreviewPhraseNoUnit", L"\x201C%ls\x201D (%d.%d s)", L"\x00AB%ls\x00BB (%d,%d \x0441)" };   // O69
+	const Text kPhraseOnly = { "GUI:VoicePreviewPhraseOnly", L"\x201C%ls\x201D", L"\x00AB%ls\x00BB" };   // O69
+	UnicodeString s_statusNoUnit;    ///< O69: the shorter forms of the last status
+	UnicodeString s_statusPhrase;
 	const Text kMissing = { "GUI:VoicePreviewMissingLine", L"This voice pack has no such line (%ls, line %d of %d).", L"\x0412 \x044D\x0442\x043E\x043C \x043F\x0430\x043A\x0435\x0442\x0435 \x043E\x0437\x0432\x0443\x0447\x043A\x0438 \x043D\x0435\x0442 \x044D\x0442\x043E\x0439 \x0440\x0435\x043F\x043B\x0438\x043A\x0438 (%ls, \x0440\x0435\x043F\x043B\x0438\x043A\x0430 %d \x0438\x0437 %d)." };
 	const Text kNoSound = { "GUI:VoicePreviewNoSoundLine", L"Found (%ls, line %d of %d), but the sound is off or not available.", L"\x041D\x0430\x0439\x0434\x0435\x043D\x043E (%ls, \x0440\x0435\x043F\x043B\x0438\x043A\x0430 %d \x0438\x0437 %d), \x043D\x043E \x0437\x0432\x0443\x043A \x0432\x044B\x043A\x043B\x044E\x0447\x0435\x043D \x0438\x043B\x0438 \x043D\x0435\x0434\x043E\x0441\x0442\x0443\x043F\x0435\x043D." };
 	const Text kNoUnit = { "GUI:VoicePreviewNoUnit", L"This unit's voice is not in the game data.", L"\x0413\x043E\x043B\x043E\x0441\x0430 \x044D\x0442\x043E\x0433\x043E \x044E\x043D\x0438\x0442\x0430 \x043D\x0435\x0442 \x0432 \x0434\x0430\x043D\x043D\x044B\x0445 \x0438\x0433\x0440\x044B." };
@@ -384,10 +388,14 @@ Bool VoicePreview::play(Int unit, const Packs::Pack *pack, UnicodeString *status
 	}
 	if (status != nullptr)
 	{
+		s_statusNoUnit.clear();
+		s_statusPhrase.clear();
 		const UnicodeString unitName = textOf(kButtons[unit]);
 		const UnicodeString phrase = played ? phraseOf(pack, sound) : UnicodeString::TheEmptyString;
 		if (played && !phrase.isEmpty()) {
 			status->format(textOf(kPlayingPhrase).str(), unitName.str(), phrase.str(), lengthMS / 1000, (lengthMS % 1000) / 100);
+			s_statusNoUnit.format(textOf(kPhraseNoUnit).str(), phrase.str(), lengthMS / 1000, (lengthMS % 1000) / 100);
+			s_statusPhrase.format(textOf(kPhraseOnly).str(), phrase.str());
 		} else if (played) {
 			status->format(textOf(kPlaying).str(), unitName.str(), index + 1, count, lengthMS / 1000, (lengthMS % 1000) / 100);
 		} else {
@@ -395,6 +403,12 @@ Bool VoicePreview::play(Int unit, const Packs::Pack *pack, UnicodeString *status
 		}
 	}
 	return played;
+}
+
+void VoicePreview::lastStatusShorter(UnicodeString *withoutUnit, UnicodeString *phraseOnly)
+{
+	*withoutUnit = s_statusNoUnit;
+	*phraseOnly = s_statusPhrase;
 }
 
 void VoicePreview::logMeter(const char *what, Real peak, Real rms, UnsignedInt64 frames, UnsignedInt64 expectedFrames, Real systemSoundVolume,

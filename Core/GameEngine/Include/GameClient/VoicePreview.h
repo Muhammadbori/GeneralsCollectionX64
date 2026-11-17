@@ -47,6 +47,10 @@ namespace VoicePreview
 	/// Plays the next select line of 'unit' from 'pack' (nullptr: the base data). 'status': one line for the screen.
 	/// TRUE when it plays.
 	Bool play(Int unit, const Packs::Pack *pack, UnicodeString *status);
+	/// O69 (row 32): the shorter forms of the last status of play(), for a status that does not fit its room: without the
+	/// unit's name ("«...» (1,5 с)"), then the phrase alone ("«...»"); the same as the status when it names no phrase.
+	/// The phrase itself is never cut.
+	void lastStatusShorter(UnicodeString *withoutUnit, UnicodeString *phraseOnly);
 	/// Stops the line (no-op when nothing plays) and frees what it held.
 	void stop();
 	/// O55: a meter line in VoicePreview.log: "<what>: out peak -8.2 dBFS, rms -21.0 dBFS, frames n of m", and
