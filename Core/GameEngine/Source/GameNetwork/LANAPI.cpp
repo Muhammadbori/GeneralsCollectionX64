@@ -1001,7 +1001,7 @@ void LANAPI::RequestGameStart()
 
 	// O31: the room's observers get the players' addresses and follow the stream; nobody waits for them
 	LanRoom::hostStart(m_currentGame, m_localIP);
-	LanRoom::rememberMatchLayout(m_currentGame);   // O40: for "Play again" on the score screen
+	// O40: "Play again" keeps the layout; O47: taken at the Start click (LanGameOptionsMenu), before the open places close
 
 	LANMessage msg;
 	msg.messageType = LANMessage::MSG_GAME_START;

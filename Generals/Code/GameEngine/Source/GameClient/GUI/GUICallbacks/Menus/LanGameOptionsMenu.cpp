@@ -356,6 +356,9 @@ void StartPressed()
 
 	if(isReady)
 	{
+		// TheSuperHackers @bugfix O47 "Play again" keeps the room as it was at the Start click: the open places close just
+		// below (S34: places 5 and 6 of Hostile Dawn were open before the match and closed in the new room)
+		LanRoom::rememberMatchLayout(myGame);
 		for( i = 0; i < MAX_SLOTS; i++ )
 		{
 			LANGameSlot *slot = myGame->getLANSlot(i);

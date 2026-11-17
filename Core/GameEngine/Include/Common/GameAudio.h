@@ -253,6 +253,13 @@ class AudioManager : public SubsystemInterface
 		virtual void setVolume( Real volume, AudioAffect whichToAffect );
 		virtual Real getVolume( AudioAffect whichToGet );
 
+		/// TheSuperHackers @feature O47 The options' "listen" buttons (VoicePreview.h): plays a WAV file image from memory
+		/// once, 2D, at 'volume' (0..1); a new call stops the one before. FALSE: nothing plays (no device, a format the
+		/// device does not read). The bytes are copied.
+		virtual Bool playPreviewSound( const void * /*wavBytes*/, UnsignedInt /*size*/, Real /*volume*/ ) { return FALSE; }
+		/// Stops the preview and frees its voice and memory (also when it ended by itself).
+		virtual void stopPreviewSound() {}
+
 		// To get a more 3-D feeling from the universe, we adjust the volume of the 3-D samples based
 		// on zoom.
 		virtual void set3DVolumeAdjustment( Real volumeAdjustment );

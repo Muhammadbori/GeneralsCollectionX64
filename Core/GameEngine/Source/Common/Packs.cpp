@@ -22,6 +22,7 @@
 
 #include "Common/Packs.h"
 
+#include "Common/CommandLine.h"
 #include "Common/FrameShots.h"
 #include "Common/GameEngine.h"
 #include "Common/GlobalData.h"
@@ -790,6 +791,98 @@ Bool Packs::groupWanted(Int group)
 		if (k.fallbackGroup == group) return k.active >= 0 && k.fallback >= 0;
 	}
 	return FALSE;
+}
+
+void Packs::previewArchives(Kind kind, const Pack *pack, std::vector<AsciiString> &out)
+{
+	State &st = state();
+	out.clear();
+	OptionPreferences pref;
+	Int xres = 0, yres = 0;
+	pref.getResolution(&xres, &yres);
+	const AsciiString textLanguage = textLanguageOf(active(KIND_TEXT));
+	// the pack and its fallback, as prepareMount takes them (an incomplete pack means the base data)
+	std::vector<const Pack *> used;
+	if (pack != nullptr)
+	{
+		std::vector<AsciiString> archives;
+		packArchives(*pack, textLanguage, yres, st.exeFolder, archives);
+		if (packComplete(*pack, archives))
+		{
+			used.push_back(pack);
+			out.insert(out.end(), archives.begin(), archives.end());
+			const Pack *fallback = pack->fallback.isNotEmpty() ? find(kind, pack->fallback) : nullptr;
+			if (fallback != nullptr && fallback != pack)
+			{
+				archives.clear();
+				packArchives(*fallback, textLanguage, yres, st.exeFolder, archives);
+				if (packComplete(*fallback, archives))
+				{
+					used.push_back(fallback);
+					out.insert(out.end(), archives.begin(), archives.end());
+				}
+			}
+		}
+	}
+	// what the packs in use of the other kinds leave out stays out
+	for (Int other = 0; other < KIND_COUNT; ++other)
+	{
+		if (other == (Int)kind) {
+			continue;
+		}
+		const KindState &k = st.kinds[other];
+		if (k.active >= 0) {
+			used.push_back(&k.packs[k.active]);
+		}
+		if (k.active >= 0 && k.fallback >= 0) {
+			used.push_back(&k.packs[k.fallback]);
+		}
+	}
+	std::vector<AsciiString> seen;
+	for (size_t i = 0; i < out.size(); ++i) {
+		seen.push_back(normalizedPath(out[i].str()));
+	}
+	// the archive list, in its order ("first line wins"), as BIGFileSystem::loadArchiveFilesFromList reads it
+	const char *listFile = CommandLine::getArchiveListFile();
+	FILE *list = listFile != nullptr ? fopen(listFile, "r") : nullptr;
+	if (list == nullptr) {
+		return;
+	}
+	AsciiString listDir = listFile;
+	if (const char *slash = listDir.reverseFind('\\')) {
+		listDir.truncateTo(slash - listDir.str() + 1);
+	} else {
+		listDir.clear();
+	}
+	char line[_MAX_PATH];
+	while (fgets(line, sizeof(line), list) != nullptr)
+	{
+		AsciiString entry = line;
+		entry.trim();
+		if (entry.isEmpty() || entry.getCharAt(0) == '#') {
+			continue;
+		}
+		const Bool absolute = entry.getLength() > 1 && (entry.getCharAt(1) == ':' || entry.getCharAt(0) == '\\');
+		AsciiString path = absolute ? AsciiString::TheEmptyString : listDir;
+		path.concat(entry);
+		const AsciiString normalized = normalizedEntry(entry);
+		Bool skip = FALSE;
+		for (size_t u = 0; u < used.size() && !skip; ++u) {
+			for (size_t x = 0; x < used[u]->excludes.size() && !skip; ++x) {
+				skip = stricmp(used[u]->excludes[x].str(), normalized.str()) == 0;
+			}
+		}
+		const AsciiString full = normalizedPath(path.str());
+		for (size_t m = 0; m < seen.size() && !skip; ++m) {
+			skip = seen[m] == full;
+		}
+		if (!skip)
+		{
+			out.push_back(path);
+			seen.push_back(full);
+		}
+	}
+	fclose(list);
 }
 
 Bool Packs::skipListEntry(const AsciiString &entry, const AsciiString &fullPath)

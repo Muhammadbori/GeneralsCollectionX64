@@ -139,6 +139,12 @@ namespace Packs
 	/// 'entry' is the line as written, 'fullPath' the archive it names.
 	Bool skipListEntry(const AsciiString &entry, const AsciiString &fullPath);
 
+	/// TheSuperHackers @feature O47 The archives the game would search for a file if 'pack' (nullptr: the base data) were
+	/// the chosen pack of 'kind', first one wins, as the mount does: that pack's archives and its fallback's, then the
+	/// archive list file without what they (and the packs in use of the other kinds) leave out. Nothing is mounted: the
+	/// options' voice preview reads a line from the pack chosen in the list before it is applied.
+	void previewArchives(Kind kind, const Pack *pack, std::vector<AsciiString> &out);
+
 	//--- the rest of the game -----------------------------------------------------------------------
 	Bool fullViewport();                                     ///< the control bar pack in use wants the full view
 	void getMovieRoots(std::vector<AsciiString> &roots);     ///< folders to try first for a movie, each ends with '\'
