@@ -143,14 +143,28 @@ namespace
 			return;
 		}
 		EnterCriticalSection(&s_logLock);
-		if (s_log != nullptr)
+		// TheSuperHackers @bugfix O82 (H14) A LAN peer can open connections at any rate and each refused one is a line
+		// ("viewer N dropped ..."): the log stops at 8 MB a run, with one line saying so
+		static long s_logBytes = 0;
+		const long kLogMaxBytes = 8L << 20;
+		if (s_log != nullptr && s_logBytes <= kLogMaxBytes)
 		{
-			fprintf(s_log, "[%8.3f] ", (LanClock::now() - s_startMs) / 1000.0);
-			va_list args;
-			va_start(args, format);
-			vfprintf(s_log, format, args);
-			va_end(args);
-			fputc('\n', s_log);
+			if (s_logBytes + 1024 > kLogMaxBytes)
+			{
+				fprintf(s_log, "[%8.3f] log full (8 MB this run): nothing more is written\n", (LanClock::now() - s_startMs) / 1000.0);
+				s_logBytes = kLogMaxBytes + 1;
+			}
+			else
+			{
+				fprintf(s_log, "[%8.3f] ", (LanClock::now() - s_startMs) / 1000.0);
+				va_list args;
+				va_start(args, format);
+				vfprintf(s_log, format, args);
+				va_end(args);
+				fputc('\n', s_log);
+				const long pos = ftell(s_log);
+				s_logBytes = pos > 0 ? pos : s_logBytes + 128;
+			}
 			fflush(s_log);
 		}
 		LeaveCriticalSection(&s_logLock);
