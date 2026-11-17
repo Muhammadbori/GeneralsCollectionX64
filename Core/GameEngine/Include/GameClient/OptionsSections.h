@@ -48,4 +48,10 @@ namespace OptionsSections
 	void save(OptionPreferences *pref);
 
 	void setDefaults();
+
+	/// O48 (row 33): -openOptions <section>: the settings open on that section as soon as the main menu is up (the quick
+	/// restart after a pack change comes back there). The main menu asks openAtStartPending() and then opens the screen.
+	void requestOpenAtStart(Int section);
+	Bool openAtStartPending();
+	void clearOpenAtStartPending();
 }

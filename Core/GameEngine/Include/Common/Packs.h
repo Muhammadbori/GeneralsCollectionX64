@@ -162,7 +162,24 @@ namespace Packs
 	void showProblemsOnce();
 
 	/// Ends the game so that it starts again; the new process starts from WinMain after this one has shut down.
-	void requestRestart();
+	/// O48 (row 33): the quick restart: the same command line plus -nologo (no intro, no logos), -restartWait <this
+	/// process> (the new one waits until this one is gone: the instance mutex, the anti-cheat, the files) and
+	/// -openOptions <section> (it opens the settings on 'optionsSection' as soon as the main menu is up; -1: not).
+	/// A test run (-uiScript) only quits, unless -restartScript <file> names the script of the new process.
+	void requestRestart(Int optionsSection = -1);
 	/// Call at the very end of WinMain: starts the game again when requestRestart() was called.
 	void restartIfRequested();
+	/// O48: call first in WinMain: with -restartWait <pid>, waits (at most 20 s) until that process has ended.
+	void waitForRestartedParent();
+	/// O48: -restartScript <file> was given (a test run may restart; the new process plays that script).
+	void setRestartScriptGiven();
+
+	/// O48 (row 33): uses a new choice of 'kind' at once when that is safe; FALSE: it takes effect at the next start.
+	/// Only the movies can (their loose files are looked up when a movie starts, Packs::getMovieRoots), and only when
+	/// neither the choice in use nor the new one mounts an archive. Every other kind lives in archives mounted at the
+	/// start (strings, fonts, sounds, INI data, textures), which the running game holds on to. Packs.log gets a line.
+	Bool applyLive(Kind kind, const Pack *pack);
+	/// O48: a choice of 'kind' was saved that waits for the next start (the settings show a mark beside its row).
+	void markPending(Kind kind);
+	Bool isPending(Kind kind);
 }

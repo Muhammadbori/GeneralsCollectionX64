@@ -45,6 +45,8 @@
 #include "GameNetwork/NetLab.h"
 #include "GameNetwork/LANAPI.h"
 #include "Common/GuardLink.h"
+#include "Common/Packs.h"
+#include "GameClient/OptionsSections.h"
 #include "GameNetwork/NetworkDefs.h"
 
 
@@ -1085,6 +1087,32 @@ Int parseLanSample(char *args[], int num)
 	LanTest::setSampleData(TRUE);
 	return 1;
 }
+// TheSuperHackers @feature O48 (row 33) The quick restart after a pack change (Packs::requestRestart): -openOptions
+// <section> opens the settings on that section once the main menu is up; -restartWait <pid> was handled first thing in
+// WinMain (the new process waited for the old one); -restartScript <file> (test) lets a -uiScript run restart, the new
+// process playing <file>.
+Int parseOpenOptions(char *args[], int num)
+{
+	if (num > 1)
+	{
+		OptionsSections::requestOpenAtStart(atoi(args[1]));
+		return 2;
+	}
+	return 1;
+}
+Int parseRestartWait(char *args[], int num)
+{
+	return num > 1 ? 2 : 1;
+}
+Int parseRestartScript(char *args[], int num)
+{
+	if (num > 1)
+	{
+		Packs::setRestartScriptGiven();
+		return 2;
+	}
+	return 1;
+}
 // TheSuperHackers @feature O45 (test switch) -lanTestLoss <percent>: this computer drops that share of the lobby messages
 // it receives and writes LanJoin.log (the join requests, repeats, answers and timeouts).
 Int parseLanTestLoss(char *args[], int num)
@@ -2074,6 +2102,9 @@ static CommandLineParam paramsForStartup[] =
 	{ "-netLabSim", parseNetLabSim },
 	{ "-netLabQuitAfter", parseNetLabQuitAfter },
 	{ "-lanLoopback", parseLanLoopback },
+	{ "-openOptions", parseOpenOptions },
+	{ "-restartWait", parseRestartWait },
+	{ "-restartScript", parseRestartScript },
 	{ "-lanTestLoss", parseLanTestLoss },
 	{ "-lanSample", parseLanSample },
 	{ "-lanNoGuard", parseLanNoGuard },

@@ -507,6 +507,29 @@ namespace
 	};
 	State s;
 
+	// O48 (row 33): kept outside 's' (cleared by init and shutdown)
+	Int s_openSection = -1;          ///< -openOptions: the section the screen opens on
+	Bool s_openPending = FALSE;      ///< the main menu still has to open the screen
+	Int s_restartSection = -1;       ///< the section of the save that offered the restart
+
+	Bool inMatch()
+	{
+		return TheGameLogic != nullptr && TheGameLogic->isInGame() && !TheGameLogic->isInShellGame();
+	}
+
+	/// O48: the title of a pack row: " *" when a saved choice waits for the restart; in a match, why it is disabled.
+	UnicodeString packRowTitle(Packs::Kind kind, Bool forSize)
+	{
+		UnicodeString title = Packs::kindTitle(kind);
+		if (inMatch()) {
+			title.concat(TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackMainMenuOnly", localizedFallback(L" (main menu only)", L" (\x0442\x043E\x043B\x044C\x043A\x043E \x0432 \x0433\x043B\x0430\x0432\x043D\x043E\x043C \x043C\x0435\x043D\x044E)")));
+		}
+		if (forSize || Packs::isPending(kind)) {
+			title.concat(L" *");
+		}
+		return title;
+	}
+
 	GameWindow *findWindow(const char *name)
 	{
 		AsciiString full("OptionsMenu.wnd:");
@@ -1391,7 +1414,14 @@ namespace
 				texts[i] = Packs::displayName(kind, st.choices[i]);
 			}
 			fillCombo(st.combo, texts, st.choiceCount, st.step);
-			st.combo->winEnable(st.choiceCount > 1);
+			// O48: a pack cannot change under a running match
+			st.combo->winEnable(st.choiceCount > 1 && !inMatch());
+		}
+		if (st.label != nullptr)
+		{
+			GadgetStaticTextSetText(st.label, packRowTitle(kind, FALSE));
+			st.label->winSetTooltip(Packs::isPending(kind) ? TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackPendingTip",
+				localizedFallback(L"* takes effect after the restart", L"* \x0432\x0441\x0442\x0443\x043F\x0438\x0442 \x0432 \x0441\x0438\x043B\x0443 \x043F\x043E\x0441\x043B\x0435 \x043F\x0435\x0440\x0435\x0437\x0430\x043F\x0443\x0441\x043A\x0430")) : UnicodeString::TheEmptyString);
 		}
 		if (st.preview != nullptr)
 		{
@@ -1497,7 +1527,7 @@ namespace
 		if (const Packs::Pack *autoPack = Packs::autoChoice(def.kind)) {
 			longest = max(longest, comboTextWidth(Packs::displayName(def.kind, autoPack)));
 		}
-		st.combo = prepareComboRow(row, page, Packs::kindTitle(def.kind), windowId(name.str()), longest, colW, labelH, &st.label);
+		st.combo = prepareComboRow(row, page, packRowTitle(def.kind, TRUE), windowId(name.str()), longest, colW, labelH, &st.label);
 		if (def.preview)
 		{
 			// preview pictures are 2:1 (512 x 256), under the list, following the chosen entry; O27: no taller than what
@@ -1810,7 +1840,8 @@ namespace
 
 	void onRestartNow()
 	{
-		Packs::requestRestart();
+		// O48: the quick restart, back to the settings on the section of the save
+		Packs::requestRestart(s_restartSection);
 	}
 
 	/// After a save that changed a pack: the box that offers the restart (in a match: a note only).
@@ -1818,8 +1849,7 @@ namespace
 	{
 		const UnicodeString title = TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackRestartTitle",
 			localizedFallback(L"Restart to apply", L"\x041D\x0443\x0436\x0435\x043D \x043F\x0435\x0440\x0435\x0437\x0430\x043F\x0443\x0441\x043A"));
-		const Bool inMatch = TheGameLogic != nullptr && TheGameLogic->isInGame() && !TheGameLogic->isInShellGame();
-		if (inMatch)
+		if (inMatch())
 		{
 			MessageBoxOk(title, TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackRestartLater",
 				localizedFallback(L"These changes take effect the next time the game starts.",
@@ -1827,10 +1857,9 @@ namespace
 				nullptr);
 			return;
 		}
-		GameWindow *box = MessageBoxYesNo(title, TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackRestartBody",
-			localizedFallback(L"These changes take effect after a restart of the game.",
-				L"\x042D\x0442\x0438 \x0438\x0437\x043C\x0435\x043D\x0435\x043D\x0438\x044F \x0432\x0441\x0442\x0443\x043F\x044F\x0442 \x0432 \x0441\x0438\x043B\x0443 \x043F\x043E\x0441\x043B\x0435 \x043F\x0435\x0440\x0435\x0437\x0430\x043F\x0443\x0441\x043A\x0430 \x0438\x0433\x0440\x044B.")),
-			onRestartNow, nullptr);
+		s_restartSection = (Int)s.current;
+		GameWindow *box = MessageBoxYesNo(title, TheGameText->FETCH_OR_SUBSTITUTE("GUI:PackRestartQuick",
+			localizedFallback(L"The game restarts now to apply this and opens these settings again (a few seconds).", L"\x0418\x0433\x0440\x0430 \x0441\x0435\x0439\x0447\x0430\x0441 \x043F\x0435\x0440\x0435\x0437\x0430\x043F\x0443\x0441\x0442\x0438\x0442\x0441\x044F, \x0447\x0442\x043E\x0431\x044B \x043F\x0440\x0438\x043C\x0435\x043D\x0438\x0442\x044C \x044D\x0442\x043E, \x0438 \x0441\x043D\x043E\x0432\x0430 \x043E\x0442\x043A\x0440\x043E\x0435\x0442 \x044D\x0442\x0438 \x043D\x0430\x0441\x0442\x0440\x043E\x0439\x043A\x0438 (\x043D\x0435\x0441\x043A\x043E\x043B\x044C\x043A\x043E \x0441\x0435\x043A\x0443\x043D\x0434).")), onRestartNow, nullptr);
 		if (box == nullptr) {
 			return;
 		}
@@ -1857,6 +1886,22 @@ namespace
 }
 
 //-------------------------------------------------------------------------------------------------
+void OptionsSections::requestOpenAtStart(Int section)
+{
+	s_openSection = section;
+	s_openPending = section >= 0;
+}
+
+Bool OptionsSections::openAtStartPending()
+{
+	return s_openPending;
+}
+
+void OptionsSections::clearOpenAtStartPending()
+{
+	s_openPending = FALSE;
+}
+
 Bool OptionsSections::isActive()
 {
 	return s.active;
@@ -2146,7 +2191,10 @@ void OptionsSections::init(OptionPreferences *pref)
 
 	s.active = TRUE;
 	updateCustomDetail();
-	showSection(SEC_DISPLAY);
+	// O48: -openOptions (the quick restart after a pack change): the section of the save
+	const Int start = (s_openSection >= 0 && s_openSection < SEC_COUNT) ? s_openSection : (Int)SEC_DISPLAY;
+	s_openSection = -1;
+	showSection((Section)start);
 	FrameShots::setRevealHook(&revealWindow);
 }
 
@@ -2351,7 +2399,8 @@ void OptionsSections::save(OptionPreferences *pref)
 	VoiceChat::reloadSettings();
 
 	// The pack choices: written when changed here, so a missing key keeps following Packs\<Kind>\default.ini.
-	// They take effect at the next start; the box offers the restart.
+	// O48 (row 33): the movies are used at once (Packs::applyLive); the other kinds at the next start: the box offers the
+	// quick restart, and a "Later" leaves a mark beside the row.
 	Bool packChanged = FALSE;
 	for (Int r = 0; r < PACK_ROW_COUNT; ++r)
 	{
@@ -2365,6 +2414,11 @@ void OptionsSections::save(OptionPreferences *pref)
 		}
 		(*pref)[Packs::kindKey(kPackRows[r].kind)] = (pack != nullptr) ? pack->name : AsciiString(Packs::BaseValue);
 		s.packRows[r].initial = pack;
+		if (!inMatch() && Packs::applyLive(kPackRows[r].kind, pack)) {
+			continue;   // in use now
+		}
+		Packs::markPending(kPackRows[r].kind);
+		showPackRow(r, FALSE);   // the mark
 		packChanged = TRUE;
 	}
 
