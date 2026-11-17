@@ -73,6 +73,7 @@ static const LookupListRec ResolutionFontSizeMethodNames[] =
 	{ "CLASSIC_NO_CEILING", GlobalLanguage::ResolutionFontSizeMethod_ClassicNoCeiling },
 	{ "STRICT", GlobalLanguage::ResolutionFontSizeMethod_Strict },
 	{ "BALANCED", GlobalLanguage::ResolutionFontSizeMethod_Balanced },
+	{ "PROPORTIONAL", GlobalLanguage::ResolutionFontSizeMethod_Proportional },   // O52
 	{ nullptr, 0 }
 };
 static_assert(ARRAY_SIZE(ResolutionFontSizeMethodNames) == GlobalLanguage::ResolutionFontSizeMethod_Count + 1, "Incorrect array size");
@@ -219,6 +220,19 @@ Real GlobalLanguage::getResolutionFontSizeScale(ResolutionFontSizeMethod method,
 
 	switch (method)
 	{
+	case ResolutionFontSizeMethod_Proportional:
+	{
+		// O52 (row 39): the reference look is 1280 x 800 with the classic method (the old default there); every other
+		// window gets that look scaled by the smaller of its width and height scales, so text never outgrows the layout
+		// of a short wide or a small window. 'scaler' (the "text size by resolution" setting) still sets how much larger
+		// the text is at the reference than at 800 x 600, and so everywhere.
+		const Real refW = 1280.0f, refH = 800.0f;
+		const Real atRef = 1.0f + (refW / (Real)DEFAULT_DISPLAY_WIDTH - 1.0f) * scaler;
+		const Real refScale = min(refW / (Real)DEFAULT_DISPLAY_WIDTH, refH / (Real)DEFAULT_DISPLAY_HEIGHT);
+		const Real scale = min(TheDisplay->getWidth() / (Real)DEFAULT_DISPLAY_WIDTH, TheDisplay->getHeight() / (Real)DEFAULT_DISPLAY_HEIGHT);
+		adjustFactor = atRef * scale / refScale;
+		return adjustFactor > 0.1f ? adjustFactor : 0.1f;   // no floor at 1: a small window gets smaller text
+	}
 	default:
 	case ResolutionFontSizeMethod_Classic:
 	{
@@ -291,8 +305,13 @@ Int GlobalLanguage::adjustFontSize(Int theFontSize)
 	// Therefore cache the adjustFactor on resolution change to not recompute it on every call.
 	const Real resolutionScaler = getResolutionFontSizeAdjustment();
 	const Real adjustFactor = getResolutionFontSizeScale(m_resolutionFontSizeMethod, resolutionScaler);
-	const Int pointSize = REAL_TO_INT_FLOOR(theFontSize * adjustFactor);
+	Int pointSize = REAL_TO_INT_FLOOR(theFontSize * adjustFactor);
 
+	// O52: readable in the smallest window: never under 8 points (a font asked smaller than that keeps its own size)
+	enum { MIN_READABLE_POINT_SIZE = 8 };
+	if (pointSize < MIN_READABLE_POINT_SIZE) {
+		pointSize = min(theFontSize, (Int)MIN_READABLE_POINT_SIZE);
+	}
 	return pointSize;
 }
 

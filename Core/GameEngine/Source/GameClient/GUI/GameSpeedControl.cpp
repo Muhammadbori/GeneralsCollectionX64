@@ -21,6 +21,7 @@
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
 
+#include "GameClient/OwnUiScale.h"
 #include "GameClient/GameSpeedControl.h"
 
 #include "Common/NameKeyGenerator.h"
@@ -394,7 +395,8 @@ void GameSpeedControl::init(GameWindow *parent, GameWindow *slider, GameWindow *
 	// the text stays and the slider shows what fits (handle and labels, or the handle alone).
 	if (m_slider != nullptr)
 	{
-		GameFont *font = m_text != nullptr ? m_text->winGetFont() : m_slider->winGetFont();
+		// O53: at the OwnUiScale factor (the skirmish rows measure with OwnUi::font too)
+		GameFont *font = OwnUi::font(m_text != nullptr ? m_text->winGetFont() : m_slider->winGetFont());
 		TickSlider::attach(m_slider, font, FALSE);
 		UnicodeString labels[GameSpeed::MaxStep - GameSpeed::MinStep + 1];
 		for (Int step = GameSpeed::MinStep; step <= GameSpeed::MaxStep; ++step) {

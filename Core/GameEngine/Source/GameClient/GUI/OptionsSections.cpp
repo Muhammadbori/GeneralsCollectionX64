@@ -51,8 +51,11 @@
 #include "GameClient/TickSlider.h"
 #include "GameClient/VoicePreview.h"
 #include "GameClient/HotkeyLetters.h"
+#include "GameClient/GlobalLanguage.h"
+#include "GameClient/OwnUiScale.h"
 #include "GameLogic/GameLogic.h"
 
+#include <algorithm>
 #include <vector>
 
 namespace
@@ -92,7 +95,9 @@ namespace
 
 	// O49 (row 34): the counters section explains itself
 	const Text kInfoPageTitle = { "GUI:OptionsCountersTitle", L"On-screen counters", L"\x0421\x0447\x0451\x0442\x0447\x0438\x043A\x0438 \x043D\x0430 \x044D\x043A\x0440\x0430\x043D\x0435" };
-	const Text kInfoExplain = { "GUI:OptionsCountersExplain", L"The small numbers at the top of the screen: the text size of each one; \"Off\" hides it. The sample below shows your choice.", L"\x041D\x0435\x0431\x043E\x043B\x044C\x0448\x0438\x0435 \x0447\x0438\x0441\x043B\x0430 \x0432\x0432\x0435\x0440\x0445\x0443 \x044D\x043A\x0440\x0430\x043D\x0430: \x0440\x0430\x0437\x043C\x0435\x0440 \x0442\x0435\x043A\x0441\x0442\x0430 \x043A\x0430\x0436\x0434\x043E\x0433\x043E; \x00AB\x0412\x044B\x043A\x043B.\x00BB \x0441\x043A\x0440\x044B\x0432\x0430\x0435\x0442 \x0435\x0433\x043E. \x041F\x0440\x0438\x043C\x0435\x0440 \x043D\x0438\x0436\x0435 \x043F\x043E\x043A\x0430\x0437\x044B\x0432\x0430\x0435\x0442 \x0432\x0430\x0448 \x0432\x044B\x0431\x043E\x0440." };
+	// O52 (row 39): one short line; the longer wording is its tooltip
+	const Text kInfoExplain = { "GUI:OptionsCountersExplainShort", L"Text size of each counter. \"Off\" hides it.", L"\x0420\x0430\x0437\x043C\x0435\x0440 \x0442\x0435\x043A\x0441\x0442\x0430 \x043A\x0430\x0436\x0434\x043E\x0433\x043E \x0441\x0447\x0451\x0442\x0447\x0438\x043A\x0430. \x00AB\x0412\x044B\x043A\x043B.\x00BB \x0441\x043A\x0440\x044B\x0432\x0430\x0435\x0442 \x0435\x0433\x043E." };
+	const Text kInfoExplainTip = { "GUI:OptionsCountersExplain", L"The small numbers at the top of the screen: the text size of each one; \"Off\" hides it. The sample below shows your choice.", L"\x041D\x0435\x0431\x043E\x043B\x044C\x0448\x0438\x0435 \x0447\x0438\x0441\x043B\x0430 \x0432\x0432\x0435\x0440\x0445\x0443 \x044D\x043A\x0440\x0430\x043D\x0430: \x0440\x0430\x0437\x043C\x0435\x0440 \x0442\x0435\x043A\x0441\x0442\x0430 \x043A\x0430\x0436\x0434\x043E\x0433\x043E; \x00AB\x0412\x044B\x043A\x043B.\x00BB \x0441\x043A\x0440\x044B\x0432\x0430\x0435\x0442 \x0435\x0433\x043E. \x041F\x0440\x0438\x043C\x0435\x0440 \x043D\x0438\x0436\x0435 \x043F\x043E\x043A\x0430\x0437\x044B\x0432\x0430\x0435\x0442 \x0432\x0430\x0448 \x0432\x044B\x0431\x043E\x0440." };
 	const Text kInfoSample = { "GUI:OptionsCountersSample", L"Sample:", L"\x041F\x0440\x0438\x043C\x0435\x0440:" };
 	const Text kInfoSampleNames[5] = { { "GUI:CounterSampleFps", L"frame rate", L"\x043A\x0430\x0434\x0440\x044B" }, { "GUI:CounterSampleClock", L"clock", L"\x0447\x0430\x0441\x044B" }, { "GUI:CounterSampleGameTime", L"game time", L"\x0432\x0440\x0435\x043C\x044F \x0438\x0433\x0440\x044B" }, { "GUI:CounterSampleLatency", L"network delay", L"\x0437\x0430\x0434\x0435\x0440\x0436\x043A\x0430 \x0441\x0435\x0442\x0438" }, { "GUI:CounterSampleMoney", L"observer money list", L"\x0434\x0435\x043D\x044C\x0433\x0438 (\x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x044C)" } };
 
@@ -1289,7 +1294,10 @@ namespace
 	Bool isListSetting(const Setting &set)
 	{
 		static const char *const keys[] = { "RenderFpsLimit", "TextureFilter", "AnisotropyLevel", "SnowStyle", "VoicePushToTalk",
-			"ScreenshotFormat", "CounterStyle", "Windowed", "WindowPosition" };
+			"ScreenshotFormat", "CounterStyle", "Windowed", "WindowPosition",
+			// O52 (row 39): the counters' text sizes are lists (a title and a box, half a slider row's height), so the
+			// Counters section fits one page at every window size
+			"RenderFpsFontSize", "SystemTimeFontSize", "GameTimeFontSize", "NetworkLatencyFontSize", "PlayerInfoListFontSize" };
 		for (Int i = 0; i < (Int)ARRAY_SIZE(keys); ++i) {
 			if (stricmp(set.key, keys[i]) == 0) {
 				return TRUE;
@@ -1482,7 +1490,8 @@ namespace
 		const Int room = lineW - 10;
 		UnicodeString shown = status;
 		GameFont *font = labelFont();
-		if (font != nullptr && room > 0 && textSize(font, status, 0).x > room)
+		// O51: shortened only when the wrapped text is taller than the status' room (two lines)
+		if (font != nullptr && room > 0 && textSize(font, status, room).y > lineH)
 		{
 			const WideChar *all = status.str();
 			Int n = status.getLength();
@@ -1495,7 +1504,7 @@ namespace
 				}
 				part.trim();
 				part.concat(L"...");
-				if (textSize(font, part, 0).x <= room) {
+				if (textSize(font, part, room).y <= lineH) {
 					shown = part;
 					break;
 				}
@@ -1550,8 +1559,9 @@ namespace
 		}
 		y += oneRow ? buttonH : VoicePreview::UNIT_COUNT * buttonH + (VoicePreview::UNIT_COUNT - 1) * (s.gap / 2);
 		y += s.gap / 2;
-		// O50: one line under the buttons; a longer text is shortened, the whole of it is the tooltip (setListenStatus)
-		const Int statusH = labelH;
+		// O51: room for two lines under the buttons (the longest status of both languages wraps once at 800x600); a text
+		// that needs more is shortened, the whole of it is the tooltip (setListenStatus)
+		const Int statusH = max(labelH * 2, textSize(labelFont(), UnicodeString(L"Wg"), 0).y * 2 + 6);
 		s.listenStatus = makeLabel(page, s.labelLook, 0, y, colW, statusH, UnicodeString::TheEmptyString, FALSE);
 		rowAdd(row, s.listenStatus, 0, y);
 		row.height = y + statusH;
@@ -1619,7 +1629,9 @@ namespace
 			}
 			if (s.sampleSize[k] != size)
 			{
-				s.sampleText[k]->setFont(TheWindowManager->winFindFont(AsciiString("Arial"), size, TRUE));
+				// O52: at the size the counter gets on this screen (InGameUI sizes them with adjustFontSize)
+				s.sampleText[k]->setFont(TheWindowManager->winFindFont(AsciiString("Arial"),
+					TheGlobalLanguageData != nullptr ? TheGlobalLanguageData->adjustFontSize(size) : size, TRUE));
 				s.sampleText[k]->setText(UnicodeString(values[k]));
 				s.sampleSize[k] = size;
 			}
@@ -1660,7 +1672,8 @@ namespace
 	void prepareCounterSample(Row &row, GameWindow *page, Int colW, Int labelH)
 	{
 		// room for the title and five lines at the largest size (16)
-		const Int lineH = max(labelH, textSize(TheWindowManager->winFindFont(AsciiString("Arial"), 16, TRUE), UnicodeString(L"Wg"), 0).y + 2);
+		const Int largest = TheGlobalLanguageData != nullptr ? TheGlobalLanguageData->adjustFontSize(16) : 16;   // O52
+		const Int lineH = max(labelH, textSize(TheWindowManager->winFindFont(AsciiString("Arial"), largest, TRUE), UnicodeString(L"Wg"), 0).y + 2);
 		const Int height = labelH + lineH * 5 + 16;
 		WinInstanceData inst;
 		inst.init();
@@ -2110,6 +2123,8 @@ void OptionsSections::init(OptionPreferences *pref)
 	s.checkLook = findWindow("CheckAlternateMouse");
 	s.sliderLook = findWindow("SliderMusicVolume");
 	s.detailCombo = findWindow("ComboBoxDetail");
+	// O53: the section buttons keep the game's size (the labels' font before the factor)
+	GameFont *tabFont = s.labelLook != nullptr ? s.labelLook->winGetFont() : nullptr;
 	if (s.frameLook != nullptr)
 	{
 		// the group title: the topmost static text of the sound group
@@ -2162,8 +2177,34 @@ void OptionsSections::init(OptionPreferences *pref)
 	const Int pageX = left + columnW + gap * 2;
 	const Int pageW = right - pageX;
 
+	// TheSuperHackers @feature O53 (row 39) Everything the pages hold is ours: the looks they copy and the old screen's
+	// controls they take get the OwnUiScale factor (font and height), once per build of the screen (the options layout
+	// is made anew each time it opens); rows, sliders, lists and margins follow from them.
+	{
+		OwnUi::reload();
+		std::vector<GameWindow *> done;
+		GameWindow *looks[5] = { s.labelLook, s.checkLook, s.detailCombo, s.titleLook, s.sliderLook };
+		std::vector<GameWindow *> all(looks, looks + 5);
+		for (Int i = 0; i < EXISTING_COUNT; ++i)
+		{
+			all.push_back(findWindow(kExisting[i].control));
+			all.push_back(kExisting[i].labelWindow != nullptr ? findWindow(kExisting[i].labelWindow) : nullptr);
+		}
+		for (size_t i = 0; i < all.size(); ++i)
+		{
+			GameWindow *w = all[i];
+			if (w == nullptr || std::find(done.begin(), done.end(), w) != done.end()) {
+				continue;
+			}
+			done.push_back(w);
+			w->winSetFont(OwnUi::font(w->winGetFont()));
+			const ICoord2D z = sizeOf(w);
+			w->winSetSize(z.x, OwnUi::size(z.y));
+		}
+	}
+
 	// the section buttons, in the menu buttons' look with the labels' font
-	GameFont *buttonFont = s.labelLook != nullptr ? s.labelLook->winGetFont() : nullptr;
+	GameFont *buttonFont = tabFont;
 	for (Int i = 0; i < SEC_COUNT; ++i)
 	{
 		WinInstanceData inst;
@@ -2190,7 +2231,7 @@ void OptionsSections::init(OptionPreferences *pref)
 	s.pageY = top;
 	s.pageW = pageW;
 	s.pageH = height;
-	s.gap = gap;
+	s.gap = max(2, OwnUi::size(gap));   // O53: the pages' margins follow the factor (the section buttons keep 'gap')
 	s.titleH = titleH;
 	for (Int i = 0; i < SEC_COUNT; ++i) {
 		s.pages[i] = makePage(i);
@@ -2212,8 +2253,8 @@ void OptionsSections::init(OptionPreferences *pref)
 	// fill the pages
 	const Int labelH = s.labelLook != nullptr ? sizeOf(s.labelLook).y : 20;
 	const Int checkH = s.checkLook != nullptr ? sizeOf(s.checkLook).y : 18;
-	const Int contentTop = gap * 2 + titleH + gap;
-	const Int colW = (pageW - gap * 8) / 2;
+	const Int contentTop = s.gap * 2 + titleH + s.gap;   // O53
+	const Int colW = (pageW - s.gap * 8) / 2;
 
 	// the pack rows start at the saved choice (it may wait for a restart), else at what this run uses
 	for (Int r = 0; r < PACK_ROW_COUNT; ++r)
@@ -2274,7 +2315,11 @@ void OptionsSections::init(OptionPreferences *pref)
 			rowClear(row);
 			const UnicodeString explain = textOf(kInfoExplain);
 			const Int h = labelHeightFor(labelFont(), explain, colW, labelH);
-			rowAdd(row, makeLabel(s.pages[sec], s.labelLook, 0, 0, colW, h, explain, FALSE), 0, 0);
+			GameWindow *explainLabel = makeLabel(s.pages[sec], s.labelLook, 0, 0, colW, h, explain, FALSE);
+			if (explainLabel != nullptr) {
+				explainLabel->winSetTooltip(textOf(kInfoExplainTip));   // O52
+			}
+			rowAdd(row, explainLabel, 0, 0);
 			row.height = h;
 			rows.insert(rows.begin(), row);
 		}
