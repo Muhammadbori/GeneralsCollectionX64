@@ -132,6 +132,7 @@ namespace
 	const Text kColGame = { "GUI:LanColGame", L"Game", L"\x0418\x0433\x0440\x0430" };
 	const Text kColMap = { "GUI:LanColMap", L"Map", L"\x041A\x0430\x0440\x0442\x0430" };
 	const Text kColPlayers = { "GUI:LanColPlayers", L"Players", L"\x0418\x0433\x0440\x043E\x043A\x0438" };
+	const Text kAdminSuffix = { "GUI:LanAdminSuffix", L" (host)", L" (\x0445\x043E\x0441\x0442)" };   // O60
 	const Text kColObservers = { "GUI:LanColObservers", L"Obs.", L"\x041D\x0430\x0431\x043B." };
 	const Text kColSpeed = { "GUI:LanColSpeed", L"Speed", L"\x0421\x043A\x043E\x0440." };
 	const Text kColColor = { "GUI:LanColColor", L"Colour", L"\x0426\x0432\x0435\x0442" };
@@ -166,6 +167,9 @@ namespace
 	const Text kWaiting = { "GUI:LanWaitingStream", L"Waiting...", L"\x041E\x0436\x0438\x0434\x0430\x043D\x0438\x0435..." };
 	const Text kInProgress = { "GUI:LanInProgress", L"in game", L"\x0438\x0434\x0451\x0442 \x0438\x0433\x0440\x0430" };
 	// O42: the host allows no outside viewers (its LIST, or its RULES during the match)
+	const Text kOtherVersionTag = { "GUI:LanOtherVersionTag", L"other version", L"\x0434\x0440\x0443\x0433\x0430\x044F \x0432\x0435\x0440\x0441\x0438\x044F" };   // O62
+	const Text kOtherVersionLine = { "GUI:LanOtherVersion", L"This game is another version of the game: it cannot be joined or watched.", L"\x042D\x0442\x0430 \x0438\x0433\x0440\x0430 \x0434\x0440\x0443\x0433\x043E\x0439 \x0432\x0435\x0440\x0441\x0438\x0438: \x0432\x043E\x0439\x0442\x0438 \x0432 \x043D\x0435\x0451 \x0438\x043B\x0438 \x0441\x043C\x043E\x0442\x0440\x0435\x0442\x044C \x0435\x0451 \x043D\x0435\x043B\x044C\x0437\x044F." };
+	const Text kAloneHint = { "GUI:LanAloneHint", L"Nobody is heard on %d.%d.%d.%d. If the others are on another network (for example Radmin VPN, 26.x.x.x), choose that address under Options, IP address, and open LAN again.", L"\x041D\x0430 \x0430\x0434\x0440\x0435\x0441\x0435 %d.%d.%d.%d \x043D\x0438\x043A\x043E\x0433\x043E \x043D\x0435 \x0441\x043B\x044B\x0448\x043D\x043E. \x0415\x0441\x043B\x0438 \x0441\x043E\x043F\x0435\x0440\x043D\x0438\x043A\x0438 \x0432 \x0434\x0440\x0443\x0433\x043E\x0439 \x0441\x0435\x0442\x0438 (\x043D\x0430\x043F\x0440\x0438\x043C\x0435\x0440, Radmin VPN, 26.x.x.x), \x0432\x044B\x0431\x0435\x0440\x0438\x0442\x0435 \x044D\x0442\x043E\x0442 \x0430\x0434\x0440\x0435\x0441 \x0432 \x043D\x0430\x0441\x0442\x0440\x043E\x0439\x043A\x0430\x0445 (IP-\x0430\x0434\x0440\x0435\x0441) \x0438 \x043E\x0442\x043A\x0440\x043E\x0439\x0442\x0435 LAN \x0441\x043D\x043E\x0432\x0430." };   // O64
 	const Text kNoViewersTag = { "GUI:LanNoViewersTag", L"no viewers", L"\x0431\x0435\x0437 \x0437\x0440\x0438\x0442\x0435\x043B\x0435\x0439" };
 	const Text kNoViewersButton = { "GUI:LanNoViewersButton", L"No viewers", L"\x0411\x0435\x0437 \x0437\x0440\x0438\x0442\x0435\x043B\x0435\x0439" };
 
@@ -681,6 +685,7 @@ namespace
 		Int shield;                ///< O30: the host's anti-cheat verdict
 		Bool inProgress;
 		Bool noViewers;            ///< O42: its host allows no outside viewers
+		Bool otherVersion;         ///< O62: another LAN protocol (cannot be joined or watched)
 		LANGameInfo *game;
 		const SampleGame *sample;
 	};
@@ -730,6 +735,7 @@ namespace
 				r.shield = sampleShield(g.files);
 				r.inProgress = FALSE;
 				r.noViewers = FALSE;
+				r.otherVersion = FALSE;
 				r.game = nullptr;
 				r.sample = &g;
 				rows.push_back(r);
@@ -751,7 +757,7 @@ namespace
 			r.sample = nullptr;
 			// O29 (item 7): the game's own name is an id (host address and seed in hex, then the name cut to 16
 			// characters); the old list showed the host's name, and so does the table
-			r.name = game->getPlayerName(0);
+			r.name = game->getHostName();   // O60: the admin, also while he watches from outside the seats
 			if (r.name.isEmpty()) {
 				r.name = game->getName();
 			}
@@ -772,11 +778,14 @@ namespace
 					++r.players;
 				}
 			}
-			r.observers = (Int)LanRoom::observersOf(game->getHostIP()).size();
-			r.observerPlaces = LanRoom::capacity(game);
+			// O60: the admin watching from outside the seats is one of the observers
+			const Int admin = game->getHostObserves() ? 1 : 0;
+			r.observers = (Int)LanRoom::observersOf(game->getHostIP()).size() + admin;
+			r.observerPlaces = LanRoom::capacity(game) + admin;
 			r.files = filesMarkOfIP(game->getHostIP());
 			r.shield = shieldOfIP(game->getHostIP());
 			r.inProgress = game->isGameInProgress();
+			r.otherVersion = !LanSameVersion(game);   // O62: another protocol number; O63: or another build
 			{
 				Int hostDelay = 60;
 				Bool outsideAllowed = TRUE;
@@ -901,11 +910,14 @@ namespace
 				TheDisplay->drawFillRect(x + 2, ry, inner + pad * 2 - 4, rh, kRowSelected);
 				TheDisplay->drawOpenRect(x + 2, ry, inner + pad * 2 - 4, rh, 1.0f, kFrame);
 			}
-			const Color c = r.inProgress ? kTextDim : (sel ? kGreen : kText);
+			const Color c = (r.inProgress || r.otherVersion) ? kTextDim : (sel ? kGreen : kText);
 			const Int ty = ry + (rh - fontHeight()) / 2;
 			// O44: the state in brackets is drawn whole; the host's name is cut instead ("(без з..." was cut in S42). When
 			// both marks do not fit next to a few letters of the name, "in game" goes (the row is dimmed for it already).
-			const Int gameW = cols.x[COL_MAP] - cols.x[COL_GAME] - 6;
+			// O60 (row 46, S25): the gold star before the admin's name (each game is named by its admin)
+			const Int starR = max(3, fontHeight() * 2 / 5);
+			const Int starRoom = 2 * starR + 4;
+			const Int gameW = cols.x[COL_MAP] - cols.x[COL_GAME] - 6 - starRoom;
 			UnicodeString suffix;
 			for (Int pass = 0; pass < 2; ++pass)
 			{
@@ -931,6 +943,11 @@ namespace
 					break;
 				}
 			}
+			if (r.otherVersion)
+			{
+				// O62: another version: that alone, the row dimmed
+				suffix.format(L" (%ls)", textOf(kOtherVersionTag).str());
+			}
 			UnicodeString name = r.name;
 			const Int suffixW = textWidth(suffix);
 			if (!suffix.isEmpty() && textWidth(name) + suffixW > gameW)
@@ -941,7 +958,8 @@ namespace
 				name.concat(L"...");
 			}
 			name.concat(suffix);
-			drawText(name, cols.x[COL_GAME] + 2, ty, gameW, c);
+			PlayerTable::drawAdminStar(cols.x[COL_GAME] + 2 + starR, ty + fontHeight() / 2, starR);
+			drawText(name, cols.x[COL_GAME] + 2 + starRoom, ty, gameW, c);
 			drawText(r.map, cols.x[COL_MAP] + 2, ty, cols.x[COL_PLAYERS] - cols.x[COL_MAP] - 6, c);
 			UnicodeString t;
 			t.format(L"%d/%d", r.players, r.maxPlayers);
@@ -988,9 +1006,26 @@ namespace
 		return TRUE;
 	}
 
+	/// O62: another version's room: one line, no join or watch.
+	Bool refuseOtherVersion(Int row)
+	{
+		std::vector<GameRow> rows;
+		collectRows(rows);
+		if (row < 0 || row >= (Int)rows.size() || !rows[row].otherVersion) {
+			return FALSE;
+		}
+		static UnsignedInt s_lastMs = 0;
+		const UnsignedInt now = timeGetTime();
+		if (s.chatList != nullptr && now - s_lastMs > 3000) {
+			GadgetListBoxAddEntryText(s.chatList, textOf(kOtherVersionLine), chatSystemColor, -1, 0);
+		}
+		s_lastMs = now;
+		return TRUE;
+	}
+
 	void joinRow(Int row)
 	{
-		if (refuseFull(row) || LanTest::sampleData() || TheLAN == nullptr || s.listGames == nullptr) {
+		if (refuseFull(row) || refuseOtherVersion(row) || LanTest::sampleData() || TheLAN == nullptr || s.listGames == nullptr) {
 			return;
 		}
 		LANGameInfo *game = (LANGameInfo *)GadgetListBoxGetItemData(s.listGames, row, 0);
@@ -1140,6 +1175,7 @@ namespace
 		Int observers = 0;
 		struct Obs { UnicodeString name; Int files; Int shield; };
 		std::vector<Obs> obs;
+		Int adminObs = -1;   // O60: the admin among them (his star)
 		for (Int k = 0; k < MAX_SLOTS; ++k)
 		{
 			UnicodeString name;
@@ -1188,12 +1224,18 @@ namespace
 				ry += rh;
 				continue;
 			}
-			if (k == 0)
+			// O60 (row 46): the admin by identity (he may sit in any seat), with his gold star
+			const Bool admin = r.game != nullptr ? r.game->getAdminSlot() == k : k == 0;
+			Int nameX = x + pad + 2;
+			if (admin)
 			{
 				name.concat(L" ");
 				name.concat(textOf(kHost));
+				const Int starR = max(3, fontHeight() * 2 / 5);
+				PlayerTable::drawAdminStar(nameX + starR, ty + fontHeight() / 2, starR);
+				nameX += 2 * starR + 3;
 			}
-			drawText(name, x + pad + 2, ty, colColor - x - pad - 6, k == 0 ? kGreen : kText);
+			drawText(name, nameX, ty, colColor - nameX - 4, admin ? kGreen : kText);
 			Color tint = 0xFFFFFFFF;
 			const Image *colorImage = PlayerTable::colorPictureOf(color, &tint);
 			if (colorImage != nullptr) {
@@ -1221,6 +1263,17 @@ namespace
 			ry += rh;
 		}
 		// O31: the room's observers (LanRoom), with their files mark and shield
+		// O60: first the admin, when he watches from outside the seats
+		if (r.game != nullptr && r.game->getHostObserves())
+		{
+			Obs o;
+			o.name = r.game->getHostName();
+			o.name.concat(textOf(kAdminSuffix));
+			o.files = filesMarkOfIP(r.game->getHostIP());
+			o.shield = shieldOfIP(r.game->getHostIP());
+			adminObs = (Int)obs.size();
+			obs.push_back(o);
+		}
 		if (r.game != nullptr)
 		{
 			const std::vector<LanRoom::Observer> room = LanRoom::observersOf(r.game->getHostIP());
@@ -1241,6 +1294,9 @@ namespace
 			ry += rh + 2;
 			for (size_t i = 0; i < obs.size() && ry + rh < bottom; ++i)
 			{
+				if ((Int)i == adminObs) {
+					PlayerTable::drawAdminStar(x + pad + 6, ry + rh / 2, min(5, max(3, fontHeight() * 2 / 5)));
+				}
 				drawText(obs[i].name, x + pad + 12, ry + (rh - fontHeight()) / 2, colShield - x - pad - 16, kText);
 				drawShield(colShield, ry + 2, icon, obs[i].shield);
 				drawFilesMark(colFiles, ry + 2, icon, obs[i].files);
@@ -1670,10 +1726,19 @@ UnicodeString LanLobbyLook::screenName()
 	return textOf(kTitle);
 }
 
+namespace
+{
+	// O64: nobody heard on this computer's LAN address
+	UnsignedInt s_aloneSince = 0;
+	Bool s_aloneSaid = FALSE;
+}
+
 void LanLobbyLook::init(GameWindow *parent)
 {
+	s_aloneSince = 0;
+	s_aloneSaid = FALSE;
 	teardown();
-	LanRoom::resetViewer();   // O31: back from following a stream: follow mode off, no mirror
+	LanRoom::lobbyOpened();   // O31: back from following a stream: follow mode off, no mirror (O60: not the admin's starting one)
 	s.parent = parent;
 	if (s.parent == nullptr) {
 		return;
@@ -1926,6 +1991,25 @@ void LanLobbyLook::update(Bool screenReady)
 			GadgetStaticTextSetText(s.panelLabel, t);
 		}
 	}
+	// TheSuperHackers @feature O64 Nobody heard for 20 s on the address this game listens on (the lobby lists only this
+	// computer and no game): one line naming the address and where to choose another (a Radmin VPN player whose Options
+	// chose the home network's address sees an empty lobby otherwise)
+	{
+		const Int players = s.listPlayers != nullptr ? GadgetListBoxGetNumEntries(s.listPlayers) : 0;
+		const Int games = s.listGames != nullptr ? GadgetListBoxGetNumEntries(s.listGames) : 0;
+		const UnsignedInt now = timeGetTime();
+		if (LanTest::sampleData() || TheLAN == nullptr || players > 1 || games > 0 || s_aloneSince == 0) {
+			s_aloneSince = now;
+		}
+		else if (!s_aloneSaid && now - s_aloneSince > 20000 && s.chatList != nullptr)
+		{
+			s_aloneSaid = TRUE;
+			const UnsignedInt ip = TheLAN->GetLocalIP();
+			UnicodeString t;
+			t.format(textOf(kAloneHint).str(), PRINTF_IP_AS_4_INTS(ip));
+			GadgetListBoxAddEntryText(s.chatList, t, chatSystemColor, -1, 0);
+		}
+	}
 	if (s.lobbyLabel != nullptr)
 	{
 		const Int count = LanTest::sampleData() ? (Int)ARRAY_SIZE(kSampleLobby) : (s.listPlayers != nullptr ? GadgetListBoxGetNumEntries(s.listPlayers) : 0);
@@ -2014,7 +2098,7 @@ Bool LanLobbyLook::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgData
 			openHistory();
 			return TRUE;
 		}
-		if (control == s.joinButton && refuseFull(selectedRow())) {
+		if (control == s.joinButton && (refuseFull(selectedRow()) || refuseOtherVersion(selectedRow()))) {
 			return TRUE;   // O29 (item 9): the menu does not ask the host
 		}
 		if (control == s.actionButton)
@@ -2023,7 +2107,7 @@ Bool LanLobbyLook::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgData
 			std::vector<GameRow> rows;
 			collectRows(rows);
 			const Int sel = selectedRow();
-			if (sel >= 0 && sel < (Int)rows.size() && rows[sel].game != nullptr && !LanTest::sampleData())
+			if (sel >= 0 && sel < (Int)rows.size() && rows[sel].game != nullptr && !LanTest::sampleData() && !refuseOtherVersion(sel))
 			{
 				LANGameInfo *game = rows[sel].game;
 				const UnsignedInt host = game->getHostIP();

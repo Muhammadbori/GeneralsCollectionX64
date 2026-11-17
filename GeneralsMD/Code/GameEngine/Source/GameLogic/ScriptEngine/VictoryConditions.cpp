@@ -204,8 +204,14 @@ void VictoryConditions::update()
 			m_isDefeated[i] = true;
 			if (TheGameLogic->getFrame() > 1)
 			{
-				ThePartitionManager->revealMapForPlayerPermanently( p->getPlayerIndex() );
-				TheGameClient->updateFakeDrawables();
+				// TheSuperHackers @feature O59 (row 47) In a match of several people a defeated player keeps his team's view:
+				// the map does not open for him. GameInfo::hasSeveralHumanPlayers comes from the slots alone, so every
+				// player, every room observer and a replay of the match decide the same (the shroud is in the CRC).
+				if (TheGameInfo == nullptr || !TheGameInfo->hasSeveralHumanPlayers())
+				{
+					ThePartitionManager->revealMapForPlayerPermanently( p->getPlayerIndex() );
+					TheGameClient->updateFakeDrawables();
+				}
 
 				TheInGameUI->message("GUI:PlayerHasBeenDefeated", p->getPlayerDisplayName().str() );
 				// People are boneheads. Also play a sound
@@ -243,7 +249,11 @@ void VictoryConditions::update()
 			}
 			m_localPlayerDefeated = true;	// don't check again
 			TheRadar->forceOn(localPlayer->getPlayerIndex(), TRUE);
-			SetInGameChatType( INGAME_CHAT_EVERYONE ); // can't chat to allies after death.  Only to other observers.
+			// O59 (row 47): in a match of several people the defeated player talks to his team-mates (DefeatedPlayer.h)
+			if (TheGameInfo != nullptr && TheGameInfo->hasSeveralHumanPlayers())
+				SetInGameChatType( INGAME_CHAT_ALLIES );
+			else
+				SetInGameChatType( INGAME_CHAT_EVERYONE ); // can't chat to allies after death.  Only to other observers.
 		}
 	}
 }

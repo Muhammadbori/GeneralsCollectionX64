@@ -28,6 +28,7 @@
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
+#include "GameClient/DefeatedPlayer.h"
 
 #define DEFINE_SHADOW_NAMES
 
@@ -1810,6 +1811,7 @@ void InGameUI::update()
 	// TheSuperHackers @feature The team voice chat and its talk indicator (VoiceChat.h, VoiceChatUI.h).
 	VoiceChat::update();
 	VoiceChatUI::update();
+	DefeatedPlayer::update();   // O59 (row 47): "Join observers" of a defeated player
 
 	// TheSuperHackers @feature A network match on one PC for tests (NetLab.h).
 	NetLab::update();
@@ -2617,7 +2619,7 @@ void InGameUI::createMouseoverHint( const GameMessage *msg )
 					{
 						Player *clientPlayer = ThePlayerList->getLocalPlayer();
 						Player *disguisedPlayer = ThePlayerList->getNthPlayer( update->getDisguisedPlayerIndex() );
-						if( player->getRelationship( clientPlayer->getDefaultTeam() ) != ALLIES && clientPlayer->isPlayerActive() )
+						if( player->getRelationship( clientPlayer->getDefaultTeam() ) != ALLIES && DefeatedPlayer::viewsAsActive(clientPlayer) )
 						{
 							//Neutrals and enemies will see this disguised unit as the team it's disguised as.
 							player = disguisedPlayer;
@@ -6351,6 +6353,9 @@ void InGameUI::drawPlayerInfoList()
 	{
 		Player *player = ThePlayerList->getPlayerFromSlotIndex(slotIndex);
 		if (!player || player->isPlayerObserver())
+			continue;
+		// O59 (row 47): a defeated player staying with his team sees his team's money only
+		if (DefeatedPlayer::localStaysWithTeam() && !DefeatedPlayer::allies(player, ThePlayerList->getLocalPlayer()))
 			continue;
 
 		const GameSlot *slot = TheGameInfo->getConstSlot(slotIndex);

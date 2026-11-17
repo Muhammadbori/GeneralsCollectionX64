@@ -20,6 +20,9 @@
 // TheSuperHackers @feature O31 (row 21, step 3) See LanRoom.h.
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
+#include "Common/Player.h"
+#include "Common/PlayerList.h"
+#include "GameLogic/VictoryConditions.h"
 
 #include "GameNetwork/LanRoom.h"
 
@@ -35,6 +38,9 @@
 #include "GameNetwork/LANAPI.h"
 #include "GameNetwork/LANAPICallbacks.h"
 #include "GameNetwork/LANGameInfo.h"
+#include "GameNetwork/NetworkDefs.h"
+#include "GameNetwork/FirewallHelper.h"
+#include "Common/UserPreferences.h"
 #include "GameLogic/GameLogic.h"
 
 #include <algorithm>
@@ -43,8 +49,8 @@
 namespace
 {
 	enum Kind { KIND_OBSERVE = 1, KIND_LEAVE = 2, KIND_LIST = 3, KIND_REMOVED = 4, KIND_CHAT = 5, KIND_START = 6, KIND_COUNT = 7,
-		KIND_RULES = 8 };
-	enum { FLAG_OUTSIDE_ALLOWED = 1, FLAG_TO_PLAYER = 2 };
+		KIND_RULES = 8, KIND_ASK_MAP = 9 /* O62: the host asks a player to say again whether it has the map */ };
+	enum { FLAG_OUTSIDE_ALLOWED = 1, FLAG_TO_PLAYER = 2, FLAG_HOST_WATCHES = 4 /* O60: START to observers */ };
 	const Int kDefaultDelay = 60;
 	const UnsignedInt kKnownKeepMs = 600000;    ///< O33: a room's LIST is kept this long (its delay and flag)
 	const size_t kKnownMax = 64;                ///< O33: at most this many rooms remembered
@@ -75,6 +81,10 @@ namespace
 	const Text kNoOutside = { "GUI:LanRoomNoOutside", L"The host of this game does not allow outside viewers.", L"\x0425\x043E\x0441\x0442 \x044D\x0442\x043E\x0439 \x0438\x0433\x0440\x044B \x043D\x0435 \x0440\x0430\x0437\x0440\x0435\x0448\x0430\x0435\x0442 \x043F\x043E\x0441\x0442\x043E\x0440\x043E\x043D\x043D\x0438\x0445 \x0437\x0440\x0438\x0442\x0435\x043B\x0435\x0439." };
 	const Text kObserverLine = { "GUI:LanObserverChatLine", L"%ls (observer): %ls", L"%ls (\x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x044C): %ls" };
 	const Text kObserverOnly = { "GUI:LanObserverChatOnly", L"Your messages go to the room's other observers only.", L"\x0412\x0430\x0448\x0438 \x0441\x043E\x043E\x0431\x0449\x0435\x043D\x0438\x044F \x0432\x0438\x0434\x044F\x0442 \x0442\x043E\x043B\x044C\x043A\x043E \x0434\x0440\x0443\x0433\x0438\x0435 \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x0438 \x043A\x043E\x043C\x043D\x0430\x0442\x044B." };
+	const Text kAdminNoMap = { "GUI:LanRoomAdminNoMap", L"The host watches, so nobody can send the map. These players need it first: %ls", L"\x0425\x043E\x0441\x0442 \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0435\x0442, \x043F\x043E\x044D\x0442\x043E\x043C\x0443 \x043A\x0430\x0440\x0442\x0443 \x043D\x0435\x043A\x043E\x043C\x0443 \x043F\x0435\x0440\x0435\x0434\x0430\x0442\x044C. \x0421\x043D\x0430\x0447\x0430\x043B\x0430 \x043E\x043D\x0430 \x043D\x0443\x0436\x043D\x0430 \x044D\x0442\x0438\x043C \x0438\x0433\x0440\x043E\x043A\x0430\x043C: %ls" };
+	const Text kAdminNobody = { "GUI:LanRoomAdminNobody", L"Nobody sits in a seat: a match needs at least one player.", L"\x041D\x0438\x043A\x0442\x043E \x043D\x0435 \x0441\x0438\x0434\x0438\x0442 \x043D\x0430 \x043C\x0435\x0441\x0442\x0435: \x0434\x043B\x044F \x043C\x0430\x0442\x0447\x0430 \x043D\x0443\x0436\x0435\x043D \x0445\x043E\x0442\x044F \x0431\x044B \x043E\x0434\x0438\x043D \x0438\x0433\x0440\x043E\x043A." };
+	const Text kOtherVersion = { "GUI:LanOtherVersion", L"This game is another version of the game: it cannot be joined or watched.", L"\x042D\x0442\x0430 \x0438\x0433\x0440\x0430 \x0434\x0440\x0443\x0433\x043E\x0439 \x0432\x0435\x0440\x0441\x0438\x0438: \x0432\x043E\x0439\x0442\x0438 \x0432 \x043D\x0435\x0451 \x0438\x043B\x0438 \x0441\x043C\x043E\x0442\x0440\x0435\x0442\x044C \x0435\x0451 \x043D\x0435\x043B\x044C\x0437\x044F." };
+	const Text kThisPcPlays = { "GUI:LanRoomThisPcPlays", L"This computer is a player of this match: it cannot watch it (a second game on a player's computer is refused).", L"\x042D\x0442\x043E\x0442 \x043A\x043E\x043C\x043F\x044C\x044E\x0442\x0435\x0440 \x2014 \x0438\x0433\x0440\x043E\x043A \x044D\x0442\x043E\x0433\x043E \x043C\x0430\x0442\x0447\x0430: \x0441\x043C\x043E\x0442\x0440\x0435\x0442\x044C \x0435\x0433\x043E \x043E\x0442\x0441\x044E\x0434\x0430 \x043D\x0435\x043B\x044C\x0437\x044F (\x0432\x0442\x043E\x0440\x0430\x044F \x0438\x0433\x0440\x0430 \x043D\x0430 \x043A\x043E\x043C\x043F\x044C\x044E\x0442\x0435\x0440\x0435 \x0438\x0433\x0440\x043E\x043A\x0430 \x043D\x0435 \x0434\x043E\x043F\x0443\x0441\x043A\x0430\x0435\x0442\x0441\x044F)." };   // O64
 	const Text kLeft = { "GUI:LanRoomLeft", L"You no longer observe that game.", L"\x0412\x044B \x0431\x043E\x043B\x044C\x0448\x0435 \x043D\x0435 \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0435\x0442\x0435 \x0437\x0430 \x044D\x0442\x043E\x0439 \x0438\x0433\x0440\x043E\x0439." };
 
 	struct Entry { UnsignedInt ip; UnicodeString name; UnsignedInt lastHeard; };
@@ -102,12 +112,13 @@ namespace
 	UnsignedInt s_peerLocalIP = 0;
 	SOCKET s_chatSocket = INVALID_SOCKET;
 	Bool s_chatHinted = FALSE;
-	const UnsignedInt kChatMagic = 0x3148434F;   ///< "OCH1"
+	const UnsignedInt kChatMagic = 0x0048434Fu | ((UnsignedInt)('0' + LANProtocolVersion) << 24);   ///< "OCH<n>" (O64: the protocol number)
 	Int s_upstreamDelay = 0;                     ///< O39: an outside viewer's sources' delay (the host's)
 	// O40: the room layout the host kept at Start (plain values only: nothing of it outlives the memory manager)
 	struct SlotKeep { Int state, playerTemplate, color, team, startPos; };
 	SlotKeep s_layout[MAX_SLOTS];
 	Bool s_layoutValid = FALSE;
+	Bool s_layoutHostObserves = FALSE;   ///< O60: the admin watched from outside the seats
 	Bool s_rematchRequested = FALSE;
 	Bool s_rematchApplyPending = FALSE;
 	// O42: the host's rules of the running match (RULES), frozen at Start
@@ -115,6 +126,9 @@ namespace
 	Int s_hostRulesDelay = 60;
 	Bool s_hostRulesOutside = TRUE;
 	UnsignedInt s_lastRules = 0;
+	// O60 (row 46): the admin who watches his room's match from outside the seats
+	Bool s_adminStarting = FALSE;      ///< his stream began at Start; the lobby he goes back to keeps it
+	Bool s_adminWatchedMatch = FALSE;  ///< for the replay's score screen ("Play again")
 
 	/// O39: the observers' channel writes what it sends, shows and drops into ObserverChat.log (user data folder), for the
 	/// tests (a picture shows a message line only for a few seconds)
@@ -135,6 +149,12 @@ namespace
 		}
 	}
 
+	// O59 (row 47): a defeated player's channel; the room's observers of the match this game plays (the host's START)
+	Bool s_defeatedChannel = FALSE;
+	UnsignedInt s_lastJoinSent = 0;
+	std::vector<Peer> s_matchRoomObservers;
+	const UnsignedInt kJoinMagic = 0x004A4F4Fu | ((UnsignedInt)('0' + LANProtocolVersion) << 24);   // "OOJ<n>" (O64: the protocol number)
+
 	void closeObserverChannel()
 	{
 		if (s_chatSocket != INVALID_SOCKET)
@@ -145,10 +165,59 @@ namespace
 		s_peers.clear();
 		s_peerLocalIP = 0;
 		s_chatHinted = FALSE;
+		s_defeatedChannel = FALSE;
+	}
+
+	/// The text socket on this game's LAN address only (never the wildcard address).
+	Bool bindChatSocket(UnsignedInt localIP)
+	{
+		SOCKET s = socket(AF_INET, SOCK_DGRAM, 0);
+		if (s == INVALID_SOCKET) {
+			return FALSE;
+		}
+		sockaddr_in addr;
+		memset(&addr, 0, sizeof(addr));
+		addr.sin_family = AF_INET;
+		addr.sin_port = htons((unsigned short)LanRoom::OBSERVER_CHAT_PORT);
+		addr.sin_addr.s_addr = htonl(localIP);
+		if (localIP == 0 || bind(s, (sockaddr *)&addr, sizeof(addr)) != 0)
+		{
+			closesocket(s);
+			return FALSE;
+		}
+		u_long on = 1;
+		ioctlsocket(s, FIONBIO, &on);
+		s_chatSocket = s;
+		return TRUE;
+	}
+
+	/// O59: 'ip' is a player of this match (a human slot) and that player is defeated in this game's copy of the match;
+	/// the slot's name in 'name'.
+	Bool defeatedMatchPlayer(UnsignedInt ip, UnicodeString *name)
+	{
+		if (ip == 0 || TheGameInfo == nullptr || ThePlayerList == nullptr || TheVictoryConditions == nullptr) {
+			return FALSE;
+		}
+		for (Int i = 0; i < MAX_SLOTS; ++i)
+		{
+			const GameSlot *slot = TheGameInfo->getConstSlot(i);
+			if (slot == nullptr || !slot->isHuman() || slot->getIP() != ip) {
+				continue;
+			}
+			Player *player = ThePlayerList->getPlayerFromSlotIndex(i);
+			if (player == nullptr || player->isPlayerObserver() || !TheVictoryConditions->hasSinglePlayerBeenDefeated(player)) {
+				return FALSE;
+			}
+			*name = slot->getName();
+			return TRUE;
+		}
+		return FALSE;
 	}
 
 	/// The observers of the host's last list, without the players; this game included.
-	void openObserverChannel(UnsignedInt hostIP, UnsignedInt localIP, const UnsignedInt *players, Int playerCount)
+	/// O60 (row 46): 'adminIP' (the host, who then is no player) watches from outside the seats and is one of them.
+	void openObserverChannel(UnsignedInt hostIP, UnsignedInt localIP, const UnsignedInt *players, Int playerCount,
+		UnsignedInt adminIP = 0, const UnicodeString &adminName = UnicodeString::TheEmptyString)
 	{
 		closeObserverChannel();
 		std::map<UnsignedInt, Known>::const_iterator k = s_known.find(hostIP);
@@ -159,9 +228,9 @@ namespace
 		for (size_t i = 0; i < k->second.list.size(); ++i)
 		{
 			const UnsignedInt ip = k->second.list[i].ip;
-			Bool player = ip == hostIP;
+			Bool player = ip == hostIP && adminIP == 0;
 			for (Int p = 0; p < playerCount; ++p) player = player || players[p] == ip;
-			if (ip == 0 || player) {
+			if (ip == 0 || player || ip == adminIP) {
 				continue;
 			}
 			Peer peer;
@@ -169,6 +238,13 @@ namespace
 			peer.name = k->second.list[i].name;
 			s_peers.push_back(peer);
 			meListed = meListed || ip == localIP;
+		}
+		if (adminIP != 0 && meListed)
+		{
+			Peer admin;
+			admin.ip = adminIP;
+			admin.name = adminName;
+			s_peers.push_back(admin);
 		}
 		if (!meListed || s_peers.size() < 2)
 		{
@@ -178,23 +254,7 @@ namespace
 		std::sort(s_peers.begin(), s_peers.end(), [](const Peer &a, const Peer &b) { return a.ip < b.ip; });
 		s_peerLocalIP = localIP;
 		// the text socket: this game's LAN address only, never the wildcard address
-		SOCKET s = socket(AF_INET, SOCK_DGRAM, 0);
-		if (s == INVALID_SOCKET) {
-			return;
-		}
-		sockaddr_in addr;
-		memset(&addr, 0, sizeof(addr));
-		addr.sin_family = AF_INET;
-		addr.sin_port = htons((unsigned short)LanRoom::OBSERVER_CHAT_PORT);
-		addr.sin_addr.s_addr = htonl(localIP);
-		if (localIP == 0 || bind(s, (sockaddr *)&addr, sizeof(addr)) != 0)
-		{
-			closesocket(s);
-			return;
-		}
-		u_long on = 1;
-		ioctlsocket(s, FIONBIO, &on);
-		s_chatSocket = s;
+		bindChatSocket(localIP);
 	}
 
 	const Peer *peerOf(UnsignedInt ip)
@@ -224,6 +284,23 @@ namespace
 			const Peer *peer = peerOf(ip);
 			UnsignedInt magic = 0;
 			memcpy(&magic, packet, 4);
+			// O59 (row 47): a defeated player of this match joins the observers: taken in only when this game's copy of the
+			// match has that address as a player who is defeated
+			if (got >= 4 && magic == kJoinMagic)
+			{
+				UnicodeString name;
+				if (peer == nullptr && ip != s_peerLocalIP && ntohs(from.sin_port) == LanRoom::OBSERVER_CHAT_PORT
+					&& defeatedMatchPlayer(ip, &name))
+				{
+					Peer joined;
+					joined.ip = ip;
+					joined.name = name;
+					s_peers.push_back(joined);
+					std::sort(s_peers.begin(), s_peers.end(), [](const Peer &a, const Peer &b) { return a.ip < b.ip; });
+					chatLog("JOINED (defeated player)", ip, name);
+				}
+				continue;
+			}
 			if (peer == nullptr || ip == s_peerLocalIP || ntohs(from.sin_port) != LanRoom::OBSERVER_CHAT_PORT || got < 6 || magic != kChatMagic) {
 				chatLog("DROPPED from", ip, UnicodeString::TheEmptyString);
 				continue;   // not a room observer of this match: dropped unseen
@@ -423,12 +500,15 @@ namespace
 		Int hostDelay, Bool outsideAllowed, const UnsignedInt *liveIps, Int liveCount, const UnsignedInt *observerIps = nullptr,
 		Int observerCount = 0)
 	{
+		s_adminWatchedMatch = FALSE;   // O60: hostStart sets it again for the admin's own stream
 		// the viewer relays its copy on its own LAN address (viewers feed viewers). O33: a room observer's relay is live for
 		// the other room observers and delayed by the host's delay for everybody else; an outside viewer's copy is delayed
 		// already, so its relay forwards what it has (never more than it was given); none when outside viewers are not
 		// allowed and nobody else may have it live.
+		// O62 (H5 #3): the match's players ('ips') are never served by this relay either
 		if (outsideAllowed || liveCount > 0) {
-			ReplayStream::configureMatchServing(localIP, LanRoom::STREAM_PORT, hostDelay, outsideAllowed, liveIps, liveCount, !roomObserver);
+			ReplayStream::configureMatchServing(localIP, LanRoom::STREAM_PORT, hostDelay, outsideAllowed, liveIps, liveCount, !roomObserver,
+				ips, count);
 		} else {
 			ReplayStream::stopServing();
 		}
@@ -458,8 +538,10 @@ Int LanRoom::capacity(const LANGameInfo *game)
 			++playerPlaces;
 		}
 	}
+	// O60: the admin watching from outside the seats takes one of them
+	const Int adminPlace = (game != nullptr && game->getHostObserves()) ? 1 : 0;
 	// never fewer places than the people a room had by the old rule (12 - humans in slots) already holds
-	const Int places = max(MAX_PEOPLE - playerPlaces, min((Int)s_hosted.size(), MAX_PEOPLE - humansInSlots(game)));
+	const Int places = max(MAX_PEOPLE - playerPlaces - adminPlace, min((Int)s_hosted.size(), MAX_PEOPLE - humansInSlots(game) - adminPlace));
 	return places > MAX_OBSERVERS ? MAX_OBSERVERS : (places < 0 ? 0 : places);
 }
 
@@ -560,6 +642,15 @@ void LanRoom::onMessage(const LANMessage *msg, UnsignedInt senderIP, UnsignedInt
 			}
 			break;
 		}
+		case KIND_ASK_MAP:
+		{
+			// O62 (H5 #6): this player's room's host did not hear whether it has the map: it says so again
+			LANGameInfo *mine = TheLAN != nullptr ? TheLAN->GetMyGame() : nullptr;
+			if (mine != nullptr && mine->getHostIP() == senderIP && msg->Room.gameIP == senderIP && !mine->isGameInProgress()) {
+				TheLAN->RequestHasMap();
+			}
+			break;
+		}
 		case KIND_RULES:
 		{
 			// O42: a running match's rules from its host: the lobby disables Watch when it allows no outside viewers
@@ -614,7 +705,7 @@ void LanRoom::onMessage(const LANMessage *msg, UnsignedInt senderIP, UnsignedInt
 			{
 				// a player of the room, or an observer: a ready line from the room's host
 				LANGameInfo *mine = TheLAN != nullptr ? TheLAN->GetMyGame() : nullptr;
-				const Bool myRoom = (mine != nullptr && mine->getIP(0) == senderIP) || (s_roomHost == senderIP && s_state == STATE_IN_ROOM);
+				const Bool myRoom = (mine != nullptr && mine->getHostIP() == senderIP) || (s_roomHost == senderIP && s_state == STATE_IN_ROOM);
 				if (myRoom) {
 					showLine(UnicodeString(text));
 				}
@@ -629,7 +720,7 @@ void LanRoom::onMessage(const LANMessage *msg, UnsignedInt senderIP, UnsignedInt
 			{
 				// O33: a player of this host's room: the observers frozen at Start (only from the room's host)
 				LANGameInfo *mine = TheLAN != nullptr ? TheLAN->GetMyGame() : nullptr;
-				if (mine == nullptr || mine->getIP(0) != senderIP || msg->Room.gameIP != senderIP) {
+				if (mine == nullptr || mine->getHostIP() != senderIP || msg->Room.gameIP != senderIP) {
 					return;
 				}
 				s_matchStart.valid = TRUE;
@@ -661,11 +752,21 @@ void LanRoom::onMessage(const LANMessage *msg, UnsignedInt senderIP, UnsignedInt
 				for (Int p = 0; p < n; ++p) player = player || ips[p] == ip;
 				if (ip != 0 && ip != localIP && !player) live[liveCount++] = ip;
 			}
+			// O60 (row 46): the admin watches the match from outside the seats: he gets this observer's relay live too and
+			// is one of the room's observers in their channel
+			const Bool hostWatches = (msg->Room.flags & FLAG_HOST_WATCHES) != 0;
+			if (hostWatches && liveCount < MAX_OBSERVERS) {
+				live[liveCount++] = senderIP;
+			}
+			UnicodeString adminName;
+			if (hostWatches && TheLAN != nullptr && TheLAN->LookupGameByHost(senderIP) != nullptr) {
+				adminName = TheLAN->LookupGameByHost(senderIP)->getHostName();
+			}
 			s_watcher = FALSE;
 			notice(textOf(kStarting));
 			beginStream(ips, n, msg->Room.port != 0 ? msg->Room.port : STREAM_PORT, localIP, TRUE, 0, delay, outside, live, liveCount);
 			// O34: the room observers' own text and voice during the match (the host's last list, players left out)
-			openObserverChannel(senderIP, localIP, ips, n);
+			openObserverChannel(senderIP, localIP, ips, n, hostWatches ? senderIP : 0, adminName);
 			break;
 		}
 		default:
@@ -754,7 +855,7 @@ void LanRoom::update(UnsignedInt localIP)
 		else if (ReplayStream::takeLostNotice() || now - s_stateSince > kStreamWaitMs)
 		{
 			// O42: a source that refused because the host allows no outside viewers says so
-			notice(textOf(ReplayStream::lostBecauseNotAllowed() ? kNoOutside : kLost));
+			notice(textOf(ReplayStream::lostBecausePlayer() ? kThisPcPlays : (ReplayStream::lostBecauseNotAllowed() ? kNoOutside : kLost)));
 			resetViewer();
 		}
 	}
@@ -762,6 +863,15 @@ void LanRoom::update(UnsignedInt localIP)
 
 void LanRoom::pollStart()
 {
+	// O61 (row 49): an outside viewer's files: the ones still held are deleted when they can be; an earlier crashed
+	// viewer's at the start
+	static Bool s_swept = FALSE;
+	if (!s_swept && TheGlobalData != nullptr)
+	{
+		s_swept = TRUE;
+		ReplayStream::sweepViewerLeftovers();
+	}
+	ReplayStream::pumpDeletes();
 	pumpObserverChat();
 	if (s_state == STATE_STARTING)
 	{
@@ -775,7 +885,7 @@ void LanRoom::pollStart()
 		}
 		return;
 	}
-	if (s_state == STATE_PLAYING && TheGameLogic != nullptr)
+	if (s_state == STATE_PLAYING && TheGameLogic != nullptr && !ReplayFollow::restarting())   // O61: not a rewind's restart
 	{
 		// O33: after the replay (back in the menus, wherever): follow mode off, no mirror, no relay
 		if (TheGameLogic->isInReplayGame()) {
@@ -887,14 +997,21 @@ void LanRoom::hostStart(LANGameInfo *game, UnsignedInt localIP)
 
 	UnsignedInt ips[MAX_SLOTS];
 	const Int n = playerAddresses(game, ips, MAX_SLOTS);
+	// O60 (row 46): the admin who watches from outside the seats is not in the match; the players' servers have him live
+	// like a room observer
+	const Bool adminWatches = game->getHostObserves() && !inSlot(game, localIP);
 	// to the players: the observer list, the delay and the flag (their servers decide by it)
 	{
 		LANMessage msg;
 		prepare(msg, KIND_START, localIP);
-		for (size_t i = 0; i < observers.size(); ++i) {
-			msg.Room.ips[i] = observers[i];
+		Int count = 0;
+		for (size_t i = 0; i < observers.size() && count < MAX_OBSERVERS; ++i) {
+			msg.Room.ips[count++] = observers[i];
 		}
-		msg.Room.count = (UnsignedByte)observers.size();
+		if (adminWatches && count < MAX_OBSERVERS) {
+			msg.Room.ips[count++] = localIP;
+		}
+		msg.Room.count = (UnsignedByte)count;
 		msg.Room.port = STREAM_PORT;
 		msg.Room.delaySeconds = (UnsignedShort)delay;
 		msg.Room.flags = (UnsignedShort)(FLAG_TO_PLAYER | (outside ? FLAG_OUTSIDE_ALLOWED : 0));
@@ -913,9 +1030,52 @@ void LanRoom::hostStart(LANGameInfo *game, UnsignedInt localIP)
 		msg.Room.count = (UnsignedByte)n;
 		msg.Room.port = STREAM_PORT;
 		msg.Room.delaySeconds = (UnsignedShort)delay;
-		msg.Room.flags = (UnsignedShort)(outside ? FLAG_OUTSIDE_ALLOWED : 0);
+		msg.Room.flags = (UnsignedShort)((outside ? FLAG_OUTSIDE_ALLOWED : 0) | (adminWatches ? FLAG_HOST_WATCHES : 0));
 		for (size_t i = 0; i < observers.size(); ++i) {
 			send(msg, observers[i]);
+		}
+	}
+	if (adminWatches)
+	{
+		// O60: the admin follows the players' stream live as a room observer does (LANAPI::OnGameStart takes him out of
+		// the room without a word to the players), and talks with the room's observers frozen above
+		s_matchStart.valid = FALSE;
+		UnsignedInt live[MAX_OBSERVERS];
+		Int liveCount = 0;
+		for (size_t i = 0; i < observers.size() && liveCount < MAX_OBSERVERS; ++i) {
+			live[liveCount++] = observers[i];
+		}
+		s_watcher = FALSE;
+		s_roomHost = localIP;
+		notice(textOf(kStarting));
+		beginStream(ips, n, STREAM_PORT, localIP, TRUE, 0, delay, outside, live, liveCount);
+		const Bool started = s_state == STATE_STARTING;
+		s_adminStarting = started;
+		s_adminWatchedMatch = started;
+		closeObserverChannel();
+		for (size_t i = 0; started && i < s_hosted.size(); ++i)
+		{
+			if (std::find(observers.begin(), observers.end(), s_hosted[i].ip) == observers.end()) {
+				continue;
+			}
+			Peer p;
+			p.ip = s_hosted[i].ip;
+			p.name = s_hosted[i].name;
+			s_peers.push_back(p);
+		}
+		if (!s_peers.empty())
+		{
+			Peer me;
+			me.ip = localIP;
+			me.name = TheLAN != nullptr ? TheLAN->GetMyName() : UnicodeString::TheEmptyString;
+			s_peers.push_back(me);
+			std::sort(s_peers.begin(), s_peers.end(), [](const Peer &a, const Peer &b) { return a.ip < b.ip; });
+			s_peerLocalIP = localIP;
+			if (!bindChatSocket(localIP))
+			{
+				s_peers.clear();
+				s_peerLocalIP = 0;
+			}
 		}
 	}
 	s_hosted.clear();   // they follow the stream now; nobody waits for them
@@ -923,6 +1083,7 @@ void LanRoom::hostStart(LANGameInfo *game, UnsignedInt localIP)
 
 void LanRoom::configureServing(UnsignedInt localIP)
 {
+	s_adminWatchedMatch = FALSE;   // O60: this computer plays this match
 	{
 		// O40: only the host of this match may offer "Play again" afterwards
 		LANGameInfo *mine = TheLAN != nullptr ? TheLAN->GetMyGame() : nullptr;
@@ -933,7 +1094,7 @@ void LanRoom::configureServing(UnsignedInt localIP)
 	// every player serves its replay on its LAN address: live to the room's observers of the host's START, delayed by the
 	// host's delay to everybody else (outside viewers per source: 4, or -serveReplayOutsideMax)
 	LANGameInfo *game = TheLAN != nullptr ? TheLAN->GetMyGame() : nullptr;
-	const UnsignedInt host = game != nullptr ? game->getIP(0) : 0;
+	const UnsignedInt host = game != nullptr ? game->getHostIP() : 0;
 	std::vector<UnsignedInt> observers;
 	Int delay = kDefaultDelay;
 	Bool outside = TRUE;
@@ -955,6 +1116,30 @@ void LanRoom::configureServing(UnsignedInt localIP)
 		}
 	}
 	s_matchStart.valid = FALSE;
+	// O59 (row 47): the room's observers of this match, for a player who joins them after a defeat (names from the
+	// host's last LIST)
+	s_matchRoomObservers.clear();
+	{
+		std::map<UnsignedInt, Known>::const_iterator k = s_known.find(host);
+		for (size_t i = 0; i < observers.size(); ++i)
+		{
+			if (observers[i] == 0 || observers[i] == localIP || inSlot(game, observers[i])) {
+				continue;
+			}
+			Peer p;
+			p.ip = observers[i];
+			if (k != s_known.end()) {
+				for (size_t n = 0; n < k->second.list.size(); ++n) {
+					if (k->second.list[n].ip == observers[i]) p.name = k->second.list[n].name;
+				}
+			}
+			// O60 (row 46): the admin who watches from outside the seats is not in his own LIST
+			if (p.name.isEmpty() && game != nullptr && observers[i] == host) {
+				p.name = game->getHostName();
+			}
+			s_matchRoomObservers.push_back(p);
+		}
+	}
 	UnsignedInt live[MAX_OBSERVERS];
 	Int liveCount = 0;
 	for (size_t i = 0; i < observers.size() && liveCount < MAX_OBSERVERS; ++i) {
@@ -970,7 +1155,10 @@ void LanRoom::configureServing(UnsignedInt localIP)
 		s_matchServing = FALSE;
 		return;
 	}
-	ReplayStream::configureMatchServing(localIP, STREAM_PORT, delay, outside, live, liveCount, FALSE);
+	// O62 (H5 #3): this match's players (this computer too: a second game on it) never get its stream
+	UnsignedInt players[MAX_SLOTS];
+	const Int playerCount = playerAddresses(game, players, MAX_SLOTS);
+	ReplayStream::configureMatchServing(localIP, STREAM_PORT, delay, outside, live, liveCount, FALSE, players, playerCount);
 	s_matchServing = TRUE;
 }
 
@@ -978,8 +1166,39 @@ void LanRoom::matchUpdate(UnsignedInt localIP)
 {
 	LANGameInfo *game = TheLAN != nullptr ? TheLAN->GetMyGame() : nullptr;
 	const UnsignedInt now = timeGetTime();
+	// O59 (row 47): a defeated player who joined the observers: their text, and JOIN every second to the observers and
+	// the match's other players (each takes him in once its copy of the match shows him defeated)
+	if (s_defeatedChannel && s_chatSocket != INVALID_SOCKET)
+	{
+		pumpObserverChat();
+		if (now - s_lastJoinSent >= 1000)
+		{
+			s_lastJoinSent = now;
+			std::vector<UnsignedInt> to;
+			for (size_t i = 0; i < s_peers.size(); ++i) {
+				if (s_peers[i].ip != s_peerLocalIP) to.push_back(s_peers[i].ip);
+			}
+			for (Int i = 0; TheGameInfo != nullptr && i < MAX_SLOTS; ++i)
+			{
+				const GameSlot *slot = TheGameInfo->getConstSlot(i);
+				if (slot != nullptr && slot->isHuman() && slot->getIP() != 0 && slot->getIP() != s_peerLocalIP
+					&& std::find(to.begin(), to.end(), slot->getIP()) == to.end()) {
+					to.push_back(slot->getIP());
+				}
+			}
+			for (size_t i = 0; i < to.size(); ++i)
+			{
+				sockaddr_in addr;
+				memset(&addr, 0, sizeof(addr));
+				addr.sin_family = AF_INET;
+				addr.sin_port = htons((unsigned short)OBSERVER_CHAT_PORT);
+				addr.sin_addr.s_addr = htonl(to[i]);
+				sendto(s_chatSocket, (const char *)&kJoinMagic, 4, 0, (sockaddr *)&addr, sizeof(addr));
+			}
+		}
+	}
 	// O42: the host tells the lobby its rules while the match runs (also when nobody may watch and nothing serves)
-	if (game != nullptr && s_hostRulesValid && game->isGameInProgress() && game->getIP(0) == localIP && now - s_lastRules >= kRulesMs)
+	if (game != nullptr && s_hostRulesValid && game->isGameInProgress() && game->getHostIP() == localIP && now - s_lastRules >= kRulesMs)
 	{
 		s_lastRules = now;
 		LANMessage rules;
@@ -995,7 +1214,7 @@ void LanRoom::matchUpdate(UnsignedInt localIP)
 	Int room = 0, outside = 0;
 	ReplayStream::servingCounts(&room, &outside);
 	LANMessage msg;
-	prepare(msg, KIND_COUNT, game->getIP(0));
+	prepare(msg, KIND_COUNT, game->getHostIP());
 	msg.Room.count = (UnsignedByte)(outside > 255 ? 255 : outside);
 	for (Int i = 0; i < MAX_SLOTS; ++i)
 	{
@@ -1009,7 +1228,7 @@ void LanRoom::matchUpdate(UnsignedInt localIP)
 void LanRoom::onMatchMessage(const LANMessage *msg, UnsignedInt senderIP)
 {
 	LANGameInfo *game = TheLAN != nullptr ? TheLAN->GetMyGame() : nullptr;
-	if (msg->Room.kind == KIND_COUNT && game != nullptr && inSlot(game, senderIP) && msg->Room.gameIP == game->getIP(0)) {
+	if (msg->Room.kind == KIND_COUNT && game != nullptr && inSlot(game, senderIP) && msg->Room.gameIP == game->getHostIP()) {
 		s_matchOthers[senderIP] = msg->Room.count;
 	}
 }
@@ -1057,6 +1276,15 @@ Bool LanRoom::isWatcher() { return s_watcher; }
 void LanRoom::startObserving(UnsignedInt hostIP)
 {
 	if (hostIP == 0 || s_state == STATE_STARTING || s_state == STATE_PLAYING) {
+		return;
+	}
+	if (TheLAN != nullptr && TheLAN->LookupGameByHost(hostIP) != nullptr && !TheLAN->LookupGameByHost(hostIP)->isHostVerified()) {
+		return;   // O64 (H6 #2): only a room its host himself announced is observed
+	}
+	if (TheLAN != nullptr && TheLAN->LookupGameByHost(hostIP) != nullptr
+		&& !LanSameVersion(TheLAN->LookupGameByHost(hostIP)))   // O62/O63
+	{
+		notice(textOf(kOtherVersion));   // O62: another version's room is not observed
 		return;
 	}
 	if (TheLAN != nullptr && hostIP == TheLAN->GetLocalIP()) {
@@ -1108,6 +1336,11 @@ void LanRoom::startWatching(LANGameInfo *game, Int extraSeconds)
 	if (game == nullptr || TheLAN == nullptr || s_state == STATE_STARTING || s_state == STATE_PLAYING) {
 		return;
 	}
+	if (!LanSameVersion(game))
+	{
+		notice(textOf(kOtherVersion));   // O62/O63: another version's (or build's) match is not watched
+		return;
+	}
 	if (game->getHostIP() == TheLAN->GetLocalIP()) {
 		return;
 	}
@@ -1151,8 +1384,13 @@ void LanRoom::resetViewer()
 {
 	if (s_state == STATE_STARTING || s_state == STATE_PLAYING)
 	{
+		if (s_state == STATE_STARTING) {
+			s_adminWatchedMatch = FALSE;   // O60: the admin's stream never played
+		}
+		s_adminStarting = FALSE;
 		ReplayStream::stopWatching();
 		ReplayStream::stopServing();   // O33: the relay ends with the viewing
+		ReplayStream::discardViewerFiles();   // O61 (row 49): nothing of the match stays on an outside viewer's disk
 		closeObserverChannel();        // O34
 		s_upstreamDelay = 0;           // O39
 		ReplayFollow::turnOff();
@@ -1178,6 +1416,7 @@ void LanRoom::rememberMatchLayout(const LANGameInfo *game)
 		k.team = slot != nullptr ? slot->getTeamNumber() : -1;
 		k.startPos = slot != nullptr ? slot->getStartPos() : -1;
 	}
+	s_layoutHostObserves = game->getHostObserves();
 	s_layoutValid = TRUE;
 }
 
@@ -1207,6 +1446,10 @@ void LanRoom::applyRematchLayout(LANGameInfo *game)
 		return;
 	}
 	s_rematchApplyPending = FALSE;
+	// O60: an admin who watched from outside the seats does so again (slot 0 opens for a player)
+	if (s_layoutHostObserves) {
+		hostSetObserves(game, TRUE);
+	}
 	for (Int i = 0; i < MAX_SLOTS; ++i)
 	{
 		GameSlot *slot = game->getSlot(i);
@@ -1214,7 +1457,7 @@ void LanRoom::applyRematchLayout(LANGameInfo *game)
 		if (slot == nullptr) {
 			continue;
 		}
-		if (i == 0)
+		if (i == 0 && !s_layoutHostObserves)
 		{
 			// the host itself: its team and start place (army and colour came from its preferences already)
 			slot->setTeamNumber(k.team);
@@ -1243,6 +1486,163 @@ void LanRoom::applyRematchLayout(LANGameInfo *game)
 	}
 }
 
+Bool LanRoom::hostStartProblem(const LANGameInfo *game, UnicodeString *text)
+{
+	if (game == nullptr || TheLAN == nullptr || !game->getHostObserves() || inSlot(game, TheLAN->GetLocalIP())) {
+		return FALSE;
+	}
+	// O62 (H5 #5): a match needs somebody in a seat
+	Bool anyone = FALSE;
+	for (Int i = 0; i < MAX_SLOTS; ++i) {
+		anyone = anyone || (game->getConstLANSlot(i) != nullptr && game->getConstLANSlot(i)->isHuman());
+	}
+	if (!anyone)
+	{
+		*text = textOf(kAdminNobody);
+		return TRUE;
+	}
+	UnicodeString missing;
+	for (Int i = 0; i < MAX_SLOTS; ++i)
+	{
+		const LANGameSlot *slot = game->getConstLANSlot(i);
+		if (slot != nullptr && slot->isHuman() && !slot->hasMap())
+		{
+			if (!missing.isEmpty()) {
+				missing.concat(L", ");
+			}
+			missing.concat(slot->getName());
+			// O62 (H5 #6): a map flag lost on the way is asked for again, so the refusal is never a dead end
+			sendSimple(KIND_ASK_MAP, TheLAN->GetLocalIP(), slot->getIP(), 0);
+		}
+	}
+	if (missing.isEmpty()) {
+		return FALSE;
+	}
+	text->format(textOf(kAdminNoMap).str(), missing.str());
+	return TRUE;
+}
+
+Bool LanRoom::hostSeatFirst(LANGameInfo *game)
+{
+	if (game == nullptr || TheLAN == nullptr || !game->amIHost()) {
+		return FALSE;
+	}
+	Int from = game->getLocalSlotNum();
+	if (from < 0)
+	{
+		// the admin watches: the lowest player, when nobody sits in the first seat
+		const GameSlot *first = game->getConstSlot(0);
+		if (first != nullptr && first->isHuman()) {
+			return FALSE;
+		}
+		for (Int i = 1; i < MAX_SLOTS && from < 0; ++i) {
+			if (game->getConstSlot(i) != nullptr && game->getConstSlot(i)->isHuman()) from = i;
+		}
+	}
+	if (from <= 0) {
+		return FALSE;
+	}
+	LANGameSlot *first = game->getLANSlot(0);
+	LANGameSlot *moved = game->getLANSlot(from);
+	if (first == nullptr || moved == nullptr) {
+		return FALSE;
+	}
+	// whole slots, not setSlot: that would mark the first seat accepted and with the map as the host's
+	const LANGameSlot keep = *first;
+	*first = *moved;
+	*moved = keep;
+	return TRUE;
+}
+
+void LanRoom::lobbyOpened()
+{
+	if (s_adminStarting && s_state == STATE_STARTING)
+	{
+		s_adminStarting = FALSE;   // O60: the admin left his room at Start to watch its match: his stream goes on
+		return;
+	}
+	s_adminStarting = FALSE;
+	resetViewer();
+}
+
+Bool LanRoom::takeAdminWatchedMatch()
+{
+	const Bool watched = s_adminWatchedMatch;
+	s_adminWatchedMatch = FALSE;
+	return watched;
+}
+
+Bool LanRoom::hostHasFreeSeat(const LANGameInfo *game)
+{
+	for (Int i = 0; game != nullptr && i < MAX_SLOTS; ++i)
+	{
+		const GameSlot *slot = game->getConstSlot(i);
+		if (slot != nullptr && slot->getState() == SLOT_OPEN) {
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+Bool LanRoom::hostSetObserves(LANGameInfo *game, Bool observe)
+{
+	// O62 (H5 #7): not while a start is under way (the countdown, or the start check)
+	if (game == nullptr || TheLAN == nullptr || !game->amIHost() || game->isGameInProgress() || TheLAN->IsStartPending()) {
+		return FALSE;
+	}
+	const Int mine = game->getLocalSlotNum();
+	if (observe)
+	{
+		if (game->getHostObserves() && mine < 0) {
+			return TRUE;
+		}
+		if (mine >= 0)
+		{
+			LANGameSlot open;
+			open.setState(SLOT_OPEN);
+			game->setSlot(mine, open);
+		}
+		game->setHostObserves(TRUE);
+	}
+	else
+	{
+		if (!game->getHostObserves() || mine >= 0) {
+			game->setHostObserves(FALSE);
+			return mine >= 0;
+		}
+		Int seat = -1;
+		if (game->getConstSlot(0) != nullptr && game->getConstSlot(0)->getState() == SLOT_OPEN) {
+			seat = 0;
+		}
+		for (Int i = 0; seat < 0 && i < MAX_SLOTS; ++i) {
+			if (game->getConstSlot(i) != nullptr && game->getConstSlot(i)->getState() == SLOT_OPEN) seat = i;
+		}
+		if (seat < 0) {
+			return FALSE;   // every seat is taken or closed
+		}
+		// the admin's seat as at the room's creation (LANAPI::RequestGameCreate), with his saved army and colour
+		LANGameSlot me;
+		me.setState(SLOT_PLAYER, TheLAN->GetMyName());
+		me.setIP(TheLAN->GetLocalIP());
+		me.setPort(NETWORK_BASE_PORT_NUMBER);
+		me.setLastHeard(0);
+		me.setLogin(TheLAN->GetMyUserName());
+		me.setHost(TheLAN->GetMyHostName());
+		LANPreferences pref;
+		me.setColor(pref.getPreferredColor());
+		me.setPlayerTemplate(pref.getPreferredFaction());
+		me.setNATBehavior(FirewallHelperClass::FIREWALL_TYPE_SIMPLE);
+		me.setMapAvailability(TRUE);
+		game->setSlot(seat, me);
+		game->setHostObserves(FALSE);
+	}
+	game->resetAccepted();
+	TheLAN->RequestGameOptions(GenerateGameOptionsString(), true);
+	lanUpdateSlotList();
+	updateGameOptions();
+	return TRUE;
+}
+
 Int LanRoom::upstreamDelaySeconds()
 {
 	return (s_watcher && (s_state == STATE_STARTING || s_state == STATE_PLAYING)) ? s_upstreamDelay : 0;
@@ -1250,7 +1650,45 @@ Int LanRoom::upstreamDelaySeconds()
 
 Bool LanRoom::observerChannelOpen()
 {
+	if (s_defeatedChannel && s_peerLocalIP != 0 && s_chatSocket != INVALID_SOCKET) {
+		return TRUE;   // O59: a defeated player who joined the observers
+	}
 	return !s_watcher && s_peerLocalIP != 0 && (s_state == STATE_STARTING || s_state == STATE_PLAYING);
+}
+
+void LanRoom::openDefeatedObserverChannel(UnsignedInt localIP)
+{
+	closeObserverChannel();
+	if (localIP == 0) {
+		return;
+	}
+	for (size_t i = 0; i < s_matchRoomObservers.size(); ++i) {
+		if (s_matchRoomObservers[i].ip != localIP) s_peers.push_back(s_matchRoomObservers[i]);
+	}
+	Peer me;
+	me.ip = localIP;
+	if (TheGameInfo != nullptr && TheGameInfo->getLocalSlotNum() >= 0 && TheGameInfo->getConstSlot(TheGameInfo->getLocalSlotNum()) != nullptr) {
+		me.name = TheGameInfo->getConstSlot(TheGameInfo->getLocalSlotNum())->getName();
+	}
+	s_peers.push_back(me);
+	std::sort(s_peers.begin(), s_peers.end(), [](const Peer &a, const Peer &b) { return a.ip < b.ip; });
+	s_peerLocalIP = localIP;
+	if (!bindChatSocket(localIP))
+	{
+		s_peers.clear();
+		s_peerLocalIP = 0;
+		return;
+	}
+	s_defeatedChannel = TRUE;
+	s_lastJoinSent = 0;
+	chatLog("OPENED (defeated player joins the observers)", localIP, me.name);
+}
+
+void LanRoom::closeDefeatedObserverChannel()
+{
+	if (s_defeatedChannel) {
+		closeObserverChannel();
+	}
 }
 
 void LanRoom::sendObserverChat(const UnicodeString &text)
@@ -1296,7 +1734,7 @@ void LanRoom::sendObserverChat(const UnicodeString &text)
 
 Int LanRoom::observerVoicePeers(UnsignedInt *ips, UnicodeString *names, Int maxCount, Int *localIndex)
 {
-	if (!observerChannelOpen() || s_state != STATE_PLAYING) {
+	if (!observerChannelOpen() || (s_state != STATE_PLAYING && !s_defeatedChannel)) {
 		return 0;
 	}
 	Int n = 0;

@@ -65,4 +65,11 @@ namespace ReplayFollow
 	Bool mayRunFrame(UnsignedInt frame);
 	/// The writer's newest finished frame (0 before the side file was read). For the replay control bar.
 	UnsignedInt newestFrame();
+	/// TheSuperHackers @feature O61 (row 48) The live point: the newest frame this follower plays to when it is not behind
+	/// (the newest frame less the follow delay and the play-out reserve); 0 when not following.
+	UnsignedInt livePointFrame();
+	/// O61: a backward seek restarts the followed replay from its first frame (ReplayControl): between the end of the
+	/// old playback and the start of the new one the viewer must not take the replay for over (LanRoom::pollStart).
+	void setRestarting(Bool restarting);
+	Bool restarting();
 }

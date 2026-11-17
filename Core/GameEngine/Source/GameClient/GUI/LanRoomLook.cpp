@@ -36,11 +36,13 @@
 #include "GameClient/GameWindowManager.h"
 #include "GameClient/LanLobbyLook.h"
 #include "GameClient/LocalizedFallback.h"
+#include "GameClient/PlayerTable.h"
 #include "GameNetwork/LANAPI.h"
 #include "GameNetwork/LANAPICallbacks.h"
 #include "GameNetwork/LANGameInfo.h"
 #include "GameNetwork/LanRoom.h"
 
+#include <math.h>
 #include <vector>
 
 namespace
@@ -53,6 +55,14 @@ namespace
 	const Text kDelayEntry = { "GUI:LanRoomViewerDelayEntry", L"Viewers: %d s", L"\x0417\x0440\x0438\x0442\x0435\x043B\x0438: %d \x0441" };
 	const Text kDelayTip = { "GUI:LanRoomViewerDelayTip", L"Delay for outside viewers of this match (the host chooses; they can always watch)", L"\x0417\x0430\x0434\x0435\x0440\x0436\x043A\x0430 \x0434\x043B\x044F \x043F\x043E\x0441\x0442\x043E\x0440\x043E\x043D\x043D\x0438\x0445 \x0437\x0440\x0438\x0442\x0435\x043B\x0435\x0439 \x044D\x0442\x043E\x0433\x043E \x043C\x0430\x0442\x0447\x0430 (\x0432\x044B\x0431\x0438\x0440\x0430\x0435\x0442 \x0445\x043E\x0441\x0442; \x0441\x043C\x043E\x0442\x0440\x0435\x0442\x044C \x043C\x043E\x0436\x043D\x043E \x0432\x0441\x0435\x0433\x0434\x0430)" };
 	const Int kDelays[] = { 10, 20, 30, 45, 60, 90, 120, 180 };
+	// O60 (row 46): the admin outside the 8 seats
+	const Text kHostWatch = { "GUI:LanRoomHostWatch", L"Watch", L"\x041D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x044C" };
+	const Text kHostWatchTip = { "GUI:LanRoomHostWatchTip", L"Watch the match from outside the 8 seats: your seat opens for a player, and you stay the host.", L"\x0421\x043C\x043E\x0442\x0440\x0435\x0442\x044C \x043C\x0430\x0442\x0447 \x0432\x043D\x0435 8 \x043C\x0435\x0441\x0442: \x0432\x0430\x0448\x0435 \x043C\x0435\x0441\x0442\x043E \x043E\x0441\x0432\x043E\x0431\x043E\x0434\x0438\x0442\x0441\x044F \x0434\x043B\x044F \x0438\x0433\x0440\x043E\x043A\x0430, \x0430 \x0432\x044B \x043E\x0441\x0442\x0430\x043D\x0435\x0442\x0435\x0441\x044C \x0445\x043E\x0441\x0442\x043E\x043C." };
+	const Text kHostPlay = { "GUI:LanRoomHostPlay", L"Play", L"\x0418\x0433\x0440\x0430\x0442\x044C" };
+	const Text kHostPlayTip = { "GUI:LanRoomHostPlayTip", L"Take a seat again (the first one if it is free, else the first free seat).", L"\x0421\x043D\x043E\x0432\x0430 \x0437\x0430\x043D\x044F\x0442\x044C \x043C\x0435\x0441\x0442\x043E (\x043F\x0435\x0440\x0432\x043E\x0435, \x0435\x0441\x043B\x0438 \x043E\x043D\x043E \x0441\x0432\x043E\x0431\x043E\x0434\x043D\x043E, \x0438\x043D\x0430\x0447\x0435 \x043F\x0435\x0440\x0432\x043E\x0435 \x0441\x0432\x043E\x0431\x043E\x0434\x043D\x043E\x0435)." };
+	const Text kHostNoSeatTip = { "GUI:LanRoomHostNoSeatTip", L"No free seat.", L"\x041D\x0435\x0442 \x0441\x0432\x043E\x0431\x043E\x0434\x043D\x043E\x0433\x043E \x043C\x0435\x0441\x0442\x0430." };
+	const Text kAdminRow = { "GUI:LanRoomAdminRow", L"%ls - observer (host)", L"%ls - \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x044C (\x0445\x043E\x0441\x0442)" };
+	const Color kAdminGold = GameMakeColor(255, 210, 90, 255);
 	const Text kBecome = { "GUI:LanRoomBecomeObserver", L"Become observer", L"\x0421\x0442\x0430\x0442\x044C \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x0435\x043C" };
 
 	const Color kFrame = GameMakeColor(30, 140, 255, 255);
@@ -71,6 +81,10 @@ namespace
 		GameWindow *backButton;
 		GameWindow *list;
 		GameWindow *become;
+		GameWindow *hostToggle; ///< O60: the admin's "Watch" / "Play"
+		Int hostToggleShown;    ///< -1 none yet, 0 "Watch", 1 "Play"
+		GameWindow *adminRow;   ///< O60: the admin above the table while he watches from outside the seats
+		GameWindow *adminMark;  ///< O60: the star on the admin's own seat while he plays
 		GameWindow *delay;      ///< O56 (row 43)
 		Int delayShown;         ///< the seconds the box shows (-1: none yet)
 		std::vector<GameWindow *> made;
@@ -126,7 +140,7 @@ namespace
 	UnsignedInt roomHost()
 	{
 		LANGameInfo *g = TheLAN != nullptr ? TheLAN->GetMyGame() : nullptr;
-		return g != nullptr ? g->getIP(0) : 0;
+		return g != nullptr ? g->getHostIP() : 0;   // O60
 	}
 
 	Bool iAmHost()
@@ -216,6 +230,46 @@ namespace
 		inst.m_hiliteText = from->m_hiliteText;
 		inst.m_imageOffset = from->m_imageOffset;
 		inst.m_font = from->m_font;
+	}
+
+	/// O60: a five-pointed star (the admin's mark), lines only
+	void drawStar(Int cx, Int cy, Int r, Color)
+	{
+		PlayerTable::drawAdminStar(cx, cy, r);   // O60 (S25): the same filled gold star everywhere
+	}
+
+	LANGameInfo *roomGame()
+	{
+		return TheLAN != nullptr ? TheLAN->GetMyGame() : nullptr;
+	}
+
+	/// O60: the admin watching from outside the seats, above the table (every client draws it)
+	void drawAdminRow(GameWindow *window, WinInstanceData *)
+	{
+		LANGameInfo *game = roomGame();
+		if (game == nullptr || !game->getHostObserves()) {
+			return;
+		}
+		Int x = 0, y = 0, w = 0, h = 0;
+		window->winGetScreenPosition(&x, &y);
+		window->winGetSize(&w, &h);
+		TheDisplay->drawFillRect(x, y, w, h, kFill);
+		TheDisplay->drawOpenRect(x, y, w, h, 1.0f, kAdminGold);
+		const Int r = max(4, h / 3);
+		drawStar(x + 4 + r, y + h / 2, r, kAdminGold);
+		UnicodeString text;
+		text.format(textOf(kAdminRow).str(), game->getHostName().str());
+		drawLine(text, x + 10 + 2 * r, y + (h - rowHeight() + 6) / 2, kText);
+		LanLobbyLook::drawMarks(x + w - 4 - (rowHeight() - 4) * 2, y + (h - rowHeight() + 4) / 2 + 2, rowHeight() - 4, game->getHostIP());
+	}
+
+	/// O60: the star on the admin's own seat (where its accept light would be) while he plays
+	void drawAdminMark(GameWindow *window, WinInstanceData *)
+	{
+		Int x = 0, y = 0, w = 0, h = 0;
+		window->winGetScreenPosition(&x, &y);
+		window->winGetSize(&w, &h);
+		drawStar(x + w / 2, y + h / 2, max(3, min(w, h) / 2 - 1), kAdminGold);
 	}
 
 	void copyDrawData(GameWindow *to, GameWindow *from)
@@ -352,6 +406,8 @@ namespace
 		freeStrings();
 		s.made.clear();
 		s.parent = s.chatList = s.startButton = s.backButton = s.list = s.become = s.delay = nullptr;
+		s.hostToggle = s.adminRow = s.adminMark = nullptr;
+		s.hostToggleShown = -1;
 		s.delayShown = -1;
 		s.font = nullptr;
 		s.shown = FALSE;
@@ -413,6 +469,72 @@ void LanRoomLook::init(GameWindow *parent)
 			s.list->winSetDrawFunc(drawList);
 			s.list->winSetInputFunc(inputList);
 			s.made.push_back(s.list);
+		}
+	}
+	// O60 (row 46): the admin's row above the table and the star on his seat; both take no input
+	{
+		GameWindow *title = find("StaticTextTitle");
+		GameWindow *frame = title != nullptr ? title->winGetParent() : nullptr;
+		if (title != nullptr && frame != nullptr)
+		{
+			Int tx = 0, ty = 0, tw = 0, th = 0, fw = 0, fh = 0;
+			title->winGetPosition(&tx, &ty);
+			title->winGetSize(&tw, &th);
+			frame->winGetSize(&fw, &fh);
+			const Int gap = 8 * pw / 800;
+			const Int rowH = min(th, rowHeight() + 8);
+			const Int left = tx + tw + gap;
+			const Int right = fw - gap;
+			if (right - left > 80)
+			{
+				WinInstanceData inst;
+				inst.init();
+				inst.m_style = GWS_USER_WINDOW;
+				s.adminRow = TheWindowManager->winCreate(frame, 0, left, ty + (th - rowH) / 2, right - left, rowH, PassMessagesToParentSystem, &inst);
+				if (s.adminRow != nullptr)
+				{
+					s.adminRow->winSetDrawFunc(drawAdminRow);
+					s.adminRow->winSetTooltip(PlayerTable::adminTip());
+					s.made.push_back(s.adminRow);
+				}
+			}
+			WinInstanceData markInst;
+			markInst.init();
+			markInst.m_style = GWS_USER_WINDOW;
+			markInst.m_style |= GWS_MOUSE_TRACK;
+			s.adminMark = TheWindowManager->winCreate(frame, WIN_STATUS_ENABLED, 0, 0, 16, 16, PassMessagesToParentSystem, &markInst);
+			if (s.adminMark != nullptr)
+			{
+				s.adminMark->winSetDrawFunc(drawAdminMark);
+				s.adminMark->winSetTooltip(PlayerTable::adminTip());
+				s.adminMark->winHide(TRUE);
+				s.made.push_back(s.adminMark);
+			}
+		}
+	}
+	// O60: the admin's "Watch" (outside the seats) / "Play", where a player's "Become observer" is
+	if (iAmHost() && s.startButton != nullptr && s.backButton != nullptr && s.startButton->winGetParent() == s.backButton->winGetParent())
+	{
+		Int sx0 = 0, sy0 = 0, sw = 0, sh = 0, bx = 0, by = 0, bw = 0, bh = 0;
+		s.startButton->winGetPosition(&sx0, &sy0);
+		s.startButton->winGetSize(&sw, &sh);
+		s.backButton->winGetPosition(&bx, &by);
+		s.backButton->winGetSize(&bw, &bh);
+		const Int gap = 8 * pw / 800;
+		const Int left = sx0 + sw + gap, right = bx - gap;
+		if (right - left > 40)
+		{
+			WinInstanceData inst;
+			copyLook(inst, s.backButton, GWS_PUSH_BUTTON | GWS_MOUSE_TRACK);
+			inst.m_id = (Int)TheNameKeyGenerator->nameToKey(AsciiString("LanGameOptionsMenu.wnd:Room.HostWatchOrPlay"));
+			s.hostToggle = TheWindowManager->gogoGadgetPushButton(s.backButton->winGetParent(),
+				WIN_STATUS_ENABLED | (s.backButton->winGetStatus() & WIN_STATUS_IMAGE), left, by, right - left, bh, &inst, inst.m_font, FALSE);
+			if (s.hostToggle != nullptr)
+			{
+				s.hostToggle->winSetWindowId(inst.m_id);
+				s.hostToggle->winSetOwner(s.parent);
+				s.made.push_back(s.hostToggle);
+			}
 		}
 	}
 	// "Become observer" between Start and Back, for a player in a slot (the host's leaving ends the room)
@@ -504,6 +626,48 @@ void LanRoomLook::update(Bool screenReady)
 		return;
 	}
 	setShown(screenReady);
+	// O60 (row 46): the admin's button and his star
+	LANGameInfo *game = roomGame();
+	if (s.hostToggle != nullptr && game != nullptr)
+	{
+		const Int want = game->getHostObserves() ? 1 : 0;
+		if (want != s.hostToggleShown)
+		{
+			GadgetButtonSetText(s.hostToggle, textOf(want ? kHostPlay : kHostWatch));
+			s.hostToggleShown = want;
+		}
+		const Bool canPlay = LanRoom::hostHasFreeSeat(game);
+		s.hostToggle->winEnable((!want || canPlay) && !TheLAN->IsStartPending());   // O62 (H5 #7): locked while a start is under way
+		s.hostToggle->winSetTooltip(textOf(want ? (canPlay ? kHostPlayTip : kHostNoSeatTip) : kHostWatchTip));
+	}
+	if (s.adminMark != nullptr && game != nullptr)
+	{
+		// on the accept light's place of the admin's seat while he plays
+		Int seat = -1;
+		for (Int i = 0; i < MAX_SLOTS && !game->getHostObserves(); ++i) {
+			if (game->getConstSlot(i) != nullptr && game->getConstSlot(i)->isHuman() && game->getConstSlot(i)->getIP() == game->getHostIP()) seat = i;
+		}
+		GameWindow *light = nullptr;
+		if (seat >= 0)
+		{
+			AsciiString name;
+			name.format("ButtonAccept%d", seat);
+			light = find(name.str());
+		}
+		if (light != nullptr && light->winGetParent() == s.adminMark->winGetParent())
+		{
+			Int lx = 0, ly = 0, lw = 0, lh = 0;
+			light->winGetPosition(&lx, &ly);
+			light->winGetSize(&lw, &lh);
+			s.adminMark->winSetPosition(lx, ly);
+			s.adminMark->winSetSize(lw, lh);
+			s.adminMark->winHide(!screenReady);
+		}
+		else
+		{
+			s.adminMark->winHide(TRUE);
+		}
+	}
 	// O56 (row 43): a player's box follows the host's LIST; the host's follows its own choice
 	if (s.delay != nullptr)
 	{
@@ -535,6 +699,15 @@ Bool LanRoomLook::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgData)
 				LanRoom::setHostDelay(seconds);
 				s.delayShown = seconds;
 			}
+		}
+		return TRUE;
+	}
+	// O60 (row 46): the admin watches from outside the seats, or takes a seat again
+	if (s.parent != nullptr && msg == GBM_SELECTED && s.hostToggle != nullptr && (GameWindow *)mData1 == s.hostToggle)
+	{
+		LANGameInfo *game = roomGame();
+		if (game != nullptr) {
+			LanRoom::hostSetObserves(game, !game->getHostObserves());
 		}
 		return TRUE;
 	}

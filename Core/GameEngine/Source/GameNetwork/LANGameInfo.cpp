@@ -91,6 +91,8 @@ LANGameInfo::LANGameInfo()
 	m_lastHeard = 0;
 	m_next = nullptr;
 	m_isDirectConnect = false;
+	m_hostVerified = FALSE;   // O64
+	m_optionsRevision = 0;
 	//
 	for (Int i = 0; i< MAX_SLOTS; ++i)
 		setSlotPointer(i, &m_LANSlot[i]);
@@ -106,7 +108,7 @@ void LANGameInfo::setSlot( Int slotNum, LANGameSlot slotInfo )
 
 	m_LANSlot[slotNum] = slotInfo;
 
-	if (slotNum == 0)
+	if (slotNum == 0 && isHostSeat(m_LANSlot[0]))   // O60: the admin may watch from outside the seats or sit elsewhere
 	{
 		m_LANSlot[slotNum].setAccept();
 		m_LANSlot[slotNum].setMapAvailability(true);
@@ -167,7 +169,82 @@ Bool LANGameInfo::amIHost() const
 	if (!m_inGame)
 		return false;
 
-	return getConstLANSlot(0)->isLocalPlayer();
+	// O60 (row 46): the creator of the room, in a seat or watching from outside them
+	const UnsignedInt host = getHostIP();
+	return host != 0 && TheLAN != nullptr && host == TheLAN->GetLocalIP();
+}
+
+UnsignedInt LANGameInfo::getHostIP() const
+{
+	const UnsignedInt ip = hostIPFromName();
+	if (ip != 0) {
+		return ip;
+	}
+	return m_LANSlot[0].isHuman() ? m_LANSlot[0].getIP() : 0;
+}
+
+Bool LANGameInfo::isHostSeat( const GameSlot &slot ) const
+{
+	const UnsignedInt host = hostIPFromName();
+	return host == 0 || slot.getIP() == host;
+}
+
+Int LANGameInfo::getAdminSlot() const
+{
+	const UnsignedInt host = hostIPFromName();
+	if (host == 0) {
+		return GameInfo::getAdminSlot();
+	}
+	for (Int i = 0; i < MAX_SLOTS; ++i) {
+		if (m_LANSlot[i].isHuman() && m_LANSlot[i].getIP() == host) return i;
+	}
+	return -1;
+}
+
+UnsignedInt LANGameInfo::hostIPFromName() const
+{
+	return hostIPOfName(m_gameName);
+}
+
+UnsignedInt LANGameInfo::hostIPOfName(const UnicodeString &gameName)
+{
+	const WideChar *name = gameName.str();
+	UnsignedInt ip = 0;
+	Int digits = 0;
+	for (; digits < 8 && name != nullptr && name[digits] != 0; ++digits)
+	{
+		const WideChar c = name[digits];
+		Int v = -1;
+		if (c >= L'0' && c <= L'9') v = c - L'0';
+		else if (c >= L'A' && c <= L'F') v = c - L'A' + 10;
+		else if (c >= L'a' && c <= L'f') v = c - L'a' + 10;
+		if (v < 0) {
+			break;
+		}
+		ip = (ip << 4) | (UnsignedInt)v;
+	}
+	return digits == 8 ? ip : 0;
+}
+
+UnicodeString LANGameInfo::getHostName() const
+{
+	// TheSuperHackers @bugfix O62 The room's name is only the 16 hex digits of address and seed (RequestGameCreate cuts
+	// it there), so the host's name is: his seat's; else this computer's own name when it is the host; else the name his
+	// own announce and options carry (the sender is checked: handleGameAnnounce, handleGameOptions). Slot 0's name was
+	// wrong while the admin watched from outside the seats (a player sits there then).
+	const UnsignedInt host = getHostIP();
+	for (Int i = 0; i < MAX_SLOTS; ++i) {
+		if (m_LANSlot[i].isHuman() && m_LANSlot[i].getIP() == host) {
+			return m_LANSlot[i].getName();
+		}
+	}
+	if (TheLAN != nullptr && host != 0 && host == TheLAN->GetLocalIP()) {
+		return TheLAN->GetMyName();
+	}
+	if (!m_hostDisplayName.isEmpty()) {
+		return m_hostDisplayName;
+	}
+	return (m_gameName.getLength() > 16) ? UnicodeString(m_gameName.str() + 16) : UnicodeString::TheEmptyString;
 }
 
 void LANGameInfo::setMap( AsciiString mapName )

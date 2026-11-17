@@ -35,5 +35,9 @@ void changeLocalPlayer(Player* player); //< Change local player during game. Mus
 void changeObservedPlayer(Player* player); ///< Change observed player during game. Can pass null: is identical to passing the "ReplayObserver" player.
 
 void enableLetterBox(Bool enable); ///< Enable or disable the letter box for cinematics. Hides the control bar.
+/// TheSuperHackers @feature O59 (row 47) A defeated player who joined the observers sees as the "ReplayObserver" player
+/// (the whole map, revealed for that player at every start): display only; the local player (and its commands) stay.
+void setDisplayAsObserver(Bool on);
+Bool isDisplayAsObserver();
 
 } // namespace rts

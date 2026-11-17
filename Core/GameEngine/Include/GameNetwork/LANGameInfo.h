@@ -96,11 +96,26 @@ public:
 	void setSeed( Int seed );														///< Set the random seed for the game
 
 	void setName( UnicodeString name ) { m_gameName = name; }		///< Set the Name of the Game
+	/// O62: the host's player name as his own announce and options name him (sender checked), for an admin without a seat
+	void setHostDisplayName( const UnicodeString &name ) { m_hostDisplayName = name; }
+	/// O64 (H6 #2): this row was announced by its host himself (a room's announce from the address its name claims), not
+	/// only by a seat of a running game. Only such a row is joined or observed.
+	Bool isHostVerified() const { return m_hostVerified; }
+	void setHostVerified( Bool verified ) { m_hostVerified = verified; }
+	/// O64 (H6 #4): the revision of the host's slot list (the host: the last it sent; a player: the newest it applied)
+	UnsignedInt getOptionsRevision() const { return m_optionsRevision; }
+	void setOptionsRevision( UnsignedInt revision ) { m_optionsRevision = revision; }
+	const AsciiString &getLastOptionsSent() const { return m_lastOptionsSent; }
+	void setLastOptionsSent( const AsciiString &options ) { m_lastOptionsSent = options; }
 	UnicodeString getName() { return m_gameName; }					///< Get the Name of the Game
 
 	// Convenience functions that interface with the LANPlayer held in the slot list
 	virtual void resetAccepted() override;														///< Reset the accepted flag on all players
 	virtual Bool amIHost() const override;																///< Convenience function - is the local player the game host?
+	/// O60 (row 46): the host's seat is the one with the address the game's name starts with (any, for a name without it)
+	virtual Bool isHostSeat( const GameSlot &slot ) const override;
+	/// O60: the seat with the host's address (-1 while he watches from outside the seats)
+	virtual Int getAdminSlot() const override;
 
 	/// Get the IP of selected player or return 0
 	UnsignedInt getIP( int who )
@@ -154,19 +169,29 @@ public:
 			m_LANSlot[who].setLastHeard(lastHeard);
 	}
 
-	/// Return the hosts IP or 0
-	UnsignedInt getHostIP()
-	{
-		if (m_LANSlot[0].isHuman())
-			return m_LANSlot[0].getIP();
-		return 0;
-	}
+	/// Return the hosts IP or 0.
+	/// TheSuperHackers @feature O60 (row 46) The host is the room's creator, not slot 0: the game's name starts with his
+	/// address in hex (LANAPI::RequestGameCreate), so every client knows him also while he watches from outside the
+	/// seats. A name without it (none made by this game) falls back to slot 0.
+	UnsignedInt getHostIP() const;
+	/// O60: the host's player name (the game's name after its 16 hex digits), or slot 0's.
+	UnicodeString getHostName() const;
+	/// O62 (H5 #2): the address a game's name starts with (8 hex digits), 0 when it has none.
+	static UnsignedInt hostIPOfName(const UnicodeString &name);
+
+private:
+	UnsignedInt hostIPFromName() const;   ///< O60: the address the game's name starts with, or 0
+public:
 
 
 private:
 	LANGameInfo *m_next;																///< Pointer for linked list
 	UnsignedInt m_lastHeard;														///< The last time we heard from this game (for timeout purposes)
 	UnicodeString m_gameName;														///< Game name.  @todo: are game names based off of host player names?
+	UnicodeString m_hostDisplayName;												///< O62: the host's name from his messages
+	Bool m_hostVerified;																///< O64
+	UnsignedInt m_optionsRevision;													///< O64
+	AsciiString m_lastOptionsSent;													///< O64
 	Bool m_isDirectConnect;															///< Is this game a direct connect game, or a LAN game?
 };
 

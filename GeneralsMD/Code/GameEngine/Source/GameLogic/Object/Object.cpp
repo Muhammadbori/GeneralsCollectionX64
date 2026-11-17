@@ -29,6 +29,7 @@
 
 // INCLUDES ///////////////////////////////////////////////////////////////////////////////////////
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
+#include "GameClient/DefeatedPlayer.h"
 #define DEFINE_WEAPONCONDITIONMAP
 #include "Common/BitFlagsIO.h"
 #include "Common/BuildAssistant.h"
@@ -1766,7 +1767,7 @@ Bool Object::isLogicallyVisible() const
 		const Player* player = rts::getObservedOrLocalPlayer();
 		const Relationship relationship = player->getRelationship(getTeam());
 
-		if (player->isPlayerActive() && relationship != ALLIES)
+		if (DefeatedPlayer::viewsAsActive(player) && relationship != ALLIES)   // O59: a defeated player with his team too
 			return false;
 	}
 

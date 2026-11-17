@@ -41,6 +41,7 @@
 //     lobby and so no START: these give its players a live list and a short delay). Server and mirror log their newest and
 //     delayed frame every 10 s.
 // Viewer: -watchReplay <host:port>[,<host:port>...] mirrors the source's replay into <user data>\Replays\Watched_<pid>_<n>.rep
+// (O61, row 49: an outside viewer's is Viewer_<pid>_<n>.rep, deleted when the viewing ends)
 // and its .live on a thread of its own, and plays that file in the follow mode of ReplayFollow.h (-followDelay and
 // -followCatchUp work the same, and only add to the server's delay). With -serveReplay too it serves its mirror: a relay.
 // -watchBind <ip> (test) makes its connections from that local address (the server tells room observers by address).
@@ -99,8 +100,11 @@ namespace ReplayStream
 	/// O33: a LAN match's serving (players at the start; a viewer's relay): the address and port, the delay for viewers not
 	/// listed live, whether outside viewers are allowed at all, and the live addresses (host order). 'receivesDelayed': this
 	/// game's own copy is already delayed (an outside viewer's relay): it forwards what it has without a second delay.
+	/// TheSuperHackers @bugfix O62 (H5 #3) 'refusedIps': the match's players (alive or defeated): this server never
+	/// serves them (a second game on a player's PC would show him the whole map, only the host's delay behind).
 	void configureMatchServing(UnsignedInt bindIpHostOrder, Int port, Int delaySeconds, Bool outsideAllowed,
-		const UnsignedInt *liveIps, Int liveCount, Bool receivesDelayed);
+		const UnsignedInt *liveIps, Int liveCount, Bool receivesDelayed, const UnsignedInt *refusedIps = nullptr,
+		Int refusedCount = 0);
 	/// O33: the recording (or the viewing) is over: the server closes its listener at once, gives the viewers it has the
 	/// rest (a delayed viewer the last 'delay' of the match) and ends by itself; the match settings are forgotten.
 	void stopServing();
@@ -135,6 +139,18 @@ namespace ReplayStream
 	Bool takeLostNotice();
 	/// O42: the last stream was lost because the host does not allow outside viewers (the room's text says so).
 	Bool lostBecauseNotAllowed();
+	/// O64 (H6, low): the last stream was refused because this computer is a player of the match (O62 H5 #3).
+	Bool lostBecausePlayer();
+	/// TheSuperHackers @feature O61 (row 49) Nothing of a watched match stays on an outside viewer's disk. Its mirror is
+	/// "<user data>\ViewerStreams\Viewer_<pid>_<n>.rep" with its .live and .idx (O64, H6 #1: a folder of its own that only
+	/// the game writes, never the replay folder; a room observer's mirror stays "Replays\Watched_..." and is kept, as
+	/// before). discardViewerFiles (the viewing is over: LanRoom::resetViewer, the program's end) deletes them; a file
+	/// another handle still holds is deleted as soon as it can be (pumpDeletes, every frame, at most 10 tries); the files
+	/// of a viewer that crashed are deleted at the next start (sweepViewerLeftovers: in that folder only, and only names
+	/// that are exactly "Viewer_<pid>_<n>.rep", ".rep.live" or ".rep.idx" of a process (pid not 0) that no longer runs).
+	void discardViewerFiles();
+	void pumpDeletes();
+	void sweepViewerLeftovers();
 
 	void shutdown();
 }

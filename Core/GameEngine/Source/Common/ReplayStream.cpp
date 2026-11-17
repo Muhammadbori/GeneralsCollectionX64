@@ -47,7 +47,7 @@ namespace
 		CHUNK = 32 * 1024,            ///< the most file bytes in one DATA message
 		IN_BUFFER = 2 * (CHUNK + 16),
 		HELLO_SIZE = 28,              ///< O42: version 3 (by frame); older hellos are refused
-		HELLO_VERSION = 3,
+		HELLO_VERSION = 4,            ///< O62: 4 = LAN protocol 1 (an older viewer or source is "another game")
 		FIDX_MAX = 64,                ///< O42: frame ends in one FIDX message
 		RESUME_WAIT_MS = 30000,       ///< O42: a viewer ahead of this source waits this long for the source to reach its frame
 		PEND_START = 256 * 1024,      ///< O42: a mirror's bytes not yet part of a whole frame
@@ -98,6 +98,8 @@ namespace
 	Bool s_matchReceivesDelayed = FALSE;
 	UnsignedInt s_matchLive[MAX_LIVE];
 	Int s_matchLiveCount = 0;
+	UnsignedInt s_matchRefused[MAX_LIVE];   ///< O62 (H5 #3): the match's players
+	Int s_matchRefusedCount = 0;
 
 	//--- viewer settings (game thread) ---------------------------------------------------------------
 	/// O34: rank: 0 an outside viewer that relays, 1 a room observer that relays, 2 a player (or a -watchReplay source);
@@ -107,7 +109,7 @@ namespace
 	Int s_sourceCount = 0;
 	UnsignedInt s_watchFlags = 0;
 	UnsignedInt s_watchBind = 0;      ///< host order; 0: the system's choice
-	enum { NOPE_REFUSED = 0, NOPE_ELSEWHERE = 1, NOPE_NOT_ALLOWED = 2, NOPE_OTHER_GAME = 3 };   ///< O34: NOPE's reason
+	enum { NOPE_REFUSED = 0, NOPE_ELSEWHERE = 1, NOPE_NOT_ALLOWED = 2, NOPE_OTHER_GAME = 3, NOPE_PLAYER = 4 };   ///< O34: NOPE's reason (O64: 4)
 	enum { HELLO_ROOM = 1, HELLO_LAST_RESORT = 2 };   ///< hello flags
 
 	//--- log -----------------------------------------------------------------------------------------
@@ -274,6 +276,7 @@ namespace
 	volatile LONG s_mirrorConnected = 0;     ///< O34: the mirror gets data from a source now            ///< O33: that generation's recording is over: no new viewers, finish the ones there
 	volatile LONG s_countRoom = 0;
 	volatile LONG s_mirrorNotAllowed = 0;    ///< O42: the last loss: a source said the host does not allow outside viewers
+	volatile LONG s_mirrorIsPlayer = 0;      ///< O64: the last loss: a source said this computer is a player of the match
 	volatile LONG s_countOutside = 0;
 
 	struct ServeConfig
@@ -286,6 +289,8 @@ namespace
 		Bool preferRelays;         ///< O34: it holds live data (a player, a room observer): outside viewers go to relays first
 		UnsignedInt live[MAX_LIVE];
 		Int liveCount;
+		UnsignedInt refused[MAX_LIVE];   ///< O62 (H5 #3): the match's players: never served
+		Int refusedCount;
 		Int max, outsideMax, rateKB, stopAfterSec;
 		UnsignedInt lagIp;         ///< O42 (test, -serveReplayLagFor): this address is served lagMs further behind (a slow link)
 		Int lagMs;
@@ -479,6 +484,14 @@ namespace
 	{
 		for (Int i = 0; i < c.liveCount; ++i) {
 			if (c.live[i] == ip) return TRUE;
+		}
+		return FALSE;
+	}
+
+	Bool isRefused(const ServeConfig &c, UnsignedInt ip)
+	{
+		for (Int i = 0; i < c.refusedCount; ++i) {
+			if (c.refused[i] == ip) return TRUE;
 		}
 		return FALSE;
 	}
@@ -797,6 +810,13 @@ namespace
 						refuse(v, NOPE_REFUSED, "it asks for a frame before this source's first one");
 						continue;
 					}
+					// O62 (H5 #3): a player of this match (alive, or defeated: who joined the observers switches his own
+					// view and needs no stream) never gets it, delayed or not
+					if (isRefused(c, v.ip))
+					{
+						refuse(v, NOPE_PLAYER, "a player of this match");
+						continue;
+					}
 					v.out = (unsigned char *)HeapAlloc(GetProcessHeap(), 0, OUT_BUFFER);
 					if (v.out == nullptr)
 					{
@@ -1029,6 +1049,69 @@ namespace
 	volatile LONG s_mirrorEnded = 0;
 	volatile LONG s_mirrorLost = 0;          ///< every source was gone for NO_SOURCE_END_MS (the game thread tells the watcher once)
 	char s_mirrorPath[_MAX_PATH] = { 0 };
+	Bool s_mirrorOutside = FALSE;            ///< O61 (row 49): the mirror is an outside viewer's (its files go at the end)
+
+	// O61 (row 49): files still to delete (another handle held them at the first try)
+	enum { MAX_PENDING_DELETES = 24, MAX_DELETE_TRIES = 10 };
+	char s_pendingDeletes[MAX_PENDING_DELETES][_MAX_PATH];
+	Int s_pendingDeleteTries[MAX_PENDING_DELETES];   ///< O64: a file that cannot be deleted is given up after a few tries
+	Int s_pendingDeleteCount = 0;
+
+	/// O64 (H6 #1): the folder of the outside viewers' mirrors: only the game writes there (never the replay folder).
+	AsciiString viewerFolder()
+	{
+		AsciiString dir = TheGlobalData != nullptr ? TheGlobalData->getPath_UserData() : AsciiString::TheEmptyString;
+		dir.concat("ViewerStreams\\");
+		return dir;
+	}
+
+	/// O64 (H6 #1): exactly "Viewer_<digits>_<digits>.rep", ".rep.live" or ".rep.idx" (any case); 'pid' the first number.
+	Bool isViewerFileName(const char *name, unsigned long *pid)
+	{
+		if (_strnicmp(name, "Viewer_", 7) != 0) {
+			return FALSE;
+		}
+		const char *p = name + 7;
+		unsigned long value = 0;
+		Int digits = 0;
+		for (; *p >= '0' && *p <= '9' && digits < 10; ++p, ++digits) {
+			value = value * 10 + (unsigned long)(*p - '0');
+		}
+		if (digits == 0 || *p != '_') {
+			return FALSE;
+		}
+		++p;
+		digits = 0;
+		for (; *p >= '0' && *p <= '9' && digits < 10; ++p, ++digits) {}
+		if (digits == 0) {
+			return FALSE;
+		}
+		if (_stricmp(p, ".rep") != 0 && _stricmp(p, ".rep.live") != 0 && _stricmp(p, ".rep.idx") != 0) {
+			return FALSE;
+		}
+		*pid = value;
+		return TRUE;
+	}
+	UnsignedInt s_lastDeleteTry = 0;
+
+	/// Deletes 'path' now, or keeps it for a later try when another handle still holds it.
+	void deleteOrKeep(const char *path)
+	{
+		if (path == nullptr || path[0] == 0) {
+			return;
+		}
+		if (DeleteFileA(path) || GetLastError() == ERROR_FILE_NOT_FOUND || GetLastError() == ERROR_PATH_NOT_FOUND) {
+			return;
+		}
+		for (Int i = 0; i < s_pendingDeleteCount; ++i) {
+			if (_stricmp(s_pendingDeletes[i], path) == 0) return;
+		}
+		if (s_pendingDeleteCount < MAX_PENDING_DELETES)
+		{
+			s_pendingDeleteTries[s_pendingDeleteCount] = 1;
+			strlcpy(s_pendingDeletes[s_pendingDeleteCount++], path, _MAX_PATH);
+		}
+	}
 
 	struct MirrorConfig
 	{
@@ -1497,7 +1580,14 @@ namespace
 					else if (memcmp(type, "NOPE", 4) == 0)
 					{
 						const UnsignedInt reason = length >= 4 ? get32(payload) : NOPE_REFUSED;
-						if (reason == NOPE_NOT_ALLOWED)
+						if (reason == NOPE_PLAYER)
+						{
+							// O64: every source refuses a player of the match: no use asking the others
+							setFlag(&s_mirrorIsPlayer);
+							loseStream("this computer is a player of the match");
+							leaveWhy = "a player of the match";
+						}
+						else if (reason == NOPE_NOT_ALLOWED)
 						{
 							// O42: the host's rule; the room's screen says so instead of "the stream did not come"
 							setFlag(&s_mirrorNotAllowed);
@@ -1673,8 +1763,12 @@ void ReplayStream::configureWatchBind(const char *ip)
 }
 
 void ReplayStream::configureMatchServing(UnsignedInt bindIpHostOrder, Int port, Int delaySeconds, Bool outsideAllowed,
-	const UnsignedInt *liveIps, Int liveCount, Bool receivesDelayed)
+	const UnsignedInt *liveIps, Int liveCount, Bool receivesDelayed, const UnsignedInt *refusedIps, Int refusedCount)
 {
+	s_matchRefusedCount = 0;
+	for (Int i = 0; refusedIps != nullptr && i < refusedCount && s_matchRefusedCount < MAX_LIVE; ++i) {
+		if (refusedIps[i] != 0) s_matchRefused[s_matchRefusedCount++] = refusedIps[i];
+	}
 	s_matchSet = port > 0 && port < 65536;
 	s_matchBind = bindIpHostOrder;
 	s_matchPort = port;
@@ -1693,6 +1787,7 @@ void ReplayStream::stopServing()
 	InterlockedExchange(&s_drainGen, InterlockedCompareExchange(&s_serverGen, 0, 0));
 	s_matchSet = FALSE;
 	s_matchLiveCount = 0;
+	s_matchRefusedCount = 0;   // O62
 	InterlockedExchange(&s_countRoom, 0);
 	InterlockedExchange(&s_countOutside, 0);
 }
@@ -1741,17 +1836,22 @@ Bool ReplayStream::beginWatching(AsciiString &localPath)
 		m->flags = s_watchFlags;
 		m->bind = s_watchBind;
 		m->relayPort = s_matchSet ? s_matchPort : s_cmdPort;
+		// O33: a file of its own per mirror (an old mirror may still close its file). O61 (row 49): an outside viewer's is
+		// "Viewer_...", deleted when the viewing ends (discardViewerFiles) or at the next start after a crash; O64 (H6 #1):
+		// in a folder of its own (ViewerStreams), never in the replay folder
+		s_mirrorOutside = (s_watchFlags & 1) == 0;
 		AsciiString dir = TheGlobalData->getPath_UserData();
-		dir.concat("Replays\\");
+		dir.concat(s_mirrorOutside ? "ViewerStreams\\" : "Replays\\");
 		CreateDirectoryA(dir.str(), nullptr);
-		// O33: a file of its own per mirror (an old mirror may still close its file)
-		snprintf(m->path, sizeof(m->path), "%sWatched_%u_%ld.rep", dir.str(), (unsigned)GetCurrentProcessId(), (long)m->gen);
+		snprintf(m->path, sizeof(m->path), "%s%s_%u_%ld.rep", dir.str(), s_mirrorOutside ? "Viewer" : "Watched",
+			(unsigned)GetCurrentProcessId(), (long)m->gen);
 		snprintf(m->livePath, sizeof(m->livePath), "%s.live", m->path);
 		snprintf(m->idxPath, sizeof(m->idxPath), "%s.idx", m->path);
 		DeleteFileA(m->path);
 		DeleteFileA(m->livePath);
 		DeleteFileA(m->idxPath);
 		InterlockedExchange(&s_mirrorNotAllowed, 0);
+		InterlockedExchange(&s_mirrorIsPlayer, 0);   // O64
 		strlcpy(s_mirrorPath, m->path, sizeof(s_mirrorPath));
 		InterlockedExchange(&s_mirrorHeaderReady, 0);
 		InterlockedExchange(&s_mirrorEnded, 0);
@@ -1845,6 +1945,8 @@ void ReplayStream::serveFile(const AsciiString &replayPath)
 		c->outsideAllowed = s_matchOutside;
 		c->liveCount = s_matchLiveCount;
 		memcpy(c->live, s_matchLive, sizeof(UnsignedInt) * s_matchLiveCount);
+		c->refusedCount = s_matchRefusedCount;   // O62 (H5 #3)
+		memcpy(c->refused, s_matchRefused, sizeof(UnsignedInt) * s_matchRefusedCount);
 		// test runs (NetLab has no lobby, so no START): -serveReplayLiveFor adds live addresses, -serveReplayDelay sets
 		// the delay
 		for (Int i = 0; i < s_cmdLiveCount && c->liveCount < MAX_LIVE; ++i) {
@@ -1890,11 +1992,127 @@ Bool ReplayStream::lostBecauseNotAllowed()
 	return InterlockedCompareExchange(&s_mirrorNotAllowed, 0, 0) != 0;
 }
 
+Bool ReplayStream::lostBecausePlayer()
+{
+	return InterlockedCompareExchange(&s_mirrorIsPlayer, 0, 0) != 0;
+}
+
+void ReplayStream::discardViewerFiles()
+{
+	if (!s_mirrorOutside || s_mirrorPath[0] == 0) {
+		return;
+	}
+	char live[_MAX_PATH];
+	char idx[_MAX_PATH];
+	snprintf(live, sizeof(live), "%s.live", s_mirrorPath);
+	snprintf(idx, sizeof(idx), "%s.idx", s_mirrorPath);
+	deleteOrKeep(s_mirrorPath);
+	deleteOrKeep(live);
+	deleteOrKeep(idx);
+	logLine("mirror: the viewer's files of %s deleted (%d still held, deleted later)", s_mirrorPath, s_pendingDeleteCount);
+	s_mirrorPath[0] = 0;
+	s_mirrorOutside = FALSE;
+}
+
+void ReplayStream::pumpDeletes()
+{
+	if (s_pendingDeleteCount == 0) {
+		return;
+	}
+	const UnsignedInt now = timeGetTime();
+	if (now - s_lastDeleteTry < 1000) {
+		return;
+	}
+	s_lastDeleteTry = now;
+	Int kept = 0;
+	for (Int i = 0; i < s_pendingDeleteCount; ++i)
+	{
+		const Bool gone = DeleteFileA(s_pendingDeletes[i]) || GetLastError() == ERROR_FILE_NOT_FOUND
+			|| GetLastError() == ERROR_PATH_NOT_FOUND;
+		if (gone) {
+			continue;
+		}
+		// O64: a file that cannot be deleted (a read-only folder) is given up after a few tries, said once
+		if (++s_pendingDeleteTries[i] > MAX_DELETE_TRIES)
+		{
+			logLine("mirror: %s could not be deleted (error %lu): given up", s_pendingDeletes[i], (unsigned long)GetLastError());
+			continue;
+		}
+		if (kept != i)
+		{
+			strlcpy(s_pendingDeletes[kept], s_pendingDeletes[i], _MAX_PATH);
+			s_pendingDeleteTries[kept] = s_pendingDeleteTries[i];
+		}
+		++kept;
+	}
+	s_pendingDeleteCount = kept;
+}
+
+void ReplayStream::sweepViewerLeftovers()
+{
+	if (TheGlobalData == nullptr) {
+		return;
+	}
+	// O64 (H6 #1): the viewers' own folder only, never the replay folder
+	const AsciiString dir = viewerFolder();
+	AsciiString pattern = dir;
+	pattern.concat("Viewer_*");
+	WIN32_FIND_DATAA found;
+	HANDLE h = FindFirstFileA(pattern.str(), &found);
+	if (h == INVALID_HANDLE_VALUE) {
+		return;
+	}
+	Int deleted = 0;
+	do
+	{
+		if ((found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+			continue;
+		}
+		// O64 (H6 #1): exactly "Viewer_<pid>_<n>.rep[.live|.idx]" with a pid; any other name is left alone
+		unsigned long pid = 0;
+		if (!isViewerFileName(found.cFileName, &pid) || pid == 0) {
+			continue;
+		}
+		Bool running = pid == GetCurrentProcessId();
+		if (!running)
+		{
+			HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)pid);
+			if (process != nullptr)
+			{
+				DWORD code = 0;
+				running = GetExitCodeProcess(process, &code) && code == STILL_ACTIVE;
+				CloseHandle(process);
+			}
+			else
+			{
+				running = GetLastError() == ERROR_ACCESS_DENIED;   // a process we may not look at: leave its files
+			}
+		}
+		if (!running)
+		{
+			AsciiString path = dir;
+			path.concat(found.cFileName);
+			deleteOrKeep(path.str());
+			++deleted;
+		}
+	} while (FindNextFileA(h, &found));
+	FindClose(h);
+	if (deleted > 0) {
+		logLine("mirror: %d file(s) of an earlier viewer deleted at the start", deleted);
+	}
+}
+
 void ReplayStream::shutdown()
 {
 	InterlockedIncrement(&s_serverGen);
 	InterlockedIncrement(&s_mirrorGen);
 	Sleep(300);   // at the end of the program only: the threads see their generation and close their sockets
+	// O61 (row 49): an outside viewer's files go with the program (a file the replay still holds: at the next start)
+	discardViewerFiles();
+	for (Int i = 0; i < s_pendingDeleteCount; ++i) {
+		DeleteFileA(s_pendingDeletes[i]);
+	}
+	s_pendingDeleteCount = 0;
 	if (s_logLockReady)
 	{
 		EnterCriticalSection(&s_logLock);

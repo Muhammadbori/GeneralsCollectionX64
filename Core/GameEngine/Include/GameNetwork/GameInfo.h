@@ -180,6 +180,19 @@ public:
 	GameSlot* getSlot( Int slotNum );									///< Get the slot
 	const GameSlot* getConstSlot( Int slotNum ) const;	///< Get the slot
 	virtual Bool amIHost() const;															///< Convenience function - is the local player the game host?
+	/// TheSuperHackers @bugfix O60 (row 46) setSlot marks the first seat accepted and with the map as the host's: only
+	/// when this slot is the host's (a LAN room's admin may watch from outside the seats or sit elsewhere).
+	virtual Bool isHostSeat( const GameSlot &slot ) const { return TRUE; }
+	/// O60 (row 46, S25): the seat of the room's admin (the LAN host), for his gold star in the lists; -1: none (he
+	/// watched from outside the seats, or no LAN game). In a LAN match and its replay a playing host sits in slot 0
+	/// (LanRoom::hostSeatFirst); a game with one human only is not taken for a LAN game.
+	virtual Int getAdminSlot() const;
+	/// TheSuperHackers @bugfix O62 (H5 #1) What a match starts from, as one number (FNV-1a): the map (name, CRC, size), the
+	/// seed, the CRC interval, the starting cash, the superweapon limit, the old-factions flag, whether the admin watches,
+	/// and every slot in order (state, address, name, army, colour, team, start place). Not the accept and map flags or
+	/// anything else a player keeps for itself. The host's START carries it; a player whose own copy differs does not
+	/// start.
+	UnsignedInt startDigest() const;
 	virtual Int getLocalSlotNum() const;				///< Get the local slot number, or -1 if we're not present
 	Int getSlotNum( AsciiString userName ) const;			///< Get the slot number corresponding to a specific user, or -1 if he's not present
 
@@ -220,6 +233,10 @@ public:
 	/// the map's player places are open again: closed slots open (lowest first) until the players and the open slots
 	/// make the map's count; past it, open slots close (highest first). Players are never removed.
 	void balanceObserverPlaces();
+	/// TheSuperHackers @feature O59 (row 47) Two or more human players in slots (the Observer army left out): a network
+	/// match of several people, where a defeated player stays with the team. From the slots alone, so the same on every
+	/// machine, for the room's observers and in a replay of the match; a skirmish (one human) is never one.
+	Bool hasSeveralHumanPlayers() const;
 
 	// CRC checking hack
 	void setCRCInterval( Int val ) { m_crcInterval = (val<100)?val:100; }
@@ -237,6 +254,16 @@ public:
 
   inline Bool oldFactionsOnly() const;
   inline void setOldFactionsOnly( Bool oldFactionsOnly );
+	/// TheSuperHackers @feature O60 (row 46) The room's admin (its creator) watches from outside the 8 seats: options
+	/// "HO=1" (absent when he plays, so a playing admin's options are as before).
+	Bool getHostObserves() const { return m_hostObserves; }
+	void setHostObserves( Bool observes ) { m_hostObserves = observes; }
+	/// O62: the LAN protocol of the room ("PV=n;" in the options; 0: none, an older build's room)
+	Int getLanProtocol() const { return m_lanProtocol; }
+	void setLanProtocol( Int protocol ) { m_lanProtocol = protocol; }
+	/// O63: the build identity of the room ("BV=<hash>;"; empty: none)
+	const AsciiString &getLanBuild() const { return m_lanBuild; }
+	void setLanBuild( const AsciiString &build ) { m_lanBuild = build; }
 
 protected:
 	Int m_preorderMask;
@@ -259,6 +286,9 @@ protected:
   Money         m_startingCash;
   UnsignedShort m_superweaponRestriction;
   Bool m_oldFactionsOnly; // Only USA, China, GLA -- not USA Air Force General, GLA Toxic General, et al
+	Bool m_hostObserves;    ///< O60
+	Int m_lanProtocol;      ///< O62
+	AsciiString m_lanBuild; ///< O63
 };
 
 extern GameInfo *TheGameInfo;

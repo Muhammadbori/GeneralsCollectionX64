@@ -33,6 +33,9 @@
 #include "Common/GlobalData.h"
 #include "Common/RandomValue.h"
 #include "GameClient/GameText.h"
+#include "GameClient/LocalizedFallback.h"
+#include "Common/version.h"
+#include "gitinfo.h"
 #include "GameClient/MapUtil.h"
 #include "Common/UserPreferences.h"
 #include "GameLogic/GameLogic.h"
@@ -85,6 +88,11 @@ LANAPI::LANAPI() : m_transport(nullptr)
 	m_localIP = 0;
 	m_inLobby = true;
 	m_isInLANMenu = TRUE;
+	m_watchMatchLeave = FALSE;   // O60
+	m_startChecking = FALSE;     // O62
+	m_startDigest = 0;
+	m_startCheckSince = 0;
+	m_lastStartCheck = 0;
 	m_currentGame = nullptr;
 	m_broadcastAddr = INADDR_BROADCAST;
 	m_directConnectRemoteIP = 0;
@@ -129,6 +137,11 @@ void LANAPI::init()
 	m_expiration = 0;
 	m_inLobby = true;
 	m_isInLANMenu = TRUE;
+	m_watchMatchLeave = FALSE;   // O60
+	m_startChecking = FALSE;     // O62
+	m_startDigest = 0;
+	m_startCheckSince = 0;
+	m_lastStartCheck = 0;
 	m_currentGame = nullptr;
 	m_directConnectRemoteIP = 0;
 
@@ -448,6 +461,12 @@ void LANAPI::update()
 {
 	if(LANbuttonPushed)
 		return;
+	// O60 (row 46): the admin who watches his room's match leaves the room now (OnGameStart)
+	if (m_watchMatchLeave)
+	{
+		OnWatchMatchLeave();
+		return;
+	}
 	static const UnsignedInt LANAPIUpdateDelay = 200;
 	UnsignedInt now = timeGetTime();
 
@@ -548,6 +567,12 @@ void LANAPI::update()
 				break;
 			case LANMessage::MSG_GAME_START:					// Hold on; we're starting!
 				handleGameStart( msg, senderIP );
+				break;
+			case LANMessage::MSG_START_CHECK:   // O62
+				handleStartCheck( msg, senderIP );
+				break;
+			case LANMessage::MSG_START_READY:   // O62
+				handleStartReady( msg, senderIP );
 				break;
 			case LANMessage::MSG_GAME_START_TIMER:
 				handleGameStartTimer( msg, senderIP );
@@ -697,17 +722,20 @@ void LANAPI::update()
 			LANMessage msg;
 			fillInLANMessage( &msg );
 			msg.messageType = LANMessage::MSG_REQUEST_GAME_LEAVE;
-			wcslcpy(msg.name, m_currentGame->getPlayerName(0).str(), ARRAY_SIZE(msg.name));
-			handleRequestGameLeave(&msg, m_currentGame->getIP(0));
+			wcslcpy(msg.name, m_currentGame->getHostName().str(), ARRAY_SIZE(msg.name));   // O60
+			handleRequestGameLeave(&msg, m_currentGame->getHostIP());
 			UnicodeString text;
 			text = TheGameText->fetch("LAN:HostNotResponding");
 			OnChat(UnicodeString::TheEmptyString, m_localIP, text, LANCHAT_SYSTEM);
 		}
 		else if ( AmIHost() )
 		{
-			// Check each player for timeouts
-			for (int p=1; p<MAX_SLOTS; ++p)
+			// Check each player for timeouts. O60: every seat but the admin's own (slot 0 holds a player while the admin
+			// watches from outside the seats)
+			for (int p=0; p<MAX_SLOTS; ++p)
 			{
+				if (m_currentGame->getIP(p) == m_localIP)
+					continue;
 				if (m_currentGame->getIP(p) && m_currentGame->getPlayerLastHeard(p) + s_resendDelta*8 < now)
 				{
 					LANMessage msg;
@@ -775,6 +803,8 @@ void LANAPI::update()
 		}
 	}
 
+	pumpStartCheck();   // O62
+
 	// send out "game starting" messages
 	if ( m_gameStartTime && m_gameStartSeconds && m_gameStartTime <= now )
 	{
@@ -822,11 +852,32 @@ void LANAPI::RequestGameJoin( LANGameInfo *game, UnsignedInt ip /* = 0 */ )
 		OnGameJoin( RET_GAME_GONE, nullptr );
 		return;
 	}
+	// O62: another version's room is not joined (the lobby says so first; this also covers a direct connect)
+	// O64 (H6 #2): only a room its host himself announced (a row made from a running game's announce is never joined)
+	if (!game->isHostVerified())
+	{
+		LanTest::joinLog("joiner: the room was never announced by its host: not joined");
+		m_pendingAction = ACT_NONE;
+		OnGameJoin( RET_GAME_GONE, nullptr );
+		return;
+	}
+	if (!LanSameVersion(game))   // O63: the build identity too
+	{
+		LanTest::joinLog("joiner: the room is protocol %d build '%s', this one %d '%s': not joined", game->getLanProtocol(),
+			game->getLanBuild().str(), LANProtocolVersion, LanBuildIdentity().str());
+		m_pendingAction = ACT_NONE;
+		OnGameJoin( RET_CRC_MISMATCH, nullptr );
+		return;
+	}
 
 	LANMessage msg;
 	msg.messageType = LANMessage::MSG_REQUEST_JOIN;
 	fillInLANMessage( &msg );
-	msg.GameToJoin.gameIP = game->getSlot(0)->getIP();
+	msg.GameToJoin.gameIP = game->getHostIP();   // O60: the admin, in a seat or not
+	wcslcpy(msg.GameToJoin.gameName, game->getName().str(), ARRAY_SIZE(msg.GameToJoin.gameName));   // O62
+	msg.GameToJoin.protocolMagic = LANProtocolMagic;
+	msg.GameToJoin.protocol = LANProtocolVersion;
+	strlcpy(msg.GameToJoin.build, LanBuildIdentity().str(), ARRAY_SIZE(msg.GameToJoin.build));   // O63
 	msg.GameToJoin.exeCRC = TheGlobalData->m_exeCRC;
 	msg.GameToJoin.iniCRC = TheGlobalData->m_iniCRC;
 
@@ -883,7 +934,7 @@ void LANAPI::RequestGameLeave()
 	sendMessage(&msg);
 	m_transport->update();  // Send immediately, before OnPlayerLeave below resets everything.
 
-	if (m_currentGame && m_currentGame->getIP(0) == m_localIP)
+	if (m_currentGame && m_currentGame->getHostIP() == m_localIP)
 	{
 		// Exit out immediately if we're hosting
 		OnPlayerLeave(m_name);
@@ -904,7 +955,7 @@ void LANAPI::RequestGameAnnounce()
 	// In game - are we a game host?
 	if (m_currentGame && !(m_currentGame->getIsDirectConnect()))
 	{
-		if (m_currentGame->getIP(0) == m_localIP || (m_currentGame->isGameInProgress() && TheNetwork && TheNetwork->isPacketRouter())) // if we're in game we should reply if we're the packet router
+		if (m_currentGame->getHostIP() == m_localIP || (m_currentGame->isGameInProgress() && TheNetwork && TheNetwork->isPacketRouter())) // if we're in game we should reply if we're the packet router
 		{
 			AsciiString gameOpts = GameInfoToAsciiString(m_currentGame);
 			if (gameOpts.isEmpty())
@@ -947,7 +998,12 @@ void LANAPI::RequestHasMap()
 	LANMessage msg;
 	fillInLANMessage( &msg );
 	msg.messageType = LANMessage::MSG_MAP_AVAILABILITY;
-	msg.MapStatus.hasMap = m_currentGame->getSlot(m_currentGame->getLocalSlotNum())->hasMap();
+	// O60: the admin outside the seats has no slot (and needs no map of his own for the match)
+	const GameSlot *mySlot = m_currentGame->getSlot(m_currentGame->getLocalSlotNum());
+	if (mySlot == nullptr) {
+		return;
+	}
+	msg.MapStatus.hasMap = mySlot->hasMap();
 	wcslcpy(msg.MapStatus.gameName, m_currentGame->getName().str(), ARRAY_SIZE(msg.MapStatus.gameName));
 	CRC mapNameCRC;
 //mapNameCRC.computeCRC(m_currentGame->getMap().str(), m_currentGame->getMap().getLength());
@@ -994,11 +1050,149 @@ void LANAPI::RequestChat( UnicodeString message, ChatType format )
 	OnChat(m_name, m_localIP, message, format);
 }
 
+AsciiString LanBuildIdentity()
+{
+	static AsciiString s_id;
+	static Bool s_made = FALSE;
+	if (!s_made && TheVersion != nullptr)
+	{
+		s_made = TRUE;
+		// letters, digits and '~' only: it travels in the room's options ("BV=") and in the join
+		const AsciiString full = TheVersion->getAsciiGitShortHash();
+		for (const char *c = full.str(); GitHaveInfo && c != nullptr && *c != 0 && s_id.getLength() < 15; ++c) {
+			if (isalnum((unsigned char)*c) || *c == '~') s_id.concat(*c);
+		}
+		// O65: a build made without git info has an explicit identity of its own (never an empty one): "nogit" and its
+		// exe CRC, so two such builds meet only when their exes are the same
+		if (s_id.isEmpty() || (s_id.getLength() == 1 && s_id.str()[0] == '~'))
+		{
+			s_id.format("nogit%08X", TheGlobalData != nullptr ? TheGlobalData->m_exeCRC : 0u);
+		}
+	}
+	return s_id;
+}
+
+UnsignedInt LanStartDigest(LANGameInfo *game)
+{
+	if (game == nullptr) {
+		return 0;
+	}
+	LANGameInfo canon;
+	canon.setName(game->getName());
+	if (ParseAsciiStringToGameInfo(&canon, GameInfoToAsciiString(game))) {
+		return canon.startDigest();
+	}
+	return game->startDigest();
+}
+
+Bool LanSameVersion(const GameInfo *game)
+{
+	return game != nullptr && game->getLanProtocol() == LANProtocolVersion && game->getLanBuild().compare(LanBuildIdentity()) == 0;
+}
+
 void LANAPI::RequestGameStart()
 {
-	if (m_inLobby || !m_currentGame || m_currentGame->getIP(0) != m_localIP)
+	if (m_inLobby || !m_currentGame || m_currentGame->getHostIP() != m_localIP)
 		return;
 
+	// TheSuperHackers @bugfix O62 (H5 #1) START no longer overtakes the slot list (a slot list lost on the way left a
+	// player starting from another order): the host sends the options and START_CHECK with the digest of its room
+	// (GameInfo::startDigest) until every seated player answers READY with the same digest, and only then START
+	// (finishStart); a player whose own copy differs answers nothing and does not start. No answer within
+	// kStartCheckMs: the start is stopped with a line naming who did not answer.
+	if (!m_startChecking)
+	{
+		m_startChecking = TRUE;
+		m_startDigest = LanStartDigest(m_currentGame);
+		m_startCheckSince = timeGetTime();
+		m_lastStartCheck = 0;
+		for (Int i = 0; i < MAX_SLOTS; ++i) {
+			m_startReady[i] = FALSE;
+		}
+		LanTest::joinLog("host: start check begins, digest %08X", m_startDigest);
+	}
+	pumpStartCheck();
+}
+
+void LANAPI::pumpStartCheck()
+{
+	if (!m_startChecking) {
+		return;
+	}
+	if (m_inLobby || m_currentGame == nullptr || !m_currentGame->amIHost() || m_currentGame->isGameInProgress())
+	{
+		m_startChecking = FALSE;
+		return;
+	}
+	const UnsignedInt now = timeGetTime();
+	const UnsignedInt digest = LanStartDigest(m_currentGame);
+	if (digest != m_startDigest)
+	{
+		// the room changed meanwhile: every answer again
+		m_startDigest = digest;
+		for (Int i = 0; i < MAX_SLOTS; ++i) {
+			m_startReady[i] = FALSE;
+		}
+		LanTest::joinLog("host: start check: the room changed, digest %08X", digest);
+	}
+	UnicodeString missing;
+	Bool allReady = TRUE;
+	for (Int i = 0; i < MAX_SLOTS; ++i)
+	{
+		const LANGameSlot *slot = m_currentGame->getConstLANSlot(i);
+		if (slot != nullptr && slot->isHuman() && slot->getIP() != m_localIP && !m_startReady[i])
+		{
+			allReady = FALSE;
+			if (!missing.isEmpty()) {
+				missing.concat(L", ");
+			}
+			missing.concat(slot->getName());
+		}
+	}
+	if (allReady)
+	{
+		m_startChecking = FALSE;
+		LanTest::joinLog("host: start check: every player READY after %u ms", (unsigned)(now - m_startCheckSince));
+		finishStart();
+		return;
+	}
+	const UnsignedInt kStartCheckMs = 8000;
+	if (now - m_startCheckSince > kStartCheckMs)
+	{
+		m_startChecking = FALSE;
+		LanTest::joinLog("host: start check: stopped, no READY from %ls", missing.str());
+		UnicodeString text;
+		text.format(TheGameText->FETCH_OR_SUBSTITUTE("GUI:LanStartNotConfirmed", localizedFallback(
+			L"Start stopped: the slot list did not reach %ls. Press Start again.",
+			L"\x0421\x0442\x0430\x0440\x0442 \x043E\x0442\x043C\x0435\x043D\x0451\x043D: \x0441\x043F\x0438\x0441\x043E\x043A \x043C\x0435\x0441\x0442 \x043D\x0435 \x0434\x043E\x0448\x0451\x043B \x0434\x043E: %ls. \x041D\x0430\x0436\x043C\x0438\x0442\x0435 \x00AB\x0421\x0442\x0430\x0440\x0442\x00BB \x0435\x0449\x0451 \x0440\x0430\x0437.")).str(), missing.str());
+		OnChat(L"SYSTEM", m_localIP, text, LANCHAT_SYSTEM);
+		LANEnableStartButton(true);
+		return;
+	}
+	if (now - m_lastStartCheck >= 250)
+	{
+		m_lastStartCheck = now;
+		RequestGameOptions(GenerateGameOptionsString(), true);
+		LANMessage msg;
+		fillInLANMessage(&msg);
+		msg.messageType = LANMessage::MSG_START_CHECK;
+		msg.StartCheck.magic = LANStartMagic;
+		msg.StartCheck.digest = digest;
+		wcslcpy(msg.StartCheck.gameName, m_currentGame->getName().str(), ARRAY_SIZE(msg.StartCheck.gameName));
+		msg.StartCheck.revision = m_currentGame->getOptionsRevision();   // O64
+		for (Int i = 0; i < MAX_SLOTS; ++i)
+		{
+			const LANGameSlot *slot = m_currentGame->getConstLANSlot(i);
+			if (slot != nullptr && slot->isHuman() && slot->getIP() != m_localIP && !m_startReady[i]) {
+				sendMessage(&msg, slot->getIP());
+			}
+		}
+		m_transport->update(); // force a send
+	}
+}
+
+void LANAPI::finishStart()
+{
 	// O31: the room's observers get the players' addresses and follow the stream; nobody waits for them
 	LanRoom::hostStart(m_currentGame, m_localIP);
 	// O40: "Play again" keeps the layout; O47: taken at the Start click (LanGameOptionsMenu), before the open places close
@@ -1006,7 +1200,19 @@ void LANAPI::RequestGameStart()
 	LANMessage msg;
 	msg.messageType = LANMessage::MSG_GAME_START;
 	fillInLANMessage( &msg );
+	msg.StartCheck.magic = LANStartMagic;   // O62: the digest every player confirmed
+	msg.StartCheck.digest = m_startDigest;
+	wcslcpy(msg.StartCheck.gameName, m_currentGame->getName().str(), ARRAY_SIZE(msg.StartCheck.gameName));
+	msg.StartCheck.revision = m_currentGame->getOptionsRevision();   // O64
+	// O62: to everybody, and to each seated player once more (a player starts on the first START it gets)
 	sendMessage(&msg);
+	for (Int i = 0; i < MAX_SLOTS; ++i)
+	{
+		const LANGameSlot *slot = m_currentGame->getConstLANSlot(i);
+		if (slot != nullptr && slot->isHuman() && slot->getIP() != m_localIP) {
+			sendMessage(&msg, slot->getIP());
+		}
+	}
 	m_transport->update(); // force a send
 
 	OnGameStart();
@@ -1016,11 +1222,12 @@ void LANAPI::ResetGameStartTimer()
 {
 	m_gameStartTime = 0;
 	m_gameStartSeconds = 0;
+	m_startChecking = FALSE;   // O62: a change of the room (resetAccepted) stops a start check too
 }
 
 void LANAPI::RequestGameStartTimer( Int seconds )
 {
-	if (m_inLobby || !m_currentGame || m_currentGame->getIP(0) != m_localIP)
+	if (m_inLobby || !m_currentGame || m_currentGame->getHostIP() != m_localIP)
 		return;
 
 	UnsignedInt now = timeGetTime();
@@ -1050,6 +1257,20 @@ void LANAPI::RequestGameOptions( AsciiString gameOptions, Bool isPublic, Unsigne
 	fillInLANMessage( &msg );
 	msg.messageType = LANMessage::MSG_GAME_OPTIONS;
 	strlcpy(msg.GameOptions.options, gameOptions.str(), ARRAY_SIZE(msg.GameOptions.options));
+	// TheSuperHackers @bugfix O64 (H6 #4) The host's slot list carries a revision that grows with every change; a player
+	// ignores an older one that arrives late (it would roll its copy back after its READY)
+	msg.GameOptions.revisionMagic = 0;
+	msg.GameOptions.revision = 0;
+	if (m_currentGame->amIHost())
+	{
+		if (gameOptions.compare(m_currentGame->getLastOptionsSent()) != 0)
+		{
+			m_currentGame->setOptionsRevision(m_currentGame->getOptionsRevision() + 1);
+			m_currentGame->setLastOptionsSent(gameOptions);
+		}
+		msg.GameOptions.revisionMagic = LANProtocolMagic;
+		msg.GameOptions.revision = m_currentGame->getOptionsRevision();
+	}
 	sendMessage(&msg, ip);
 
 	m_lastGameopt = gameOptions;
@@ -1096,6 +1317,9 @@ void LANAPI::RequestGameCreate( UnicodeString gameName, Bool isDirectConnect )
 
 //	myGame->setInProgress(false);
 	myGame->enterGame();
+	myGame->setLanProtocol(LANProtocolVersion);   // O62: this build's rooms carry its protocol
+	myGame->setLanBuild(LanBuildIdentity());       // O63: and its build identity
+	myGame->setHostVerified(TRUE);                 // O64
 	UnicodeString s;
 	s.format(L"%8.8X%8.8X", m_localIP, myGame->getSeed());
 	if (gameName.isEmpty())
@@ -1328,12 +1552,16 @@ LANGameInfo* LANAPI::LookupGameByHost(UnsignedInt hostIP)
 	LANGameInfo* lastGame = nullptr;
 	UnsignedInt lastHeard = 0;
 
-	for (LANGameInfo* game = m_games; game; game = game->getNext())
+	// O65: a row its host announced himself (host-verified) before one made from a running game's announce
+	for (Int pass = 0; pass < 2 && lastGame == nullptr; ++pass)
 	{
-		if (game->getHostIP() == hostIP && game->getLastHeard() >= lastHeard)
+		for (LANGameInfo* game = m_games; game; game = game->getNext())
 		{
-			lastGame = game;
-			lastHeard = game->getLastHeard();
+			if (game->getHostIP() == hostIP && (pass == 1 || game->isHostVerified()) && game->getLastHeard() >= lastHeard)
+			{
+				lastGame = game;
+				lastHeard = game->getLastHeard();
+			}
 		}
 	}
 
@@ -1472,6 +1700,14 @@ void LANAPI::addPlayer( LANPlayer *player )
 
 Bool LANAPI::SetLocalIP( UnsignedInt localIP )
 {
+	// TheSuperHackers @bugfix O64 (H6 #5) Never while this computer hosts a room: its name holds the address it was made
+	// on, and every lobby drops an announce from another address. The LAN screen sets the address only when it opens
+	// (LanLobbyMenuInit), when no room is open; this keeps it so.
+	if (m_currentGame != nullptr && m_currentGame->amIHost() && localIP != m_localIP)
+	{
+		DEBUG_LOG(("LANAPI::SetLocalIP - not while hosting a room"));
+		return TRUE;
+	}
 	Bool retval = TRUE;
 	m_localIP = (LanTest::loopbackSlot() >= 0) ? LanTest::loopbackIP() : localIP;   // O26 test switch
 
@@ -1490,7 +1726,7 @@ void LANAPI::SetLocalIP( AsciiString localIP )
 
 Bool LANAPI::AmIHost()
 {
-	return m_currentGame && m_currentGame->getIP(0) == m_localIP;
+	return m_currentGame && m_currentGame->getHostIP() == m_localIP;
 }
 
 void LANAPI::setIsActive(Bool isActive) {
@@ -1550,9 +1786,17 @@ void LANAPI::terminateStrings(LANMessage *msg)
 			break;
 		case LANMessage::MSG_REQUEST_JOIN:
 			msg->GameToJoin.serial[ARRAY_SIZE(msg->GameToJoin.serial) - 1] = 0;
+			msg->GameToJoin.gameName[ARRAY_SIZE(msg->GameToJoin.gameName) - 1] = 0;   // O65
+			msg->GameToJoin.build[ARRAY_SIZE(msg->GameToJoin.build) - 1] = 0;
 			break;
 		case LANMessage::MSG_JOIN_ACCEPT:
 			msg->GameJoined.gameName[ARRAY_SIZE(msg->GameJoined.gameName) - 1] = 0;
+			msg->GameJoined.build[ARRAY_SIZE(msg->GameJoined.build) - 1] = 0;   // O65
+			break;
+		case LANMessage::MSG_GAME_START:   // O65: the start handshake's room name
+		case LANMessage::MSG_START_CHECK:
+		case LANMessage::MSG_START_READY:
+			msg->StartCheck.gameName[ARRAY_SIZE(msg->StartCheck.gameName) - 1] = 0;
 			break;
 		case LANMessage::MSG_JOIN_DENY:
 			msg->GameNotJoined.gameName[ARRAY_SIZE(msg->GameNotJoined.gameName) - 1] = 0;

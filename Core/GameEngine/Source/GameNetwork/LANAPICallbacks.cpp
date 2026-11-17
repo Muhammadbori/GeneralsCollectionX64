@@ -136,7 +136,7 @@ void LANAPI::OnAccept( UnsignedInt playerIP, Bool status )
 	else
 	{
 		//i'm not the host but if the accept came from the host...
-		if( m_currentGame->getIP(0) == playerIP )
+		if( m_currentGame->getHostIP() == playerIP )
 		{
 			UnicodeString text;
 			text = TheGameText->fetch("GUI:HostWantsToStart");
@@ -207,10 +207,14 @@ void LANAPI::OnGameStart()
 	{
 		LANPreferences pref;
 		AsciiString option;
-		option.format("%d", m_currentGame->getLANSlot( m_currentGame->getLocalSlotNum() )->getPlayerTemplate());
-		pref["PlayerTemplate"] = option;
-		option.format("%d", m_currentGame->getLANSlot( m_currentGame->getLocalSlotNum() )->getColor());
-		pref["Color"] = option;
+		// O60: the admin outside the seats keeps his saved army and colour
+		if (const LANGameSlot *mine = m_currentGame->getLANSlot( m_currentGame->getLocalSlotNum() ))
+		{
+			option.format("%d", mine->getPlayerTemplate());
+			pref["PlayerTemplate"] = option;
+			option.format("%d", mine->getColor());
+			pref["Color"] = option;
+		}
 		if (m_currentGame->amIHost())
     {
     	pref["Map"] = AsciiStringToQuotedPrintable(m_currentGame->getMap());
@@ -218,6 +222,16 @@ void LANAPI::OnGameStart()
       pref.setStartingCash( m_currentGame->getStartingCash() );
     }
 		pref.write();
+
+		// TheSuperHackers @feature O60 (row 46) The admin who watches from outside the seats is not in the match (no
+		// network, no lockstep, no map transfer): LanRoom::hostStart began his stream. He leaves his room on the next
+		// update without a word to the players (their match does not wait for him and goes on if his computer goes
+		// away) and watches from the lobby.
+		if (m_currentGame->amIHost() && m_currentGame->getHostObserves() && m_currentGame->getLocalSlotNum() < 0)
+		{
+			m_watchMatchLeave = TRUE;
+			return;
+		}
 
 		m_isInLANMenu = FALSE;
 
@@ -284,19 +298,37 @@ void LANAPI::OnGameStart()
 	}
 }
 
+void LANAPI::OnWatchMatchLeave()
+{
+	m_watchMatchLeave = FALSE;
+	ResetGameStartTimer();
+	if (m_currentGame != nullptr)
+	{
+		removeGame(m_currentGame);
+		delete m_currentGame;
+		m_currentGame = nullptr;
+	}
+	m_inLobby = TRUE;
+	LANbuttonPushed = true;
+	DEBUG_LOG(("OnWatchMatchLeave: the admin watches his room's match from the lobby"));
+	TheShell->pop();
+}
+
 void LANAPI::OnGameOptions( UnsignedInt playerIP, Int playerSlot, AsciiString options )
 {
 	if (!m_currentGame)
 		return;
 
-	if (m_currentGame->getIP(playerSlot) != playerIP)
+	// O60 (row 46): the host by identity (in a seat, or watching from outside them with no slot)
+	const Bool fromHost = playerIP != 0 && playerIP == m_currentGame->getHostIP();
+	if (!fromHost && (playerSlot < 0 || playerSlot >= MAX_SLOTS || m_currentGame->getIP(playerSlot) != playerIP))
 		return; // He's not in our game?!?
 
 
 	if (m_currentGame->isGameInProgress())
 		return; // we don't want to process any game options while in game.
 
-	if (playerSlot == 0 && !m_currentGame->amIHost())
+	if (fromHost && !m_currentGame->amIHost())
 	{
 		m_currentGame->setLastHeard(timeGetTime());
 		AsciiString oldOptions = GameInfoToAsciiString(m_currentGame); // save these off for if we get booted
@@ -306,7 +338,7 @@ void LANAPI::OnGameOptions( UnsignedInt playerIP, Int playerSlot, AsciiString op
 			updateGameOptions();
 		}
 		Bool booted = true;
-		for(Int player = 1; player< MAX_SLOTS; player++)
+		for(Int player = 0; player< MAX_SLOTS; player++)   // O60: slot 0 is a player's while the admin watches
 		{
 			if(m_currentGame->getIP(player) == m_localIP)
 			{
@@ -324,6 +356,9 @@ void LANAPI::OnGameOptions( UnsignedInt playerIP, Int playerSlot, AsciiString op
 	}
 	else
 	{
+		if (playerSlot < 0 || playerSlot >= MAX_SLOTS) {
+			return;   // O62 (H5 #9): a host without a seat sends only as the host (the branch above)
+		}
 		// Check for user/host updates
 		{
 			AsciiString key;
@@ -516,7 +551,7 @@ void LANAPI::OnSlotList( ReturnType ret, LANGameInfo *theGame )
 */
 void LANAPI::OnPlayerJoin( Int slot, UnicodeString playerName )
 {
-	if (m_currentGame && m_currentGame->getIP(0) == m_localIP)
+	if (m_currentGame && m_currentGame->getHostIP() == m_localIP)
 	{
 		// Someone New Joined.. lets reset the accepts
 		m_currentGame->resetAccepted();
@@ -597,7 +632,7 @@ void LANAPI::OnPlayerLeave( UnicodeString player )
 	}
 	else
 	{
-		if (m_currentGame && m_currentGame->getIP(0) == m_localIP)
+		if (m_currentGame && m_currentGame->getHostIP() == m_localIP)
 		{
 			// Force a new slotlist send
 			m_lastResendTime = 0;

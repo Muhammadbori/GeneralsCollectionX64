@@ -51,6 +51,7 @@
 // USER INCLUDES //////////////////////////////////////////////////////////////
 //-----------------------------------------------------------------------------
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
+#include "GameClient/DefeatedPlayer.h"
 
 #include "Common/GameUtility.h"
 #include "Common/NameKeyGenerator.h"
@@ -259,6 +260,9 @@ void ControlBar::populateObserverList()
 			if(p)
 			{
 				if(p->isPlayerObserver())
+					continue;
+				// TheSuperHackers @feature O59 (row 47) A defeated player staying with his team looks only at his team
+				if (DefeatedPlayer::localStaysWithTeam() && !DefeatedPlayer::allies(p, ThePlayerList->getLocalPlayer()))
 					continue;
 				DEBUG_ASSERTCRASH(currentButton < MAX_BUTTONS, ("ControlBar::populateObserverList trying to populate more buttons then we have"));
 				GadgetButtonSetData(buttonPlayer[currentButton], (void *)p);

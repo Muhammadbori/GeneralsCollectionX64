@@ -64,6 +64,25 @@ Bool AreSlotListUpdatesEnabled()
 
 // -----------------------------------------------------------------------------
 
+/// O60 (row 46): the slot of the room's admin: the LAN room's creator wherever he sits (-1 while he watches from outside
+/// the seats); slot 0 for every other game.
+static Int adminSlotOf(GameInfo *game)
+{
+	if (TheLAN != nullptr && game != nullptr && (GameInfo *)TheLAN->GetMyGame() == game)
+	{
+		const UnsignedInt host = TheLAN->GetMyGame()->getHostIP();
+		for (Int i = 0; i < MAX_SLOTS; ++i)
+		{
+			const GameSlot *slot = game->getConstSlot(i);
+			if (slot != nullptr && slot->isHuman() && slot->getIP() == host) {
+				return i;
+			}
+		}
+		return -1;
+	}
+	return 0;
+}
+
 void EnableAcceptControls(Bool Enabled, GameInfo *myGame, GameWindow *comboPlayer[],
 										GameWindow *comboColor[], GameWindow *comboPlayerTemplate[],
 										GameWindow *comboTeam[], GameWindow *buttonAccept[], GameWindow *buttonStart,
@@ -71,6 +90,8 @@ void EnableAcceptControls(Bool Enabled, GameInfo *myGame, GameWindow *comboPlaye
 {
 	if(slotNum == -1 || slotNum >= MAX_SLOTS )
 		slotNum = myGame->getLocalSlotNum();
+	if (slotNum < 0 || myGame->getConstSlot(slotNum) == nullptr)
+		return;   // O60: the admin outside the seats has no controls of his own
 
 	Bool isObserver = myGame->getConstSlot(slotNum)->getPlayerTemplate() == PLAYERTEMPLATE_OBSERVER;
 
@@ -429,7 +450,8 @@ void UpdateSlotList( GameInfo *myGame, GameWindow *comboPlayer[],
 				{
 					GadgetComboBoxSetText(comboPlayer[i], newName);
 				}
-				if(i!= 0 && buttonAccept && buttonAccept[i])
+				// O60: every seat's accept light but the admin's own (slot 0 is a player's while he watches)
+				if(i != adminSlotOf(myGame) && buttonAccept && buttonAccept[i])
 				{
 					buttonAccept[i]->winHide(FALSE);
 				//Color In the little accepted boxes
@@ -461,7 +483,13 @@ void UpdateSlotList( GameInfo *myGame, GameWindow *comboPlayer[],
 				if (comboPlayer[i])
 					comboPlayer[i]->winEnable( TRUE );
 			}
-			else*/ if (!myGame->amIHost())
+			else*/ if (myGame->amIHost())
+			{
+				// O60: the admin may open, close or set any seat but his own
+				if (comboPlayer[i])
+					comboPlayer[i]->winEnable( i != myGame->getLocalSlotNum() );
+			}
+			else if (!myGame->amIHost())
 			{
 				if (comboPlayer[i])
 					comboPlayer[i]->winEnable( FALSE );

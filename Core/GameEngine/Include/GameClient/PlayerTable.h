@@ -42,6 +42,7 @@
 
 #include "Lib/BaseType.h"
 #include "GameClient/Color.h"
+#include "Common/UnicodeString.h"
 
 class GameWindow;
 class GameSlot;
@@ -69,7 +70,14 @@ namespace PlayerTable
 
 	/// The pictures of one row of the loading screen or the in-game list, by the apparent values of the slot: a spiral
 	/// before the name, the army picture before the army name, the pirate sign for no team. Any window may be nullptr.
-	void decorateRow(GameWindow *nameText, GameWindow *sideText, GameWindow *teamText, const GameSlot *slot);
+	/// O60 (row 46, S25): 'admin' adds the admin's gold star before the name (after the colour picture), with its tooltip.
+	void decorateRow(GameWindow *nameText, GameWindow *sideText, GameWindow *teamText, const GameSlot *slot, Bool admin = FALSE);
+	/// TheSuperHackers @feature O60 (row 46, S25) The admin's mark: a small filled gold star with a dark rim, drawn by code
+	/// (no art file, no font glyph), centred on (cx, cy) with the outer radius r. Drawn before the admin's name wherever
+	/// it is listed (room table and admin row, Tab list, loading screen, the lobby's tables).
+	void drawAdminStar(Int cx, Int cy, Int r);
+	/// The mark's tooltip: "Host (admin)" / "Хост (админ)".
+	UnicodeString adminTip();
 	/// O26: the colour picture of a colour index (rainbow for random, the spiral tinted with the colour through 'tint').
 	const Image *colorPictureOf(Int color, Color *tint);
 	/// O26: the army picture of a player template index (random emblem, or the general's side icon); nullptr: none.

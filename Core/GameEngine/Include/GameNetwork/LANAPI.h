@@ -188,6 +188,11 @@ struct LANMessage
 		// TheSuperHackers @feature O31 (row 21, step 3) The room's observers (LanRoom.h). Appended; a build without it
 		// ignores it.
 		MSG_ROOM,
+
+		// TheSuperHackers @bugfix O62 (H5 #1) The start handshake: the host's check of its slot list's digest, and a
+		// player's answer that its own copy has the same digest (StartCheck). Appended.
+		MSG_START_CHECK,
+		MSG_START_READY,
 	} messageType;
 
 	WideChar name[g_lanPlayerNameLength+1]; ///< My name, for convenience
@@ -233,6 +238,10 @@ struct LANMessage
 			UnsignedInt exeCRC;
 			UnsignedInt iniCRC;
 			char serial[g_maxSerialLength];
+			WideChar gameName[g_lanGameNameLength+1];   ///< O62 (H5 #2): the room asked for (the host checks it is his)
+			UnsignedInt protocolMagic;                  ///< O62: LANProtocolMagic
+			Int protocol;                               ///< O62: LANProtocolVersion
+			char build[16];                             ///< O63: LanBuildIdentity
 		} GameToJoin;
 
 		// GameJoined is sent with JOIN_ACCEPT
@@ -242,6 +251,9 @@ struct LANMessage
 			UnsignedInt gameIP;
 			UnsignedInt playerIP;
 			Int slotPosition;
+			UnsignedInt protocolMagic;   ///< O62: LANProtocolMagic
+			Int protocol;                ///< O62: LANProtocolVersion
+			char build[16];              ///< O63: LanBuildIdentity
 		} GameJoined;
 
 		// GameNotJoined is sent with JOIN_DENY
@@ -280,6 +292,8 @@ struct LANMessage
 		struct
 		{
 			char options[m_lanMaxOptionsLength+1];
+			UnsignedInt revisionMagic;   ///< O64 (H6 #4): LANProtocolMagic when the host sends its slot list
+			UnsignedInt revision;        ///< O64: grows with every change of the host's slot list
 		} GameOptions;
 
 		// FilesInfo is sent with FILES_INFO (O26)
@@ -316,7 +330,17 @@ struct LANMessage
 			UnsignedShort delaySeconds; ///< O33: list, start: the host's delay for outside viewers (10..180 s)
 			UnsignedShort flags;        ///< O33: list, start: bit 0 outside viewers allowed; start: bit 1 sent to a player
 		} Room;
+		// StartCheck is sent with GAME_START, START_CHECK and START_READY (O62)
+		struct
+		{
+			UnsignedInt magic;        ///< LANStartMagic
+			UnsignedInt digest;       ///< LanStartDigest of the sender's copy of the room
+			WideChar gameName[g_lanGameNameLength+1];
+			UnsignedInt revision;     ///< O64 (H6 #4): the revision of the host's slot list it checks
+		} StartCheck;
+
 		static_assert(sizeof(Room) <= sizeof(GameInfo), "MSG_ROOM must not make LANMessage larger");
+		static_assert(sizeof(GameOptions) <= sizeof(GameInfo), "O64: the options' revision must not make LANMessage larger");
 		static_assert(sizeof(GuardData) <= sizeof(GameInfo), "MSG_GUARD_DATA must not make LANMessage larger");
 		static_assert(ARRAY_SIZE(GameOptions.options) > m_lanMaxOptionsLength, "GameOptions.options buffer must be larger than m_lanMaxOptionsLength");
 
@@ -328,8 +352,31 @@ static_assert(sizeof(LANMessage) <= MAX_LANAPI_PACKET_SIZE, "LANMessage struct c
 
 // TheSuperHackers @feature O26 (row 26) What the LAN screen needs beyond the original messages.
 static const UnsignedInt LANFilesInfoMagic = 0x46494C31;   ///< "FIL1"
+// TheSuperHackers @feature O62 The LAN protocol number. A room's options carry it ("PV=n;", GameInfo), and so do the join
+// request and accept (GameToJoin, GameJoined, with LANProtocolMagic); a different number is another version: its room
+// is listed as "другая версия" and cannot be joined or watched, a join of it is refused with the version line. Bump it
+// whenever the wire of the room, the start, the observers' channel or the stream changes. 1 = O59..O62 (plan3/plan4 and
+// older have none: 0); 2 = O63 (the build identity in the join).
+// TheSuperHackers @feature O63 Next to the number, the BUILD IDENTITY: the git commit of the build (Version's short hash,
+// "~" first when it was built with uncommitted changes), the same for every exe of one build (the product and the
+// uitest exe) and not changed by any pack. A room carries it ("BV=<hash>;"), and so do the join request and accept; a
+// different identity is "другая версия" as a different number. (The exe CRC differs between the product and uitest
+// exes of one build; the ini CRC is the original's and stays unused, see plan1-o63-report.md.)
+static const UnsignedInt LANProtocolMagic = 0x3156504C;    ///< "LPV1"
+static const Int LANProtocolVersion = 2;
+/// O64 (H6, low): the start handshake's magic carries the protocol number ("STR2"): another number is not this game's.
+static const UnsignedInt LANStartMagic = 0x00525453u | ((UnsignedInt)('0' + LANProtocolVersion) << 24);
+/// O63: this build's identity (letters, digits and '~', at most 15).
+AsciiString LanBuildIdentity();
+/// O63: the room is this build's: the same protocol number and the same build identity.
+Bool LanSameVersion(const GameInfo *game);
+/// TheSuperHackers @bugfix O64 (H6 #3) The start digest of a room as its options carry it: the copy goes through the
+/// options string and back, so the host's raw map path and names and a player's parsed (portable, lower case) ones give
+/// the same number (GameInfo::startDigest of that copy).
+UnsignedInt LanStartDigest(LANGameInfo *game);
 static const UnsignedInt LANGuardDataMagic = 0x31445247;   ///< "GRD1" (O30)
-static const UnsignedInt LANRoomMagic = 0x314D4F52;        ///< "ROM1" (O31)
+/// "ROM<n>" (O31; O62/O64: the room messages carry the protocol number, so builds of other numbers ignore each other)
+static const UnsignedInt LANRoomMagic = 0x004D4F52u | ((UnsignedInt)('0' + LANProtocolVersion) << 24);
 namespace LanFiles
 {
 	/// The files fingerprint a lobby player or a game host sent (MSG_FILES_INFO); FALSE when none came yet.
@@ -416,6 +463,11 @@ public:
 											 UnicodeString message, ChatType format ) override;														///< Chat message from someone
 	virtual void OnGameStart() override;																													///< The game is starting
 	virtual void OnGameStartTimer( Int seconds ) override;
+	/// TheSuperHackers @feature O60 (row 46) The admin who watches from outside the seats is not in the match: after
+	/// OnGameStart he leaves his room on the next update, without a word to the players, and watches from the lobby.
+	void OnWatchMatchLeave();
+	/// O62 (H5 #1, #7): a start is under way: the countdown runs, or the host waits for the players' READY.
+	Bool IsStartPending() const { return m_gameStartTime != 0 || m_startChecking; }
 	virtual void OnGameOptions( UnsignedInt playerIP, Int playerSlot, AsciiString options ) override;	///< Someone sent game options
 	virtual void OnGameCreate( ReturnType ret ) override;																							///< Your game is created
 	//virtual void OnSlotList( ReturnType ret, LANGameInfo *theGame );															///< Slotlist for a game in setup
@@ -432,6 +484,8 @@ public:
 	virtual void SetLocalIP( AsciiString localIP ) override;																		///< For multiple NIC machines
 	virtual Bool AmIHost() override;																											///< Am I hosting a game?
 	virtual UnicodeString GetMyName() override { return m_name; }                 ///< What's my name?
+	AsciiString GetMyUserName() const { return m_userName; }                       ///< O60: login name
+	AsciiString GetMyHostName() const { return m_hostName; }                       ///< O60: machine name
 	virtual LANGameInfo* GetMyGame() override { return m_currentGame; }					      ///< What's my Game?
 	virtual UnsignedInt GetLocalIP() { return m_localIP; }								///< What's my IP?
 	virtual void fillInLANMessage( LANMessage *msg ) override;																	///< Fill in default params
@@ -466,6 +520,12 @@ protected:
 	UnsignedInt					m_lastResendTime; // in ms
 
 	Bool								m_isInLANMenu;		///< true while we are in a LAN menu (lobby, game options, direct connect)
+	Bool								m_watchMatchLeave;	///< O60: the admin's quiet leave at Start is due (OnWatchMatchLeave)
+	Bool								m_startChecking;	///< O62: the host waits for every seated player's READY
+	UnsignedInt					m_startDigest;		///< O62: GameInfo::startDigest of the host's room now
+	UnsignedInt					m_startCheckSince;
+	UnsignedInt					m_lastStartCheck;
+	Bool								m_startReady[MAX_SLOTS];
 	Bool								m_inLobby;											///< Are we in the lobby (not in a game)?
 	LANGameInfo *				m_currentGame;							///< Pointer to game (setup screen) we are currently in (null for lobby)
 	//LANGameInfo *m_currentGameInfo;			///< Pointer to game setup info we are currently in.
@@ -504,6 +564,12 @@ protected:
 	void handleChat( LANMessage *msg, UnsignedInt senderIP );
 	void handleGameStart( LANMessage *msg, UnsignedInt senderIP );
 	void handleGameStartTimer( LANMessage *msg, UnsignedInt senderIP );
+	/// O62 (H5 #2): an announce comes from its host (a room) or from a seat of it (a running game: its packet router).
+	Bool announceFromItsHost( LANMessage *msg, UnsignedInt senderIP );
+	void handleStartCheck( LANMessage *msg, UnsignedInt senderIP );   ///< O62
+	void handleStartReady( LANMessage *msg, UnsignedInt senderIP );   ///< O62
+	void pumpStartCheck();   ///< O62: the host: options and START_CHECK again, START once every seated player is READY
+	void finishStart();      ///< O62: the host: the room's observers, START, the match
 	void handleGameOptions( LANMessage *msg, UnsignedInt senderIP );
 	void handleInActive( LANMessage *msg, UnsignedInt senderIP );
 

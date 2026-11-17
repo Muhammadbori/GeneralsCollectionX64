@@ -24,6 +24,7 @@
 
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
+#include "GameClient/DefeatedPlayer.h"
 
 #include "Compression.h"
 #include "WWLib/strtok_r.h"
@@ -773,8 +774,18 @@ void ConnectionManager::processChat(NetChatCommandMsg *msg)
 	}
 
 	Bool fromObserver = !player->isPlayerActive();
-	Bool amIObserver = !ThePlayerList->getLocalPlayer()->isPlayerActive();
+	// TheSuperHackers @feature O59 (row 47) In a match of several people a defeated player stays with his team: his text
+	// reaches his team-mates only (no enemy, no observer), and he reads as an active player (no observer's text) until he
+	// joins the observers
+	const Player *localPlayer = ThePlayerList->getLocalPlayer();
+	const Bool fromDefeatedMate = fromObserver && DefeatedPlayer::isDefeatedInTeamMatch(player);
+	Bool amIObserver = !localPlayer->isPlayerActive() && !DefeatedPlayer::localStaysWithTeam();
 	Bool canSeeChat = (amIObserver || !fromObserver) && !TheGameInfo->getConstSlot(playerID)->isMuted();
+	if (fromDefeatedMate)
+	{
+		canSeeChat = DefeatedPlayer::allies(player, localPlayer) && !localPlayer->isPlayerObserver()
+			&& !DefeatedPlayer::localJoinedObservers() && !TheGameInfo->getConstSlot(playerID)->isMuted();
+	}
 
 	if ( ((1<<m_localSlot) & msg->getPlayerMask() ) && canSeeChat  )
 	{
