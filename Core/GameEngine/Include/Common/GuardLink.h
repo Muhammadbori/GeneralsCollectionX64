@@ -80,7 +80,11 @@ namespace GuardLink
 	Verdict verdictOf(UnsignedInt ip);
 
 	/// A LAN message came from 'ip': that player is checked now and then while it is seen.
-	void notePeer(UnsignedInt ip, UnsignedInt ownIp);
+	/// O83: an address this player's screens show a shield for (fromState: a seat of his room or match, a listed game's
+	/// host or seat, a lobby player, a room observer), or one that asked to join his room (fromState FALSE). Only these
+	/// are asked; a full table (256) makes room for a fromState address by dropping the oldest address that is not one
+	/// any more, and refuses the others.
+	void notePeer(UnsignedInt ip, UnsignedInt ownIp, Bool fromState = TRUE);
 	void onLanData(UnsignedInt fromIp, UnsignedInt ownIp, const UnsignedByte *data, Int length);
 	void setSender(SendFunc func);
 

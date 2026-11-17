@@ -214,6 +214,12 @@ namespace
 		s_dropped.clear();
 		s_droppedOther = 0;
 		s_refusedJoins.clear();
+		// O83 (H15): the log's 1 MB is per match (per channel), so a flood in one match does not silence the next
+		if (s_chatLogBytes > kChatLogMaxBytes && s_chatLogFile != nullptr) {
+			fprintf(s_chatLogFile, "[%10u] the next match's lines follow\n", (unsigned)LanClock::now());
+			fflush(s_chatLogFile);
+		}
+		s_chatLogBytes = 0;
 	}
 
 	// O59 (row 47): a defeated player's channel; the room's observers of the match this game plays (the host's START)
@@ -1175,6 +1181,8 @@ void LanRoom::hostStart(LANGameInfo *game, UnsignedInt localIP)
 			{
 				s_peers.clear();
 				s_peerLocalIP = 0;
+				notice(textOf(kChatPortBusy));   // O83: as the room observer's (O82)
+				chatLog("NOT OPENED (port 8091 in use)", localIP, UnicodeString::TheEmptyString);
 			}
 		}
 	}
