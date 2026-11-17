@@ -67,6 +67,7 @@ namespace
 		Bool asked = FALSE;
 		Int misses = 0;             ///< answers missed in a row
 		UnsignedInt verdictMs = 0;  ///< O32: when the verdict was given
+		UnsignedInt stateSeen = 0;  ///< O83: when this player's own room/lobby state last named this address (0: never)
 		GuardLink::Verdict verdict = GuardLink::VERDICT_NONE;
 		UnsignedInt bits = 0;
 	};
@@ -671,18 +672,54 @@ GuardLink::Verdict GuardLink::verdictOf(UnsignedInt ip)
 	return LanClock::now() - it->second.verdictMs <= kVerdictLifeMs ? it->second.verdict : VERDICT_NONE;
 }
 
-void GuardLink::notePeer(UnsignedInt ip, UnsignedInt ownIp)
+void GuardLink::notePeer(UnsignedInt ip, UnsignedInt ownIp, Bool fromState)
 {
 	if (!s_started || s_dead || ip == 0 || ip == ownIp) {
 		return;   // O32 (review 21): nothing is collected once the guard is gone
 	}
-	// O82 (H14): at most 256 addresses at a time (any LAN packet's source lands here; old ones are forgotten after 2 min)
-	if (s_peers.size() >= 256 && s_peers.find(ip) == s_peers.end()) {
-		return;
+	const UnsignedInt now = LanClock::now();
+	// TheSuperHackers @bugfix O83 (H15) Only addresses that matter to this player come here (LANAPI::noteGuardPeers: the
+	// seats, games, lobby players and observers his screens show, from his own state; and join requests to his room), not
+	// every packet's source. The 256 are a backstop: a full table makes room for an address of his state by dropping the
+	// oldest one his state no longer names (a join requester, a game gone from the list), and refuses anything else.
+	const size_t kMaxPeers = 256;
+	if (s_peers.size() >= kMaxPeers && s_peers.find(ip) == s_peers.end())
+	{
+		std::map<UnsignedInt, Peer>::iterator drop = s_peers.end();
+		if (fromState)
+		{
+			for (std::map<UnsignedInt, Peer>::iterator it = s_peers.begin(); it != s_peers.end(); ++it)
+			{
+				const Bool named = it->second.stateSeen != 0 && now - it->second.stateSeen < 2000;
+				if (!named && (drop == s_peers.end() || now - it->second.lastSeen > now - drop->second.lastSeen)) {
+					drop = it;
+				}
+			}
+		}
+		static Bool s_fullSaid = FALSE;
+		if (!s_fullSaid && TheGlobalData != nullptr)
+		{
+			s_fullSaid = TRUE;
+			AsciiString path = TheGlobalData->getPath_UserData();
+			path.concat("GuardLink.log");
+			if (FILE *f = fopen(path.str(), "a"))
+			{
+				fprintf(f, "[%10u] the table of players to check is full (%u): %s\n", (unsigned)now, (unsigned)kMaxPeers,
+					drop != s_peers.end() ? "the oldest one no longer shown makes room" : "this address is not checked");
+				fclose(f);
+			}
+		}
+		if (drop == s_peers.end()) {
+			return;
+		}
+		s_peers.erase(drop);
 	}
 	Peer &p = s_peers[ip];
 	p.ownIp = ownIp;
-	p.lastSeen = LanClock::now();
+	p.lastSeen = now;
+	if (fromState) {
+		p.stateSeen = now;
+	}
 }
 
 void GuardLink::onLanData(UnsignedInt fromIp, UnsignedInt ownIp, const UnsignedByte *data, Int length)

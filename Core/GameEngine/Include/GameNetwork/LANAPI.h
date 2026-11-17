@@ -620,6 +620,7 @@ protected:
 	/// state, e.g. never accepted, and nothing repeated it).
 	void pumpConvergence();
 	void pumpRoomBeat(UnsignedInt now);            ///< O71: the 2 s keep-alive (host: its list; joiner: HELLO to the host)
+	void noteGuardPeers();                         ///< O83: the addresses this player's screens show a shield for
 	void noteHeardFrom(UnsignedInt senderIP, Int messageType);   ///< O71/O73: a room message of a seat (host) or of the host (joiner) is a sign of life
 	void sendAcceptOnly();
 	void noteHostView(const AsciiString &options);   ///< what the host's slot list says about this joiner's seat
