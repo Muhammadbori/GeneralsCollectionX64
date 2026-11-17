@@ -92,6 +92,8 @@ LANAPI::LANAPI() : m_transport(nullptr)
 	m_convergeGame = nullptr;    // O70
 	m_lastRoomBeat = 0;
 	for (Int k = 0; k < MAX_SLOTS; ++k) m_seatJoinedMs[k] = 0;
+	m_lastLoopMs = 0;     // O71
+	m_startSeenMs = 0;
 	m_acceptWanted = FALSE;
 	m_hostViewMs = 0;
 	m_mapLastSent = 0;
@@ -148,6 +150,8 @@ void LANAPI::init()
 	m_convergeGame = nullptr;    // O70
 	m_lastRoomBeat = 0;
 	for (Int k = 0; k < MAX_SLOTS; ++k) m_seatJoinedMs[k] = 0;
+	m_lastLoopMs = 0;     // O71
+	m_startSeenMs = 0;
 	m_acceptWanted = FALSE;
 	m_hostViewMs = 0;
 	m_mapLastSent = 0;
@@ -484,6 +488,32 @@ void LANAPI::update()
 	static const UnsignedInt LANAPIUpdateDelay = 200;
 	UnsignedInt now = timeGetTime();
 
+	// TheSuperHackers @bugfix O71 (H8) Time in which this computer's own loop did not run (a window dragged, a long
+	// frame, a modal box) is not silence of the others: their packets wait in the socket and nobody's clock is read.
+	// After a gap of more than 3 s every room clock starts again from now.
+	if (!m_inLobby && m_currentGame != nullptr && !m_currentGame->isGameInProgress())
+	{
+		if (m_lastLoopMs != 0 && now - m_lastLoopMs > 3000)
+		{
+			LanTest::joinLog("room: this computer's loop did not run for %u ms: the room's silence clocks start again", now - m_lastLoopMs);
+			m_currentGame->setLastHeard(now);
+			for (Int p = 0; p < MAX_SLOTS; ++p)
+			{
+				if (m_currentGame->getIP(p) != 0) {
+					m_currentGame->setPlayerLastHeard(p, now);
+				}
+				if (m_seatJoinedMs[p] != 0) {
+					m_seatJoinedMs[p] = now;
+				}
+			}
+		}
+		m_lastLoopMs = now;
+	}
+	else
+	{
+		m_lastLoopMs = 0;
+	}
+
 	if( now > m_lastUpdate + LANAPIUpdateDelay)
 	{
 		m_lastUpdate = now;
@@ -660,7 +690,7 @@ void LANAPI::update()
 		if (AmIHost()) {
 			RequestGameOptions( GenerateGameOptionsString(), true );
 		} else {
-			RequestGameOptions( "HELLO", false );
+			RequestGameOptions( "HELLO", false, m_currentGame->getHostIP() );   // O71 (H8): to the host, not broadcast
 		}
 	}
 	// Send out periodic I'm Here messages
@@ -740,8 +770,10 @@ void LANAPI::update()
 	}
 	if ( m_currentGame && !m_currentGame->isGameInProgress() )
 	{
-		// O70: 16 s without the host's slot list (it comes every 2 s now) instead of 160 s
-		if ( !AmIHost() && (m_currentGame->getLastHeard() + 16000 < now) )
+		// O70/O71: 30 s without the host's slot list (it comes every 2 s now: 15 lost in a row) instead of 160 s; not
+		// while a start is under way (the host's start check or countdown came in the last 30 s)
+		const Bool startUnderWay = m_startSeenMs != 0 && now - m_startSeenMs < 30000;
+		if ( !AmIHost() && !startUnderWay && (m_currentGame->getLastHeard() + 30000 < now) )
 		{
 			// We haven't heard from the host in a while.  Bail.
 			// Actually, fake a host leaving message. :)
@@ -754,7 +786,7 @@ void LANAPI::update()
 			text = TheGameText->fetch("LAN:HostNotResponding");
 			OnChat(UnicodeString::TheEmptyString, m_localIP, text, LANCHAT_SYSTEM);
 		}
-		else if ( AmIHost() )
+		else if ( AmIHost() && !IsStartPending() )   // O71: not during the start check and the countdown
 		{
 			// Check each player for timeouts. O60: every seat but the admin's own (slot 0 holds a player while the admin
 			// watches from outside the seats)
@@ -762,14 +794,14 @@ void LANAPI::update()
 			{
 				if (m_currentGame->getIP(p) == m_localIP)
 					continue;
-				// O70: a joiner says HELLO every 2 s now: 16 s of silence (was 80 s), or a seat given at a join and never heard
-				// from after it for 10 s (its accept was lost and the joiner gave up: S41 hs11), frees the seat
-				const Bool silent = m_currentGame->getPlayerLastHeard(p) + 16000 < now;
+				// O70/O71: a joiner says HELLO every 2 s now: 30 s of silence (15 lost in a row; was 80 s), or a seat given at a
+				// join and never heard from after it for 10 s (its accept was lost and the joiner gave up: S41 hs11), frees it
+				const Bool silent = m_currentGame->getPlayerLastHeard(p) + 30000 < now;
 				const Bool unconfirmed = m_seatJoinedMs[p] != 0 && now - m_seatJoinedMs[p] > 10000;
 				if (m_currentGame->getIP(p) && (silent || unconfirmed))
 				{
 					m_seatJoinedMs[p] = 0;
-					LanTest::joinLog("host: seat %d freed (%s)", p, unconfirmed ? "never heard from after its join" : "silent for 16 s");
+					LanTest::joinLog("host: seat %d freed (%s)", p, unconfirmed ? "never heard from after its join" : "silent for 30 s");
 					LANMessage msg;
 					fillInLANMessage( &msg );
 					UnicodeString theStr;
@@ -1336,6 +1368,9 @@ void LANAPI::pumpConvergence()
 			m_acceptWanted = FALSE;
 		} else if (LanStartDigest(m_currentGame) != m_acceptDigest || now - m_acceptSince > 30000) {
 			m_acceptWanted = FALSE;
+			// O71 (H8): said, not dropped silently; the room shows this player not accepted, the click accepts again
+			LanTest::joinLog("player: accept no longer sent again (%s)", LanStartDigest(m_currentGame) != m_acceptDigest
+				? "the host changed the room: every accept was reset" : "30 s without the host's list showing it");
 		} else if (now - m_acceptLastSent >= 700) {
 			m_acceptLastSent = now;
 			LanTest::joinLog("player: accept again (the host's list does not show it)");
@@ -1493,6 +1528,10 @@ void LANAPI::RequestGameCreate( UnicodeString gameName, Bool isDirectConnect )
 
 	// Create the local game object
 	m_inLobby = false;
+	for (Int k = 0; k < MAX_SLOTS; ++k) m_seatJoinedMs[k] = 0;   // O71: nothing of an earlier room (Play again)
+	m_lastRoomBeat = 0;
+	m_lastLoopMs = 0;
+	m_startSeenMs = 0;
 	LANGameInfo *myGame = NEW LANGameInfo;
 
 	myGame->setSeed(GetTickCount());

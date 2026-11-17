@@ -529,6 +529,9 @@ protected:
 	// 16 s is gone, a seat never heard from after its join is freed after 10 s
 	UnsignedInt					m_lastRoomBeat;
 	UnsignedInt					m_seatJoinedMs[MAX_SLOTS];   ///< the host: a seat given and not yet heard from (0: none)
+	// O71: silence is 30 s; it is not counted while this computer's own loop did not run, nor during a start
+	UnsignedInt					m_lastLoopMs;        ///< the last LANAPI::update in a room
+	UnsignedInt					m_startSeenMs;       ///< a joiner: the host's last start check or countdown message
 	Bool								m_acceptWanted;
 	UnsignedInt					m_acceptDigest;
 	UnsignedInt					m_acceptLastSent;
