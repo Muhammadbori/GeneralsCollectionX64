@@ -58,7 +58,7 @@ void LANAPI::handleRequestLocations( LANMessage *msg, UnsignedInt senderIP )
 		// In game - are we a game host?
 		if (m_currentGame)
 		{
-			if (m_currentGame->getIP(0) == m_localIP)
+			if (m_currentGame->getHostIP() == m_localIP)
 			{
 				AsciiString gameOpts = GenerateGameOptionsString();
 				if (!gameOpts.isEmpty())
@@ -191,7 +191,7 @@ void LANAPI::handleRequestGameInfo( LANMessage *msg, UnsignedInt senderIP )
 	// In game - are we a game host?
 	if (m_currentGame)
 	{
-		if (m_currentGame->getIP(0) == m_localIP || (m_currentGame->isGameInProgress() && TheNetwork && TheNetwork->isPacketRouter())) // if we're in game we should reply if we're the packet router
+		if (m_currentGame->getHostIP() == m_localIP || (m_currentGame->isGameInProgress() && TheNetwork && TheNetwork->isPacketRouter())) // if we're in game we should reply if we're the packet router
 		{
 			AsciiString gameOpts = GameInfoToAsciiString(m_currentGame);
 			if (gameOpts.isEmpty())
@@ -269,7 +269,7 @@ void LANAPI::handleRequestJoin( LANMessage *msg, UnsignedInt senderIP )
 	}
 	LANMessage reply;
 	fillInLANMessage( &reply );
-	if (!m_inLobby && m_currentGame && m_currentGame->getIP(0) == m_localIP)
+	if (!m_inLobby && m_currentGame && m_currentGame->getHostIP() == m_localIP)
 	{
 		if (m_currentGame->isGameInProgress())
 		{
@@ -700,7 +700,7 @@ void LANAPI::handleChat( LANMessage *msg, UnsignedInt senderIP )
 
 void LANAPI::handleGameStart( LANMessage *msg, UnsignedInt senderIP )
 {
-	if (!m_inLobby && m_currentGame && m_currentGame->getIP(0) == senderIP && !m_currentGame->isGameInProgress())
+	if (!m_inLobby && m_currentGame && m_currentGame->getHostIP() == senderIP && !m_currentGame->isGameInProgress())
 	{
 		OnGameStart();
 	}
@@ -708,7 +708,7 @@ void LANAPI::handleGameStart( LANMessage *msg, UnsignedInt senderIP )
 
 void LANAPI::handleGameStartTimer( LANMessage *msg, UnsignedInt senderIP )
 {
-	if (!m_inLobby && m_currentGame && m_currentGame->getIP(0) == senderIP && !m_currentGame->isGameInProgress())
+	if (!m_inLobby && m_currentGame && m_currentGame->getHostIP() == senderIP && !m_currentGame->isGameInProgress())
 	{
 		OnGameStartTimer(msg->StartTimer.seconds);
 	}

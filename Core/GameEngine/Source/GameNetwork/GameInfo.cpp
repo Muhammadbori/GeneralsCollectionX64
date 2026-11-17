@@ -320,6 +320,7 @@ void GameInfo::reset()
 	m_useStats = TRUE;
 	m_surrendered = FALSE;
   m_oldFactionsOnly = FALSE;
+	m_hostObserves = FALSE;   // O60
 //	m_localIP = 0; // BGC - actually we don't want this to be reset since the m_localIP is
 										// set properly in the constructor of LANGameInfo which uses this as a base class.
 	m_mapCRC = 0;
@@ -1055,6 +1056,10 @@ static AsciiString buildGameInfoAsciiString(const GameInfo& game, const AsciiStr
 		game.getStartingCash().countMoney(), game.oldFactionsOnly() ? 'Y' : 'N' );
 #endif
 
+	// O60 (row 46): the admin watches from outside the seats
+	if (game.getHostObserves())
+		optionsString.concat("HO=1;");
+
 	//add player info for each slot
 	optionsString.concat(slotListID);
 	optionsString.concat('=');
@@ -1176,6 +1181,7 @@ Bool ParseAsciiStringToGameInfo(GameInfo *game, AsciiString options)
 	Int crc = 100;
 	Bool sawCRC = FALSE;
   Bool oldFactionsOnly = FALSE;
+	Bool hostObserves = FALSE;   // O60
 	Int useStats = TRUE;
   Money startingCash = TheGlobalData->m_defaultStartingCash;
   UnsignedShort restriction = 0; // Always the default
@@ -1298,6 +1304,10 @@ Bool ParseAsciiStringToGameInfo(GameInfo *game, AsciiString options)
       oldFactionsOnly = ( val.compareNoCase( "Y" ) == 0 );
       sawOldFactions = TRUE;
     }
+		else if (key.compare("HO") == 0)
+		{
+			hostObserves = atoi(val.str()) != 0;   // O60 (row 46)
+		}
 		else if (key.getLength() == 1 && *key.str() == slotListID)
 		{
 			sawSlotlist = true;
@@ -1666,6 +1676,7 @@ Bool ParseAsciiStringToGameInfo(GameInfo *game, AsciiString options)
 		game->setSuperweaponRestriction(restriction);
 		game->setStartingCash(startingCash);
 		game->setOldFactionsOnly(oldFactionsOnly);
+		game->setHostObserves(hostObserves);   // O60
 
 		return true;
 	}

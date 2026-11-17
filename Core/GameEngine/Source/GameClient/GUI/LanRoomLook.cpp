@@ -126,7 +126,7 @@ namespace
 	UnsignedInt roomHost()
 	{
 		LANGameInfo *g = TheLAN != nullptr ? TheLAN->GetMyGame() : nullptr;
-		return g != nullptr ? g->getIP(0) : 0;
+		return g != nullptr ? g->getHostIP() : 0;   // O60
 	}
 
 	Bool iAmHost()

@@ -154,13 +154,13 @@ public:
 			m_LANSlot[who].setLastHeard(lastHeard);
 	}
 
-	/// Return the hosts IP or 0
-	UnsignedInt getHostIP()
-	{
-		if (m_LANSlot[0].isHuman())
-			return m_LANSlot[0].getIP();
-		return 0;
-	}
+	/// Return the hosts IP or 0.
+	/// TheSuperHackers @feature O60 (row 46) The host is the room's creator, not slot 0: the game's name starts with his
+	/// address in hex (LANAPI::RequestGameCreate), so every client knows him also while he watches from outside the
+	/// seats. A name without it (none made by this game) falls back to slot 0.
+	UnsignedInt getHostIP() const;
+	/// O60: the host's player name (the game's name after its 16 hex digits), or slot 0's.
+	UnicodeString getHostName() const;
 
 
 private:

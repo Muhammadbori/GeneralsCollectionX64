@@ -751,7 +751,7 @@ namespace
 			r.sample = nullptr;
 			// O29 (item 7): the game's own name is an id (host address and seed in hex, then the name cut to 16
 			// characters); the old list showed the host's name, and so does the table
-			r.name = game->getPlayerName(0);
+			r.name = game->getHostName();   // O60: the admin, also while he watches from outside the seats
 			if (r.name.isEmpty()) {
 				r.name = game->getName();
 			}

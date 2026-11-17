@@ -671,7 +671,7 @@ void LanRoom::onMessage(const LANMessage *msg, UnsignedInt senderIP, UnsignedInt
 			{
 				// a player of the room, or an observer: a ready line from the room's host
 				LANGameInfo *mine = TheLAN != nullptr ? TheLAN->GetMyGame() : nullptr;
-				const Bool myRoom = (mine != nullptr && mine->getIP(0) == senderIP) || (s_roomHost == senderIP && s_state == STATE_IN_ROOM);
+				const Bool myRoom = (mine != nullptr && mine->getHostIP() == senderIP) || (s_roomHost == senderIP && s_state == STATE_IN_ROOM);
 				if (myRoom) {
 					showLine(UnicodeString(text));
 				}
@@ -686,7 +686,7 @@ void LanRoom::onMessage(const LANMessage *msg, UnsignedInt senderIP, UnsignedInt
 			{
 				// O33: a player of this host's room: the observers frozen at Start (only from the room's host)
 				LANGameInfo *mine = TheLAN != nullptr ? TheLAN->GetMyGame() : nullptr;
-				if (mine == nullptr || mine->getIP(0) != senderIP || msg->Room.gameIP != senderIP) {
+				if (mine == nullptr || mine->getHostIP() != senderIP || msg->Room.gameIP != senderIP) {
 					return;
 				}
 				s_matchStart.valid = TRUE;
@@ -990,7 +990,7 @@ void LanRoom::configureServing(UnsignedInt localIP)
 	// every player serves its replay on its LAN address: live to the room's observers of the host's START, delayed by the
 	// host's delay to everybody else (outside viewers per source: 4, or -serveReplayOutsideMax)
 	LANGameInfo *game = TheLAN != nullptr ? TheLAN->GetMyGame() : nullptr;
-	const UnsignedInt host = game != nullptr ? game->getIP(0) : 0;
+	const UnsignedInt host = game != nullptr ? game->getHostIP() : 0;
 	std::vector<UnsignedInt> observers;
 	Int delay = kDefaultDelay;
 	Bool outside = TRUE;
@@ -1087,7 +1087,7 @@ void LanRoom::matchUpdate(UnsignedInt localIP)
 		}
 	}
 	// O42: the host tells the lobby its rules while the match runs (also when nobody may watch and nothing serves)
-	if (game != nullptr && s_hostRulesValid && game->isGameInProgress() && game->getIP(0) == localIP && now - s_lastRules >= kRulesMs)
+	if (game != nullptr && s_hostRulesValid && game->isGameInProgress() && game->getHostIP() == localIP && now - s_lastRules >= kRulesMs)
 	{
 		s_lastRules = now;
 		LANMessage rules;
@@ -1103,7 +1103,7 @@ void LanRoom::matchUpdate(UnsignedInt localIP)
 	Int room = 0, outside = 0;
 	ReplayStream::servingCounts(&room, &outside);
 	LANMessage msg;
-	prepare(msg, KIND_COUNT, game->getIP(0));
+	prepare(msg, KIND_COUNT, game->getHostIP());
 	msg.Room.count = (UnsignedByte)(outside > 255 ? 255 : outside);
 	for (Int i = 0; i < MAX_SLOTS; ++i)
 	{
@@ -1117,7 +1117,7 @@ void LanRoom::matchUpdate(UnsignedInt localIP)
 void LanRoom::onMatchMessage(const LANMessage *msg, UnsignedInt senderIP)
 {
 	LANGameInfo *game = TheLAN != nullptr ? TheLAN->GetMyGame() : nullptr;
-	if (msg->Room.kind == KIND_COUNT && game != nullptr && inSlot(game, senderIP) && msg->Room.gameIP == game->getIP(0)) {
+	if (msg->Room.kind == KIND_COUNT && game != nullptr && inSlot(game, senderIP) && msg->Room.gameIP == game->getHostIP()) {
 		s_matchOthers[senderIP] = msg->Room.count;
 	}
 }

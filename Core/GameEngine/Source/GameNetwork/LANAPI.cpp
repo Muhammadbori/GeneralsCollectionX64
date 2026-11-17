@@ -698,7 +698,7 @@ void LANAPI::update()
 			fillInLANMessage( &msg );
 			msg.messageType = LANMessage::MSG_REQUEST_GAME_LEAVE;
 			wcslcpy(msg.name, m_currentGame->getPlayerName(0).str(), ARRAY_SIZE(msg.name));
-			handleRequestGameLeave(&msg, m_currentGame->getIP(0));
+			handleRequestGameLeave(&msg, m_currentGame->getHostIP());
 			UnicodeString text;
 			text = TheGameText->fetch("LAN:HostNotResponding");
 			OnChat(UnicodeString::TheEmptyString, m_localIP, text, LANCHAT_SYSTEM);
@@ -826,7 +826,7 @@ void LANAPI::RequestGameJoin( LANGameInfo *game, UnsignedInt ip /* = 0 */ )
 	LANMessage msg;
 	msg.messageType = LANMessage::MSG_REQUEST_JOIN;
 	fillInLANMessage( &msg );
-	msg.GameToJoin.gameIP = game->getSlot(0)->getIP();
+	msg.GameToJoin.gameIP = game->getHostIP();   // O60: the admin, in a seat or not
 	msg.GameToJoin.exeCRC = TheGlobalData->m_exeCRC;
 	msg.GameToJoin.iniCRC = TheGlobalData->m_iniCRC;
 
@@ -883,7 +883,7 @@ void LANAPI::RequestGameLeave()
 	sendMessage(&msg);
 	m_transport->update();  // Send immediately, before OnPlayerLeave below resets everything.
 
-	if (m_currentGame && m_currentGame->getIP(0) == m_localIP)
+	if (m_currentGame && m_currentGame->getHostIP() == m_localIP)
 	{
 		// Exit out immediately if we're hosting
 		OnPlayerLeave(m_name);
@@ -904,7 +904,7 @@ void LANAPI::RequestGameAnnounce()
 	// In game - are we a game host?
 	if (m_currentGame && !(m_currentGame->getIsDirectConnect()))
 	{
-		if (m_currentGame->getIP(0) == m_localIP || (m_currentGame->isGameInProgress() && TheNetwork && TheNetwork->isPacketRouter())) // if we're in game we should reply if we're the packet router
+		if (m_currentGame->getHostIP() == m_localIP || (m_currentGame->isGameInProgress() && TheNetwork && TheNetwork->isPacketRouter())) // if we're in game we should reply if we're the packet router
 		{
 			AsciiString gameOpts = GameInfoToAsciiString(m_currentGame);
 			if (gameOpts.isEmpty())
@@ -996,7 +996,7 @@ void LANAPI::RequestChat( UnicodeString message, ChatType format )
 
 void LANAPI::RequestGameStart()
 {
-	if (m_inLobby || !m_currentGame || m_currentGame->getIP(0) != m_localIP)
+	if (m_inLobby || !m_currentGame || m_currentGame->getHostIP() != m_localIP)
 		return;
 
 	// O31: the room's observers get the players' addresses and follow the stream; nobody waits for them
@@ -1020,7 +1020,7 @@ void LANAPI::ResetGameStartTimer()
 
 void LANAPI::RequestGameStartTimer( Int seconds )
 {
-	if (m_inLobby || !m_currentGame || m_currentGame->getIP(0) != m_localIP)
+	if (m_inLobby || !m_currentGame || m_currentGame->getHostIP() != m_localIP)
 		return;
 
 	UnsignedInt now = timeGetTime();
@@ -1490,7 +1490,7 @@ void LANAPI::SetLocalIP( AsciiString localIP )
 
 Bool LANAPI::AmIHost()
 {
-	return m_currentGame && m_currentGame->getIP(0) == m_localIP;
+	return m_currentGame && m_currentGame->getHostIP() == m_localIP;
 }
 
 void LANAPI::setIsActive(Bool isActive) {

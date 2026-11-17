@@ -241,6 +241,10 @@ public:
 
   inline Bool oldFactionsOnly() const;
   inline void setOldFactionsOnly( Bool oldFactionsOnly );
+	/// TheSuperHackers @feature O60 (row 46) The room's admin (its creator) watches from outside the 8 seats: options
+	/// "HO=1" (absent when he plays, so a playing admin's options are as before).
+	Bool getHostObserves() const { return m_hostObserves; }
+	void setHostObserves( Bool observes ) { m_hostObserves = observes; }
 
 protected:
 	Int m_preorderMask;
@@ -263,6 +267,7 @@ protected:
   Money         m_startingCash;
   UnsignedShort m_superweaponRestriction;
   Bool m_oldFactionsOnly; // Only USA, China, GLA -- not USA Air Force General, GLA Toxic General, et al
+	Bool m_hostObserves;    ///< O60
 };
 
 extern GameInfo *TheGameInfo;
