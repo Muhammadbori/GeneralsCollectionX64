@@ -1492,9 +1492,14 @@ void LANAPI::noteGuardPeers()
 	// and the lobby players list; in a room, its seats and its observers. (In a match LANAPI::pumpGuard notes the
 	// seats.) Join requests to his room are noted by handleRequestJoin. Nothing else enters the anti-cheat's table.
 	// O84 (H16): in classes with room of their own (GuardLink::PeerClass). My room: its seats, host and observers. The
-	// lobby: the host of each row its host announced (isHostVerified: the announce came from the room's own address),
-	// the seats and observers of the SELECTED row only (never every row's made-up seats), and the lobby players. A host in
-	// his room also keeps the lobby players checked (the likely joiners), in the lobby class.
+	// lobby: the host of each listed row, the seats and observers of the SELECTED row only (never every row's made-up
+	// seats), and the lobby players. A host in his room also keeps the lobby players checked (the likely joiners), in the
+	// lobby class.
+	// O85 (H17): a listed row is one whose announce passed announceFromItsHost: a room not running was announced from its
+	// own address (isHostVerified); a RUNNING game by one of its seats, of the row known and of the list sent, naming a
+	// seat as its host (or HO=1, its admin watching). Both are named here, so a lobby opened during a match shows that
+	// match's marks (the rows people select to watch). Naming is display only: a running row is still not host-verified,
+	// so nothing host-only (join, observe, its host's messages) is taken for it (O64).
 	if (m_currentGame != nullptr && !m_inLobby)
 	{
 		for (Int k = 0; k < MAX_SLOTS; ++k)
@@ -1518,8 +1523,8 @@ void LANAPI::noteGuardPeers()
 	}
 	for (LANGameInfo *game = m_games; game != nullptr; game = game->getNext())
 	{
-		if (!game->isHostVerified()) {
-			continue;   // a row its host never announced: its addresses come from someone else's packet
+		if (!game->isHostVerified() && !game->isGameInProgress()) {
+			continue;   // O85: neither of the two rules above (every row comes through handleGameAnnounce, so none today)
 		}
 		GuardLink::notePeer(game->getHostIP(), m_localIP, GuardLink::PEER_LOBBY);
 		if (game->getHostIP() != m_lobbySelectedHost) {

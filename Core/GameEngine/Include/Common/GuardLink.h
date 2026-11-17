@@ -84,10 +84,18 @@ namespace GuardLink
 	/// - PEER_ROOM (24): the seats, host and observers of the room or match this player is in;
 	/// - PEER_JOIN (8): who asked to join this host's room (the oldest request leaves first), so a host that requires the
 	///   anti-cheat can always check a stranger;
-	/// - PEER_LOBBY (96): what this player's lobby shows: the hosts of rows announced by their host, the seats and
-	///   observers of the selected row only, the lobby players. A full lobby class makes room only by dropping an address
-	///   that is no longer shown, so a verdict on screen never turns into "unknown".
-	/// Each address named within the last 2 s counts as shown in that class.
+	/// - PEER_LOBBY (96): what this player's lobby shows: the hosts of the listed rows (a room announced from its own
+	///   address, or a running game announced by one of its seats, O85), the seats and observers of the selected row
+	///   only, the lobby players. A full lobby class makes room only by dropping an address that is no longer shown, so a
+	///   verdict on screen never turns into "unknown".
+	/// Each address named within the last 2 s counts as shown in that class. An entry moves to another class only when
+	/// that class has room (O85).
+	/// Known residuals (O85, H17):
+	/// - a peer that can spoof 96 source addresses can fill PEER_LOBBY with rows of its own (each announced "from its own
+	///   address"); while it keeps them shown, a new honest host shows no mark in the lobby. His admission as a joiner
+	///   (PEER_JOIN), every room and match (PEER_ROOM) are unaffected, and the marks come once the flood stops. A cheap
+	///   bound, not built: at most 8 lobby entries per /24 (spoofed sources usually share one), or per sender burst.
+	/// - a spoofed join-request flood from 8 addresses holds PEER_JOIN; a stranger is checked about 5 s after it stops.
 	enum PeerClass { PEER_ROOM = 0, PEER_JOIN = 1, PEER_LOBBY = 2, PEER_CLASSES = 3 };
 	void notePeer(UnsignedInt ip, UnsignedInt ownIp, PeerClass peerClass = PEER_ROOM);
 	void onLanData(UnsignedInt fromIp, UnsignedInt ownIp, const UnsignedByte *data, Int length);

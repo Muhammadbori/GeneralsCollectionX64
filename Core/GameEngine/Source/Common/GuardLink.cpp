@@ -779,9 +779,11 @@ void GuardLink::notePeer(UnsignedInt ip, UnsignedInt ownIp, PeerClass peerClass)
 			sayClassFull(peerClass, now);
 			return;
 		}
+		// O85 (H17): it goes over to another class that still names it only when that class has room, so no class's
+		// count exceeds its room (24/8/96); otherwise it is dropped, and that class names it again into its own room
 		Int other = -1;
 		for (Int c = 0; c < PEER_CLASSES && other < 0; ++c) {
-			if (c != peerClass && namedNow(drop->second, c, now)) other = c;
+			if (c != peerClass && namedNow(drop->second, c, now) && ownedBy((PeerClass)c) < kClassRoom[c]) other = c;
 		}
 		if (other >= 0) {
 			drop->second.owner = (PeerClass)other;
