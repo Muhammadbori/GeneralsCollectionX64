@@ -1904,6 +1904,7 @@ void LanLobbyLook::update(Bool screenReady)
 	hideOld();
 	setShown(screenReady);
 	if (!screenReady) {
+		if (TheLAN != nullptr) TheLAN->SetLobbySelectedHost(0);   // O84
 		return;
 	}
 	// O40: "Play again" on the score screen: the room again, with the same layout (LanRoom::applyRematchLayout)
@@ -1924,6 +1925,7 @@ void LanLobbyLook::update(Bool screenReady)
 		const LanRoom::State st = LanRoom::state();
 		const Bool busy = st == LanRoom::STATE_STARTING || st == LanRoom::STATE_PLAYING;
 		const UnsignedInt host = have && rows[sel].game != nullptr ? rows[sel].game->getHostIP() : 0;
+		if (TheLAN != nullptr) TheLAN->SetLobbySelectedHost(host);   // O84: its seats and observers get checked (GuardLink)
 		const Bool observingThis = host != 0 && LanRoom::observedHost() == host && (st == LanRoom::STATE_ASKED || st == LanRoom::STATE_IN_ROOM);
 		// O33: not one's own room; a running game whose host forbids outside viewers cannot be watched
 		const Bool ownRoom = host != 0 && TheLAN != nullptr && host == TheLAN->GetLocalIP();

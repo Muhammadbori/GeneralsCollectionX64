@@ -94,6 +94,7 @@ LANAPI::LANAPI() : m_transport(nullptr)
 	m_lastRoomBeat = 0;
 	for (Int k = 0; k < MAX_SLOTS; ++k) m_seatJoinedMs[k] = 0;
 	m_lastLoopMs = 0;     // O71
+	m_lobbySelectedHost = 0;   // O84
 	m_startSeenMs = 0;
 	m_notListedSinceMs = 0;
 	m_acceptWanted = FALSE;
@@ -154,6 +155,7 @@ void LANAPI::init()
 	m_lastRoomBeat = 0;
 	for (Int k = 0; k < MAX_SLOTS; ++k) m_seatJoinedMs[k] = 0;
 	m_lastLoopMs = 0;     // O71
+	m_lobbySelectedHost = 0;   // O84
 	m_startSeenMs = 0;
 	m_notListedSinceMs = 0;
 	m_acceptWanted = FALSE;
@@ -570,11 +572,11 @@ void LANAPI::update()
 			LANMessage *msg = (LANMessage *)(m_transport->m_inBuffer[i].data);
 			terminateStrings(msg);   // O33 (review 7): every text field of the message ends inside the message
 			noteHeardFrom(senderIP, msg->messageType);   // O71: a seat's room message counts as heard (O73: not lobby-wide ones)
-			// O83: a player who may ask to join (its lobby announce, or the join request itself) is checked ahead of the
-			// join (a host that requires the anti-cheat lets in only verified players), at low priority: the addresses of
-			// this player's own state (noteGuardPeers) always come first, so junk senders cannot crowd them out
-			if (msg->messageType == LANMessage::MSG_LOBBY_ANNOUNCE || msg->messageType == LANMessage::MSG_REQUEST_JOIN) {
-				GuardLink::notePeer(senderIP, m_localIP, FALSE);
+			// O84 (H16): a join request to this host's room: the requester is checked in the join class (its own room,
+			// the oldest request leaves first), so a host that requires the anti-cheat can always check a stranger
+			if (msg->messageType == LANMessage::MSG_REQUEST_JOIN && !m_inLobby && m_currentGame != nullptr
+				&& m_currentGame->amIHost() && !m_currentGame->isGameInProgress()) {
+				GuardLink::notePeer(senderIP, m_localIP, GuardLink::PEER_JOIN);
 			}
 			//DEBUG_LOG(("LAN message type %s from %ls (%s@%s)", GetMessageTypeString(msg->messageType).str(),
 			//	msg->name, msg->userName, msg->hostName));
@@ -1489,39 +1491,54 @@ void LANAPI::noteGuardPeers()
 	// listed game's host and seats (the game rows, the selected game's seats), the room observers of each listed game,
 	// and the lobby players list; in a room, its seats and its observers. (In a match LANAPI::pumpGuard notes the
 	// seats.) Join requests to his room are noted by handleRequestJoin. Nothing else enters the anti-cheat's table.
+	// O84 (H16): in classes with room of their own (GuardLink::PeerClass). My room: its seats, host and observers. The
+	// lobby: the host of each row its host announced (isHostVerified: the announce came from the room's own address),
+	// the seats and observers of the SELECTED row only (never every row's made-up seats), and the lobby players. A host in
+	// his room also keeps the lobby players checked (the likely joiners), in the lobby class.
 	if (m_currentGame != nullptr && !m_inLobby)
 	{
 		for (Int k = 0; k < MAX_SLOTS; ++k)
 		{
 			const LANGameSlot *slot = m_currentGame->getConstLANSlot(k);
 			if (slot != nullptr && slot->isHuman() && slot->getIP() != 0) {
-				GuardLink::notePeer(slot->getIP(), m_localIP);
+				GuardLink::notePeer(slot->getIP(), m_localIP, GuardLink::PEER_ROOM);
 			}
 		}
-		GuardLink::notePeer(m_currentGame->getHostIP(), m_localIP);
+		GuardLink::notePeer(m_currentGame->getHostIP(), m_localIP, GuardLink::PEER_ROOM);
 		const std::vector<LanRoom::Observer> observers = LanRoom::observersOf(m_currentGame->getHostIP());
 		for (size_t i = 0; i < observers.size(); ++i) {
-			GuardLink::notePeer(observers[i].ip, m_localIP);
+			GuardLink::notePeer(observers[i].ip, m_localIP, GuardLink::PEER_ROOM);
+		}
+		if (m_currentGame->amIHost() && !m_currentGame->isGameInProgress()) {
+			for (LANPlayer *player = m_lobbyPlayers; player != nullptr; player = player->getNext()) {
+				GuardLink::notePeer(player->getIP(), m_localIP, GuardLink::PEER_LOBBY);
+			}
 		}
 		return;
 	}
 	for (LANGameInfo *game = m_games; game != nullptr; game = game->getNext())
 	{
-		GuardLink::notePeer(game->getHostIP(), m_localIP);
+		if (!game->isHostVerified()) {
+			continue;   // a row its host never announced: its addresses come from someone else's packet
+		}
+		GuardLink::notePeer(game->getHostIP(), m_localIP, GuardLink::PEER_LOBBY);
+		if (game->getHostIP() != m_lobbySelectedHost) {
+			continue;
+		}
 		for (Int k = 0; k < MAX_SLOTS; ++k)
 		{
 			const LANGameSlot *slot = game->getConstLANSlot(k);
 			if (slot != nullptr && slot->isHuman() && slot->getIP() != 0) {
-				GuardLink::notePeer(slot->getIP(), m_localIP);
+				GuardLink::notePeer(slot->getIP(), m_localIP, GuardLink::PEER_LOBBY);
 			}
 		}
 		const std::vector<LanRoom::Observer> observers = LanRoom::observersOf(game->getHostIP());
 		for (size_t i = 0; i < observers.size(); ++i) {
-			GuardLink::notePeer(observers[i].ip, m_localIP);
+			GuardLink::notePeer(observers[i].ip, m_localIP, GuardLink::PEER_LOBBY);
 		}
 	}
 	for (LANPlayer *player = m_lobbyPlayers; player != nullptr; player = player->getNext()) {
-		GuardLink::notePeer(player->getIP(), m_localIP);
+		GuardLink::notePeer(player->getIP(), m_localIP, GuardLink::PEER_LOBBY);
 	}
 }
 
@@ -1551,6 +1568,7 @@ void LANAPI::keepRoomAlive()
 		return;
 	}
 	pumpRoomBeat(LanClock::now());
+	noteGuardPeers();   // O84: a screen change does not let the shown addresses go stale
 	m_transport->doSend();
 }
 

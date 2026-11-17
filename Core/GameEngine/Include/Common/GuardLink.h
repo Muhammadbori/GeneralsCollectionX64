@@ -79,12 +79,17 @@ namespace GuardLink
 	UnsignedInt ownFailBits();
 	Verdict verdictOf(UnsignedInt ip);
 
-	/// A LAN message came from 'ip': that player is checked now and then while it is seen.
-	/// O83: an address this player's screens show a shield for (fromState: a seat of his room or match, a listed game's
-	/// host or seat, a lobby player, a room observer), or one that asked to join his room (fromState FALSE). Only these
-	/// are asked; a full table (256) makes room for a fromState address by dropping the oldest address that is not one
-	/// any more, and refuses the others.
-	void notePeer(UnsignedInt ip, UnsignedInt ownIp, Bool fromState = TRUE);
+	/// TheSuperHackers @bugfix O84 (H16) Who is checked, in three classes with room of their own; a class never takes
+	/// another's room:
+	/// - PEER_ROOM (24): the seats, host and observers of the room or match this player is in;
+	/// - PEER_JOIN (8): who asked to join this host's room (the oldest request leaves first), so a host that requires the
+	///   anti-cheat can always check a stranger;
+	/// - PEER_LOBBY (96): what this player's lobby shows: the hosts of rows announced by their host, the seats and
+	///   observers of the selected row only, the lobby players. A full lobby class makes room only by dropping an address
+	///   that is no longer shown, so a verdict on screen never turns into "unknown".
+	/// Each address named within the last 2 s counts as shown in that class.
+	enum PeerClass { PEER_ROOM = 0, PEER_JOIN = 1, PEER_LOBBY = 2, PEER_CLASSES = 3 };
+	void notePeer(UnsignedInt ip, UnsignedInt ownIp, PeerClass peerClass = PEER_ROOM);
 	void onLanData(UnsignedInt fromIp, UnsignedInt ownIp, const UnsignedByte *data, Int length);
 	void setSender(SendFunc func);
 
