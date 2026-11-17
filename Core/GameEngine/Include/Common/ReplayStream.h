@@ -100,8 +100,11 @@ namespace ReplayStream
 	/// O33: a LAN match's serving (players at the start; a viewer's relay): the address and port, the delay for viewers not
 	/// listed live, whether outside viewers are allowed at all, and the live addresses (host order). 'receivesDelayed': this
 	/// game's own copy is already delayed (an outside viewer's relay): it forwards what it has without a second delay.
+	/// TheSuperHackers @bugfix O62 (H5 #3) 'refusedIps': the match's players (alive or defeated): this server never
+	/// serves them (a second game on a player's PC would show him the whole map, only the host's delay behind).
 	void configureMatchServing(UnsignedInt bindIpHostOrder, Int port, Int delaySeconds, Bool outsideAllowed,
-		const UnsignedInt *liveIps, Int liveCount, Bool receivesDelayed);
+		const UnsignedInt *liveIps, Int liveCount, Bool receivesDelayed, const UnsignedInt *refusedIps = nullptr,
+		Int refusedCount = 0);
 	/// O33: the recording (or the viewing) is over: the server closes its listener at once, gives the viewers it has the
 	/// rest (a delayed viewer the last 'delay' of the match) and ends by itself; the match settings are forgotten.
 	void stopServing();

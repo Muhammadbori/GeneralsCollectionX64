@@ -502,8 +502,10 @@ namespace
 		// the other room observers and delayed by the host's delay for everybody else; an outside viewer's copy is delayed
 		// already, so its relay forwards what it has (never more than it was given); none when outside viewers are not
 		// allowed and nobody else may have it live.
+		// O62 (H5 #3): the match's players ('ips') are never served by this relay either
 		if (outsideAllowed || liveCount > 0) {
-			ReplayStream::configureMatchServing(localIP, LanRoom::STREAM_PORT, hostDelay, outsideAllowed, liveIps, liveCount, !roomObserver);
+			ReplayStream::configureMatchServing(localIP, LanRoom::STREAM_PORT, hostDelay, outsideAllowed, liveIps, liveCount, !roomObserver,
+				ips, count);
 		} else {
 			ReplayStream::stopServing();
 		}
@@ -1141,7 +1143,10 @@ void LanRoom::configureServing(UnsignedInt localIP)
 		s_matchServing = FALSE;
 		return;
 	}
-	ReplayStream::configureMatchServing(localIP, STREAM_PORT, delay, outside, live, liveCount, FALSE);
+	// O62 (H5 #3): this match's players (this computer too: a second game on it) never get its stream
+	UnsignedInt players[MAX_SLOTS];
+	const Int playerCount = playerAddresses(game, players, MAX_SLOTS);
+	ReplayStream::configureMatchServing(localIP, STREAM_PORT, delay, outside, live, liveCount, FALSE, players, playerCount);
 	s_matchServing = TRUE;
 }
 

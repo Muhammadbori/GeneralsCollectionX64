@@ -98,6 +98,8 @@ namespace
 	Bool s_matchReceivesDelayed = FALSE;
 	UnsignedInt s_matchLive[MAX_LIVE];
 	Int s_matchLiveCount = 0;
+	UnsignedInt s_matchRefused[MAX_LIVE];   ///< O62 (H5 #3): the match's players
+	Int s_matchRefusedCount = 0;
 
 	//--- viewer settings (game thread) ---------------------------------------------------------------
 	/// O34: rank: 0 an outside viewer that relays, 1 a room observer that relays, 2 a player (or a -watchReplay source);
@@ -286,6 +288,8 @@ namespace
 		Bool preferRelays;         ///< O34: it holds live data (a player, a room observer): outside viewers go to relays first
 		UnsignedInt live[MAX_LIVE];
 		Int liveCount;
+		UnsignedInt refused[MAX_LIVE];   ///< O62 (H5 #3): the match's players: never served
+		Int refusedCount;
 		Int max, outsideMax, rateKB, stopAfterSec;
 		UnsignedInt lagIp;         ///< O42 (test, -serveReplayLagFor): this address is served lagMs further behind (a slow link)
 		Int lagMs;
@@ -479,6 +483,14 @@ namespace
 	{
 		for (Int i = 0; i < c.liveCount; ++i) {
 			if (c.live[i] == ip) return TRUE;
+		}
+		return FALSE;
+	}
+
+	Bool isRefused(const ServeConfig &c, UnsignedInt ip)
+	{
+		for (Int i = 0; i < c.refusedCount; ++i) {
+			if (c.refused[i] == ip) return TRUE;
 		}
 		return FALSE;
 	}
@@ -795,6 +807,13 @@ namespace
 					if (v.resume != ALL_FRAMES && index.count > 0 && v.resume < index.first)
 					{
 						refuse(v, NOPE_REFUSED, "it asks for a frame before this source's first one");
+						continue;
+					}
+					// O62 (H5 #3): a player of this match (alive, or defeated: who joined the observers switches his own
+					// view and needs no stream) never gets it, delayed or not
+					if (isRefused(c, v.ip))
+					{
+						refuse(v, NOPE_REFUSED, "a player of this match");
 						continue;
 					}
 					v.out = (unsigned char *)HeapAlloc(GetProcessHeap(), 0, OUT_BUFFER);
@@ -1697,8 +1716,12 @@ void ReplayStream::configureWatchBind(const char *ip)
 }
 
 void ReplayStream::configureMatchServing(UnsignedInt bindIpHostOrder, Int port, Int delaySeconds, Bool outsideAllowed,
-	const UnsignedInt *liveIps, Int liveCount, Bool receivesDelayed)
+	const UnsignedInt *liveIps, Int liveCount, Bool receivesDelayed, const UnsignedInt *refusedIps, Int refusedCount)
 {
+	s_matchRefusedCount = 0;
+	for (Int i = 0; refusedIps != nullptr && i < refusedCount && s_matchRefusedCount < MAX_LIVE; ++i) {
+		if (refusedIps[i] != 0) s_matchRefused[s_matchRefusedCount++] = refusedIps[i];
+	}
 	s_matchSet = port > 0 && port < 65536;
 	s_matchBind = bindIpHostOrder;
 	s_matchPort = port;
@@ -1717,6 +1740,7 @@ void ReplayStream::stopServing()
 	InterlockedExchange(&s_drainGen, InterlockedCompareExchange(&s_serverGen, 0, 0));
 	s_matchSet = FALSE;
 	s_matchLiveCount = 0;
+	s_matchRefusedCount = 0;   // O62
 	InterlockedExchange(&s_countRoom, 0);
 	InterlockedExchange(&s_countOutside, 0);
 }
@@ -1872,6 +1896,8 @@ void ReplayStream::serveFile(const AsciiString &replayPath)
 		c->outsideAllowed = s_matchOutside;
 		c->liveCount = s_matchLiveCount;
 		memcpy(c->live, s_matchLive, sizeof(UnsignedInt) * s_matchLiveCount);
+		c->refusedCount = s_matchRefusedCount;   // O62 (H5 #3)
+		memcpy(c->refused, s_matchRefused, sizeof(UnsignedInt) * s_matchRefusedCount);
 		// test runs (NetLab has no lobby, so no START): -serveReplayLiveFor adds live addresses, -serveReplayDelay sets
 		// the delay
 		for (Int i = 0; i < s_cmdLiveCount && c->liveCount < MAX_LIVE; ++i) {
