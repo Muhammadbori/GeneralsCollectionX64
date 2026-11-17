@@ -494,6 +494,11 @@ static void handlePlayerTemplateSelection(int index)
 
 		if (myGame->amIHost())
 		{
+			// TheSuperHackers @feature O56 (row 41) The host (or an AI slot it sets) as "Observer" frees its player place: a
+			// closed slot opens for a player, and closes again when the observer plays again
+			if ((oldTemplate == PLAYERTEMPLATE_OBSERVER) != (playerTemplate == PLAYERTEMPLATE_OBSERVER)) {
+				myGame->balanceObserverPlaces();
+			}
 			if (!s_isIniting)
 			{
 				// send around a new slotlist

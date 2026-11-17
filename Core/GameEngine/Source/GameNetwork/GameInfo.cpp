@@ -774,11 +774,12 @@ void GameInfo::adjustSlotsForMap()
 		Int numPlayerSlots = 0;
 
 		// first get the number of occupied slots.
+		// TheSuperHackers @tweak O56 (row 41) A slot with the "Observer" army takes no player place of the map.
 		Int i = 0;
 		for (; i < MAX_SLOTS; ++i)
 		{
 			GameSlot *tempSlot = getSlot(i);
-			if (tempSlot->isOccupied())
+			if (tempSlot->isOccupied() && tempSlot->getPlayerTemplate() != PLAYERTEMPLATE_OBSERVER)
 			{
 				++numPlayerSlots;
 			}
@@ -811,6 +812,44 @@ void GameInfo::adjustSlotsForMap()
 					setSlot(i, newSlot);
 				}
 			}
+		}
+	}
+}
+
+void GameInfo::balanceObserverPlaces()
+{
+	const MapMetaData *md = TheMapCache != nullptr ? TheMapCache->findMap(m_mapName) : nullptr;
+	if (md == nullptr) {
+		return;
+	}
+	Int players = 0, open = 0;
+	for (Int i = 0; i < MAX_SLOTS; ++i)
+	{
+		const GameSlot *slot = getConstSlot(i);
+		if (slot->isOccupied()) {
+			players += slot->getPlayerTemplate() != PLAYERTEMPLATE_OBSERVER ? 1 : 0;
+		} else if (slot->getState() == SLOT_OPEN) {
+			++open;
+		}
+	}
+	for (Int i = 0; i < MAX_SLOTS && players + open < md->m_numPlayers; ++i)
+	{
+		if (getConstSlot(i)->getState() == SLOT_CLOSED)
+		{
+			GameSlot newSlot;
+			newSlot.setState(SLOT_OPEN);
+			setSlot(i, newSlot);
+			++open;
+		}
+	}
+	for (Int i = MAX_SLOTS - 1; i >= 0 && players + open > md->m_numPlayers && open > 0; --i)
+	{
+		if (getConstSlot(i)->getState() == SLOT_OPEN)
+		{
+			GameSlot newSlot;
+			newSlot.setState(SLOT_CLOSED);
+			setSlot(i, newSlot);
+			--open;
 		}
 	}
 }

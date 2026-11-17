@@ -398,12 +398,17 @@ void LANAPI::OnGameOptions( UnsignedInt playerIP, Int playerSlot, AsciiString op
 				{
 					if (val >= PLAYERTEMPLATE_MIN && val < ThePlayerTemplateStore->getPlayerTemplateCount() && val != slot->getPlayerTemplate())
 					{
+						const Bool wasObserver = slot->getPlayerTemplate() == PLAYERTEMPLATE_OBSERVER;
 						slot->setPlayerTemplate(val);
 						if (val == PLAYERTEMPLATE_OBSERVER)
 						{
 							slot->setColor(-1);
 							slot->setStartPos(-1);
 							slot->setTeamNumber(-1);
+						}
+						// O56 (row 41): an observer frees the player place it held (and takes it back when it plays again)
+						if (wasObserver != (val == PLAYERTEMPLATE_OBSERVER)) {
+							m_currentGame->balanceObserverPlaces();
 						}
 						change = true;
 						shouldUnaccept = true;

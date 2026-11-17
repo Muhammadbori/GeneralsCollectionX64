@@ -215,6 +215,11 @@ public:
 	virtual void adjustSlotsForMap();					///< adjusts the slots to open and closed depending on the players in the game and the number of players the map can hold.
 
 	virtual void closeOpenSlots();						///< close all slots that are currently unoccupied.
+	/// TheSuperHackers @feature O56 (row 41) A person in a slot with the "Observer" army takes no player place of the map (the
+	/// start check counts only the others, and an observer gets no start position): after a change to or from Observer,
+	/// the map's player places are open again: closed slots open (lowest first) until the players and the open slots
+	/// make the map's count; past it, open slots close (highest first). Players are never removed.
+	void balanceObserverPlaces();
 
 	// CRC checking hack
 	void setCRCInterval( Int val ) { m_crcInterval = (val<100)?val:100; }
