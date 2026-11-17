@@ -71,6 +71,8 @@ namespace
 		UnicodeString baseEnglish;
 		UnicodeString baseRussian;
 		AsciiString baseTextLanguage;
+		AsciiString basePreviewFile;      ///< O49 (row 35): the base data's preview picture, empty: none
+		AsciiString basePreviewTexture;
 		AsciiString baseLanguage;    ///< O26: Voice, Movies: the spoken language of the base data (lower case)
 		Int active;                  ///< index into packs, -1: the base data
 		Int fallback;                ///< index into packs, -1: none
@@ -94,6 +96,9 @@ namespace
 
 	State *s_state = nullptr;
 	Bool s_restart = FALSE;
+	Int s_restartSection = -1;        ///< O48: the settings section the new process opens (-1: none)
+	Bool s_restartScriptGiven = FALSE; ///< O48: -restartScript was given
+	Bool s_pending[Packs::KIND_COUNT] = { FALSE };   ///< O48: saved choices that wait for the next start
 
 	//---------------------------------------------------------------------------------------------
 	void exeFolderOf(char *out, Int size)
@@ -563,15 +568,40 @@ void Packs::scan()
 
 		AsciiString defaultIni = kindFolderPath;
 		defaultIni.concat("default.ini");
+		AsciiString basePreview;
 		readKeyValues(defaultIni.str(), [&](const AsciiString &key, const AsciiString &value)
 		{
-			if (keyIs(key, "Default")) k.defaultName = value;
+			if (keyIs(key, "Preview")) basePreview = value;
+			else if (keyIs(key, "Default")) k.defaultName = value;
 			else if (keyIs(key, "ShowBase")) k.showBase = isYes(value);
 			else if (keyIs(key, "BaseNameEnglish")) k.baseEnglish = fromUtf8(value);
 			else if (keyIs(key, "BaseNameRussian")) k.baseRussian = fromUtf8(value);
 			else if (keyIs(key, "BaseTextLanguage")) { k.baseTextLanguage = value; k.baseTextLanguage.toLower(); }
 			else if (keyIs(key, "BaseLanguage")) { k.baseLanguage = value; k.baseLanguage.toLower(); }
 		});
+
+		// O49 (row 35): the base data's preview, by the rules of a pack's (in <Kind>\<Game>\ first, then <Kind>\)
+		{
+			const char *const defaults[] = { "base_preview.tga", "base_preview.dds" };
+			const Int tries = basePreview.isEmpty() ? 2 : 1;
+			for (Int t = 0; t < tries && k.basePreviewFile.isEmpty(); ++t)
+			{
+				const AsciiString file = basePreview.isEmpty() ? AsciiString(defaults[t]) : basePreview;
+				AsciiString inGame = kindFolderPath;
+				inGame.concat(kGameFolder);
+				inGame.concat("\\");
+				inGame.concat(file);
+				AsciiString inKind = kindFolderPath;
+				inKind.concat(file);
+				if (fileExists(inGame.str())) k.basePreviewFile = inGame;
+				else if (fileExists(inKind.str())) k.basePreviewFile = inKind;
+			}
+			if (k.basePreviewFile.isNotEmpty())
+			{
+				const char *dot = strrchr(k.basePreviewFile.str(), '.');
+				k.basePreviewTexture = textureNameOf((Kind)kind, AsciiString("base"), dot != nullptr ? dot : ".tga");
+			}
+		}
 
 		std::vector<AsciiString> names;
 		listFolders(kindFolderPath, names);
@@ -661,6 +691,12 @@ AsciiString Packs::chosenName(Kind kind, OptionPreferences &pref)
 	AsciiString value = (it != pref.end()) ? it->second : (kind == KIND_MOVIES ? AsciiString(AutoValue) : state().kinds[kind].defaultName);
 	value.trim();
 	if (value.isEmpty() || stricmp(value.str(), BaseValue) == 0) {
+		return AsciiString::TheEmptyString;
+	}
+	// TheSuperHackers @feature O49 (row 36) "Original + letters on icons" is gone: the game draws each button's real hotkey
+	// letter itself (HotkeyLetters.h, Settings -> Controls). A saved choice of it means the original set, without the box
+	// about a missing pack.
+	if (kind == KIND_HOTKEYS && stricmp(value.str(), "HotkeyLetters") == 0) {
 		return AsciiString::TheEmptyString;
 	}
 	return value;
@@ -984,8 +1020,16 @@ const char *Packs::findPreviewPath(const char *textureName)
 				return k.packs[i].previewFile.str();
 			}
 		}
+		if (k.basePreviewTexture.isNotEmpty() && stricmp(k.basePreviewTexture.str(), textureName) == 0) {
+			return k.basePreviewFile.str();   // O49 (row 35)
+		}
 	}
 	return nullptr;
+}
+
+AsciiString Packs::basePreviewTexture(Kind kind)
+{
+	return (kind >= 0 && kind < KIND_COUNT) ? state().kinds[kind].basePreviewTexture : AsciiString::TheEmptyString;
 }
 
 Bool Packs::findSplash(const char *fileName, char *path, Int pathSize)
@@ -1079,6 +1123,31 @@ void Packs::writeLog(const std::vector<AsciiString> &files, const std::vector<As
 	for (size_t i = 0; i < st.leftOut.size(); ++i) {
 		fprintf(fp, "left out of the list: %s\n", st.leftOut[i].str());
 	}
+	// TheSuperHackers @feature O50 An Exclude of a pack in use that no line of the archive list matched: a wrong path in
+	// pack.ini shows here (as read: a cut value shows cut, for example by a NUL written for "\00" by a script).
+	for (Int kind = 0; kind < KIND_COUNT; ++kind)
+	{
+		const KindState &k = st.kinds[kind];
+		const Int used[2] = { k.active, k.active >= 0 ? k.fallback : -1 };
+		for (Int u = 0; u < 2; ++u)
+		{
+			if (used[u] < 0 || (u == 1 && used[1] == used[0])) {
+				continue;
+			}
+			const Pack &pack = k.packs[used[u]];
+			for (size_t x = 0; x < pack.excludes.size(); ++x)
+			{
+				Bool matched = FALSE;
+				for (size_t i = 0; i < st.leftOut.size() && !matched; ++i) {
+					matched = stricmp(normalizedEntry(st.leftOut[i]).str(), pack.excludes[x].str()) == 0;
+				}
+				if (!matched) {
+					fprintf(fp, "Exclude of the %s pack '%s' matches no line of the archive list: '%s'\n", kFolders[kind],
+						pack.name.str(), pack.excludes[x].str());
+				}
+			}
+		}
+	}
 	for (size_t i = 0; i < st.problems.size(); ++i)
 	{
 		const ProblemEntry &e = st.problems[i];
@@ -1134,10 +1203,106 @@ void Packs::showProblemsOnce()
 }
 
 //-------------------------------------------------------------------------------------------------
-void Packs::requestRestart()
+void Packs::setRestartScriptGiven()
 {
-	// A test run (frame shots, -uiScript) only quits: a new process would play the same script again.
-	s_restart = !FrameShots::isEnabled();
+	s_restartScriptGiven = TRUE;
+}
+
+void Packs::markPending(Kind kind)
+{
+	if (kind >= 0 && kind < KIND_COUNT) {
+		s_pending[kind] = TRUE;
+	}
+}
+
+Bool Packs::isPending(Kind kind)
+{
+	return kind >= 0 && kind < KIND_COUNT && s_pending[kind];
+}
+
+Bool Packs::applyLive(Kind kind, const Pack *pack)
+{
+	if (kind != KIND_MOVIES) {
+		return FALSE;   // strings, fonts, sounds, INI data and textures: mounted at the start and held by the game
+	}
+	State &st = state();
+	KindState &k = st.kinds[kind];
+	OptionPreferences pref;
+	Int xres = 0, yres = 0;
+	pref.getResolution(&xres, &yres);
+	const AsciiString textLanguage = textLanguageOf(active(KIND_TEXT));
+	// what the choice means now ("Auto": the movies of the voices in use)
+	const Bool isAuto = pack != nullptr && pack == autoChoice(kind);
+	const AsciiString name = isAuto ? autoMovieName() : (pack != nullptr ? pack->name : AsciiString::TheEmptyString);
+	const Int index = name.isEmpty() ? -1 : indexOf(kind, name);
+	if (name.isNotEmpty() && index < 0) {
+		return FALSE;
+	}
+	Int fallback = -1;
+	if (index >= 0 && k.packs[index].fallback.isNotEmpty() && stricmp(k.packs[index].fallback.str(), k.packs[index].name.str()) != 0) {
+		fallback = indexOf(kind, k.packs[index].fallback);
+	}
+	// loose files only: neither the movie packs in use now nor the new ones mount an archive; the new ones complete
+	const Int check[4] = { k.active, k.active >= 0 ? k.fallback : -1, index, fallback };
+	for (Int c = 0; c < 4; ++c)
+	{
+		if (check[c] < 0) {
+			continue;
+		}
+		std::vector<AsciiString> archives;
+		packArchives(k.packs[check[c]], textLanguage, yres, st.exeFolder, archives);
+		if (!archives.empty()) {
+			return FALSE;
+		}
+		if (c >= 2 && !packComplete(k.packs[check[c]], archives)) {
+			return FALSE;
+		}
+	}
+	k.active = index;
+	k.fallback = (index >= 0) ? fallback : -1;
+	st.moviesAuto = isAuto;
+	s_pending[kind] = FALSE;
+	if (TheGlobalData != nullptr)
+	{
+		AsciiString path = TheGlobalData->getPath_UserData();
+		path.concat("Packs.log");
+		if (FILE *fp = fopen(path.str(), "a"))
+		{
+			fprintf(fp, "Live change (no restart): %s = %s%s\n", kFolders[kind], index >= 0 ? k.packs[index].name.str() : "(base data)",
+				isAuto ? " (Auto)" : "");
+			fclose(fp);
+		}
+	}
+	DEBUG_LOG(("Packs: the movies are now %s, without a restart.", index >= 0 ? k.packs[index].name.str() : "the base data"));
+	return TRUE;
+}
+
+void Packs::waitForRestartedParent()
+{
+	// before anything else of the game: plain Win32 only (no engine memory yet)
+	const wchar_t *line = GetCommandLineW();
+	const wchar_t *at = line != nullptr ? wcsstr(line, L"-restartWait ") : nullptr;
+	if (at == nullptr) {
+		return;
+	}
+	const DWORD pid = (DWORD)wcstoul(at + 13, nullptr, 10);
+	if (pid == 0 || pid == GetCurrentProcessId()) {
+		return;
+	}
+	HANDLE parent = OpenProcess(SYNCHRONIZE, FALSE, pid);
+	if (parent != nullptr)
+	{
+		WaitForSingleObject(parent, 20000);
+		CloseHandle(parent);
+	}
+}
+
+void Packs::requestRestart(Int optionsSection)
+{
+	// A test run (frame shots, -uiScript) only quits: a new process would play the same script again (O48: unless
+	// -restartScript names the new process's script).
+	s_restart = !FrameShots::isEnabled() || s_restartScriptGiven;
+	s_restartSection = optionsSection;
 	DEBUG_LOG(("Packs: restart requested%s.", s_restart ? "" : " (test run: quit only)"));
 	if (TheGameEngine != nullptr) {
 		TheGameEngine->setQuitting(TRUE);
@@ -1158,9 +1323,95 @@ void Packs::restartIfRequested()
 	if (len == 0 || len >= ARRAY_SIZE(exePath)) {
 		return;
 	}
+	// O48: the same command line without the switches of an earlier restart, then -restartWait <this process>,
+	// -openOptions <section> and -nologo; in a test run -uiScript plays the -restartScript file. Plain Win32 and fixed
+	// buffers only: the engine's memory is gone by now.
 	static wchar_t commandLine[32768];
-	wcsncpy(commandLine, GetCommandLineW(), ARRAY_SIZE(commandLine) - 1);
-	commandLine[ARRAY_SIZE(commandLine) - 1] = L'\0';
+	{
+		const wchar_t *src = GetCommandLineW();
+		size_t out = 0;
+		const size_t room = ARRAY_SIZE(commandLine) - 160;
+		const wchar_t *restartScript = nullptr;
+		size_t restartScriptLen = 0;
+		Bool haveNoLogo = FALSE;
+		// first pass: the -restartScript value
+		for (Int pass = 0; pass < 2; ++pass)
+		{
+			const wchar_t *p = src;
+			Int index = 0;
+			Int skipNext = 0;
+			Bool replaceNext = FALSE;
+			while (*p != L'\0')
+			{
+				while (*p == L' ' || *p == L'\t') ++p;
+				if (*p == L'\0') break;
+				const wchar_t *start = p;
+				Bool quoted = FALSE;
+				while (*p != L'\0' && (quoted || (*p != L' ' && *p != L'\t')))
+				{
+					if (*p == L'"') quoted = !quoted;
+					++p;
+				}
+				const size_t len = (size_t)(p - start);
+				const Bool isSwitch = len > 1 && start[0] == L'-';
+				if (pass == 0)
+				{
+					if (isSwitch && len == 14 && _wcsnicmp(start, L"-restartScript", 14) == 0) {
+						replaceNext = TRUE;
+					} else if (replaceNext) {
+						restartScript = start;
+						restartScriptLen = len;
+						replaceNext = FALSE;
+					}
+					if (isSwitch && len == 7 && _wcsnicmp(start, L"-nologo", 7) == 0) {
+						haveNoLogo = TRUE;
+					}
+					++index;
+					continue;
+				}
+				Bool emit = TRUE;
+				const wchar_t *text = start;
+				size_t textLen = len;
+				if (skipNext > 0)
+				{
+					emit = FALSE;
+					--skipNext;
+				}
+				else if (replaceNext)
+				{
+					replaceNext = FALSE;
+					text = restartScript;
+					textLen = restartScriptLen;
+				}
+				else if (index > 0 && isSwitch && ((len == 12 && _wcsnicmp(start, L"-restartWait", 12) == 0)
+					|| (len == 12 && _wcsnicmp(start, L"-openOptions", 12) == 0) || (len == 14 && _wcsnicmp(start, L"-restartScript", 14) == 0)))
+				{
+					emit = FALSE;
+					skipNext = 1;
+				}
+				else if (index > 0 && isSwitch && len == 9 && _wcsnicmp(start, L"-uiScript", 9) == 0 && restartScript != nullptr)
+				{
+					replaceNext = TRUE;
+				}
+				if (emit && out + textLen + 1 < room)
+				{
+					if (out > 0) commandLine[out++] = L' ';
+					wmemcpy(commandLine + out, text, textLen);
+					out += textLen;
+				}
+				++index;
+			}
+		}
+		commandLine[out] = L'\0';
+		wchar_t extra[160];
+		if (s_restartSection >= 0) {
+			swprintf(extra, ARRAY_SIZE(extra), L" -restartWait %lu -openOptions %d%ls", (unsigned long)GetCurrentProcessId(), s_restartSection,
+				haveNoLogo ? L"" : L" -nologo");
+		} else {
+			swprintf(extra, ARRAY_SIZE(extra), L" -restartWait %lu%ls", (unsigned long)GetCurrentProcessId(), haveNoLogo ? L"" : L" -nologo");
+		}
+		wcsncat(commandLine, extra, ARRAY_SIZE(commandLine) - wcslen(commandLine) - 1);
+	}
 	wchar_t currentFolder[MAX_PATH];
 	const DWORD folderLen = GetCurrentDirectoryW(ARRAY_SIZE(currentFolder), currentFolder);
 

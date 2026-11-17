@@ -79,6 +79,7 @@
 #include "GameClient/ControlBarResizer.h"
 #include "GameClient/GadgetListBox.h"
 #include "GameClient/HotKey.h"
+#include "GameClient/HotkeyLetters.h"
 #include "GameClient/GameWindowTransitions.h"
 #include "GameClient/GUICallbacks.h"
 
@@ -986,6 +987,7 @@ ControlBar::ControlBar()
 //-------------------------------------------------------------------------------------------------
 ControlBar::~ControlBar()
 {
+	HotkeyLetters::clear();   // O49
 
 	if(m_scienceLayout)
 	{
@@ -1309,6 +1311,7 @@ void ControlBar::init()
 //-------------------------------------------------------------------------------------------------
 void ControlBar::reset()
 {
+	HotkeyLetters::clear();   // O49
 	hideSpecialPowerShortcut();
 	// do not destroy the rally drawable, it will get destroyed with everything else during a reset
 	m_rallyPointDrawableID = INVALID_DRAWABLE_ID;
@@ -2531,6 +2534,9 @@ void ControlBar::setControlCommand( GameWindow *button, const CommandButton *com
 		if(hotKey.isNotEmpty())
 			TheHotKeyManager->addHotKey(button, hotKey);
 	}
+	// TheSuperHackers @feature O49 (row 36) the letter the hotkey uses, drawn on the button (HotkeyLetters.h)
+	HotkeyLetters::setButton(button, commandButton,
+		commandButton->getTextLabel().isNotEmpty() ? TheGameText->fetch(commandButton->getTextLabel()) : UnicodeString::TheEmptyString);
 	GadgetButtonSetAltSound(button, "GUICommandBarClick");
 
 }

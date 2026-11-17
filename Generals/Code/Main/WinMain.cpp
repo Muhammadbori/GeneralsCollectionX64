@@ -815,6 +815,10 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 {
 	Int exitcode = 1;
 
+	// TheSuperHackers @feature O48 (row 33) The quick restart: the new process waits until the old one is gone (its
+	// instance, its anti-cheat, its files) before anything else.
+	Packs::waitForRestartedParent();
+
 	try {
 
 		SetUnhandledExceptionFilter( UnHandledExceptionFilter );

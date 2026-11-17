@@ -108,6 +108,13 @@ public:
 	/// values of the same names in TheWritableGlobalData. Keys that are absent or not valid change nothing. Client side only:
 	/// these values are read by the view and the terrain renderer, never by the game logic.
 	void applyCameraOverrides(Bool resetAbsentKeys = FALSE); ///< TRUE: an absent CameraPitch / MaxCameraHeight goes back to the GameData value
+	/// TheSuperHackers @bugfix O49 (row 37) The options' camera pitch (degrees) and highest camera (world units); 0: the
+	/// game's own ("Standard"). They no longer overwrite GlobalData: the menus' shell map keeps the game's camera, and
+	/// W3DView applies these in a match only (over the map script's default camera too), at once when they change.
+	static Real optionCameraPitch();
+	static Real optionMaxCameraHeight();
+	/// The highest camera the partial terrain drawing covers; above it a match draws the whole terrain.
+	static Real partialTerrainMaxCameraHeight();
 	Int getTextureReduction();
 	void getResolution(Int *xres, Int *yres);
 	Bool get3DShadowsEnabled();

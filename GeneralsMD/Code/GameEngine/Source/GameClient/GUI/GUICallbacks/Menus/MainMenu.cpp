@@ -74,6 +74,7 @@
 
 #include "GameClient/InGameUI.h"
 #include "GameClient/LanLobbyLook.h"
+#include "GameClient/OptionsSections.h"
 #include "Common/GuardLink.h"
 #include "GameClient/GadgetPushButton.h"
 
@@ -827,6 +828,15 @@ void MainMenuUpdate( WindowLayout *layout, void *userData )
 
 	if(dontAllowTransitions && TheTransitionHandler->isFinished())
 		dontAllowTransitions = FALSE;
+
+	// TheSuperHackers @feature O48 (row 33) After the quick restart of a pack change (-openOptions): the settings again,
+	// as the Options button opens them, once the menu is up
+	if (OptionsSections::openAtStartPending() && !justEntered && !dontAllowTransitions && buttonOptions != nullptr
+		&& TheShell->isAnimFinished() && TheTransitionHandler->isFinished())
+	{
+		OptionsSections::clearOpenAtStartPending();
+		TheWindowManager->winSendSystemMsg(buttonOptions->winGetParent(), GBM_SELECTED, (WindowMsgData)buttonOptions, optionsID);
+	}
 
 	if(showLogo && dontAllowTransitions == FALSE)
 	{
