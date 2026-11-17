@@ -1589,6 +1589,34 @@ namespace
 		return (step >= 0 && step < kSettings[i].choiceCount) ? kSettings[i].choices[step].value : "";
 	}
 
+	/// O54: 'ds' shows 'full', or as much of it as fits 'room' pixels with "..." (empty when not even that fits); its width.
+	Int fitSampleText(DisplayString *ds, const UnicodeString &full, Int room)
+	{
+		ds->setText(full);
+		Int w = 0, h = 0;
+		ds->getSize(&w, &h);
+		if (w <= room) {
+			return w;
+		}
+		const WideChar *all = full.str();
+		for (Int n = full.getLength() - 1; n > 0; --n)
+		{
+			UnicodeString part;
+			for (Int i = 0; i < n; ++i) {
+				part.concat(all[i]);
+			}
+			part.trim();
+			part.concat(L"...");
+			ds->setText(part);
+			ds->getSize(&w, &h);
+			if (w <= room) {
+				return w;
+			}
+		}
+		ds->setText(UnicodeString::TheEmptyString);
+		return 0;
+	}
+
 	void drawCounterSample(GameWindow *window, WinInstanceData *)
 	{
 		Int x = 0, y = 0, w = 0, h = 0;
@@ -1643,8 +1671,15 @@ namespace
 			name->setText(textOf(kInfoSampleNames[k]));
 			Int nw = 0, nh = 0;
 			name->getSize(&nw, &nh);
+			// TheSuperHackers @bugfix O54 Every line stays inside the frame: a value wider than the frame is not drawn,
+			// a name is shortened with "..." to the room it has (the whole name was drawn past the right border)
+			if (vw > w - pad * 2) {
+				TheDisplayStringManager->freeDisplayString(name);
+				break;
+			}
 			if (genTool)
 			{
+				nw = fitSampleText(name, textOf(kInfoSampleNames[k]), max(vw, x + w - pad - cx));
 				if (cx + vw > x + w - pad) {
 					TheDisplayStringManager->freeDisplayString(name);
 					break;
@@ -1661,6 +1696,7 @@ namespace
 					break;
 				}
 				s.sampleText[k]->draw(x + pad, cy, colors[k], drop);
+				fitSampleText(name, textOf(kInfoSampleNames[k]), x + w - pad - (x + pad + vw + pad * 3));
 				name->draw(x + pad + vw + pad * 3, cy + (vh - nh) / 2, grey, drop);
 				cy += max(vh, nh) + 2;
 			}
