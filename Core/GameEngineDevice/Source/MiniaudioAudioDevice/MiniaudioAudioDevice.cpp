@@ -152,6 +152,10 @@ namespace
 		OcclusionSetting active;
 		ma_lpf2 lpf[2];
 		bool lpfReady;
+		// O55: the output meter (written by the audio thread only; reset and read by the game)
+		std::atomic<float> meterPeak;
+		std::atomic<double> meterSumSquares;
+		std::atomic<ma_uint64> meterFrames;
 	};
 
 	ma_lpf2_config lpfConfig(double cutoff, double q)
@@ -209,6 +213,32 @@ namespace
 			}
 			out[2 * i] = in[2 * i] * n->left;
 			out[2 * i + 1] = in[2 * i + 1] * n->right;
+		}
+		// O55: the meter, over the frames that carry sound
+		{
+			float peak = 0.0f;
+			double sumSquares = 0.0;
+			ma_uint64 sounding = 0;
+			for (ma_uint32 i = 0; i < frames; ++i)
+			{
+				const float l = out[2 * i], r = out[2 * i + 1];
+				if (l == 0.0f && r == 0.0f) {
+					continue;
+				}
+				++sounding;
+				const float al = l < 0.0f ? -l : l, ar = r < 0.0f ? -r : r;
+				if (al > peak) peak = al;
+				if (ar > peak) peak = ar;
+				sumSquares += (double)l * l + (double)r * r;
+			}
+			if (sounding > 0)
+			{
+				if (peak > n->meterPeak.load(std::memory_order_relaxed)) {
+					n->meterPeak.store(peak, std::memory_order_relaxed);
+				}
+				n->meterSumSquares.store(n->meterSumSquares.load(std::memory_order_relaxed) + sumSquares, std::memory_order_relaxed);
+				n->meterFrames.store(n->meterFrames.load(std::memory_order_relaxed) + sounding, std::memory_order_release);
+			}
 		}
 		*frameCountIn = frames;
 	}
@@ -863,6 +893,9 @@ namespace
 		n.requestedVersion.store(0);
 		n.appliedVersion = 0;
 		n.lpfReady = false;
+		n.meterPeak.store(0.0f);   // O55
+		n.meterSumSquares.store(0.0);
+		n.meterFrames.store(0);
 
 		const ma_lpf2_config c = lpfConfig(1000.0, 0.707107);
 		if (ma_lpf2_init(&c, nullptr, &n.lpf[0]) == MA_SUCCESS) {
@@ -1473,6 +1506,32 @@ AudioVoice MiniaudioAudioDevice::allocVoice(AudioVoiceKind kind, UnsignedInt pro
 	std::lock_guard<std::mutex> guard(s->lock);
 	s->voices.push_back(v);
 	return (AudioVoice)v;
+}
+
+//-------------------------------------------------------------------------------------------------
+void MiniaudioAudioDevice::resetVoiceMeter(AudioVoice voice)
+{
+	if (voice == 0) {
+		return;
+	}
+	MiniaudioVoice *v = toVoice(voice);
+	v->node.meterPeak.store(0.0f);
+	v->node.meterSumSquares.store(0.0);
+	v->node.meterFrames.store(0);
+}
+
+Bool MiniaudioAudioDevice::readVoiceMeter(AudioVoice voice, Real *peak, Real *rms, UnsignedInt64 *frames) const
+{
+	if (voice == 0 || !toVoice(voice)->nodeReady) {
+		return FALSE;
+	}
+	const MiniaudioVoice *v = toVoice(voice);
+	const ma_uint64 n = v->node.meterFrames.load(std::memory_order_acquire);
+	const double sumSquares = v->node.meterSumSquares.load(std::memory_order_relaxed);
+	*peak = v->node.meterPeak.load(std::memory_order_relaxed);
+	*rms = n > 0 ? (Real)sqrt(sumSquares / (2.0 * (double)n)) : 0.0f;
+	*frames = (UnsignedInt64)n;
+	return TRUE;
 }
 
 void MiniaudioAudioDevice::freeVoice(AudioVoice voice, AudioVoiceKind kind)
