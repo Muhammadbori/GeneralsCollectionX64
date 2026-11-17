@@ -1220,6 +1220,7 @@ void LANAPI::RequestGameStart()
 		m_lastStartCheck = 0;
 		for (Int i = 0; i < MAX_SLOTS; ++i) {
 			m_startReady[i] = FALSE;
+			m_startCannot[i] = FALSE;   // O76
 		}
 		LanTest::joinLog("host: start check begins, digest %08X", m_startDigest);
 	}
@@ -1244,8 +1245,40 @@ void LANAPI::pumpStartCheck()
 		m_startDigest = digest;
 		for (Int i = 0; i < MAX_SLOTS; ++i) {
 			m_startReady[i] = FALSE;
+			m_startCannot[i] = FALSE;   // O76
 		}
 		LanTest::joinLog("host: start check: the room changed, digest %08X", digest);
+	}
+	// TheSuperHackers @bugfix O76 A player that cannot start (no map, and none will be transferred) stops the start
+	// before anybody loads: the original refused Start for such a player with GUI:PlayerNoMap ("... does not have the
+	// map ..."); the same line names it
+	{
+		Bool cannot = FALSE;
+		const MapMetaData *mapData = TheMapCache->findMap(m_currentGame->getMap());
+		UnicodeString mapName;
+		if (mapData != nullptr) {
+			mapName.format(L"%ls", mapData->m_displayName.str());
+		} else {
+			mapName.format(L"%hs", m_currentGame->getMap().str());
+		}
+		for (Int i = 0; i < MAX_SLOTS; ++i)
+		{
+			const LANGameSlot *slot = m_currentGame->getConstLANSlot(i);
+			if (m_startReady[i] && m_startCannot[i] && slot != nullptr && slot->isHuman())
+			{
+				cannot = TRUE;
+				UnicodeString text;
+				text.format(TheGameText->fetch("GUI:PlayerNoMap"), slot->getName().str(), mapName.str());
+				OnChat(L"SYSTEM", m_localIP, text, LANCHAT_SYSTEM);
+				LanTest::joinLog("host: start check: stopped, slot %d cannot start (no map)", i);
+			}
+		}
+		if (cannot)
+		{
+			m_startChecking = FALSE;
+			LANEnableStartButton(true);
+			return;
+		}
 	}
 	UnicodeString missing;
 	Bool allReady = TRUE;
@@ -1325,6 +1358,19 @@ void LANAPI::finishStart()
 	pumpStartDelivery();
 }
 
+void LANAPI::stopStartDelivery(const char *why)
+{
+	// O76: START is called back while nobody has acknowledged it (a player whose five acknowledgements were all lost has
+	// started anyway: its load waits for the others, gives up after the 60 s progress timeout and leaves it in a match
+	// without them, on the original's disconnect screen)
+	m_startDelivering = FALSE;
+	LanTest::joinLog("host: %s, nobody started yet: start stopped", why);
+	OnChat(L"SYSTEM", m_localIP, TheGameText->FETCH_OR_SUBSTITUTE("GUI:LanStartRoomChanged", localizedFallback(
+		L"The room changed during the start: start stopped. Press Start again.",
+		L"\x041A\x043E\x043C\x043D\x0430\x0442\x0430 \x0438\x0437\x043C\x0435\x043D\x0438\x043B\x0430\x0441\x044C \x0432\x043E \x0432\x0440\x0435\x043C\x044F \x0441\x0442\x0430\x0440\x0442\x0430: \x0441\x0442\x0430\x0440\x0442 \x043E\x0442\x043C\x0435\x043D\x0451\x043D. \x041D\x0430\x0436\x043C\x0438\x0442\x0435 \x00AB\x0421\x0442\x0430\x0440\x0442\x00BB \x0435\x0449\x0451 \x0440\x0430\x0437.")), LANCHAT_SYSTEM);
+	LANEnableStartButton(true);
+}
+
 void LANAPI::sendStartMessage(UnsignedInt ip)
 {
 	LANMessage msg;
@@ -1355,34 +1401,17 @@ void LANAPI::pumpStartDelivery()
 	{
 		Bool anyAcked = FALSE;
 		for (Int i = 0; i < MAX_SLOTS; ++i) {
-			anyAcked = anyAcked || (m_startAcked[i] && !m_startCannot[i]);
+			anyAcked = anyAcked || m_startAcked[i];
 		}
 		if (!anyAcked)
 		{
-			m_startDelivering = FALSE;
-			LanTest::joinLog("host: the room changed during START, nobody started yet: start stopped");
-			OnChat(L"SYSTEM", m_localIP, TheGameText->FETCH_OR_SUBSTITUTE("GUI:LanStartRoomChanged", localizedFallback(
-				L"The room changed during the start: start stopped. Press Start again.",
-				L"\x041A\x043E\x043C\x043D\x0430\x0442\x0430 \x0438\x0437\x043C\x0435\x043D\x0438\x043B\x0430\x0441\x044C \x0432\x043E \x0432\x0440\x0435\x043C\x044F \x0441\x0442\x0430\x0440\x0442\x0430: \x0441\x0442\x0430\x0440\x0442 \x043E\x0442\x043C\x0435\x043D\x0451\x043D. \x041D\x0430\x0436\x043C\x0438\x0442\x0435 \x00AB\x0421\x0442\x0430\x0440\x0442\x00BB \x0435\x0449\x0451 \x0440\x0430\x0437.")), LANCHAT_SYSTEM);
-			LANEnableStartButton(true);
+			stopStartDelivery("the room changed during the start");
 			return;
 		}
 		LanTest::joinLog("host: the room changed during START after a player started: starting as it is");
 	}
 	UnicodeString missing;
-	UnicodeString cannot;
 	Bool allAcked = TRUE;
-	for (Int i = 0; i < MAX_SLOTS; ++i)
-	{
-		const LANGameSlot *slot = m_currentGame->getConstLANSlot(i);
-		if (slot != nullptr && slot->isHuman() && slot->getIP() != m_localIP && m_startCannot[i])
-		{
-			if (!cannot.isEmpty()) {
-				cannot.concat(L", ");
-			}
-			cannot.concat(slot->getName());
-		}
-	}
 	for (Int i = 0; i < MAX_SLOTS; ++i)
 	{
 		const LANGameSlot *slot = m_currentGame->getConstLANSlot(i);
@@ -1412,15 +1441,6 @@ void LANAPI::pumpStartDelivery()
 				L"\x0421\x0442\x0430\x0440\x0442 \x043D\x0435 \x043F\x043E\x0434\x0442\x0432\x0435\x0440\x0434\x0438\x043B\x0438: %ls. \x0421\x043A\x043E\x0440\x0435\x0435 \x0432\x0441\x0435\x0433\x043E, \x043E\x043D\x0438 \x043D\x0430\x0447\x0430\x043B\x0438 (\x043F\x043E\x0434\x0442\x0432\x0435\x0440\x0436\x0434\x0435\x043D\x0438\x0435 \x043F\x043E\x0442\x0435\x0440\x044F\x043B\x043E\x0441\x044C); \x043D\x0435 \x043D\x0430\x0447\x0430\x0432\x0448\x0438\x0439 \x0438\x0433\x0440\x043E\x043A \x043E\x0442\x043A\x043B\x044E\x0447\x0438\x0442\x0441\x044F \x0432 \x043A\x043E\x043D\x0446\x0435 \x0437\x0430\x0433\x0440\x0443\x0437\x043A\x0438 \x043A\x0430\x0440\x0442\x044B.")).str(), missing.str());
 			OnChat(L"SYSTEM", m_localIP, text, LANCHAT_SYSTEM);
 			LanRoom::postNotice(text);   // shown in the lobby after the match too
-		}
-		if (!cannot.isEmpty())
-		{
-			UnicodeString text;
-			text.format(TheGameText->FETCH_OR_SUBSTITUTE("GUI:LanCannotStartNamed", localizedFallback(
-				L"Cannot start (the map is missing on it): %ls.",
-				L"\x041D\x0435 \x043C\x043E\x0436\x0435\x0442 \x043D\x0430\x0447\x0430\x0442\x044C (\x043D\x0430 \x043D\x0451\x043C \x043D\x0435\x0442 \x043A\x0430\x0440\x0442\x044B): %ls.")).str(), cannot.str());
-			OnChat(L"SYSTEM", m_localIP, text, LANCHAT_SYSTEM);
-			LanRoom::postNotice(text);
 		}
 		m_transport->update(); // force a send
 		OnGameStart();

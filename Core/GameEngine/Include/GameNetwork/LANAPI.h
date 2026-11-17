@@ -370,6 +370,9 @@ static const UnsignedInt LANProtocolMagic = 0x3156504C;    ///< "LPV1"
 static const Int LANProtocolVersion = 2;
 /// O64 (H6, low): the start handshake's magic carries the protocol number ("STR2"): another number is not this game's.
 static const UnsignedInt LANStartMagic = 0x00525453u | ((UnsignedInt)('0' + LANProtocolVersion) << 24);
+/// O76: a player's answer to START_CHECK (MSG_START_READY) when it cannot start: the map is not on it and no transfer
+/// will bring it (an official map, or its seat says it has the map while the file is not there)
+static const UnsignedInt LANStartNoMapMagic = LANStartMagic ^ 0x50414D4Eu;
 /// O63: this build's identity (letters, digits and '~', at most 15).
 AsciiString LanBuildIdentity();
 /// O63: the room is this build's: the same protocol number and the same build identity.
@@ -472,6 +475,7 @@ public:
 	void OnWatchMatchLeave();
 	/// O62 (H5 #1, #7): a start is under way: the countdown runs, or the host waits for the players' READY.
 	Bool IsStartPending() const { return m_gameStartTime != 0 || m_startChecking || m_startDelivering; }
+	Bool IsStartDelivering() const { return m_startDelivering; }   ///< O76: START is out: the room must not change
 	/// O71: the room's keep-alive while update() does not run (the screen changes: LANbuttonPushed, a shell animation);
 	/// called by the LAN lobby menu's update instead of update()
 	void keepRoomAlive();
@@ -562,8 +566,7 @@ protected:
 	UnsignedInt					m_startDeliverSince;
 	UnsignedInt					m_lastStartSend;
 	Bool								m_startAcked[MAX_SLOTS];
-	Bool								m_startCannot[MAX_SLOTS];   ///< O75: acknowledged with "cannot start" (no map)
-	enum { kStartAckCannotStart = 0xFFFFFFFFu };          ///< O75: MSG_START_ACK's revision for "cannot start"
+	Bool								m_startCannot[MAX_SLOTS];   ///< O76: answered the start check with "cannot start: no map"
 	Bool								m_inLobby;											///< Are we in the lobby (not in a game)?
 	LANGameInfo *				m_currentGame;							///< Pointer to game (setup screen) we are currently in (null for lobby)
 	//LANGameInfo *m_currentGameInfo;			///< Pointer to game setup info we are currently in.
@@ -609,6 +612,7 @@ protected:
 	void handleStartAck( LANMessage *msg, UnsignedInt senderIP );     ///< O74
 	void pumpStartDelivery();                                         ///< O74
 	void sendStartMessage( UnsignedInt ip );                          ///< O74: START with the confirmed digest (0: to all)
+	void stopStartDelivery( const char *why );                        ///< O76: START called back while nobody started
 	void pumpStartCheck();   ///< O62: the host: options and START_CHECK again, START once every seated player is READY
 	void finishStart();      ///< O62: the host: the room's observers, START, the match
 	/// TheSuperHackers @bugfix O70 A joiner's room requests (accept, has-map, army/colour/team/start place) are sent

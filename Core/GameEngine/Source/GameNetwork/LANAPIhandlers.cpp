@@ -673,10 +673,19 @@ void LANAPI::handleRequestGameLeave( LANMessage *msg, UnsignedInt senderIP )
 {
 	if (m_startDelivering && m_currentGame != nullptr && m_currentGame->amIHost() && senderIP != m_localIP)
 	{
-		// O75 (H10): START is out with this room's slot list and some players may be loading it: the room is not
-		// changed now (the host starts with the same list as they did); a player that left is dropped by the match
-		LanTest::joinLog("host: a leave from %d.%d.%d.%d during START: the seat stays for the match", PRINTF_IP_AS_4_INTS(senderIP));
-		return;
+		Bool anyAcked = FALSE;
+		for (Int i = 0; i < MAX_SLOTS; ++i) {
+			anyAcked = anyAcked || m_startAcked[i];
+		}
+		if (anyAcked)
+		{
+			// O75 (H10): some players are loading this room's slot list: the host starts with the same list; the player
+			// that left is dropped at the end of their load (the 60 s progress timeout: a known limit, O76)
+			LanTest::joinLog("host: a leave from %d.%d.%d.%d during START after a player started: the seat stays for the match", PRINTF_IP_AS_4_INTS(senderIP));
+			return;
+		}
+		// O76: nobody has started: the start stops (with a line) and the leave is applied as any other
+		stopStartDelivery("a player left during the start");
 	}
 	if (!m_inLobby && m_currentGame && !m_currentGame->isGameInProgress())
 	{
@@ -875,36 +884,19 @@ void LANAPI::handleGameStart( LANMessage *msg, UnsignedInt senderIP )
 			return;
 		}
 		m_startSeenMs = LanClock::now();
-		// TheSuperHackers @bugfix O75 (H10) OnGameStart leaves without starting when the map is not on this computer after
-		// the transfer. With no transfer for it (its seat has the map), the same test is made now, before the
-		// acknowledgement: a computer that would leave says "cannot start" instead, and the host names it. A transfer's
-		// own failure is known only after it, while the host transfers (it is not reading LAN messages then): that seat
-		// is dropped at the end of the others' load, as before.
-		const Int localSlot = m_currentGame->getLocalSlotNum();
-		const GameSlot *mySlot = localSlot >= 0 ? m_currentGame->getConstSlot(localSlot) : nullptr;
-		const Bool transferComing = mySlot != nullptr && !mySlot->hasMap();
-		const Bool canStart = transferComing || TheMapCache->findMap(m_currentGame->getMap()) != nullptr;
+		// O76: whether this computer can start (the map) was answered at the start check (handleStartCheck); a START
+		// comes only after every seat answered READY that it can
 		LANMessage ack;
 		fillInLANMessage(&ack);
 		ack.messageType = LANMessage::MSG_START_ACK;
 		ack.StartCheck.magic = LANStartMagic;
 		ack.StartCheck.digest = mine;
-		ack.StartCheck.revision = canStart ? m_currentGame->getOptionsRevision() : kStartAckCannotStart;
+		ack.StartCheck.revision = m_currentGame->getOptionsRevision();
 		wcslcpy(ack.StartCheck.gameName, m_currentGame->getName().str(), ARRAY_SIZE(ack.StartCheck.gameName));
 		for (Int k = 0; k < 5; ++k) {
 			sendMessage(&ack, senderIP);
 		}
 		m_transport->doSend();
-		if (!canStart)
-		{
-			LanTest::joinLog("player: START, but the map %s is not here: cannot start", m_currentGame->getMap().str());
-			UnicodeString text;
-			text.format(TheGameText->FETCH_OR_SUBSTITUTE("GUI:LanCannotStartNoMap", localizedFallback(
-				L"This computer cannot start: the map %hs is not on it. The host was told.",
-				L"\x042D\x0442\x043E\x0442 \x043A\x043E\x043C\x043F\x044C\x044E\x0442\x0435\x0440 \x043D\x0435 \x043C\x043E\x0436\x0435\x0442 \x043D\x0430\x0447\x0430\x0442\x044C: \x043A\x0430\x0440\x0442\x044B %hs \x043D\x0430 \x043D\x0451\x043C \x043D\x0435\x0442. \x0425\x043E\x0441\x0442 \x043E\x0431 \x044D\x0442\x043E\x043C \x0437\x043D\x0430\x0435\x0442.")).str(), m_currentGame->getMap().str());
-			OnChat(L"SYSTEM", m_localIP, text, LANCHAT_SYSTEM);
-			return;
-		}
 		LanTest::joinLog("player: START with digest %08X: started", mine);
 		OnGameStart();
 	}
@@ -923,16 +915,7 @@ void LANAPI::handleStartAck( LANMessage *msg, UnsignedInt senderIP )
 		if (slot != nullptr && slot->isHuman() && slot->getIP() == senderIP && !m_startAcked[i])
 		{
 			m_startAcked[i] = TRUE;
-			if (msg->StartCheck.revision == kStartAckCannotStart)
-			{
-				// O75: it will not start (its map is missing): named now; the others have started, the match goes on
-				m_startCannot[i] = TRUE;
-				LanTest::joinLog("host: slot %d (%d.%d.%d.%d) cannot start (no map)", i, PRINTF_IP_AS_4_INTS(senderIP));
-			}
-			else
-			{
-				LanTest::joinLog("host: START acknowledged by slot %d (%d.%d.%d.%d)", i, PRINTF_IP_AS_4_INTS(senderIP));
-			}
+			LanTest::joinLog("host: START acknowledged by slot %d (%d.%d.%d.%d)", i, PRINTF_IP_AS_4_INTS(senderIP));
 		}
 	}
 }
@@ -952,10 +935,23 @@ void LANAPI::handleStartCheck( LANMessage *msg, UnsignedInt senderIP )
 			msg->StartCheck.revision, mine, m_currentGame->getOptionsRevision());
 		return;   // the options the host sends with every check bring this copy up to date
 	}
+	// TheSuperHackers @bugfix O76 READY also says that this computer can start: OnGameStart leaves without starting when
+	// the map is not here after the transfer. The map is here (in the map cache), or a transfer for this seat will bring
+	// it (its seat does not have it, and it is not an official map: WouldMapTransfer). Otherwise the answer is "cannot
+	// start: no map", and the host stops the start before anybody loads, naming this player (GUI:PlayerNoMap, the
+	// original's line for a player without the map).
+	const Int localSlot = m_currentGame->getLocalSlotNum();
+	const GameSlot *mySlot = localSlot >= 0 ? m_currentGame->getConstSlot(localSlot) : nullptr;
+	const Bool mapHere = TheMapCache->findMap(m_currentGame->getMap()) != nullptr;
+	const Bool transferComing = mySlot != nullptr && !mySlot->hasMap() && WouldMapTransfer(m_currentGame->getMap());
+	const Bool canStart = mySlot == nullptr || mapHere || transferComing;   // no seat (the watching admin): nothing to load
+	if (!canStart) {
+		LanTest::joinLog("player: start check, but the map %s is not here and no transfer comes: cannot start", m_currentGame->getMap().str());
+	}
 	LANMessage reply;
 	fillInLANMessage(&reply);
 	reply.messageType = LANMessage::MSG_START_READY;
-	reply.StartCheck.magic = LANStartMagic;
+	reply.StartCheck.magic = canStart ? LANStartMagic : LANStartNoMapMagic;
 	reply.StartCheck.digest = mine;
 	reply.StartCheck.revision = m_currentGame->getOptionsRevision();   // O64
 	wcslcpy(reply.StartCheck.gameName, m_currentGame->getName().str(), ARRAY_SIZE(reply.StartCheck.gameName));
@@ -964,7 +960,8 @@ void LANAPI::handleStartCheck( LANMessage *msg, UnsignedInt senderIP )
 
 void LANAPI::handleStartReady( LANMessage *msg, UnsignedInt senderIP )
 {
-	if (!m_startChecking || m_currentGame == nullptr || !m_currentGame->amIHost() || msg->StartCheck.magic != LANStartMagic
+	if (!m_startChecking || m_currentGame == nullptr || !m_currentGame->amIHost()
+		|| (msg->StartCheck.magic != LANStartMagic && msg->StartCheck.magic != LANStartNoMapMagic)   // O76
 		|| msg->StartCheck.digest != m_startDigest || m_currentGame->getName().compare(msg->StartCheck.gameName) != 0
 		|| msg->StartCheck.revision != m_currentGame->getOptionsRevision()) {   // O64
 		return;
@@ -975,7 +972,9 @@ void LANAPI::handleStartReady( LANMessage *msg, UnsignedInt senderIP )
 		if (slot != nullptr && slot->isHuman() && slot->getIP() == senderIP && !m_startReady[i])
 		{
 			m_startReady[i] = TRUE;
-			LanTest::joinLog("host: READY from slot %d (%d.%d.%d.%d)", i, PRINTF_IP_AS_4_INTS(senderIP));
+			m_startCannot[i] = msg->StartCheck.magic == LANStartNoMapMagic;   // O76
+			LanTest::joinLog("host: READY from slot %d (%d.%d.%d.%d)%s", i, PRINTF_IP_AS_4_INTS(senderIP),
+				m_startCannot[i] ? ": cannot start, no map" : "");
 		}
 	}
 }
