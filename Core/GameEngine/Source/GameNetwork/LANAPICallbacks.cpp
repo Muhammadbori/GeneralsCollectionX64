@@ -47,6 +47,7 @@
 #include "GameNetwork/LANAPICallbacks.h"
 #include "Common/GuardLink.h"
 #include "GameNetwork/LanRoom.h"
+#include "GameClient/LocalizedFallback.h"   // O71
 #include "GameNetwork/networkutil.h"
 
 LANAPI *TheLAN = nullptr;
@@ -350,6 +351,11 @@ void LANAPI::OnGameOptions( UnsignedInt playerIP, Int playerSlot, AsciiString op
 		{
 			// restore the options with us in so we can save prefs
 			ParseGameOptionsString(m_currentGame, oldOptions);
+			// TheSuperHackers @bugfix O71 (addendum) Said, not a silent return to the lobby
+			LanTest::joinLog("player: the host's list no longer has this computer: back to the lobby");
+			LanRoom::postNotice(TheGameText->FETCH_OR_SUBSTITUTE("GUI:LanRemovedFromRoom", localizedFallback(
+				L"You are no longer in the room: the host removed this computer (a kick, or it did not hear from it).",
+				L"\x0412\x044B \x0431\x043E\x043B\x044C\x0448\x0435 \x043D\x0435 \x0432 \x043A\x043E\x043C\x043D\x0430\x0442\x0435: \x0445\x043E\x0441\x0442 \x0443\x0431\x0440\x0430\x043B \x044D\x0442\x043E\x0442 \x043A\x043E\x043C\x043F\x044C\x044E\x0442\x0435\x0440 (\x0438\x0441\x043A\x043B\x044E\x0447\x0438\x043B \x0438\x043B\x0438 \x043D\x0435 \x043F\x043E\x043B\x0443\x0447\x0430\x043B \x043E\x0442 \x043D\x0435\x0433\x043E \x043E\x0442\x0432\x0435\x0442\x0430).")));
 			OnPlayerLeave(m_name);
 		}
 

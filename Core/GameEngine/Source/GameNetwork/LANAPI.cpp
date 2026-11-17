@@ -552,6 +552,7 @@ void LANAPI::update()
 
 			LANMessage *msg = (LANMessage *)(m_transport->m_inBuffer[i].data);
 			terminateStrings(msg);   // O33 (review 7): every text field of the message ends inside the message
+			noteHeardFrom(senderIP);   // O71: any packet counts as heard (HELLO, a request, a join try, chat, READY)
 			GuardLink::notePeer(senderIP, m_localIP);   // O30: every player heard from is checked now and then
 			//DEBUG_LOG(("LAN message type %s from %ls (%s@%s)", GetMessageTypeString(msg->messageType).str(),
 			//	msg->name, msg->userName, msg->hostName));
@@ -684,15 +685,7 @@ void LANAPI::update()
 	LanRoom::update(m_localIP);   // O31: observers (heartbeats, the host's list, the stream start)
 	// O70: the room's keep-alive every 2 s: the host's slot list (the joiners take the host for alive by it), a joiner's
 	// HELLO (the host takes the seat for alive by it)
-	if (!m_inLobby && m_currentGame != nullptr && !m_currentGame->isGameInProgress() && now - m_lastRoomBeat >= 2000)
-	{
-		m_lastRoomBeat = now;
-		if (AmIHost()) {
-			RequestGameOptions( GenerateGameOptionsString(), true );
-		} else {
-			RequestGameOptions( "HELLO", false, m_currentGame->getHostIP() );   // O71 (H8): to the host, not broadcast
-		}
-	}
+	pumpRoomBeat(now);
 	// Send out periodic I'm Here messages
 	if (now > s_resendDelta + m_lastResendTime)
 	{
@@ -772,7 +765,7 @@ void LANAPI::update()
 	{
 		// O70/O71: 30 s without the host's slot list (it comes every 2 s now: 15 lost in a row) instead of 160 s; not
 		// while a start is under way (the host's start check or countdown came in the last 30 s)
-		const Bool startUnderWay = m_startSeenMs != 0 && now - m_startSeenMs < 30000;
+		const Bool startUnderWay = m_startSeenMs != 0 && (Int)(now - m_startSeenMs) < 30000;
 		if ( !AmIHost() && !startUnderWay && (m_currentGame->getLastHeard() + 30000 < now) )
 		{
 			// We haven't heard from the host in a while.  Bail.
@@ -785,6 +778,8 @@ void LANAPI::update()
 			UnicodeString text;
 			text = TheGameText->fetch("LAN:HostNotResponding");
 			OnChat(UnicodeString::TheEmptyString, m_localIP, text, LANCHAT_SYSTEM);
+			LanRoom::postNotice(text);   // O71: the room is gone: the line shows in the lobby too
+			LanTest::joinLog("player: the host was silent for 30 s: back to the lobby");
 		}
 		else if ( AmIHost() && !IsStartPending() )   // O71: not during the start check and the countdown
 		{
@@ -797,7 +792,9 @@ void LANAPI::update()
 				// O70/O71: a joiner says HELLO every 2 s now: 30 s of silence (15 lost in a row; was 80 s), or a seat given at a
 				// join and never heard from after it for 10 s (its accept was lost and the joiner gave up: S41 hs11), frees it
 				const Bool silent = m_currentGame->getPlayerLastHeard(p) + 30000 < now;
-				const Bool unconfirmed = m_seatJoinedMs[p] != 0 && now - m_seatJoinedMs[p] > 10000;
+				// O71 (addendum): signed: the seat is given inside this update, after its "now" was read (S41 ww30_01/_04:
+				// now - joined wrapped round to about 4e9 and freed the seat 0-2 ms after its join)
+				const Bool unconfirmed = m_seatJoinedMs[p] != 0 && (Int)(now - m_seatJoinedMs[p]) > 10000;
 				if (m_currentGame->getIP(p) && (silent || unconfirmed))
 				{
 					m_seatJoinedMs[p] = 0;
@@ -1312,6 +1309,58 @@ void LANAPI::finishStart()
 	m_transport->update(); // force a send
 
 	OnGameStart();
+}
+
+void LANAPI::pumpRoomBeat(UnsignedInt now)
+{
+	// O70: the room's keep-alive every 2 s: the host's slot list (the joiners take the host for alive by it), a joiner's
+	// HELLO (the host takes the seat for alive by it)
+	if (!m_inLobby && m_currentGame != nullptr && !m_currentGame->isGameInProgress() && (Int)(now - m_lastRoomBeat) >= 2000)
+	{
+		m_lastRoomBeat = now;
+		if (AmIHost()) {
+			RequestGameOptions( GenerateGameOptionsString(), true );
+		} else {
+			RequestGameOptions( "HELLO", false, m_currentGame->getHostIP() );   // O71 (H8): to the host, not broadcast
+		}
+	}
+}
+
+void LANAPI::keepRoomAlive()
+{
+	// TheSuperHackers @bugfix O71 (addendum) A joiner that has its accept opens the room screen: update() does not run
+	// until that screen's init (LANbuttonPushed, set by OnGameJoin) and while the shell animates, so its first HELLO
+	// and the requests OnGameJoin queued waited for the screen. On a busy computer that took long enough for the host's
+	// 10 s rule (S41 ww30_02). The keep-alive goes on meanwhile, and the queue is sent; nothing is received here
+	// (update() does that, with the room's checks).
+	if (m_inLobby || m_currentGame == nullptr || m_currentGame->isGameInProgress() || m_transport == nullptr) {
+		return;
+	}
+	pumpRoomBeat(timeGetTime());
+	m_transport->doSend();
+}
+
+void LANAPI::noteHeardFrom(UnsignedInt senderIP)
+{
+	if (m_inLobby || m_currentGame == nullptr || m_currentGame->isGameInProgress() || senderIP == 0) {
+		return;
+	}
+	const UnsignedInt t = timeGetTime();
+	if (m_currentGame->amIHost())
+	{
+		for (Int p = 0; p < MAX_SLOTS; ++p)
+		{
+			if (m_currentGame->getIP(p) == senderIP && senderIP != m_localIP)
+			{
+				m_currentGame->setPlayerLastHeard(p, t);
+				m_seatJoinedMs[p] = 0;
+			}
+		}
+	}
+	else if (senderIP == m_currentGame->getHostIP())
+	{
+		m_currentGame->setLastHeard(t);
+	}
 }
 
 void LANAPI::noteHostView(const AsciiString &options)

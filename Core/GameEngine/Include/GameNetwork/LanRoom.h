@@ -199,4 +199,6 @@ namespace LanRoom
 	Bool takeAdminWatchedMatch();
 	/// A line for the screen's chat (removed, full, waiting, lost ...); FALSE when none.
 	Bool takeNotice(UnicodeString *text);
+	/// O71: a line for the LAN lobby's chat from LANAPI (this computer left its room without asking)
+	void postNotice(const UnicodeString &text);
 }
