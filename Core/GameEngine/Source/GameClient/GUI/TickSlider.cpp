@@ -73,6 +73,10 @@ namespace
 		std::vector<Int> markPositions;
 		DisplayString *valueString;
 		UnicodeString valueShown;
+		// O54: the first label shortened for the ticks ("Станд.") when its whole width hid every middle label
+		DisplayString *shortFirst;
+		Int shortEvery;     ///< the label step with the short first label; 0: none
+		Int shortForW;      ///< the track width it was made for (-1: not tried)
 		// dragging
 		Bool held;
 		Real dragX;      ///< the handle's centre (screen x) while held
@@ -100,7 +104,13 @@ namespace
 			if (in->valueString != nullptr) {
 				TheDisplayStringManager->freeDisplayString(in->valueString);
 			}
+			if (in->shortFirst != nullptr) {
+				TheDisplayStringManager->freeDisplayString(in->shortFirst);
+			}
 		}
+		in->shortFirst = nullptr;
+		in->shortEvery = 0;
+		in->shortForW = -1;
 		in->markStrings.clear();
 		in->markPositions.clear();
 		in->valueString = nullptr;
@@ -479,7 +489,7 @@ namespace
 	}
 
 	/// O28 (item 7): the step k of the shown labels (see tickDraw): 1 when all fit, count - 1 for the two ends alone.
-	Int labelEvery(const Geo &g, const Info *in, const SliderData *sd)
+	Int labelEvery(const Geo &g, const Info *in, const SliderData *sd, Int firstWidth = -1)
 	{
 		const Int count = (Int)in->markPositions.size();
 		if (count <= 2) {
@@ -496,7 +506,7 @@ namespace
 			for (Int i = 0; i < count && fits; i += k)
 			{
 				const Int mx = (Int)positionToX(g, sd, (Real)in->markPositions[i]);
-				const Int w = stringWidth(in->markStrings[i]);
+				const Int w = (i == 0 && firstWidth >= 0) ? firstWidth : stringWidth(in->markStrings[i]);
 				fits = mx - w / 2 >= lastRight + gap;
 				lastRight = mx + w / 2;
 			}
@@ -505,6 +515,52 @@ namespace
 			}
 		}
 		return count - 1;
+	}
+
+	/// TheSuperHackers @bugfix O54 When only the two end labels fit because the first one is wide (Russian "Стандартная" on
+	/// the camera sliders hid "450"), the first label is shortened for the ticks alone (its first letters and a dot, at
+	/// least three letters) as far as needed for an even subset to fit; the value above the handle keeps the whole text.
+	void makeShortFirst(const Geo &g, Info *in, const SliderData *sd)
+	{
+		const Int trackW = g.trackR - g.trackL;
+		if (in->shortForW == trackW) {
+			return;
+		}
+		if (in->shortFirst != nullptr && TheDisplayStringManager != nullptr) {
+			TheDisplayStringManager->freeDisplayString(in->shortFirst);
+		}
+		in->shortFirst = nullptr;
+		in->shortEvery = 0;
+		in->shortForW = trackW;
+		const Int count = (Int)in->markPositions.size();
+		if (count <= 2 || in->labels.empty() || TheDisplayStringManager == nullptr || labelEvery(g, in, sd) != count - 1) {
+			return;
+		}
+		const UnicodeString &full = in->labels[0];
+		const Int len = full.getLength();
+		DisplayString *ds = TheDisplayStringManager->newDisplayString();
+		if (ds == nullptr) {
+			return;
+		}
+		ds->setFont(in->font);
+		for (Int n = len - 1; n >= 3; --n)
+		{
+			UnicodeString part;
+			for (Int i = 0; i < n; ++i) {
+				part.concat(full.str()[i]);
+			}
+			part.trim();
+			part.concat(L".");
+			ds->setText(part);
+			const Int every = labelEvery(g, in, sd, stringWidth(ds));
+			if (every != count - 1)
+			{
+				in->shortFirst = ds;
+				in->shortEvery = every;
+				return;
+			}
+		}
+		TheDisplayStringManager->freeDisplayString(ds);
 	}
 
 	void tickDraw(GameWindow *window, WinInstanceData *instData)
@@ -543,7 +599,8 @@ namespace
 		std::vector<Bool> shown(count, FALSE);
 		if (g.showLabels && count > 0)
 		{
-			const Int every = labelEvery(g, in, sd);
+			makeShortFirst(g, in, sd);   // O54
+			const Int every = in->shortFirst != nullptr ? in->shortEvery : labelEvery(g, in, sd);
 			for (Int i = 0; i < count; i += every) {
 				shown[i] = TRUE;
 			}
@@ -555,9 +612,10 @@ namespace
 			TheDisplay->drawFillRect(mx, tickTop, 1 + in->fontH / 16, g.tickLen, kTick);
 			if (shown[i] && in->markStrings[i] != nullptr)
 			{
-				const Int w = stringWidth(in->markStrings[i]);
+				DisplayString *ds = (i == 0 && in->shortFirst != nullptr) ? in->shortFirst : in->markStrings[i];   // O54
+				const Int w = stringWidth(ds);
 				const Bool chosen = !in->continuous && in->markPositions[i] == sd->position;
-				in->markStrings[i]->draw(mx - w / 2, g.labelY, chosen && enabled ? kLabelChosen : kLabel, kDrop);
+				ds->draw(mx - w / 2, g.labelY, chosen && enabled ? kLabelChosen : kLabel, kDrop);
 			}
 		}
 
@@ -611,6 +669,9 @@ void TickSlider::attach(GameWindow *slider, GameFont *font, Bool continuous)
 		in->func = nullptr;
 		in->context = nullptr;
 		in->valueString = nullptr;
+		in->shortFirst = nullptr;
+		in->shortEvery = 0;
+		in->shortForW = -1;
 		in->built = FALSE;
 		in->builtMin = in->builtMax = in->builtCount = 0;
 		in->held = FALSE;

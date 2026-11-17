@@ -176,6 +176,7 @@ class MilesAudioManager : public AudioManager, public AudioDeviceListener
 		// TheSuperHackers @feature O47 The options' "listen" buttons: one 2D voice of its own
 		virtual Bool playPreviewSound( const void *wavBytes, UnsignedInt size, Real volume ) override;
 		virtual void stopPreviewSound() override;
+		virtual Bool previewMeter( Real *peak, Real *rms, UnsignedInt64 *frames ) override;   // O55
 
 		virtual void stopAudio( AudioAffect which ) override;
 		virtual void pauseAudio( AudioAffect which ) override;

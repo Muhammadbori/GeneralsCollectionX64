@@ -34,6 +34,7 @@
 #include "GameClient/GameText.h"
 #include "GameClient/LocalizedFallback.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <vector>
 
@@ -57,6 +58,10 @@ namespace
 	const char *const kTags[VoicePreview::UNIT_COUNT] = { "usa-dozer", "china-dozer", "gla-worker" };
 	const UnsignedInt kMaxFileBytes = 32u * 1024u * 1024u;
 	Int s_next[VoicePreview::UNIT_COUNT] = { 0, 0, 0 };
+	// O55: the preview playing now, for its meter line when it is replaced or the screen goes
+	Bool s_playing = FALSE;
+	AsciiString s_playingWhat;
+	Int s_playingMS = 0;
 
 	UnsignedInt be32(const unsigned char *p)
 	{
@@ -356,13 +361,25 @@ Bool VoicePreview::play(Int unit, const Packs::Pack *pack, UnicodeString *status
 		return FALSE;
 	}
 
-	// the unit's voice in the game: a 2D sound at the line's volume times the sound effects volume
+	// TheSuperHackers @bugfix O55 The unit's voice as in a match: a 2D sound at the line's volume times the user's sound
+	// effects volume (the Options slider). Not the sound volume of the moment: while the Options screen is open the shell
+	// map's script (ShellOptionsOpened) turns it to 5 % (0.72 x 0.05 = 0.036), so every preview played at about 0.03,
+	// about -50 dB after the device's volume curve: not heard.
 	const Int lengthMS = wavLengthMS(bytes);
-	const Real volume = info->m_volume * TheAudio->getVolume(AudioAffect_Sound);
+	const Real lineVolume = info->m_volume;
+	const Real soundVolume = TheAudio->getSystemSoundVolume();
+	const Real volume = lineVolume * soundVolume;
 	const Bool played = TheAudio->playPreviewSound(&bytes[0], (UnsignedInt)bytes.size(), volume);
-	logLine("%s: pack %s: line %d/%d %s: archive %s, file %s, %u bytes, %d ms, volume %.2f: %s", kTags[unit], packName(pack).str(),
-		index + 1, count, sound.str(), foundIn.str(), foundAs.str(), (unsigned)bytes.size(), lengthMS, volume,
+	logLine("%s: pack %s: line %d/%d %s: archive %s, file %s, %u bytes, %d ms, volume %.3f = line %.2f x sound %.2f (now %.3f, script %.2f): %s",
+		kTags[unit], packName(pack).str(), index + 1, count, sound.str(), foundIn.str(), foundAs.str(), (unsigned)bytes.size(), lengthMS,
+		volume, lineVolume, soundVolume, TheAudio->getVolume(AudioAffect_Sound), TheAudio->getScriptSoundVolume(),
 		played ? "PLAYED" : "NOT PLAYED (no audio device or an unknown format)");
+	if (played)
+	{
+		s_playing = TRUE;
+		s_playingWhat.format("%s: pack %s: line %d/%d %s: volume %.3f", kTags[unit], packName(pack).str(), index + 1, count, sound.str(), volume);
+		s_playingMS = lengthMS;
+	}
 	if (status != nullptr)
 	{
 		const UnicodeString unitName = textOf(kButtons[unit]);
@@ -378,8 +395,31 @@ Bool VoicePreview::play(Int unit, const Packs::Pack *pack, UnicodeString *status
 	return played;
 }
 
+void VoicePreview::logMeter(const char *what, Real peak, Real rms, UnsignedInt64 frames, UnsignedInt64 expectedFrames, Real systemSoundVolume)
+{
+	char peakText[32], rmsText[32], expected[32];
+	if (peak > 0.0f) snprintf(peakText, sizeof(peakText), "%.1f", 20.0 * log10((double)peak)); else strlcpy(peakText, "-inf", sizeof(peakText));
+	if (rms > 0.0f) snprintf(rmsText, sizeof(rmsText), "%.1f", 20.0 * log10((double)rms)); else strlcpy(rmsText, "-inf", sizeof(rmsText));
+	if (expectedFrames > 0) snprintf(expected, sizeof(expected), "%llu", (unsigned long long)expectedFrames); else strlcpy(expected, "?", sizeof(expected));
+	const Bool tooQuiet = systemSoundVolume >= 0.2f && peak < 0.01f;   // -40 dBFS
+	logLine("%s: out peak %s dBFS, rms %s dBFS, frames %llu of %s%s", what, peakText, rmsText, (unsigned long long)frames, expected,
+		tooQuiet ? ": TOO QUIET" : "");
+}
+
 void VoicePreview::stop()
 {
+	// O55: the meter of the preview that is replaced or ends with the screen
+	if (s_playing && TheAudio != nullptr)
+	{
+		Real peak = 0.0f, rms = 0.0f;
+		UnsignedInt64 frames = 0;
+		if (TheAudio->previewMeter(&peak, &rms, &frames)) {
+			logMeter(s_playingWhat.str(), peak, rms, frames, (UnsignedInt64)s_playingMS * 44100 / 1000, TheAudio->getSystemSoundVolume());
+		} else {
+			logLine("%s: no output meter on this audio device", s_playingWhat.str());
+		}
+	}
+	s_playing = FALSE;
 	if (TheAudio != nullptr) {
 		TheAudio->stopPreviewSound();
 	}

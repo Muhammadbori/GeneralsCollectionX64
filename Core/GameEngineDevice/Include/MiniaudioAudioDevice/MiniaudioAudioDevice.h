@@ -94,6 +94,8 @@ public:
 	virtual void set3DVolume(AudioVoice voice, Real volume) override;
 	virtual void set3DPosition(AudioVoice voice, const Coord3D &position) override;
 	virtual void debugVoiceValues(AudioVoice voice, AudioVoiceKind kind, Real *volume, Real *pan, Int *rate) const override;
+	virtual void resetVoiceMeter(AudioVoice voice) override;   ///< O55
+	virtual Bool readVoiceMeter(AudioVoice voice, Real *peak, Real *rms, UnsignedInt64 *frames) const override;
 
 	virtual Int fileLengthMS(const char *fileName) const override;
 	virtual void readSampleInfo(const void *fileBytes, AudioSampleInfo *info) const override;

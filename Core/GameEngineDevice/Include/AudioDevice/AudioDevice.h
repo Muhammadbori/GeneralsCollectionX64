@@ -158,6 +158,11 @@ public:
 	/// For -audioLog only: what the library reports for a started voice. 2D: volume, pan, rate; 3D: volume, rate;
 	/// streams: volume, pan. A value the kind does not have is left as it is.
 	virtual void debugVoiceValues(AudioVoice voice, AudioVoiceKind kind, Real *volume, Real *pan, Int *rate) const = 0;
+	/// TheSuperHackers @feature O55 A meter on what one voice hands to the output mix, after its gain: reset it before the
+	/// voice starts, read it when the sound ended or is replaced. 'peak' and 'rms' in full-scale units (1 = 0 dBFS),
+	/// 'frames' the output frames that carried sound. FALSE: the device has no meter (Miles).
+	virtual void resetVoiceMeter(AudioVoice /*voice*/) {}
+	virtual Bool readVoiceMeter(AudioVoice /*voice*/, Real * /*peak*/, Real * /*rms*/, UnsignedInt64 * /*frames*/) const { return FALSE; }
 
 	// --- files ---------------------------------------------------------------------------------
 	/// The length the library reports in whole milliseconds, or -1 when the file cannot be opened.

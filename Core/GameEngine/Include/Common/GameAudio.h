@@ -259,6 +259,12 @@ class AudioManager : public SubsystemInterface
 		virtual Bool playPreviewSound( const void * /*wavBytes*/, UnsignedInt /*size*/, Real /*volume*/ ) { return FALSE; }
 		/// Stops the preview and frees its voice and memory (also when it ended by itself).
 		virtual void stopPreviewSound() {}
+		/// TheSuperHackers @feature O55 The meter of the preview voice since it started (AudioDevice::readVoiceMeter).
+		virtual Bool previewMeter( Real * /*peak*/, Real * /*rms*/, UnsignedInt64 * /*frames*/ ) { return FALSE; }
+		/// O55: the user's sound effects volume (the Options slider) and what map scripts set over it (the shell map
+		/// turns it to 5 % while the Options screen is open).
+		Real getSystemSoundVolume() const { return m_systemSoundVolume; }
+		Real getScriptSoundVolume() const { return m_scriptSoundVolume; }
 
 		// To get a more 3-D feeling from the universe, we adjust the volume of the 3-D samples based
 		// on zoom.

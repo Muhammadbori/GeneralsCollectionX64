@@ -39,6 +39,7 @@
 /*---------------------------------------------------------------------------*/
 
 #include "Lib/BaseType.h"
+#include "GameClient/VoicePreview.h"
 #include "MilesAudioDevice/MilesAudioManager.h"
 
 #include "Common/AudioAffect.h"
@@ -139,12 +140,43 @@ Bool MilesAudioManager::playPreviewSound( const void *wavBytes, UnsignedInt size
 	m_previewSample = decoded;
 	m_previewBytes = copy;
 	m_device->prepare2D(voice, volume, 1.0f, 0.0f);
+	m_device->resetVoiceMeter(voice);   // O55
 	if (!m_device->start2D(voice, decoded))
 	{
 		stopPreviewSound();
 		return FALSE;
 	}
 	return TRUE;
+}
+
+Bool MilesAudioManager::previewMeter( Real *peak, Real *rms, UnsignedInt64 *frames )
+{
+	return m_previewVoice != 0 && m_device->readVoiceMeter(m_previewVoice, peak, rms, frames);
+}
+
+//-------------------------------------------------------------------------------------------------
+// TheSuperHackers @feature O55 -voiceMeter (tests): the output meter of the USA dozer's select voice in a match, written to
+// VoicePreview.log when the sound is released, to set beside the options' preview of the same line.
+namespace
+{
+	AudioVoice s_meteredVoice = 0;
+	AsciiString s_meteredInfo;
+	Int s_meteredLengthMS = 0;
+
+	Bool voiceMeterWanted()
+	{
+		static int s_state = -1;
+		if (s_state < 0)
+		{
+			s_state = 0;
+			for (int arg = 1; arg < __argc; ++arg) {
+				if (stricmp(__argv[arg], "-voiceMeter") == 0) {
+					s_state = 1;
+				}
+			}
+		}
+		return s_state == 1;
+	}
 }
 
 void MilesAudioManager::stopPreviewSound()
@@ -1190,6 +1222,16 @@ void MilesAudioManager::releaseMilesHandles( PlayingAudio *playing )
 	{
 		case PAT_Sample:
 		{
+			if (playing->m_voice && playing->m_voice == s_meteredVoice)
+			{
+				// O55 (-voiceMeter)
+				Real peak = 0.0f, rms = 0.0f;
+				UnsignedInt64 frames = 0;
+				if (m_device->readVoiceMeter(playing->m_voice, &peak, &rms, &frames)) {
+					VoicePreview::logMeter(s_meteredInfo.str(), peak, rms, frames, 0, getSystemSoundVolume());
+				}
+				s_meteredVoice = 0;
+			}
 			if (playing->m_voice) {
 				m_device->release(playing->m_voice, AVK_2D);
 				m_availableSamples.push_back(playing->m_voice);
@@ -2942,6 +2984,16 @@ void *MilesAudioManager::playSample( AudioEventRTS *event, AudioVoice sample )
 
 	// Init, end callback, volume, pitch shift and delay filter
 	m_device->prepare2D(sample, getEffectiveVolume(event), pitchShift, event->getDelay());
+	if (voiceMeterWanted() && event->getEventName().compareNoCase("DozerUSAVoiceSelect") == 0)
+	{
+		// O55: the in-match line, measured as the preview is
+		m_device->resetVoiceMeter(sample);
+		s_meteredVoice = sample;
+		s_meteredInfo.format("match: %s %s: line volume %.2f x shift %.2f x sound %.2f (system %.2f, script %.2f) = %.3f",
+			event->getEventName().str(), event->getFilename().str(), event->getVolume(), event->getVolumeShift(),
+			getVolume(AudioAffect_Sound), getSystemSoundVolume(), getScriptSoundVolume(), getEffectiveVolume(event));
+		s_meteredLengthMS = 0;
+	}
 
 	// Load the file in
 	void *fileBuffer = nullptr;
