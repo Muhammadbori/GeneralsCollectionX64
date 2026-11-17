@@ -247,9 +247,12 @@ namespace
 			admin.name = adminName;
 			s_peers.push_back(admin);
 		}
-		if (!meListed || s_peers.size() < 2)
+		// TheSuperHackers @bugfix O81 (row 47) A room observer alone in its room opens the channel too: a defeated player
+		// of the match may join it later (O59). It used to need a second observer, so a lone observer had no socket and
+		// never took a defeated player in (S41 def run: one room observer, no JOINED, the defeated player's text lost).
+		if (!meListed)
 		{
-			s_peers.clear();   // nobody to talk to (or not listed: never a channel)
+			s_peers.clear();   // not listed: never a channel
 			return;
 		}
 		std::sort(s_peers.begin(), s_peers.end(), [](const Peer &a, const Peer &b) { return a.ip < b.ip; });
@@ -291,7 +294,17 @@ namespace
 			{
 				UnicodeString name;
 				if (peer == nullptr && ip != s_peerLocalIP && ntohs(from.sin_port) == LanRoom::OBSERVER_CHAT_PORT
-					&& defeatedMatchPlayer(ip, &name))
+					&& !defeatedMatchPlayer(ip, &name))
+				{
+					// O81: said once per address in ObserverChat.log (a player who is not defeated, an unknown address)
+					static std::vector<UnsignedInt> s_refusedJoins;
+					if (std::find(s_refusedJoins.begin(), s_refusedJoins.end(), ip) == s_refusedJoins.end())
+					{
+						s_refusedJoins.push_back(ip);
+						chatLog("JOIN REFUSED (not a defeated player of this match)", ip, UnicodeString::TheEmptyString);
+					}
+				}
+				else if (peer == nullptr && ip != s_peerLocalIP && ntohs(from.sin_port) == LanRoom::OBSERVER_CHAT_PORT)
 				{
 					Peer joined;
 					joined.ip = ip;
