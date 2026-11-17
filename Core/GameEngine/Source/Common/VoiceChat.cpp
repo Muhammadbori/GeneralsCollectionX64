@@ -413,7 +413,7 @@ namespace
 	{
 		if (s_testTalkStartMs < 0) return FALSE;
 		const Int t = (Int)(now - s_sessionStartMs);
-		return t >= s_testTalkStartMs && t < s_testTalkStartMs + s_testTalkLengthMs;
+		return (Int)(t - s_testTalkStartMs) >= 0 && (Int)(t - s_testTalkStartMs) < (Int)s_testTalkLengthMs;   // O73: signed
 	}
 
 	void sendFrame(VoiceThread &vt, const Roster &r, const Short *pcm)

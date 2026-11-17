@@ -413,6 +413,8 @@ struct MiniaudioVoice
 	std::atomic<UnsignedInt> endGeneration;  ///< the generation of the sound now playing, read by the audio thread
 	std::atomic<ma_uint64> endedAt;  ///< O72: engine time + 1 when the audio thread saw the last sound end (0: none)
 	Real restartGapMs;               ///< O72: from that end to the start of the sound now playing (< 0: unknown)
+	UnsignedInt endPausedGeneration; ///< O73: the sound of this generation ended, then the voice was paused before the end
+	                                 ///< was delivered: delivered at resume (0: none)
 	bool playing;
 	bool paused;
 	bool ended;
@@ -477,6 +479,7 @@ struct MiniaudioDeviceState
 	bool resourceManagerReady;
 	ma_engine engine;
 	bool engineReady;
+	std::atomic<bool> measureGaps;   ///< O73: -audioLog: the restart gaps are measured
 	AudioDeviceListener *listener;
 
 	std::mutex lock;                 ///< the device lock
@@ -873,7 +876,9 @@ namespace
 	{
 		MiniaudioVoice *v = (MiniaudioVoice *)userData;
 		MiniaudioDeviceState *s = v->state;
-		v->endedAt.store(ma_engine_get_time_in_pcm_frames(&s->engine) + 1);   // O72 (the gap measurement)
+		if (s->measureGaps.load(std::memory_order_relaxed)) {
+			v->endedAt.store(ma_engine_get_time_in_pcm_frames(&s->engine) + 1);   // O72 (the gap measurement, -audioLog only)
+		}
 		{
 			std::lock_guard<std::mutex> guard(s->endQueueLock);
 			MiniaudioEnd e = { v, v->endGeneration.load(std::memory_order_acquire) };
@@ -941,6 +946,7 @@ namespace
 		v->endGeneration.store(v->generation);
 		v->endedAt.store(0);
 		v->restartGapMs = -1.0f;
+		v->endPausedGeneration = 0;
 		v->playing = false;
 		v->paused = false;
 		v->ended = false;
@@ -1082,6 +1088,9 @@ namespace
 	/// mix period.
 	void noteRestartGap(MiniaudioDeviceState *s, MiniaudioVoice *v)
 	{
+		if (!s->measureGaps.load(std::memory_order_relaxed)) {
+			return;   // O73: no cost without -audioLog
+		}
 		const ma_uint64 ended = v->endedAt.exchange(0);
 		const ma_uint64 now = engineTime(s);
 		v->restartGapMs = (ended != 0 && now + 1 >= ended) ? (Real)((double)(now + 1 - ended) * 1000.0 / kEngineRate) : -1.0f;
@@ -1103,8 +1112,16 @@ namespace
 			for (size_t i = 0; i < queued.size(); ++i)
 			{
 				MiniaudioVoice *v = queued[i].voice;
-				if (v->dead || !v->playing || v->paused || v->generation != queued[i].generation) {
+				if (v->dead || !v->playing || v->generation != queued[i].generation) {
 					continue;	// released or started again since: dropped, as Miles drops it
+				}
+				if (v->paused) {
+					// TheSuperHackers @bugfix O73 The sound ended, then the voice was paused before this delivery: the end was
+					// dropped and the sound never finished (no next loop or portion, no stop: the PlayingAudio and its voice
+					// stayed until the game stopped it, and resume() would have started it again from its beginning, as
+					// ma_sound_start does for a sound at its end). It is kept, and resume() delivers it.
+					v->endPausedGeneration = v->generation;
+					continue;
 				}
 				v->playing = false;
 				v->ended = true;
@@ -1279,6 +1296,7 @@ MiniaudioAudioDevice::MiniaudioAudioDevice()
 	m_state->endEvent = nullptr;
 	m_state->endThread = nullptr;
 	m_state->generationCounter = 0;
+	m_state->measureGaps.store(false);
 	m_state->quit.store(0);
 	m_state->listenerPosition.x = m_state->listenerPosition.y = m_state->listenerPosition.z = 0.0f;
 	m_state->listenerLook.x = 0.0f; m_state->listenerLook.y = 1.0f; m_state->listenerLook.z = 0.0f;
@@ -1586,6 +1604,11 @@ void MiniaudioAudioDevice::set3DOcclusion(AudioVoice voice, Bool useOcclusion, R
 	v->node.requestedVersion.fetch_add(1, std::memory_order_release);
 }
 
+void MiniaudioAudioDevice::setMeasureRestartGaps(Bool on)
+{
+	m_state->measureGaps.store(on ? true : false);
+}
+
 Real MiniaudioAudioDevice::restartGapMs(AudioVoice voice, AudioVoiceKind kind) const
 {
 	std::lock_guard<std::mutex> guard(m_state->lock);
@@ -1817,6 +1840,21 @@ void MiniaudioAudioDevice::resume(AudioVoice voice, AudioVoiceKind kind)
 	std::lock_guard<std::mutex> guard(s->lock);
 	MiniaudioVoice *v = toVoice(voice);
 	if (!v->paused || !v->soundReady) {
+		return;
+	}
+	if (v->endPausedGeneration != 0 && v->endPausedGeneration == v->generation)
+	{
+		// O73: it ended before the pause took it: not started again; its end goes to the end thread now
+		v->paused = false;
+		v->endPausedGeneration = 0;
+		{
+			std::lock_guard<std::mutex> q(s->endQueueLock);
+			MiniaudioEnd e = { v, v->generation };
+			s->endQueue.push_back(e);
+		}
+		if (s->endEvent) {
+			SetEvent(s->endEvent);
+		}
 		return;
 	}
 	const ma_uint64 now = engineTime(s);

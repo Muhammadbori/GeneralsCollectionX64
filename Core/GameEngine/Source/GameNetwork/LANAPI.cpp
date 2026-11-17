@@ -516,7 +516,8 @@ void LANAPI::update()
 		m_lastLoopMs = 0;
 	}
 
-	if( now > m_lastUpdate + LANAPIUpdateDelay)
+	// O73: every time test below is a signed difference: right across timeGetTime's wrap (every 49.7 days)
+	if( (Int)(now - m_lastUpdate) > (Int)LANAPIUpdateDelay)
 	{
 		m_lastUpdate = now;
 	}
@@ -554,7 +555,7 @@ void LANAPI::update()
 
 			LANMessage *msg = (LANMessage *)(m_transport->m_inBuffer[i].data);
 			terminateStrings(msg);   // O33 (review 7): every text field of the message ends inside the message
-			noteHeardFrom(senderIP);   // O71: any packet counts as heard (HELLO, a request, a join try, chat, READY)
+			noteHeardFrom(senderIP, msg->messageType);   // O71: a seat's room message counts as heard (O73: not lobby-wide ones)
 			GuardLink::notePeer(senderIP, m_localIP);   // O30: every player heard from is checked now and then
 			//DEBUG_LOG(("LAN message type %s from %ls (%s@%s)", GetMessageTypeString(msg->messageType).str(),
 			//	msg->name, msg->userName, msg->hostName));
@@ -689,7 +690,7 @@ void LANAPI::update()
 	// HELLO (the host takes the seat for alive by it)
 	pumpRoomBeat(now);
 	// Send out periodic I'm Here messages
-	if (now > s_resendDelta + m_lastResendTime)
+	if ((Int)(now - m_lastResendTime) > (Int)s_resendDelta)
 	{
 		m_lastResendTime = now;
 
@@ -730,7 +731,7 @@ void LANAPI::update()
 	LANPlayer *player = m_lobbyPlayers;
 	while (player)
 	{
-		if (player->getLastHeard() + s_resendDelta*2 < now)
+		if ((Int)(now - player->getLastHeard()) > (Int)(s_resendDelta*2))
 		{
 			// He's gone!
 			removePlayer(player);
@@ -749,7 +750,7 @@ void LANAPI::update()
 	LANGameInfo *game = m_games;
 	while (game)
 	{
-		if (game != m_currentGame && game->getLastHeard() + s_resendDelta*2 < now)
+		if (game != m_currentGame && (Int)(now - game->getLastHeard()) > (Int)(s_resendDelta*2))
 		{
 			// He's gone!
 			removeGame(game);
@@ -768,7 +769,7 @@ void LANAPI::update()
 		// O70/O71: 30 s without the host's slot list (it comes every 2 s now: 15 lost in a row) instead of 160 s; not
 		// while a start is under way (the host's start check or countdown came in the last 30 s)
 		const Bool startUnderWay = m_startSeenMs != 0 && (Int)(now - m_startSeenMs) < 30000;
-		if ( !AmIHost() && !startUnderWay && (m_currentGame->getLastHeard() + 30000 < now) )
+		if ( !AmIHost() && !startUnderWay && ((Int)(now - m_currentGame->getLastHeard()) > 30000) )
 		{
 			// We haven't heard from the host in a while.  Bail.
 			// Actually, fake a host leaving message. :)
@@ -797,7 +798,7 @@ void LANAPI::update()
 					continue;
 				// O70/O71: a joiner says HELLO every 2 s now: 30 s of silence (15 lost in a row; was 80 s), or a seat given at a
 				// join and never heard from after it for 10 s (its accept was lost and the joiner gave up: S41 hs11), frees it
-				const Bool silent = m_currentGame->getPlayerLastHeard(p) + 30000 < now;
+				const Bool silent = (Int)(now - m_currentGame->getPlayerLastHeard(p)) > 30000;   // O73: signed
 				// O71 (addendum): signed: the seat is given inside this update, after its "now" was read (S41 ww30_01/_04:
 				// now - joined wrapped round to about 4e9 and freed the seat 0-2 ms after its join)
 				const Bool unconfirmed = m_seatJoinedMs[p] != 0 && (Int)(now - m_seatJoinedMs[p]) > 10000;
@@ -834,7 +835,7 @@ void LANAPI::update()
 	}
 
 	// O45: a join with no answer yet asks again every second, until the accept, a denial or the 5 s timeout
-	if (m_pendingAction == ACT_JOIN && s_joinTries > 0 && now - s_joinSentMs >= kJoinRepeatMs && now + 300 < m_expiration)
+	if (m_pendingAction == ACT_JOIN && s_joinTries > 0 && now - s_joinSentMs >= kJoinRepeatMs && (Int)(m_expiration - now) > 300)
 	{
 		sendMessage(&s_joinRequest, s_joinRequestIP);
 		s_joinSentMs = now;
@@ -846,7 +847,7 @@ void LANAPI::update()
 	}
 
 	// Time out old actions
-	if (m_pendingAction != ACT_NONE && now > m_expiration)
+	if (m_pendingAction != ACT_NONE && (Int)(now - m_expiration) > 0)
 	{
 		switch (m_pendingAction)
 		{
@@ -888,14 +889,14 @@ void LANAPI::update()
 	pumpConvergence();  // O70
 
 	// send out "game starting" messages
-	if ( m_gameStartTime && m_gameStartSeconds && m_gameStartTime <= now )
+	if ( m_gameStartTime && m_gameStartSeconds && (Int)(now - m_gameStartTime) >= 0 )
 	{
 		// m_gameStartTime is when the next message goes out
 		// m_gameStartSeconds is how many seconds remain in the message
 
 		RequestGameStartTimer( m_gameStartSeconds );
 	}
-	else if (m_gameStartTime && m_gameStartTime <= now)
+	else if (m_gameStartTime && (Int)(now - m_gameStartTime) >= 0)
 	{
 //		DEBUG_LOG(("m_gameStartTime=%d, now=%d, m_gameStartSeconds=%d", m_gameStartTime, now, m_gameStartSeconds));
 		ResetGameStartTimer();
@@ -905,7 +906,7 @@ void LANAPI::update()
 	// Check for an MOTD every few seconds
 	static UnsignedInt lastMOTDCheck = 0;
 	static const UnsignedInt motdInterval = 30000;
-	if (now > lastMOTDCheck + motdInterval)
+	if ((Int)(now - lastMOTDCheck) > (Int)motdInterval)
 	{
 		checkMOTD();
 		lastMOTDCheck = now;
@@ -1351,9 +1352,21 @@ void LANAPI::keepRoomAlive()
 	m_transport->doSend();
 }
 
-void LANAPI::noteHeardFrom(UnsignedInt senderIP)
+void LANAPI::noteHeardFrom(UnsignedInt senderIP, Int messageType)
 {
 	if (m_inLobby || m_currentGame == nullptr || m_currentGame->isGameInProgress() || senderIP == 0) {
+		return;
+	}
+	// O73 (H9): the messages a player or host sends to its room; not the lobby-wide ones (announces, locations, files,
+	// the room observers' MSG_ROOM), which another instance on the same address could send for a player that is gone
+	switch (messageType)
+	{
+	case LANMessage::MSG_GAME_OPTIONS: case LANMessage::MSG_SET_ACCEPT: case LANMessage::MSG_MAP_AVAILABILITY:
+	case LANMessage::MSG_CHAT: case LANMessage::MSG_START_READY: case LANMessage::MSG_REQUEST_JOIN:
+	case LANMessage::MSG_JOIN_ACCEPT: case LANMessage::MSG_START_CHECK: case LANMessage::MSG_GAME_START_TIMER:
+	case LANMessage::MSG_INACTIVE:
+		break;
+	default:
 		return;
 	}
 	const UnsignedInt t = timeGetTime();
@@ -1424,7 +1437,7 @@ void LANAPI::pumpConvergence()
 	// host resets every accept by design, and then this one is not wanted any more; at most 30 s
 	if (m_acceptWanted)
 	{
-		if (m_hostSeesAccepted && m_hostViewMs > m_acceptLastSent) {
+		if (m_hostSeesAccepted && (Int)(m_hostViewMs - m_acceptLastSent) > 0) {   // O73: the order of two stamps, signed
 			m_acceptWanted = FALSE;
 		} else if (LanStartDigest(m_currentGame) != m_acceptDigest || (Int)(now - m_acceptSince) > 30000) {
 			m_acceptWanted = FALSE;
@@ -1452,7 +1465,7 @@ void LANAPI::pumpConvergence()
 		if (!m_optionPending[k]) {
 			continue;
 		}
-		if (m_hostSeesValue[k] == m_optionWanted[k] && m_hostViewMs > m_optionLastSent[k]) {
+		if (m_hostSeesValue[k] == m_optionWanted[k] && (Int)(m_hostViewMs - m_optionLastSent[k]) > 0) {
 			m_optionPending[k] = FALSE;
 		} else if ((Int)(now - m_optionSince[k]) > 5000) {
 			m_optionPending[k] = FALSE;

@@ -79,6 +79,7 @@ public:
 	virtual Bool setVoiceLooping(AudioVoice voice, AudioVoiceKind kind, Bool loop) override;     ///< O72
 	virtual void set3DOcclusion(AudioVoice voice, Bool useOcclusion, Real occlusion) override;   ///< O72
 	virtual Real restartGapMs(AudioVoice voice, AudioVoiceKind kind) const override;            ///< O72
+	virtual void setMeasureRestartGaps(Bool on) override;                                       ///< O73
 	virtual Int playingVoiceCount() const override;                                             ///< O72
 
 	virtual void prepare2D(AudioVoice voice, Real volume, Real pitchShift, Real delaySeconds) override;
