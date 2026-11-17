@@ -92,6 +92,7 @@ LANGameInfo::LANGameInfo()
 	m_next = nullptr;
 	m_isDirectConnect = false;
 	m_hostVerified = FALSE;   // O64
+	m_optionsRevision = 0;
 	//
 	for (Int i = 0; i< MAX_SLOTS; ++i)
 		setSlotPointer(i, &m_LANSlot[i]);

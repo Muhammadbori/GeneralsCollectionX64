@@ -1065,6 +1065,19 @@ AsciiString LanBuildIdentity()
 	return s_id;
 }
 
+UnsignedInt LanStartDigest(LANGameInfo *game)
+{
+	if (game == nullptr) {
+		return 0;
+	}
+	LANGameInfo canon;
+	canon.setName(game->getName());
+	if (ParseAsciiStringToGameInfo(&canon, GameInfoToAsciiString(game))) {
+		return canon.startDigest();
+	}
+	return game->startDigest();
+}
+
 Bool LanSameVersion(const GameInfo *game)
 {
 	return game != nullptr && game->getLanProtocol() == LANProtocolVersion && game->getLanBuild().compare(LanBuildIdentity()) == 0;
@@ -1083,7 +1096,7 @@ void LANAPI::RequestGameStart()
 	if (!m_startChecking)
 	{
 		m_startChecking = TRUE;
-		m_startDigest = m_currentGame->startDigest();
+		m_startDigest = LanStartDigest(m_currentGame);
 		m_startCheckSince = timeGetTime();
 		m_lastStartCheck = 0;
 		for (Int i = 0; i < MAX_SLOTS; ++i) {
@@ -1105,7 +1118,7 @@ void LANAPI::pumpStartCheck()
 		return;
 	}
 	const UnsignedInt now = timeGetTime();
-	const UnsignedInt digest = m_currentGame->startDigest();
+	const UnsignedInt digest = LanStartDigest(m_currentGame);
 	if (digest != m_startDigest)
 	{
 		// the room changed meanwhile: every answer again
@@ -1159,6 +1172,7 @@ void LANAPI::pumpStartCheck()
 		msg.StartCheck.magic = LANStartMagic;
 		msg.StartCheck.digest = digest;
 		wcslcpy(msg.StartCheck.gameName, m_currentGame->getName().str(), ARRAY_SIZE(msg.StartCheck.gameName));
+		msg.StartCheck.revision = m_currentGame->getOptionsRevision();   // O64
 		for (Int i = 0; i < MAX_SLOTS; ++i)
 		{
 			const LANGameSlot *slot = m_currentGame->getConstLANSlot(i);
@@ -1182,6 +1196,7 @@ void LANAPI::finishStart()
 	msg.StartCheck.magic = LANStartMagic;   // O62: the digest every player confirmed
 	msg.StartCheck.digest = m_startDigest;
 	wcslcpy(msg.StartCheck.gameName, m_currentGame->getName().str(), ARRAY_SIZE(msg.StartCheck.gameName));
+	msg.StartCheck.revision = m_currentGame->getOptionsRevision();   // O64
 	// O62: to everybody, and to each seated player once more (a player starts on the first START it gets)
 	sendMessage(&msg);
 	for (Int i = 0; i < MAX_SLOTS; ++i)
@@ -1235,6 +1250,20 @@ void LANAPI::RequestGameOptions( AsciiString gameOptions, Bool isPublic, Unsigne
 	fillInLANMessage( &msg );
 	msg.messageType = LANMessage::MSG_GAME_OPTIONS;
 	strlcpy(msg.GameOptions.options, gameOptions.str(), ARRAY_SIZE(msg.GameOptions.options));
+	// TheSuperHackers @bugfix O64 (H6 #4) The host's slot list carries a revision that grows with every change; a player
+	// ignores an older one that arrives late (it would roll its copy back after its READY)
+	msg.GameOptions.revisionMagic = 0;
+	msg.GameOptions.revision = 0;
+	if (m_currentGame->amIHost())
+	{
+		if (gameOptions.compare(m_currentGame->getLastOptionsSent()) != 0)
+		{
+			m_currentGame->setOptionsRevision(m_currentGame->getOptionsRevision() + 1);
+			m_currentGame->setLastOptionsSent(gameOptions);
+		}
+		msg.GameOptions.revisionMagic = LANProtocolMagic;
+		msg.GameOptions.revision = m_currentGame->getOptionsRevision();
+	}
 	sendMessage(&msg, ip);
 
 	m_lastGameopt = gameOptions;
@@ -1660,6 +1689,14 @@ void LANAPI::addPlayer( LANPlayer *player )
 
 Bool LANAPI::SetLocalIP( UnsignedInt localIP )
 {
+	// TheSuperHackers @bugfix O64 (H6 #5) Never while this computer hosts a room: its name holds the address it was made
+	// on, and every lobby drops an announce from another address. The LAN screen sets the address only when it opens
+	// (LanLobbyMenuInit), when no room is open; this keeps it so.
+	if (m_currentGame != nullptr && m_currentGame->amIHost() && localIP != m_localIP)
+	{
+		DEBUG_LOG(("LANAPI::SetLocalIP - not while hosting a room"));
+		return TRUE;
+	}
 	Bool retval = TRUE;
 	m_localIP = (LanTest::loopbackSlot() >= 0) ? LanTest::loopbackIP() : localIP;   // O26 test switch
 

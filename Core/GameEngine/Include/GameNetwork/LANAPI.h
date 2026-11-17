@@ -292,6 +292,8 @@ struct LANMessage
 		struct
 		{
 			char options[m_lanMaxOptionsLength+1];
+			UnsignedInt revisionMagic;   ///< O64 (H6 #4): LANProtocolMagic when the host sends its slot list
+			UnsignedInt revision;        ///< O64: grows with every change of the host's slot list
 		} GameOptions;
 
 		// FilesInfo is sent with FILES_INFO (O26)
@@ -332,11 +334,13 @@ struct LANMessage
 		struct
 		{
 			UnsignedInt magic;        ///< LANStartMagic
-			UnsignedInt digest;       ///< GameInfo::startDigest of the sender's copy of the room
+			UnsignedInt digest;       ///< LanStartDigest of the sender's copy of the room
 			WideChar gameName[g_lanGameNameLength+1];
+			UnsignedInt revision;     ///< O64 (H6 #4): the revision of the host's slot list it checks
 		} StartCheck;
 
 		static_assert(sizeof(Room) <= sizeof(GameInfo), "MSG_ROOM must not make LANMessage larger");
+		static_assert(sizeof(GameOptions) <= sizeof(GameInfo), "O64: the options' revision must not make LANMessage larger");
 		static_assert(sizeof(GuardData) <= sizeof(GameInfo), "MSG_GUARD_DATA must not make LANMessage larger");
 		static_assert(ARRAY_SIZE(GameOptions.options) > m_lanMaxOptionsLength, "GameOptions.options buffer must be larger than m_lanMaxOptionsLength");
 
@@ -365,6 +369,10 @@ static const Int LANProtocolVersion = 2;
 AsciiString LanBuildIdentity();
 /// O63: the room is this build's: the same protocol number and the same build identity.
 Bool LanSameVersion(const GameInfo *game);
+/// TheSuperHackers @bugfix O64 (H6 #3) The start digest of a room as its options carry it: the copy goes through the
+/// options string and back, so the host's raw map path and names and a player's parsed (portable, lower case) ones give
+/// the same number (GameInfo::startDigest of that copy).
+UnsignedInt LanStartDigest(LANGameInfo *game);
 static const UnsignedInt LANGuardDataMagic = 0x31445247;   ///< "GRD1" (O30)
 static const UnsignedInt LANRoomMagic = 0x324D4F52;        ///< "ROM2" (O31; O62: the room messages of protocol 1, so an older build's and this build's ignore each other)
 namespace LanFiles

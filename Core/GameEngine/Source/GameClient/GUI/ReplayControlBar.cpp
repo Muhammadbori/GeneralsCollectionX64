@@ -73,6 +73,10 @@ namespace
 	UnsignedInt s_rewindTarget = kNone;    ///< the restarted replay runs to this frame once its map is loaded
 	UnsignedInt s_rewindSinceMs = 0;
 	Bool s_reachedLive = FALSE;            ///< row 49: this followed replay was at its live point once
+	UnsignedInt s_runLastFrame = 0;        ///< O64 (H6 #6): a run that stops moving is ended
+	UnsignedInt s_runLastMoveMs = 0;
+	const UnsignedInt kRunStallMs = 15000;
+	const UnsignedInt kRestartFailMs = 60000;   ///< O64 (H6 #7): a restarted replay whose logic never runs
 
 	// what the panel shows now, to set its texts only when they change
 	Int s_shownSpeed = -2;
@@ -220,6 +224,8 @@ namespace
 	{
 		ReplayControl::setSpeed(ReplayControl::SPEED_MAX);
 		s_seekTarget = frame;
+		s_runLastFrame = TheGameLogic->getFrame();
+		s_runLastMoveMs = timeGetTime();
 		if (TheGameLogic->isGamePaused()) {
 			TheGameLogic->setGamePaused(FALSE);
 		}
@@ -249,6 +255,10 @@ namespace
 		}
 		const UnsignedInt now = TheGameLogic->getFrame();
 		const UnsignedInt total = totalFrames();
+		// O64 (H6 #6): a followed replay without data yet has no end to clamp to: no seek then
+		if (following() && total == 0) {
+			return FALSE;
+		}
 		if (total > 0 && frame > total && frame > now) {
 			frame = total > now ? total : now;
 		}
@@ -369,10 +379,10 @@ namespace
 		return line;
 	}
 
-	UnicodeString delayLine(UnsignedInt lagFrames)
+	UnicodeString delayLine(Int lagFrames)
 	{
 		UnicodeString s(L"-");
-		s.concat(ReplayControl::timeText(lagFrames));
+		s.concat(ReplayControl::timeText((UnsignedInt)(lagFrames > 0 ? lagFrames : 0)));   // O64: never below 0
 		return s;
 	}
 
@@ -1029,6 +1039,21 @@ void ReplayControl::update()
 				finishSeek();
 			}
 		}
+		else if (s_seekKind == SEEK_RUN || s_seekKind == SEEK_LIVE)
+		{
+			// O64 (H6 #6): a run whose frame stops moving (a followed stream without more data) ends, and the keys and
+			// the panel are free again
+			if (now != s_runLastFrame)
+			{
+				s_runLastFrame = now;
+				s_runLastMoveMs = timeGetTime();
+			}
+			else if (timeGetTime() - s_runLastMoveMs > kRunStallMs)
+			{
+				finishSeek();
+				TheInGameUI->message(text("GUI:ReplayBarSeekStopped", L"Seek stopped: there is no more data.", L"\x041F\x0435\x0440\x0435\x043C\x043E\x0442\x043A\x0430 \x043E\x0441\x0442\x0430\x043D\x043E\x0432\x043B\x0435\x043D\x0430: \x0434\x0430\x043B\x044C\x0448\x0435 \x0434\x0430\x043D\x043D\x044B\x0445 \x043D\x0435\x0442."));
+			}
+		}
 		else if (s_seekKind == SEEK_NONE && !s_reachedLive && following())
 		{
 			// O61 (row 49): a followed replay that starts behind its live point (an outside viewer coming into a running
@@ -1045,6 +1070,17 @@ void ReplayControl::update()
 				s_reachedLive = TRUE;
 			}
 		}
+	}
+
+	// O64 (H6 #7): a restarted replay whose logic never gets going: the seek is given up and the input is free again
+	if (inReplay && s_rewindTarget != kNone && timeGetTime() - s_rewindSinceMs > kRestartFailMs
+		&& (loading || !TheGameLogic->isInGame() || TheGameLogic->getFrame() == 0))
+	{
+		s_rewindTarget = kNone;
+		s_seekKind = SEEK_NONE;
+		ReplayFollow::setRestarting(FALSE);
+		setSpeed(s_speedBeforeSeek);
+		TheInGameUI->message(text("GUI:ReplayBarSeekFailed", L"The seek failed: the replay did not start again.", L"\x041F\x0435\x0440\x0435\x043C\x043E\x0442\x043A\x0430 \x043D\x0435 \x0443\x0434\x0430\x043B\x0430\x0441\x044C: \x0437\x0430\x043F\x0438\x0441\x044C \x043D\x0435 \x0437\x0430\x043F\x0443\x0441\x0442\x0438\x043B\x0430\x0441\x044C \x0441\x043D\x043E\x0432\x0430."));
 	}
 
 	if (!barWanted())

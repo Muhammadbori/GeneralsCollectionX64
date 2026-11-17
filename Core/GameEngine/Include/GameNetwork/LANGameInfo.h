@@ -102,6 +102,11 @@ public:
 	/// only by a seat of a running game. Only such a row is joined or observed.
 	Bool isHostVerified() const { return m_hostVerified; }
 	void setHostVerified( Bool verified ) { m_hostVerified = verified; }
+	/// O64 (H6 #4): the revision of the host's slot list (the host: the last it sent; a player: the newest it applied)
+	UnsignedInt getOptionsRevision() const { return m_optionsRevision; }
+	void setOptionsRevision( UnsignedInt revision ) { m_optionsRevision = revision; }
+	const AsciiString &getLastOptionsSent() const { return m_lastOptionsSent; }
+	void setLastOptionsSent( const AsciiString &options ) { m_lastOptionsSent = options; }
 	UnicodeString getName() { return m_gameName; }					///< Get the Name of the Game
 
 	// Convenience functions that interface with the LANPlayer held in the slot list
@@ -185,6 +190,8 @@ private:
 	UnicodeString m_gameName;														///< Game name.  @todo: are game names based off of host player names?
 	UnicodeString m_hostDisplayName;												///< O62: the host's name from his messages
 	Bool m_hostVerified;																///< O64
+	UnsignedInt m_optionsRevision;													///< O64
+	AsciiString m_lastOptionsSent;													///< O64
 	Bool m_isDirectConnect;															///< Is this game a direct connect game, or a LAN game?
 };
 

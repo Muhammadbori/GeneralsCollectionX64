@@ -841,7 +841,7 @@ void LANAPI::handleGameStart( LANMessage *msg, UnsignedInt senderIP )
 		if (msg->StartCheck.magic != LANStartMagic || m_currentGame->getName().compare(msg->StartCheck.gameName) != 0) {
 			return;
 		}
-		const UnsignedInt mine = m_currentGame->startDigest();
+		const UnsignedInt mine = LanStartDigest(m_currentGame);
 		if (mine != msg->StartCheck.digest)
 		{
 			LanTest::joinLog("player: START with digest %08X, mine %08X: not started", msg->StartCheck.digest, mine);
@@ -862,10 +862,11 @@ void LANAPI::handleStartCheck( LANMessage *msg, UnsignedInt senderIP )
 		|| msg->StartCheck.magic != LANStartMagic || m_currentGame->getName().compare(msg->StartCheck.gameName) != 0) {
 		return;
 	}
-	const UnsignedInt mine = m_currentGame->startDigest();
-	if (mine != msg->StartCheck.digest)
+	const UnsignedInt mine = LanStartDigest(m_currentGame);
+	if (mine != msg->StartCheck.digest || m_currentGame->getOptionsRevision() != msg->StartCheck.revision)   // O64: and the revision
 	{
-		LanTest::joinLog("player: start check digest %08X, mine %08X: no READY yet", msg->StartCheck.digest, mine);
+		LanTest::joinLog("player: start check digest %08X rev %u, mine %08X rev %u: no READY yet", msg->StartCheck.digest,
+			msg->StartCheck.revision, mine, m_currentGame->getOptionsRevision());
 		return;   // the options the host sends with every check bring this copy up to date
 	}
 	LANMessage reply;
@@ -873,6 +874,7 @@ void LANAPI::handleStartCheck( LANMessage *msg, UnsignedInt senderIP )
 	reply.messageType = LANMessage::MSG_START_READY;
 	reply.StartCheck.magic = LANStartMagic;
 	reply.StartCheck.digest = mine;
+	reply.StartCheck.revision = m_currentGame->getOptionsRevision();   // O64
 	wcslcpy(reply.StartCheck.gameName, m_currentGame->getName().str(), ARRAY_SIZE(reply.StartCheck.gameName));
 	sendMessage(&reply, senderIP);
 }
@@ -880,7 +882,8 @@ void LANAPI::handleStartCheck( LANMessage *msg, UnsignedInt senderIP )
 void LANAPI::handleStartReady( LANMessage *msg, UnsignedInt senderIP )
 {
 	if (!m_startChecking || m_currentGame == nullptr || !m_currentGame->amIHost() || msg->StartCheck.magic != LANStartMagic
-		|| msg->StartCheck.digest != m_startDigest || m_currentGame->getName().compare(msg->StartCheck.gameName) != 0) {
+		|| msg->StartCheck.digest != m_startDigest || m_currentGame->getName().compare(msg->StartCheck.gameName) != 0
+		|| msg->StartCheck.revision != m_currentGame->getOptionsRevision()) {   // O64
 		return;
 	}
 	for (Int i = 0; i < MAX_SLOTS; ++i)
@@ -906,6 +909,16 @@ void LANAPI::handleGameOptions( LANMessage *msg, UnsignedInt senderIP )
 {
 	if (!m_inLobby && m_currentGame && !m_currentGame->isGameInProgress())
 	{
+		// TheSuperHackers @bugfix O64 (H6 #4) An older slot list of the host (it arrived late) is ignored
+		if (senderIP != 0 && senderIP == m_currentGame->getHostIP() && msg->GameOptions.revisionMagic == LANProtocolMagic)
+		{
+			if (msg->GameOptions.revision < m_currentGame->getOptionsRevision())
+			{
+				LanTest::joinLog("player: slot list revision %u after %u: ignored", msg->GameOptions.revision, m_currentGame->getOptionsRevision());
+				return;
+			}
+			m_currentGame->setOptionsRevision(msg->GameOptions.revision);
+		}
 		int player;
 		for (player = 0; player < MAX_SLOTS; ++player)
 		{
