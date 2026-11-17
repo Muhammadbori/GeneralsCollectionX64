@@ -1228,7 +1228,7 @@ void MilesAudioManager::releaseMilesHandles( PlayingAudio *playing )
 				Real peak = 0.0f, rms = 0.0f;
 				UnsignedInt64 frames = 0;
 				if (m_device->readVoiceMeter(playing->m_voice, &peak, &rms, &frames)) {
-					VoicePreview::logMeter(s_meteredInfo.str(), peak, rms, frames, 0, getSystemSoundVolume());
+					VoicePreview::logMeter(s_meteredInfo.str(), peak, rms, frames, 0, getSystemSoundVolume(), isAudioMuted());
 				}
 				s_meteredVoice = 0;
 			}

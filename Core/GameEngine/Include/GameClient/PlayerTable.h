@@ -45,6 +45,7 @@
 
 class GameWindow;
 class GameSlot;
+class GameInfo;
 class Image;
 
 namespace PlayerTable
@@ -73,4 +74,22 @@ namespace PlayerTable
 	const Image *colorPictureOf(Int color, Color *tint);
 	/// O26: the army picture of a player template index (random emblem, or the general's side icon); nullptr: none.
 	const Image *armyPictureOf(Int playerTemplate);
+
+	//--- TheSuperHackers @feature O56 (row 44) Team groups ------------------------------------------------------------
+	// When a team is chosen, the players of one team stand together, apart from the others: teams 1, 2, 3, 4 in that
+	// order, then each player without a team alone (slot order), then the open and closed slots. A thin line parts the
+	// groups. Nobody in a team: the slot order, no lines (as before). Display only: slots, start places and the network
+	// messages stay as they are.
+
+	/// 'order' gets the slots in that order (all MAX_SLOTS); 'groupStart[k]' TRUE when the k-th starts a new group.
+	/// FALSE when no occupied slot has a team (then the slot order).
+	Bool teamOrder(const GameInfo *game, Int order[], Bool groupStart[]);
+	/// The lines of a table: a window over 'parent' (found again by 'idName'; it takes no input, clicks pass through)
+	/// that draws a thin line at each screen y in 'ys' from x0 to x1. count 0: no lines.
+	void showGroupLines(GameWindow *parent, const char *idName, const Int *ys, Int count, Int x0, Int x1);
+	/// The lobby table (skirmish and LAN game screens), every frame: the rows of the slots in team groups by moving the
+	/// rows' windows (their y only); a new order is applied only after it held for 1 s with no mouse input and while no
+	/// list of the table is open, so nothing moves under the cursor. 'columns[c][slot]' are the windows of a row (any
+	/// may be nullptr); their places when first seen are the rows' places.
+	void groupLobbyRows(const GameInfo *game, GameWindow *parent, GameWindow **columns[], Int columnCount);
 }

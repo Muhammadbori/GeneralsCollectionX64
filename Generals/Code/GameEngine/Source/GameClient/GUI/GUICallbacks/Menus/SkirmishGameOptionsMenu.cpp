@@ -1513,6 +1513,18 @@ void SkirmishGameOptionsMenuShutdown( WindowLayout *layout, void *userData )
 //-------------------------------------------------------------------------------------------------
 void SkirmishGameOptionsMenuUpdate( WindowLayout * layout, void *userData)
 {
+	// TheSuperHackers @feature O56 (row 44) The slots' rows in team groups (display only, PlayerTable::groupLobbyRows);
+	// the local player's name box goes with row 0
+	if (TheSkirmishGameInfo != nullptr && comboBoxPlayer[0] != nullptr)
+	{
+		static GameWindow *nameBox[MAX_SLOTS];
+		for (Int i = 0; i < MAX_SLOTS; ++i) {
+			nameBox[i] = nullptr;
+		}
+		nameBox[0] = textEntryPlayerName;
+		GameWindow **columns[] = { comboBoxPlayer, nameBox, comboBoxColor, comboBoxPlayerTemplate, comboBoxTeam };
+		PlayerTable::groupLobbyRows(TheSkirmishGameInfo, comboBoxPlayer[0]->winGetParent(), columns, (Int)ARRAY_SIZE(columns));
+	}
 	if (TheGameLogic->isInShellGame() && TheGameLogic->getFrame() == 1)
 	{
 		SignalUIInteraction(SHELL_SCRIPT_HOOK_SKIRMISH_ENTERED_FROM_GAME);

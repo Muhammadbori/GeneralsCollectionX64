@@ -612,6 +612,50 @@ void PopulateInGameDiplomacyPopup()
 		}
 	}
 
+	// TheSuperHackers @feature O56 (row 44) A thin line between the team groups (each player without a team alone); none
+	// when nobody is in a team
+	{
+		Int ys[MAX_SLOTS];
+		Int count = 0;
+		Bool anyTeam = FALSE;
+		for (Int r = 0; r < rowNum; ++r)
+		{
+			const GameSlot *slot = slotNumInRow[r] >= 0 ? TheGameInfo->getConstSlot(slotNumInRow[r]) : nullptr;
+			anyTeam = anyTeam || (slot != nullptr && slot->getTeamNumber() >= 0);
+		}
+		Int x0 = 100000, x1 = -100000;
+		for (Int r = 0; r < rowNum; ++r)
+		{
+			GameWindow *cells[4] = { staticTextPlayer[r], staticTextSide[r], staticTextTeam[r], staticTextStatus[r] };
+			Int top = 100000;
+			for (Int c = 0; c < 4; ++c)
+			{
+				if (cells[c] == nullptr) {
+					continue;
+				}
+				Int sx = 0, sy = 0, sw = 0, sh = 0;
+				cells[c]->winGetScreenPosition(&sx, &sy);
+				cells[c]->winGetSize(&sw, &sh);
+				x0 = min(x0, sx);
+				x1 = max(x1, sx + sw);
+				top = min(top, sy);
+			}
+			if (r == 0 || !anyTeam || top >= 100000) {
+				continue;
+			}
+			const GameSlot *slot = TheGameInfo->getConstSlot(slotNumInRow[r]);
+			const GameSlot *above = TheGameInfo->getConstSlot(slotNumInRow[r - 1]);
+			const Int team = slot != nullptr ? slot->getTeamNumber() : -1;
+			const Int teamAbove = above != nullptr ? above->getTeamNumber() : -1;
+			if (team < 0 || team != teamAbove) {
+				ys[count++] = top;
+			}
+		}
+		if (staticTextPlayer[0] != nullptr) {
+			PlayerTable::showGroupLines(staticTextPlayer[0]->winGetParent(), "PlayerTable.wnd:DiplomacyGroupLines", ys, x1 > x0 ? count : 0, x0, x1);
+		}
+	}
+
 	while (rowNum < MAX_SLOTS)
 	{
 		slotNumInRow[rowNum] = -1;

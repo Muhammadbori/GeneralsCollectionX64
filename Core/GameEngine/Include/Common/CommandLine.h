@@ -56,6 +56,11 @@ public:
 
 	// TheSuperHackers @feature True with -audioLog: the audio manager writes AudioEvents.log in the user data folder.
 	static bool isAudioLogEnabled();
+	/// TheSuperHackers @feature O57 TRUE when this program file's name contains "uitest" (a test build, as -guardTest's).
+	static bool isTestExe();
+	/// O57 (tests): -audioIgnoreFocus: the audio is not muted when the window loses the focus. Only a *uitest*.exe
+	/// honours it; the product exe mutes as always.
+	static bool isAudioIgnoreFocus();
 
 	// TheSuperHackers @feature True with -audioLenDump: after the audio subsystem is loaded the Miles audio manager writes
 	// AudioLengths.tsv (every .wav/.mp3 under Data\Audio and the length Miles reports for it) to the user data folder and the

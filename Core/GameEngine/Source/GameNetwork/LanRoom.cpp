@@ -449,7 +449,17 @@ namespace
 //-------------------------------------------------------------------------------------------------
 Int LanRoom::capacity(const LANGameInfo *game)
 {
-	const Int places = MAX_PEOPLE - humansInSlots(game);
+	// O56 (row 42): the player places of the map (the slots not closed) and the observer places make 12
+	Int playerPlaces = 0;
+	for (Int i = 0; game != nullptr && i < MAX_SLOTS; ++i)
+	{
+		const GameSlot *slot = game->getConstSlot(i);
+		if (slot != nullptr && slot->getState() != SLOT_CLOSED) {
+			++playerPlaces;
+		}
+	}
+	// never fewer places than the people a room had by the old rule (12 - humans in slots) already holds
+	const Int places = max(MAX_PEOPLE - playerPlaces, min((Int)s_hosted.size(), MAX_PEOPLE - humansInSlots(game)));
 	return places > MAX_OBSERVERS ? MAX_OBSERVERS : (places < 0 ? 0 : places);
 }
 
@@ -783,13 +793,30 @@ void LanRoom::cancelStarting()
 	}
 }
 
+static Int s_hostDelay = -1;   ///< O56 (row 43): the delay the host chose in the room; -1: Options.ini's
+
+void LanRoom::setHostDelay(Int seconds)
+{
+	s_hostDelay = clampDelay(seconds);
+}
+
+void LanRoom::resetHostDelay()
+{
+	s_hostDelay = -1;
+}
+
 void LanRoom::hostViewerRules(Int *delaySeconds, Bool *outsideAllowed)
 {
-	OptionPreferences pref;
-	OptionPreferences::const_iterator it = pref.find("LanWatchDelay");
-	*delaySeconds = it != pref.end() ? clampDelay(atoi(it->second.str())) : kDefaultDelay;
-	it = pref.find("LanAllowViewers");
-	*outsideAllowed = it == pref.end() || stricmp(it->second.str(), "no") != 0;
+	if (s_hostDelay >= 0) {
+		*delaySeconds = s_hostDelay;
+	} else {
+		OptionPreferences pref;
+		OptionPreferences::const_iterator it = pref.find("LanWatchDelay");
+		*delaySeconds = it != pref.end() ? clampDelay(atoi(it->second.str())) : kDefaultDelay;
+	}
+	// TheSuperHackers @tweak O56 (row 43) Outside viewers are always allowed ("people want to watch anyway"); an old
+	// Options.ini LanAllowViewers = no counts as yes.
+	*outsideAllowed = TRUE;
 }
 
 Bool LanRoom::viewerRulesOf(UnsignedInt hostIP, Int *delaySeconds, Bool *outsideAllowed)

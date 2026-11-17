@@ -326,6 +326,53 @@ bool CommandLine::isAudioLogEnabled()
 	return s_state == 1;
 }
 
+bool CommandLine::isTestExe()
+{
+	static int s_state = -1;
+	if (s_state < 0)
+	{
+		char path[_MAX_PATH];
+		const DWORD n = GetModuleFileNameA(nullptr, path, ARRAY_SIZE(path));
+		s_state = 0;
+		if (n > 0 && n < ARRAY_SIZE(path))
+		{
+			const char *name = strrchr(path, '\\');
+			name = name != nullptr ? name + 1 : path;
+			char lower[_MAX_PATH];
+			strlcpy(lower, name, ARRAY_SIZE(lower));
+			for (char *c = lower; *c != '\0'; ++c) {
+				*c = (char)tolower((unsigned char)*c);
+			}
+			s_state = strstr(lower, "uitest") != nullptr ? 1 : 0;
+		}
+	}
+	return s_state == 1;
+}
+
+bool CommandLine::isAudioIgnoreFocus()
+{
+	static int s_state = -1;
+	if (s_state < 0)
+	{
+		s_state = 0;
+		for (int arg = 1; arg < __argc && s_state == 0; ++arg) {
+			if (stricmp(__argv[arg], "-audioIgnoreFocus") == 0) {
+				s_state = 1;
+			}
+		}
+		if (s_state == 1 && !isTestExe()) {
+			s_state = 0;   // the product exe mutes as always
+		}
+	}
+	return s_state == 1;
+}
+
+// O57: -audioIgnoreFocus: see CommandLine::isAudioIgnoreFocus(); this entry only makes the option known.
+Int parseAudioIgnoreFocus(char *[], int)
+{
+	return 1;
+}
+
 bool CommandLine::isAudioLenDumpEnabled()
 {
 	static int s_state = -1;
@@ -2058,6 +2105,7 @@ static CommandLineParam paramsForStartup[] =
 	// TheSuperHackers @feature 2026 Do not read or write the registry keys of the game.
 	{ "-noRegistry", parseNoRegistry },
 	{ "-audioLog", parseAudioLog },
+	{ "-audioIgnoreFocus", parseAudioIgnoreFocus },   // O57 (tests, *uitest*.exe only)
 	{ "-stateTrace", parseStateTrace },
 	{ "-stateTraceCalls", parseStateTraceCalls },
 	{ "-audioLenDump", parseAudioLenDump },

@@ -52,5 +52,8 @@ namespace VoicePreview
 	/// O55: a meter line in VoicePreview.log: "<what>: out peak -8.2 dBFS, rms -21.0 dBFS, frames n of m", and
 	/// "TOO QUIET" when the peak is under -40 dBFS while the sound effects volume is at least 20 %. 'expectedFrames' 0:
 	/// not known.
-	void logMeter(const char *what, Real peak, Real rms, UnsignedInt64 frames, UnsignedInt64 expectedFrames, Real systemSoundVolume);
+	/// O57: 'muted': the press came while the window had lost the focus (all audio muted): the line says so instead of a
+	/// bare -inf, and no "TOO QUIET".
+	void logMeter(const char *what, Real peak, Real rms, UnsignedInt64 frames, UnsignedInt64 expectedFrames, Real systemSoundVolume,
+		Bool muted = FALSE);
 }
