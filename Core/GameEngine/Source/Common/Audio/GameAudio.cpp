@@ -269,8 +269,23 @@ namespace AudioLog
 		vwrite(tag, buf);
 	}
 
+	/// TheSuperHackers @bugfix O78 -audioLog in the product exe: no requests and no refusals (they name the sounds of
+	/// units the player may not see or hear, e.g. "why=shroud", with their place) and no place or owner of any sound
+	/// (pos=, obj=, drw=): the speakers give a direction, the log would give a map position. A *uitest*.exe logs all.
+	static Bool fullDetail()
+	{
+		static int s_state = -1;
+		if (s_state < 0) {
+			s_state = CommandLine::isTestExe() ? 1 : 0;
+		}
+		return s_state == 1;
+	}
+
 	void logEvent(const char *tag, AudioEventRTS *ev, const char *fmt, ...)
 	{
+		if (!fullDetail() && (strcmp(tag, "REQ") == 0 || strcmp(tag, "QUE") == 0 || strcmp(tag, "REJ") == 0)) {
+			return;
+		}
 		char head[384];
 		const AudioEventInfo *info = ev->getAudioEventInfo();
 		int n = _snprintf(head, sizeof(head), "ev=%s kind=%s h=%u prio=%d vol=%.3f pl=%d",
@@ -278,7 +293,7 @@ namespace AudioLog
 			info ? (int)info->m_priority : -1, ev->getVolume(), ev->getPlayerIndex());
 		if (n < 0 || n >= (int)sizeof(head))
 			n = (int)sizeof(head) - 1;
-		switch (ev->getOwnerType())
+		switch (fullDetail() ? ev->getOwnerType() : OT_INVALID)   // O78: no place in the product exe
 		{
 			case OT_Positional:
 			{
