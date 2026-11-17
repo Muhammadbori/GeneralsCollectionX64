@@ -43,6 +43,7 @@
 #include "Common/FramePacer.h"
 #include "Common/GameUtility.h"
 #include "Common/GlobalData.h"
+#include "Common/OptionPreferences.h"
 #include "Common/Module.h"
 #include "Common/Radar.h"
 #include "Common/RandomValue.h"
@@ -152,8 +153,42 @@ Real W3DView::getHeightAroundPos(Real x, Real y, Real terrainSampleSize) const
 
 //-------------------------------------------------------------------------------------------------
 //-------------------------------------------------------------------------------------------------
+//-------------------------------------------------------------------------------------------------
+// TheSuperHackers @bugfix O49 (row 37) The options' camera (Settings -> Controls: highest camera, camera pitch) acts in a
+// match only: not on the menus' shell map, and over the map script's default camera (doCameraSetDefault), which used
+// to set its own pitch; it follows a change made in the match's options at once.
+namespace
+{
+	Bool cameraOptionsApply()
+	{
+		return TheGameLogic != nullptr && TheGameLogic->isInGame() && !TheGameLogic->isInShellGame();
+	}
+}
+
+Bool W3DDrawEntireTerrain()
+{
+	if (TheGlobalData == nullptr) {
+		return FALSE;
+	}
+	if (TheGlobalData->m_drawEntireTerrain) {
+		return TRUE;
+	}
+	return cameraOptionsApply() && OptionPreferences::optionMaxCameraHeight() > OptionPreferences::partialTerrainMaxCameraHeight();
+}
+
+Real W3DView::baseMaxCameraHeight() const
+{
+	const Real option = cameraOptionsApply() ? OptionPreferences::optionMaxCameraHeight() : 0.0f;
+	return option > 0.0f ? option : TheGlobalData->m_maxCameraHeight;
+}
+
 W3DView::W3DView()
 {
+	m_haveDefaultView = FALSE;
+	m_defaultViewPitch = m_defaultViewAngle = 0.0f;
+	m_defaultViewHeightFactor = 1.0f;
+	m_optionsCameraInMatch = FALSE;
+	m_optionsCameraPitch = m_optionsCameraHeight = 0.0f;
 
 	m_3DCamera = nullptr;
 	m_2DCamera = nullptr;
@@ -670,7 +705,7 @@ Real W3DView::getCameraOffsetZ() const
 	}
 #endif
 
-	return m_pos.z + TheGlobalData->m_maxCameraHeight;
+	return m_pos.z + baseMaxCameraHeight();
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -761,7 +796,7 @@ void W3DView::updateCameraClipPlanes(const Matrix3D &transform)
 {
 	Real farZ;
 
-	if (TheGlobalData->m_drawEntireTerrain)
+	if (W3DDrawEntireTerrain())
 	{
 		farZ = 100000.0f;
 	}
@@ -1374,6 +1409,29 @@ void W3DView::update()
 {
 	//USE_PERF_TIMER(W3DView_updateView)
 	Bool didScriptedMovement = false;
+	// O49 (row 37): the options' camera at the start and the end of a match, and at once after a change in the match's
+	// options: the last default view again, and the pitch the new default
+	{
+		const Bool inMatch = cameraOptionsApply();
+		const Real pitch = inMatch ? OptionPreferences::optionCameraPitch() : 0.0f;
+		const Real height = inMatch ? OptionPreferences::optionMaxCameraHeight() : 0.0f;
+		if (inMatch != m_optionsCameraInMatch || pitch != m_optionsCameraPitch || height != m_optionsCameraHeight)
+		{
+			const Bool pitchChanged = pitch != m_optionsCameraPitch;
+			m_optionsCameraInMatch = inMatch;
+			m_optionsCameraPitch = pitch;
+			m_optionsCameraHeight = height;
+			if (m_haveDefaultView)
+			{
+				setDefaultView(m_defaultViewPitch, m_defaultViewAngle, m_defaultViewHeightFactor);
+				if (pitchChanged) {
+					setPitchToDefault();
+				}
+			}
+			m_cameraAreaConstraintsValid = false;
+			m_recalcCamera = true;
+		}
+	}
 #ifdef LOG_FRAME_TIMES
 	__int64 curTime64,freq64;
 	static __int64 prevTime64=0;
@@ -2255,8 +2313,14 @@ void W3DView::setDefaultView(Real pitch, Real angle, Real maxHeight)
 {
 	// MDC - we no longer want to rotate maps (design made all of them right to begin with)
 	//	m_defaultAngle = angle * WWMATH_PI/180.0f;
-	setDefaultPitch(pitch);
-	m_maxHeightAboveGround = TheGlobalData->m_maxCameraHeight*maxHeight;
+	m_haveDefaultView = TRUE;
+	m_defaultViewPitch = pitch;
+	m_defaultViewAngle = angle;
+	m_defaultViewHeightFactor = maxHeight;
+	// O49 (row 37): in a match the options' pitch over the game's (and the map script's)
+	const Real optionPitch = cameraOptionsApply() ? OptionPreferences::optionCameraPitch() : 0.0f;
+	setDefaultPitch(optionPitch > 0.0f ? DEG_TO_RADF(optionPitch) : pitch);
+	m_maxHeightAboveGround = baseMaxCameraHeight()*maxHeight;
 	if (m_minHeightAboveGround > m_maxHeightAboveGround)
 		m_maxHeightAboveGround = m_minHeightAboveGround;
 }
@@ -3725,7 +3789,7 @@ void W3DView::Add_Camera_Shake (const Coord3D & position,float radius,float dura
 
 bool W3DView::getDesiredTerrainDrawSize(ICoord2D &dimensions) const
 {
-	if (TheGlobalData && TheGlobalData->m_drawEntireTerrain)
+	if (W3DDrawEntireTerrain())
 	{
 		DEBUG_ASSERTCRASH(TheTerrainRenderObject != nullptr, ("TheTerrainRenderObject is null"));
 

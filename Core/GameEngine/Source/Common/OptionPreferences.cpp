@@ -859,6 +859,12 @@ static Bool s_cameraDefaultsKept = FALSE;
 static Real s_defaultCameraPitch = 0.0f;
 static Real s_defaultMaxCameraHeight = 0.0f;
 static Real s_defaultCameraRotateSpeed = 0.0f;
+static Real s_optionCameraPitch = 0.0f;       ///< O49: 0 = the game's own
+static Real s_optionMaxCameraHeight = 0.0f;   ///< O49: 0 = the game's own
+
+Real OptionPreferences::optionCameraPitch() { return s_optionCameraPitch; }
+Real OptionPreferences::optionMaxCameraHeight() { return s_optionMaxCameraHeight; }
+Real OptionPreferences::partialTerrainMaxCameraHeight() { return MAX_OPTION_CAMERA_HEIGHT_PARTIAL_TERRAIN; }
 
 void OptionPreferences::applyCameraOverrides(Bool resetAbsentKeys)
 {
@@ -893,30 +899,33 @@ void OptionPreferences::applyCameraOverrides(Bool resetAbsentKeys)
 		{
 			DEBUG_LOG(("Options.ini CameraPitch %f is outside %f..%f, using %f", value, MIN_OPTION_CAMERA_PITCH, MAX_OPTION_CAMERA_PITCH, pitch));
 		}
-		TheWritableGlobalData->m_cameraPitch = pitch;
+		s_optionCameraPitch = pitch;   // O49: applied by W3DView in a match, not to the shell's camera
 	}
 	else if (resetAbsentKeys)
 	{
-		TheWritableGlobalData->m_cameraPitch = s_defaultCameraPitch;
+		s_optionCameraPitch = 0.0f;
 	}
+	TheWritableGlobalData->m_cameraPitch = s_defaultCameraPitch;   // O49: an earlier build may have changed it
 
 	it = find("MaxCameraHeight");
 	if (it != end() && parseOptionReal(it->second, &value))
 	{
 		const Real lowest = max(MIN_OPTION_CAMERA_HEIGHT, TheGlobalData->m_minCameraHeight);
-		const Real highest = TheGlobalData->m_drawEntireTerrain
-			? MAX_OPTION_CAMERA_HEIGHT_ENTIRE_TERRAIN : MAX_OPTION_CAMERA_HEIGHT_PARTIAL_TERRAIN;
+		// O49 (row 37): no longer 350 without "Draw the entire terrain" (450 .. 1000 all gave 350): above that a match
+		// draws the whole terrain by itself (W3DDrawEntireTerrain)
+		const Real highest = MAX_OPTION_CAMERA_HEIGHT_ENTIRE_TERRAIN;
 		const Real height = clamp(lowest, value, max(lowest, highest));
 		if (height != value)
 		{
 			DEBUG_LOG(("Options.ini MaxCameraHeight %f is outside %f..%f, using %f", value, lowest, highest, height));
 		}
-		TheWritableGlobalData->m_maxCameraHeight = height;
+		s_optionMaxCameraHeight = height;   // O49: applied by W3DView in a match
 	}
 	else if (resetAbsentKeys)
 	{
-		TheWritableGlobalData->m_maxCameraHeight = s_defaultMaxCameraHeight;
+		s_optionMaxCameraHeight = 0.0f;
 	}
+	TheWritableGlobalData->m_maxCameraHeight = s_defaultMaxCameraHeight;
 }
 
 void OptionPreferences::getResolution(Int *xres, Int *yres)

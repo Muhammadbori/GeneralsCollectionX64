@@ -66,6 +66,7 @@
 #include "GameLogic/ScriptEngine.h"
 #include "W3DDevice/GameClient/W3DShaderManager.h"
 #include "W3DDevice/GameClient/W3DDisplay.h"
+#include "W3DDevice/GameClient/W3DView.h"
 #include "W3DDevice/GameClient/W3DPoly.h"
 #include "W3DDevice/GameClient/W3DScene.h"
 #include "W3DDevice/GameClient/W3DCustomScene.h"
@@ -1315,7 +1316,7 @@ void WaterRenderObjClass::Render(RenderInfoClass & rinfo)
 
 					if(m_useCloudLayer)
 					{
-						if (TheGlobalData && TheGlobalData->m_drawEntireTerrain)
+						if (W3DDrawEntireTerrain())   // O49
 							m_skyBox->Render(rinfo);
 						else
 						{

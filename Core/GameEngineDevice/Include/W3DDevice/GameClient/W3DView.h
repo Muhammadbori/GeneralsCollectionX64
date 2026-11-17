@@ -298,6 +298,12 @@ private:
 	Bool m_cameraAreaConstraintsValid; ///< If false, recalculates the camera area constraints in the next render update
 	Bool m_recalcCameraConstraintsAfterScrolling; ///< Recalculates the camera area constraints after the user has moved the camera
 	Bool m_recalcCamera; ///< Recalculates the camera transform in the next render update
+	// O49 (row 37): the last default view the game asked for, and the options' camera last applied
+	Bool m_haveDefaultView;
+	Real m_defaultViewPitch, m_defaultViewAngle, m_defaultViewHeightFactor;
+	Bool m_optionsCameraInMatch;
+	Real m_optionsCameraPitch, m_optionsCameraHeight;
+	Real baseMaxCameraHeight() const;   ///< the options' highest camera in a match, else GlobalData's
 	Bool m_clipPlanesIncludeSkyBox; ///< The current far clip plane was placed behind the skybox
 
 	Real getHeightAroundPos(Real x, Real y, Real terrainSampleSize = TERRAIN_SAMPLE_SIZE) const;
@@ -343,3 +349,6 @@ private:
 
 // EXTERNALS //////////////////////////////////////////////////////////////////////////////////////
 extern Real TheW3DFrameLengthInMsec;
+/// TheSuperHackers @bugfix O49 (row 37) Draw the whole terrain: the option, or in a match a highest camera above what the
+/// partial terrain drawing covers.
+Bool W3DDrawEntireTerrain();
