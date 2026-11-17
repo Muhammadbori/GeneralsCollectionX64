@@ -161,7 +161,10 @@ namespace
 		LANGameInfo *game = TheLAN != nullptr ? TheLAN->GetMyGame() : nullptr;
 		const std::vector<LanRoom::Observer> list = LanRoom::observersOf(roomHost());
 		UnicodeString head;
-		head.format(textOf(kObservers).str(), (Int)list.size(), LanRoom::capacity(game));
+		// O66: the admin watching from outside the seats is one of the observers here as in the lobby's column (he was left
+		// out of both numbers: "0/9" here and "1/10" in the lobby for the same room)
+		const Int admin = (game != nullptr && game->getHostObserves()) ? 1 : 0;
+		head.format(textOf(kObservers).str(), (Int)list.size() + admin, LanRoom::capacity(game) + admin);
 		drawLine(head, x + 4, y + 3, kHeader);
 		TheDisplay->drawLine(x + 1, y + rh + 1, x + w - 2, y + rh + 1, 1.0f, kFrame);
 		if (list.empty())
