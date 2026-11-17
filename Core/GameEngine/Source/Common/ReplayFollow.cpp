@@ -430,6 +430,27 @@ Bool ReplayFollow::mayRunFrame(UnsignedInt frame)
 	return TRUE;
 }
 
+UnsignedInt ReplayFollow::livePointFrame()
+{
+	if (!isOn() || !poll()) {
+		return 0;
+	}
+	const Int point = (Int)s_last.frame - s_delayFrames - s_reserveFrames;
+	return point > 0 ? (UnsignedInt)point : 0;
+}
+
+static Bool s_restarting = FALSE;   // O61
+
+void ReplayFollow::setRestarting(Bool restarting)
+{
+	s_restarting = restarting;
+}
+
+Bool ReplayFollow::restarting()
+{
+	return s_restarting;
+}
+
 UnsignedInt ReplayFollow::newestFrame()
 {
 	if (!isOn() || !poll()) {

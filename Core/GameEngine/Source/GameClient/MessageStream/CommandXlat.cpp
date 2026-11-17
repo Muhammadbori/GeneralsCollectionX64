@@ -3526,6 +3526,12 @@ GameMessageDisposition CommandTranslator::translateGameMessage(const GameMessage
         //--------------------------------------------------------------------------------------
 		case GameMessage::MSG_META_TOGGLE_FAST_FORWARD_REPLAY:
 		{
+			// TheSuperHackers @feature O61 (row 48) While a replay seek runs, the speed keys wait (ReplayControlBar.h)
+			if (ReplayControl::isSeeking())
+			{
+				disp = DESTROY_MESSAGE;
+				break;
+			}
 			if( TheGlobalData )
 			{
 #if !defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)//may be defined in GameCommon.h
@@ -3544,6 +3550,11 @@ GameMessageDisposition CommandTranslator::translateGameMessage(const GameMessage
 		case GameMessage::MSG_META_TOGGLE_PAUSE:
 		case GameMessage::MSG_META_TOGGLE_PAUSE_ALT:
 		{
+			if (ReplayControl::isSeeking())   // O61: a replay seek runs
+			{
+				disp = DESTROY_MESSAGE;
+				break;
+			}
 			if (!TheGameLogic->isInMultiplayerGame())
 			{
 				if (TheGameLogic->isGamePaused())
@@ -3564,6 +3575,11 @@ GameMessageDisposition CommandTranslator::translateGameMessage(const GameMessage
 		case GameMessage::MSG_META_STEP_FRAME:
 		case GameMessage::MSG_META_STEP_FRAME_ALT:
 		{
+			if (ReplayControl::isSeeking())   // O61: a replay seek runs
+			{
+				disp = DESTROY_MESSAGE;
+				break;
+			}
 			if (!TheGameLogic->isInMultiplayerGame())
 			{
 				TheGameLogic->setGamePaused(FALSE);

@@ -862,7 +862,7 @@ void LanRoom::pollStart()
 		}
 		return;
 	}
-	if (s_state == STATE_PLAYING && TheGameLogic != nullptr)
+	if (s_state == STATE_PLAYING && TheGameLogic != nullptr && !ReplayFollow::restarting())   // O61: not a rewind's restart
 	{
 		// O33: after the replay (back in the menus, wherever): follow mode off, no mirror, no relay
 		if (TheGameLogic->isInReplayGame()) {

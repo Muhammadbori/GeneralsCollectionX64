@@ -37,6 +37,7 @@
 #include "GameNetwork/LANAPICallbacks.h"
 #include "Common/GuardLink.h"
 #include "GameNetwork/LanRoom.h"
+#include "GameClient/ReplayControlBar.h"
 
 extern DWORD TheMessageTime;
 
@@ -104,6 +105,8 @@ void Win32GameEngine::update()
 	}
 	// O33 (review 8): an observer's stream replay starts here, outside the LAN screen's update
 	LanRoom::pollStart();
+	// O61 (row 48): a backward seek restarts the replay here, outside the client's update
+	ReplayControl::pollRewind();
 
 	extern HWND ApplicationHWnd;
 	if (ApplicationHWnd && ::IsIconic(ApplicationHWnd)) {
