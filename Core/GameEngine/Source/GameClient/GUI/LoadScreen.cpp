@@ -1343,13 +1343,10 @@ void MultiPlayerLoadScreen::init( GameInfo *game )
 	const Bool teamGrouped = PlayerTable::teamOrder(game, teamOrderOf, teamGroupStart);
 	Int groupLineRows[MAX_SLOTS];
 	Int groupLineCount = 0;
-	// Loop through and make the loadscreen look all good.
-	for (Int orderIndex = 0; orderIndex < MAX_SLOTS; ++orderIndex)
+	// Look up every row's windows first, in slot order: the fill below visits the slots in team order and writes
+	// row netSlot (not necessarily <= i), so all windows must exist before it starts (S39 fix: crash at Start).
+	for (i = 0; i < MAX_SLOTS; ++i)
 	{
-		i = teamOrderOf[orderIndex];
-		if (teamGrouped && teamGroupStart[orderIndex] && game->getConstSlot(i) != nullptr && game->getConstSlot(i)->isOccupied()) {
-			groupLineRows[groupLineCount++] = netSlot;   // a line above this row
-		}
 		// Load the Progress Bar
 		AsciiString winName;
 		winName.format( "MultiplayerLoadScreen.wnd:ProgressLoad%d",i);
@@ -1376,7 +1373,15 @@ void MultiPlayerLoadScreen::init( GameInfo *game )
 
 		winName.format( "MultiplayerLoadScreen.wnd:StaticTextTeam%d",i);
 		teamWin[i] = TheWindowManager->winGetWindowFromId( m_loadScreen,TheNameKeyGenerator->nameToKey( winName ));
+	}
 
+	// Loop through and make the loadscreen look all good.
+	for (Int orderIndex = 0; orderIndex < MAX_SLOTS; ++orderIndex)
+	{
+		i = teamOrderOf[orderIndex];
+		if (teamGrouped && teamGroupStart[orderIndex] && game->getConstSlot(i) != nullptr && game->getConstSlot(i)->isOccupied()) {
+			groupLineRows[groupLineCount++] = netSlot;   // a line above this row
+		}
 		// get the slot man!
 		GameSlot *slot = game->getSlot(i);
 		if (!slot || !slot->isOccupied())
