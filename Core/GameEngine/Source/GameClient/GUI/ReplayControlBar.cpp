@@ -47,6 +47,7 @@
 #include "GameClient/LocalizedFallback.h"
 #include "GameLogic/GameLogic.h"
 #include "GameNetwork/LanRoom.h"
+#include "Common/FrameShots.h"
 
 namespace
 {
@@ -220,6 +221,27 @@ namespace
 		return s_seekKind != SEEK_NONE || s_rewindRequest != kNone || s_rewindTarget != kNone;
 	}
 
+	/// O68: while a -uiScript plays, each seek's start and end with the play state, in <user data>ReplayBar.log
+	void seekLog(const char *format, ...)
+	{
+		if (!FrameShots::isUiScriptRunning() || TheGlobalData == nullptr) {
+			return;
+		}
+		char path[_MAX_PATH];
+		snprintf(path, sizeof(path), "%sReplayBar.log", TheGlobalData->getPath_UserData().str());
+		FILE *f = fopen(path, "a");
+		if (f == nullptr) {
+			return;
+		}
+		fprintf(f, "[%10u] ", (unsigned)timeGetTime());
+		va_list args;
+		va_start(args, format);
+		vfprintf(f, format, args);
+		va_end(args);
+		fputc('\n', f);
+		fclose(f);
+	}
+
 	//--- seeking ------------------------------------------------------------------------------------
 	/// Runs at Max to 'frame' (the logic pauses itself there; finishSeek decides what comes after).
 	void beginRun(UnsignedInt frame)
@@ -238,6 +260,7 @@ namespace
 	void finishSeek()
 	{
 		const Bool pause = s_pauseAtTarget;
+		seekLog("seek end at frame %u: %s", TheGameLogic->getFrame(), pause ? "paused (as before the seek)" : "playing (as before the seek)");
 		s_seekKind = SEEK_NONE;
 		s_seekTarget = 0;
 		s_catchUp = FALSE;
@@ -270,6 +293,8 @@ namespace
 		}
 		s_speedBeforeSeek = ReplayControl::speed();
 		s_pauseAtTarget = !live && (pauseAtTarget || TheGameLogic->isGamePaused());
+		seekLog("seek from frame %u to %u (%s): before it %s", now, frame, live ? "live" : (frame > now ? "forward" : "backward"),
+			TheGameLogic->isGamePaused() ? "paused" : "playing");
 		if (frame > now)
 		{
 			s_seekKind = live ? SEEK_LIVE : SEEK_RUN;
@@ -1021,7 +1046,11 @@ void ReplayControl::update()
 				finishSeek();
 			}
 		}
-		else if ((s_seekKind == SEEK_RUN || s_seekKind == SEEK_LIVE) && now >= s_seekTarget)
+		// TheSuperHackers @bugfix O68 Arrived only once the logic has paused itself at the target (GameLogic::preUpdate does
+		// it at the start of the NEXT update after the frame is reached): before, the panel resumed first and the logic then
+		// paused, so a seek started while playing ended paused
+		else if ((s_seekKind == SEEK_RUN || s_seekKind == SEEK_LIVE) && now >= s_seekTarget
+			&& (TheGameLogic->isGamePaused() || now > s_seekTarget))
 		{
 			Bool done = TRUE;
 			if (s_seekKind == SEEK_LIVE && following())
