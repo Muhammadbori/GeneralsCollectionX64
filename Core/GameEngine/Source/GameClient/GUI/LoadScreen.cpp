@@ -1336,9 +1336,20 @@ void MultiPlayerLoadScreen::init( GameInfo *game )
 	}
 
 	Int netSlot = 0;
+	// TheSuperHackers @feature O56 (row 44) The rows in team groups (PlayerTable::teamOrder): teams 1, 2, 3, 4, then each
+	// player without a team; nobody in a team: the slot order as before. m_playerLookup keeps every slot's row.
+	Int teamOrderOf[MAX_SLOTS];
+	Bool teamGroupStart[MAX_SLOTS];
+	const Bool teamGrouped = PlayerTable::teamOrder(game, teamOrderOf, teamGroupStart);
+	Int groupLineRows[MAX_SLOTS];
+	Int groupLineCount = 0;
 	// Loop through and make the loadscreen look all good.
-	for (i = 0; i < MAX_SLOTS; ++i)
+	for (Int orderIndex = 0; orderIndex < MAX_SLOTS; ++orderIndex)
 	{
+		i = teamOrderOf[orderIndex];
+		if (teamGrouped && teamGroupStart[orderIndex] && game->getConstSlot(i) != nullptr && game->getConstSlot(i)->isOccupied()) {
+			groupLineRows[groupLineCount++] = netSlot;   // a line above this row
+		}
 		// Load the Progress Bar
 		AsciiString winName;
 		winName.format( "MultiplayerLoadScreen.wnd:ProgressLoad%d",i);
@@ -1408,6 +1419,48 @@ void MultiPlayerLoadScreen::init( GameInfo *game )
 		m_playerLookup[i] = netSlot; // save our mapping so we can update progress correctly
 
 		netSlot++;
+	}
+
+	// O56 (row 44): the lines between the groups, over the rows' whole width
+	{
+		Int ys[MAX_SLOTS];
+		Int count = 0;
+		Int x0 = 100000, x1 = -100000;
+		for (Int g = 0; g < groupLineCount; ++g)
+		{
+			GameWindow *row = m_playerNames[groupLineRows[g]];
+			if (row == nullptr) {
+				continue;
+			}
+			Int sx = 0, sy = 0;
+			row->winGetScreenPosition(&sx, &sy);
+			ys[count++] = sy;
+		}
+		for (Int r = 0; r < netSlot; ++r)
+		{
+			GameWindow *cells[3] = { m_progressBars[r], m_playerNames[r], m_playerSide[r] };
+			for (Int c = 0; c < 3; ++c)
+			{
+				if (cells[c] == nullptr) {
+					continue;
+				}
+				Int sx = 0, sy = 0, sw = 0, sh = 0;
+				cells[c]->winGetScreenPosition(&sx, &sy);
+				cells[c]->winGetSize(&sw, &sh);
+				x0 = min(x0, sx);
+				x1 = max(x1, sx + sw);
+			}
+			if (teamWin[r] != nullptr)
+			{
+				Int sx = 0, sy = 0, sw = 0, sh = 0;
+				teamWin[r]->winGetScreenPosition(&sx, &sy);
+				teamWin[r]->winGetSize(&sw, &sh);
+				x1 = max(x1, sx + sw);
+			}
+		}
+		if (m_playerNames[0] != nullptr && count > 0 && x1 > x0) {
+			PlayerTable::showGroupLines(m_playerNames[0]->winGetParent(), "PlayerTable.wnd:LoadGroupLines", ys, count, x0, x1);
+		}
 	}
 
 	for(i = netSlot; i < MAX_SLOTS; ++i)

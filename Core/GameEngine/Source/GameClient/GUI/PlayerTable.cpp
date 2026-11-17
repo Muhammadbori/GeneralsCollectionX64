@@ -37,6 +37,10 @@
 #include "GameClient/GameWindowManager.h"
 #include "GameClient/Image.h"
 #include "GameNetwork/GameInfo.h"
+#include "GameClient/Mouse.h"
+
+#include <map>
+#include <vector>
 
 namespace
 {
@@ -404,6 +408,9 @@ void PlayerTable::applyLobbyRow(GameWindow *comboColor, GameWindow *comboPlayerT
 		Color tint = 0xFFFFFFFF;
 		const Image *image = observer ? nullptr : colorPicture(slot->getColor(), &tint);
 		GadgetComboBoxSetClosedImage(comboColor, image, tint, image != nullptr);
+		if (observer) {
+			GadgetComboBoxSetText(comboColor, UnicodeString(L"-"));   // O56: an observer has no colour (was "Ran", cut)
+		}
 	}
 	if (comboPlayerTemplate != nullptr)
 	{
@@ -413,7 +420,13 @@ void PlayerTable::applyLobbyRow(GameWindow *comboColor, GameWindow *comboPlayerT
 	if (comboTeam != nullptr)
 	{
 		const Image *pirate = picture(PICTURE_NO_TEAM);
-		if (slot->getTeamNumber() < 0 && !observer)
+		if (observer)
+		{
+			// O56: an observer has no team (was "Non", cut)
+			GadgetComboBoxSetClosedImage(comboTeam, nullptr, 0xFFFFFFFF, FALSE);
+			GadgetComboBoxSetText(comboTeam, UnicodeString(L"-"));
+		}
+		else if (slot->getTeamNumber() < 0)
 		{
 			GadgetComboBoxSetClosedImage(comboTeam, pirate, 0xFFFFFFFF, pirate != nullptr);
 		}
@@ -457,6 +470,276 @@ void PlayerTable::decorateRow(GameWindow *nameText, GameWindow *sideText, GameWi
 		}
 		setIcon(teamText, pirate, 0xFFFFFFFF, TRUE);
 	}
+}
+
+//-------------------------------------------------------------------------------------------------
+// O56 (row 44) team groups
+namespace
+{
+	struct GroupLines
+	{
+		std::vector<Int> ys;
+		Int x0, x1;
+	};
+	std::map<const GameWindow *, GroupLines> s_groupLines;
+	const Color kGroupLine = GameMakeColor(110, 190, 255, 230);
+
+	void drawGroupLines(GameWindow *window, WinInstanceData *)
+	{
+		std::map<const GameWindow *, GroupLines>::const_iterator it = s_groupLines.find(window);
+		if (it == s_groupLines.end() || TheDisplay == nullptr) {
+			return;
+		}
+		for (size_t i = 0; i < it->second.ys.size(); ++i) {
+			TheDisplay->drawFillRect(it->second.x0, it->second.ys[i] - 1, it->second.x1 - it->second.x0, 2, kGroupLine);
+		}
+	}
+
+	WindowMsgHandledType groupLinesSystem(GameWindow *window, UnsignedInt msg, WindowMsgData, WindowMsgData)
+	{
+		if (msg == GWM_DESTROY) {
+			s_groupLines.erase(window);
+		}
+		return MSG_IGNORED;
+	}
+
+	Bool slotOccupied(const GameSlot *slot)
+	{
+		return slot != nullptr && slot->isOccupied();
+	}
+
+	/// The lobby rows' state of the screen whose first window is 'key'.
+	struct LobbyGroups
+	{
+		const GameWindow *key;
+		enum { MAX_COLUMNS = 8 };
+		Int baseY[MAX_COLUMNS][MAX_SLOTS];
+		Int applied[MAX_SLOTS];
+		Int pending[MAX_SLOTS];
+		Bool pendingStarts[MAX_SLOTS];
+		Bool appliedStarts[MAX_SLOTS];
+		UnsignedInt pendingSince;
+		UnsignedInt lastInput;
+		ICoord2D lastMouse;
+	};
+	LobbyGroups s_lobby = { nullptr };
+}
+
+Bool PlayerTable::teamOrder(const GameInfo *game, Int order[], Bool groupStart[])
+{
+	Int rank[MAX_SLOTS];
+	Bool anyTeam = FALSE;
+	for (Int i = 0; i < MAX_SLOTS; ++i)
+	{
+		const GameSlot *slot = game != nullptr ? game->getConstSlot(i) : nullptr;
+		const Int team = slot != nullptr ? slot->getTeamNumber() : -1;
+		if (slotOccupied(slot) && team >= 0) {
+			rank[i] = team;                  // teams 1, 2, 3, 4 ...
+			anyTeam = TRUE;
+		} else if (slotOccupied(slot)) {
+			rank[i] = 1000 + i;              // each player without a team alone
+		} else {
+			rank[i] = 100000;                // open and closed slots last, one group
+		}
+		order[i] = i;
+	}
+	if (!anyTeam)
+	{
+		for (Int i = 0; i < MAX_SLOTS; ++i) {
+			groupStart[i] = FALSE;
+		}
+		return FALSE;
+	}
+	// stable insertion sort by rank
+	for (Int i = 1; i < MAX_SLOTS; ++i)
+	{
+		const Int s = order[i];
+		Int k = i;
+		while (k > 0 && rank[order[k - 1]] > rank[s]) {
+			order[k] = order[k - 1];
+			--k;
+		}
+		order[k] = s;
+	}
+	for (Int k = 0; k < MAX_SLOTS; ++k) {
+		groupStart[k] = k > 0 && rank[order[k]] != rank[order[k - 1]];
+	}
+	return TRUE;
+}
+
+void PlayerTable::showGroupLines(GameWindow *parent, const char *idName, const Int *ys, Int count, Int x0, Int x1)
+{
+	if (parent == nullptr || TheWindowManager == nullptr) {
+		return;
+	}
+	const Int id = (Int)TheNameKeyGenerator->nameToKey(AsciiString(idName));
+	GameWindow *lines = TheWindowManager->winGetWindowFromId(parent, id);
+	if (lines == nullptr)
+	{
+		if (count <= 0) {
+			return;
+		}
+		Int w = 0, h = 0;
+		parent->winGetSize(&w, &h);
+		WinInstanceData inst;
+		inst.init();
+		inst.m_style = GWS_USER_WINDOW;
+		inst.m_id = id;
+		// not enabled: a hit test passes it by (GameWindow::winPointInChild), so it takes no click
+		lines = TheWindowManager->winCreate(parent, 0, 0, 0, w, h, groupLinesSystem, &inst);
+		if (lines == nullptr) {
+			return;
+		}
+		lines->winSetWindowId(id);
+		lines->winSetDrawFunc(drawGroupLines);
+	}
+	GroupLines &g = s_groupLines[lines];
+	g.ys.assign(ys, ys + (count > 0 ? count : 0));
+	g.x0 = x0;
+	g.x1 = x1;
+}
+
+void PlayerTable::groupLobbyRows(const GameInfo *game, GameWindow *parent, GameWindow **columns[], Int columnCount)
+{
+	if (game == nullptr || parent == nullptr || columns == nullptr || columnCount <= 0) {
+		return;
+	}
+	columnCount = min(columnCount, (Int)LobbyGroups::MAX_COLUMNS);
+	const GameWindow *key = nullptr;
+	for (Int c = 0; c < columnCount && key == nullptr; ++c) {
+		key = columns[c] != nullptr ? columns[c][0] : nullptr;
+	}
+	if (key == nullptr) {
+		return;
+	}
+	LobbyGroups &g = s_lobby;
+	const UnsignedInt now = timeGetTime();
+	// a screen made anew (possibly at the same addresses) shows the slot order: its rows are not where this state put them
+	Bool fresh = g.key != key;
+	for (Int c = 0; c < columnCount && !fresh; ++c) {
+		for (Int k = 0; k < MAX_SLOTS && !fresh; ++k)
+		{
+			GameWindow *w = columns[c] != nullptr ? columns[c][g.applied[k]] : nullptr;
+			if (w != nullptr)
+			{
+				Int x = 0, y = 0;
+				w->winGetPosition(&x, &y);
+				fresh = y != g.baseY[c][k];
+			}
+		}
+	}
+	if (fresh)
+	{
+		// a new screen: its rows' places as the .wnd made them
+		g.key = key;
+		for (Int c = 0; c < columnCount; ++c) {
+			for (Int s = 0; s < MAX_SLOTS; ++s)
+			{
+				Int x = 0, y = 0;
+				GameWindow *w = columns[c] != nullptr ? columns[c][s] : nullptr;
+				if (w != nullptr) {
+					w->winGetPosition(&x, &y);
+				}
+				g.baseY[c][s] = y;
+			}
+		}
+		for (Int s = 0; s < MAX_SLOTS; ++s) {
+			g.applied[s] = g.pending[s] = s;
+			g.appliedStarts[s] = g.pendingStarts[s] = FALSE;
+		}
+		g.pendingSince = g.lastInput = now;
+		g.lastMouse.x = g.lastMouse.y = -1;
+	}
+
+	// mouse input: the pointer moved or a button is held
+	if (TheMouse != nullptr)
+	{
+		const MouseIO *m = TheMouse->getMouseStatus();
+		if (m != nullptr && (m->pos.x != g.lastMouse.x || m->pos.y != g.lastMouse.y || m->leftState == MBS_Down || m->rightState == MBS_Down))
+		{
+			g.lastMouse = m->pos;
+			g.lastInput = now;
+		}
+	}
+	// a list of the table that is open
+	Bool listOpen = FALSE;
+	for (Int c = 0; c < columnCount && !listOpen; ++c) {
+		for (Int s = 0; s < MAX_SLOTS && !listOpen; ++s)
+		{
+			GameWindow *w = columns[c] != nullptr ? columns[c][s] : nullptr;
+			if (w != nullptr && (w->winGetStyle() & GWS_COMBO_BOX) != 0)
+			{
+				GameWindow *list = GadgetComboBoxGetListBox(w);
+				listOpen = list != nullptr && !list->winIsHidden();
+			}
+		}
+	}
+
+	Int order[MAX_SLOTS];
+	Bool starts[MAX_SLOTS];
+	teamOrder(game, order, starts);
+	Bool changed = FALSE;
+	for (Int k = 0; k < MAX_SLOTS; ++k) {
+		changed = changed || order[k] != g.pending[k] || starts[k] != g.pendingStarts[k];
+	}
+	if (changed)
+	{
+		for (Int k = 0; k < MAX_SLOTS; ++k) {
+			g.pending[k] = order[k];
+			g.pendingStarts[k] = starts[k];
+		}
+		g.pendingSince = now;
+	}
+	Bool differs = FALSE;
+	for (Int k = 0; k < MAX_SLOTS; ++k) {
+		differs = differs || g.pending[k] != g.applied[k] || g.pendingStarts[k] != g.appliedStarts[k];
+	}
+	if (differs && !listOpen && now - g.pendingSince >= 1000 && now - g.lastInput >= 1000)
+	{
+		for (Int k = 0; k < MAX_SLOTS; ++k)
+		{
+			const Int s = g.pending[k];
+			for (Int c = 0; c < columnCount; ++c)
+			{
+				GameWindow *w = columns[c] != nullptr ? columns[c][s] : nullptr;
+				if (w != nullptr)
+				{
+					Int x = 0, y = 0;
+					w->winGetPosition(&x, &y);
+					w->winSetPosition(x, g.baseY[c][k]);
+				}
+			}
+			g.applied[k] = s;
+			g.appliedStarts[k] = g.pendingStarts[k];
+		}
+	}
+
+	// the lines between the applied groups, over the row's whole width
+	Int ys[MAX_SLOTS];
+	Int count = 0;
+	Int x0 = 100000, x1 = -100000;
+	for (Int k = 0; k < MAX_SLOTS; ++k)
+	{
+		const Int s = g.applied[k];
+		Int top = 100000;
+		for (Int c = 0; c < columnCount; ++c)
+		{
+			GameWindow *w = columns[c] != nullptr ? columns[c][s] : nullptr;
+			if (w == nullptr || w->winIsHidden()) {
+				continue;
+			}
+			Int sx = 0, sy = 0, sw = 0, sh = 0;
+			w->winGetScreenPosition(&sx, &sy);
+			w->winGetSize(&sw, &sh);
+			x0 = min(x0, sx);
+			x1 = max(x1, sx + sw);
+			top = min(top, sy);
+		}
+		if (g.appliedStarts[k] && top < 100000) {
+			ys[count++] = top;
+		}
+	}
+	showGroupLines(parent, "PlayerTable.wnd:GroupLines", ys, x1 > x0 ? count : 0, x0, x1);
 }
 
 const Image *PlayerTable::colorPictureOf(Int color, Color *tint)
