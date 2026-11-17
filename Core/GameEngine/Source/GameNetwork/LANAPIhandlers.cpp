@@ -536,6 +536,7 @@ void LANAPI::handleRequestJoin( LANMessage *msg, UnsignedInt senderIP )
 					newSlot.setIP(senderIP);
 					newSlot.setPort(NETWORK_BASE_PORT_NUMBER);
 					newSlot.setLastHeard(timeGetTime());
+					m_seatJoinedMs[player] = timeGetTime();   // O70: freed if the joiner is never heard from after this
 					newSlot.setSerial(msg->GameToJoin.serial);
 					m_currentGame->setSlot(player,newSlot);
 					DEBUG_LOG(("LANAPI::handleRequestJoin - added player %ls at ip 0x%08x to the game", msg->name, senderIP));
@@ -918,6 +919,10 @@ void LANAPI::handleGameOptions( LANMessage *msg, UnsignedInt senderIP )
 				return;
 			}
 			m_currentGame->setOptionsRevision(msg->GameOptions.revision);
+		}
+		// O70: what the host's list says about this joiner's seat (accept, map, army, colour, team, start place)
+		if (senderIP != 0 && senderIP == m_currentGame->getHostIP()) {
+			noteHostView(AsciiString(msg->GameOptions.options));
 		}
 		int player;
 		for (player = 0; player < MAX_SLOTS; ++player)

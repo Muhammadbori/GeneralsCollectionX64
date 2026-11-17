@@ -89,6 +89,13 @@ LANAPI::LANAPI() : m_transport(nullptr)
 	m_inLobby = true;
 	m_isInLANMenu = TRUE;
 	m_watchMatchLeave = FALSE;   // O60
+	m_convergeGame = nullptr;    // O70
+	m_lastRoomBeat = 0;
+	for (Int k = 0; k < MAX_SLOTS; ++k) m_seatJoinedMs[k] = 0;
+	m_acceptWanted = FALSE;
+	m_hostViewMs = 0;
+	m_mapLastSent = 0;
+	for (Int k = 0; k < CONVERGE_COUNT; ++k) m_optionPending[k] = FALSE;
 	m_startChecking = FALSE;     // O62
 	m_startDigest = 0;
 	m_startCheckSince = 0;
@@ -138,6 +145,13 @@ void LANAPI::init()
 	m_inLobby = true;
 	m_isInLANMenu = TRUE;
 	m_watchMatchLeave = FALSE;   // O60
+	m_convergeGame = nullptr;    // O70
+	m_lastRoomBeat = 0;
+	for (Int k = 0; k < MAX_SLOTS; ++k) m_seatJoinedMs[k] = 0;
+	m_acceptWanted = FALSE;
+	m_hostViewMs = 0;
+	m_mapLastSent = 0;
+	for (Int k = 0; k < CONVERGE_COUNT; ++k) m_optionPending[k] = FALSE;
 	m_startChecking = FALSE;     // O62
 	m_startDigest = 0;
 	m_startCheckSince = 0;
@@ -638,6 +652,17 @@ void LANAPI::update()
 		}
 	}
 	LanRoom::update(m_localIP);   // O31: observers (heartbeats, the host's list, the stream start)
+	// O70: the room's keep-alive every 2 s: the host's slot list (the joiners take the host for alive by it), a joiner's
+	// HELLO (the host takes the seat for alive by it)
+	if (!m_inLobby && m_currentGame != nullptr && !m_currentGame->isGameInProgress() && now - m_lastRoomBeat >= 2000)
+	{
+		m_lastRoomBeat = now;
+		if (AmIHost()) {
+			RequestGameOptions( GenerateGameOptionsString(), true );
+		} else {
+			RequestGameOptions( "HELLO", false );
+		}
+	}
 	// Send out periodic I'm Here messages
 	if (now > s_resendDelta + m_lastResendTime)
 	{
@@ -715,7 +740,8 @@ void LANAPI::update()
 	}
 	if ( m_currentGame && !m_currentGame->isGameInProgress() )
 	{
-		if ( !AmIHost() && (m_currentGame->getLastHeard() + s_resendDelta*16 < now) )
+		// O70: 16 s without the host's slot list (it comes every 2 s now) instead of 160 s
+		if ( !AmIHost() && (m_currentGame->getLastHeard() + 16000 < now) )
 		{
 			// We haven't heard from the host in a while.  Bail.
 			// Actually, fake a host leaving message. :)
@@ -736,8 +762,14 @@ void LANAPI::update()
 			{
 				if (m_currentGame->getIP(p) == m_localIP)
 					continue;
-				if (m_currentGame->getIP(p) && m_currentGame->getPlayerLastHeard(p) + s_resendDelta*8 < now)
+				// O70: a joiner says HELLO every 2 s now: 16 s of silence (was 80 s), or a seat given at a join and never heard
+				// from after it for 10 s (its accept was lost and the joiner gave up: S41 hs11), frees the seat
+				const Bool silent = m_currentGame->getPlayerLastHeard(p) + 16000 < now;
+				const Bool unconfirmed = m_seatJoinedMs[p] != 0 && now - m_seatJoinedMs[p] > 10000;
+				if (m_currentGame->getIP(p) && (silent || unconfirmed))
 				{
+					m_seatJoinedMs[p] = 0;
+					LanTest::joinLog("host: seat %d freed (%s)", p, unconfirmed ? "never heard from after its join" : "silent for 16 s");
 					LANMessage msg;
 					fillInLANMessage( &msg );
 					UnicodeString theStr;
@@ -781,6 +813,15 @@ void LANAPI::update()
 		case ACT_JOIN:
 			LanTest::joinLog("joiner: join TIMED OUT after %d tries", s_joinTries);
 			s_joinTries = 0;
+			{
+				// O70: the host may have seated this computer while every accept was lost (S41 hs11: a seat held for
+				// nobody, the room then "full"): it is told that nobody comes, so it frees the seat at once
+				LANMessage leave;
+				fillInLANMessage(&leave);
+				leave.messageType = LANMessage::MSG_REQUEST_GAME_LEAVE;
+				wcslcpy(leave.GameToLeave.gameName, s_joinRequest.GameToJoin.gameName, ARRAY_SIZE(leave.GameToLeave.gameName));
+				sendMessage(&leave, s_joinRequest.GameToJoin.gameIP);
+			}
 			OnGameJoin(RET_TIMEOUT, nullptr);
 			m_pendingAction = ACT_NONE;
 			m_currentGame = nullptr;
@@ -804,6 +845,7 @@ void LANAPI::update()
 	}
 
 	pumpStartCheck();   // O62
+	pumpConvergence();  // O70
 
 	// send out "game starting" messages
 	if ( m_gameStartTime && m_gameStartSeconds && m_gameStartTime <= now )
@@ -978,6 +1020,28 @@ void LANAPI::RequestGameAnnounce()
 }
 
 void LANAPI::RequestAccept()
+{
+	if (m_inLobby || !m_currentGame)
+		return;
+	// O70: wanted until the host's slot list shows it (pumpConvergence), for the room as it is now
+	if (!m_currentGame->amIHost())
+	{
+		if (m_convergeGame != m_currentGame)
+		{
+			for (Int j = 0; j < CONVERGE_COUNT; ++j) m_optionPending[j] = FALSE;
+			m_mapLastSent = 0;
+			m_hostViewMs = 0;
+		}
+		m_convergeGame = m_currentGame;
+		m_acceptWanted = TRUE;
+		m_acceptDigest = LanStartDigest(m_currentGame);
+		m_acceptSince = timeGetTime();
+		m_acceptLastSent = m_acceptSince;
+	}
+	sendAcceptOnly();
+}
+
+void LANAPI::sendAcceptOnly()
 {
 	if (m_inLobby || !m_currentGame)
 		return;
@@ -1218,6 +1282,101 @@ void LANAPI::finishStart()
 	OnGameStart();
 }
 
+void LANAPI::noteHostView(const AsciiString &options)
+{
+	if (m_currentGame == nullptr || m_currentGame->amIHost()) {
+		return;
+	}
+	LANGameInfo view;
+	view.setName(m_currentGame->getName());
+	if (!ParseAsciiStringToGameInfo(&view, options)) {
+		return;
+	}
+	for (Int i = 0; i < MAX_SLOTS; ++i)
+	{
+		const LANGameSlot *slot = view.getConstLANSlot(i);
+		if (slot != nullptr && slot->isHuman() && slot->getIP() == m_localIP)
+		{
+			if (m_convergeGame != m_currentGame)
+			{
+				m_convergeGame = m_currentGame;
+				m_acceptWanted = FALSE;
+				for (Int k = 0; k < CONVERGE_COUNT; ++k) m_optionPending[k] = FALSE;
+				m_mapLastSent = 0;
+			}
+			m_hostViewMs = timeGetTime();
+			m_hostSeesAccepted = slot->isAccepted();
+			m_hostSeesMap = slot->hasMap();
+			m_hostSeesValue[CONVERGE_COLOR] = slot->getColor();
+			m_hostSeesValue[CONVERGE_TEMPLATE] = slot->getPlayerTemplate();
+			m_hostSeesValue[CONVERGE_STARTPOS] = slot->getStartPos();
+			m_hostSeesValue[CONVERGE_TEAM] = slot->getTeamNumber();
+			return;
+		}
+	}
+}
+
+void LANAPI::pumpConvergence()
+{
+	if (m_inLobby || m_currentGame == nullptr || m_currentGame->amIHost() || m_currentGame->isGameInProgress()
+		|| m_convergeGame != m_currentGame || m_hostViewMs == 0) {
+		return;
+	}
+	const Int local = m_currentGame->getLocalSlotNum();
+	const LANGameSlot *mine = local >= 0 ? m_currentGame->getConstLANSlot(local) : nullptr;
+	if (mine == nullptr) {
+		return;
+	}
+	const UnsignedInt now = timeGetTime();
+	// accept: again every 0.7 s until the host's list (newer than the last send) shows it; a change of the room by the
+	// host resets every accept by design, and then this one is not wanted any more; at most 30 s
+	if (m_acceptWanted)
+	{
+		if (m_hostSeesAccepted && m_hostViewMs > m_acceptLastSent) {
+			m_acceptWanted = FALSE;
+		} else if (LanStartDigest(m_currentGame) != m_acceptDigest || now - m_acceptSince > 30000) {
+			m_acceptWanted = FALSE;
+		} else if (now - m_acceptLastSent >= 700) {
+			m_acceptLastSent = now;
+			LanTest::joinLog("player: accept again (the host's list does not show it)");
+			sendAcceptOnly();
+		}
+	}
+	// has the map: this computer's own check (GameInfo::setMapCRC/setMapSize) against what the host's list says
+	if (mine->hasMap() != m_hostSeesMap && now - m_mapLastSent >= 1500 && now - m_hostViewMs < 5000)
+	{
+		m_mapLastSent = now;
+		LanTest::joinLog("player: map status again (mine %d, the host's list %d)", mine->hasMap() ? 1 : 0, m_hostSeesMap ? 1 : 0);
+		RequestHasMap();
+	}
+	// army, colour, team, start place: again every 0.7 s for 5 s while the host's list shows another value (a value the
+	// host refuses, e.g. a colour taken meanwhile, stays refused after that)
+	static const char *const kKeys[CONVERGE_COUNT] = { "Color", "PlayerTemplate", "StartPos", "Team" };
+	for (Int k = 0; k < CONVERGE_COUNT; ++k)
+	{
+		if (!m_optionPending[k]) {
+			continue;
+		}
+		if (m_hostSeesValue[k] == m_optionWanted[k] && m_hostViewMs > m_optionLastSent[k]) {
+			m_optionPending[k] = FALSE;
+		} else if (now - m_optionSince[k] > 5000) {
+			m_optionPending[k] = FALSE;
+		} else if (now - m_optionLastSent[k] >= 700) {
+			m_optionLastSent[k] = now;
+			AsciiString request;
+			request.format("%s=%d", kKeys[k], m_optionWanted[k]);
+			LANMessage msg;
+			fillInLANMessage(&msg);
+			msg.messageType = LANMessage::MSG_GAME_OPTIONS;
+			strlcpy(msg.GameOptions.options, request.str(), ARRAY_SIZE(msg.GameOptions.options));
+			msg.GameOptions.revisionMagic = 0;
+			msg.GameOptions.revision = 0;
+			sendMessage(&msg, m_currentGame->getHostIP());
+			LanTest::joinLog("player: %s again", request.str());
+		}
+	}
+}
+
 void LANAPI::ResetGameStartTimer()
 {
 	m_gameStartTime = 0;
@@ -1251,6 +1410,29 @@ void LANAPI::RequestGameOptions( AsciiString gameOptions, Bool isPublic, Unsigne
 	if (!m_currentGame || gameOptions.isEmpty())
 	{
 		return;
+	}
+	// O70: a joiner's request of army, colour, team or start place: wanted until the host's slot list shows it
+	if (!isPublic && !m_currentGame->amIHost())
+	{
+		static const char *const kKeys[CONVERGE_COUNT] = { "Color", "PlayerTemplate", "StartPos", "Team" };
+		for (Int k = 0; k < CONVERGE_COUNT; ++k)
+		{
+			const Int keyLength = (Int)strlen(kKeys[k]);
+			if (strncmp(gameOptions.str(), kKeys[k], keyLength) == 0 && gameOptions.str()[keyLength] == '=')
+			{
+				if (m_convergeGame != m_currentGame) {
+					m_convergeGame = m_currentGame;
+					m_acceptWanted = FALSE;
+					for (Int j = 0; j < CONVERGE_COUNT; ++j) m_optionPending[j] = FALSE;
+					m_mapLastSent = 0;
+					m_hostViewMs = 0;
+				}
+				m_optionPending[k] = TRUE;
+				m_optionWanted[k] = atoi(gameOptions.str() + keyLength + 1);
+				m_optionSince[k] = timeGetTime();
+				m_optionLastSent[k] = m_optionSince[k];
+			}
+		}
 	}
 
 	LANMessage msg;

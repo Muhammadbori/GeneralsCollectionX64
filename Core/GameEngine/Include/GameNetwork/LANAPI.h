@@ -522,6 +522,26 @@ protected:
 	Bool								m_isInLANMenu;		///< true while we are in a LAN menu (lobby, game options, direct connect)
 	Bool								m_watchMatchLeave;	///< O60: the admin's quiet leave at Start is due (OnWatchMatchLeave)
 	Bool								m_startChecking;	///< O62: the host waits for every seated player's READY
+	// O70: a joiner's requests until the host's slot list shows them
+	enum { CONVERGE_COLOR, CONVERGE_TEMPLATE, CONVERGE_STARTPOS, CONVERGE_TEAM, CONVERGE_COUNT };
+	LANGameInfo *				m_convergeGame;
+	// O70: the room's keep-alive: the host's slot list and a joiner's HELLO every 2 s; a seat (or the host) silent for
+	// 16 s is gone, a seat never heard from after its join is freed after 10 s
+	UnsignedInt					m_lastRoomBeat;
+	UnsignedInt					m_seatJoinedMs[MAX_SLOTS];   ///< the host: a seat given and not yet heard from (0: none)
+	Bool								m_acceptWanted;
+	UnsignedInt					m_acceptDigest;
+	UnsignedInt					m_acceptLastSent;
+	UnsignedInt					m_acceptSince;
+	UnsignedInt					m_hostViewMs;
+	Bool								m_hostSeesAccepted;
+	Bool								m_hostSeesMap;
+	Int									m_hostSeesValue[CONVERGE_COUNT];
+	UnsignedInt					m_mapLastSent;
+	Bool								m_optionPending[CONVERGE_COUNT];
+	Int									m_optionWanted[CONVERGE_COUNT];
+	UnsignedInt					m_optionSince[CONVERGE_COUNT];
+	UnsignedInt					m_optionLastSent[CONVERGE_COUNT];
 	UnsignedInt					m_startDigest;		///< O62: GameInfo::startDigest of the host's room now
 	UnsignedInt					m_startCheckSince;
 	UnsignedInt					m_lastStartCheck;
@@ -570,6 +590,12 @@ protected:
 	void handleStartReady( LANMessage *msg, UnsignedInt senderIP );   ///< O62
 	void pumpStartCheck();   ///< O62: the host: options and START_CHECK again, START once every seated player is READY
 	void finishStart();      ///< O62: the host: the room's observers, START, the match
+	/// TheSuperHackers @bugfix O70 A joiner's room requests (accept, has-map, army/colour/team/start place) are sent
+	/// again until the host's slot list shows them (they were sent once: one lost packet left the host with the old
+	/// state, e.g. never accepted, and nothing repeated it).
+	void pumpConvergence();
+	void sendAcceptOnly();
+	void noteHostView(const AsciiString &options);   ///< what the host's slot list says about this joiner's seat
 	void handleGameOptions( LANMessage *msg, UnsignedInt senderIP );
 	void handleInActive( LANMessage *msg, UnsignedInt senderIP );
 
