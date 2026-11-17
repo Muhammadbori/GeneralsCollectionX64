@@ -99,8 +99,14 @@ namespace LanRoom
 	void hostRemove(UnsignedInt ip);                     ///< the host's remove button
 	void hostDropJoined(UnsignedInt ip);                 ///< the host accepted that person's join into a slot
 	void hostStart(LANGameInfo *game, UnsignedInt localIP);   ///< Start: the observers get the players' addresses
-	/// O33: this host's rules for outside viewers (Options.ini LanWatchDelay 10..180, default 60; LanAllowViewers)
+	/// O33: this host's rules for outside viewers: the delay chosen in the room (O56 row 43), else Options.ini
+	/// LanWatchDelay 10..180, default 60. O56 (row 43): outside viewers are always allowed (an old LanAllowViewers = no
+	/// is ignored).
 	void hostViewerRules(Int *delaySeconds, Bool *outsideAllowed);
+	/// O56 (row 43): the host's choice in the room (10..180 s), for this room and the match that starts from it; a new
+	/// room (LANAPI::RequestGameCreate) starts again from Options.ini.
+	void setHostDelay(Int seconds);
+	void resetHostDelay();
 
 	//--- players (every LAN match) ---------------------------------------------------------------
 	/// At the match start: serve the replay on the LAN address, live to the room's observers the host named at Start, delayed

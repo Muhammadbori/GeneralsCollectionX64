@@ -783,13 +783,30 @@ void LanRoom::cancelStarting()
 	}
 }
 
+static Int s_hostDelay = -1;   ///< O56 (row 43): the delay the host chose in the room; -1: Options.ini's
+
+void LanRoom::setHostDelay(Int seconds)
+{
+	s_hostDelay = clampDelay(seconds);
+}
+
+void LanRoom::resetHostDelay()
+{
+	s_hostDelay = -1;
+}
+
 void LanRoom::hostViewerRules(Int *delaySeconds, Bool *outsideAllowed)
 {
-	OptionPreferences pref;
-	OptionPreferences::const_iterator it = pref.find("LanWatchDelay");
-	*delaySeconds = it != pref.end() ? clampDelay(atoi(it->second.str())) : kDefaultDelay;
-	it = pref.find("LanAllowViewers");
-	*outsideAllowed = it == pref.end() || stricmp(it->second.str(), "no") != 0;
+	if (s_hostDelay >= 0) {
+		*delaySeconds = s_hostDelay;
+	} else {
+		OptionPreferences pref;
+		OptionPreferences::const_iterator it = pref.find("LanWatchDelay");
+		*delaySeconds = it != pref.end() ? clampDelay(atoi(it->second.str())) : kDefaultDelay;
+	}
+	// TheSuperHackers @tweak O56 (row 43) Outside viewers are always allowed ("people want to watch anyway"); an old
+	// Options.ini LanAllowViewers = no counts as yes.
+	*outsideAllowed = TRUE;
 }
 
 Bool LanRoom::viewerRulesOf(UnsignedInt hostIP, Int *delaySeconds, Bool *outsideAllowed)

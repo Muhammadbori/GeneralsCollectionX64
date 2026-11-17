@@ -1071,6 +1071,7 @@ void LANAPI::RequestGameOptions( AsciiString gameOptions, Bool isPublic, Unsigne
 
 void LANAPI::RequestGameCreate( UnicodeString gameName, Bool isDirectConnect )
 {
+	LanRoom::resetHostDelay();   // O56 (row 43): a new room starts from Options.ini's delay for outside viewers
 	// No games of the same name should exist...  Ignore that for now.
 	/// @todo: make sure LAN games with identical names don't crash things like in RA2.
 
