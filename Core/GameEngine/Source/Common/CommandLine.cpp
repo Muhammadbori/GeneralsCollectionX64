@@ -39,6 +39,7 @@
 #include "GameClient/TerrainVisual.h" // for TERRAIN_LOD_MIN definition
 #include "GameClient/GameText.h"
 #include "GameClient/ReplayControlBar.h"
+#include "GameClient/DefeatedPlayer.h"
 #include "Common/MapPacks.h"
 #include "Common/ReplayStream.h"
 #include "Common/VoiceChat.h"
@@ -365,6 +366,18 @@ bool CommandLine::isAudioIgnoreFocus()
 		}
 	}
 	return s_state == 1;
+}
+
+// O68: -testDefeatAtFrame <frame> (tests, *uitest*.exe only; DefeatedPlayer::configureTestDefeat)
+Int parseTestDefeatAtFrame(char *args[], int num)
+{
+	if (num > 1)
+	{
+		const Int frame = atoi(args[1]);
+		DefeatedPlayer::configureTestDefeat(frame > 0 ? (UnsignedInt)frame : 0);
+		return 2;
+	}
+	return 1;
 }
 
 // O57: -audioIgnoreFocus: see CommandLine::isAudioIgnoreFocus(); this entry only makes the option known.
@@ -2106,6 +2119,7 @@ static CommandLineParam paramsForStartup[] =
 	{ "-noRegistry", parseNoRegistry },
 	{ "-audioLog", parseAudioLog },
 	{ "-audioIgnoreFocus", parseAudioIgnoreFocus },   // O57 (tests, *uitest*.exe only)
+	{ "-testDefeatAtFrame", parseTestDefeatAtFrame },   // O68 (tests, *uitest*.exe only)
 	{ "-stateTrace", parseStateTrace },
 	{ "-stateTraceCalls", parseStateTraceCalls },
 	{ "-audioLenDump", parseAudioLenDump },

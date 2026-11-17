@@ -39,6 +39,7 @@
 #include "GameClient/LocalizedFallback.h"
 #include "GameNetwork/GameInfo.h"
 #include "GameClient/Mouse.h"
+#include "Common/FrameShots.h"
 
 #include <map>
 #include <vector>
@@ -709,8 +710,12 @@ void PlayerTable::showGroupLines(GameWindow *parent, const char *idName, const I
 		inst.init();
 		inst.m_style = GWS_USER_WINDOW;
 		inst.m_id = id;
-		// not enabled: a hit test passes it by (GameWindow::winPointInChild), so it takes no click
-		lines = TheWindowManager->winCreate(parent, 0, 0, 0, w, h, groupLinesSystem, &inst);
+		// not enabled: a hit test passes it by (GameWindow::winPointInChild), so it takes no click. O67: and only 1 x 1 pixel
+		// at the parent's corner: the tooltip search (winPointInAnyChild) ignores the enabled flag, and a window the size of
+		// the parent took every tooltip of the screen. Its draw function draws at the lines' screen points anyway.
+		(void)w;
+		(void)h;
+		lines = TheWindowManager->winCreate(parent, 0, 0, 0, 1, 1, groupLinesSystem, &inst);
 		if (lines == nullptr) {
 			return;
 		}
@@ -776,12 +781,25 @@ void PlayerTable::groupLobbyRows(const GameInfo *game, GameWindow *parent, GameW
 	}
 
 	// mouse input: the pointer moved or a button is held
-	if (TheMouse != nullptr)
+	// The real mouse (TheMouse: the device's state, every frame) or, while a -uiScript plays, the script's pointer and
+	// button (O67: it sends raw mouse messages, which TheMouse never sees, so its motion did not count)
 	{
-		const MouseIO *m = TheMouse->getMouseStatus();
-		if (m != nullptr && (m->pos.x != g.lastMouse.x || m->pos.y != g.lastMouse.y || m->leftState == MBS_Down || m->rightState == MBS_Down))
+		ICoord2D pos = { -1, -1 };
+		Bool held = FALSE;
+		Bool known = FrameShots::uiScriptMouse(&pos, &held);
+		if (!known && TheMouse != nullptr)
 		{
-			g.lastMouse = m->pos;
+			const MouseIO *m = TheMouse->getMouseStatus();
+			if (m != nullptr)
+			{
+				pos = m->pos;
+				held = m->leftState == MBS_Down || m->rightState == MBS_Down;
+				known = TRUE;
+			}
+		}
+		if (known && (pos.x != g.lastMouse.x || pos.y != g.lastMouse.y || held))
+		{
+			g.lastMouse = pos;
 			g.lastInput = now;
 		}
 	}

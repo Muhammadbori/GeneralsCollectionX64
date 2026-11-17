@@ -936,7 +936,11 @@ void positionStartSpots( GameInfo *myGame, GameWindow *buttonMapStartPositions[]
 	{
 		Int localIdx = myGame->getLocalSlotNum();
 		if (localIdx == -1)
-			localMapFname = AsciiString::TheEmptyString;
+		{
+			// O66: no seat, but the LAN room's admin watching from outside the seats has the map he chose
+			if (!myGame->amIHost())
+				localMapFname = AsciiString::TheEmptyString;
+		}
 		else
 		{
 			if (!myGame->getConstSlot(localIdx)->hasMap())

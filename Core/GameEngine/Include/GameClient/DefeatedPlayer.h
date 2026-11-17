@@ -48,4 +48,9 @@ namespace DefeatedPlayer
 	Bool allies(const Player *a, const Player *b);
 	void joinObservers();
 	void update();                          ///< every frame (InGameUI): the button, and the reset after the match
+	/// TheSuperHackers @feature O68 (test, *uitest*.exe only) -testDefeatAtFrame <frame>: at that logic frame of a live
+	/// network match this player surrenders, by the same network message as the quit menu's Surrender
+	/// (MSG_SELF_DESTRUCT with TRUE: his assets go to a living ally and he is killed), so every machine, room observer and
+	/// replay sees the same defeat. Ignored by the product exe.
+	void configureTestDefeat(UnsignedInt frame);
 }

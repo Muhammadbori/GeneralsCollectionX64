@@ -145,6 +145,7 @@ namespace
 	UnsignedInt s_uiTimeoutMs = 300000;
 	Int s_uiPhase = 0;
 	ICoord2D s_uiPointer = { 0, 0 };
+	Bool s_uiButtonDown = FALSE;   ///< O67: a script's mouse button is held (between its DOWN and UP)
 	Int s_uiScaleW = 0, s_uiScaleH = 0;
 	FILE *s_uiLog = nullptr;
 
@@ -248,6 +249,11 @@ namespace
 
 	void uiMouse(GameMessage::Type type)
 	{
+		if (type == GameMessage::MSG_RAW_MOUSE_LEFT_BUTTON_DOWN || type == GameMessage::MSG_RAW_MOUSE_RIGHT_BUTTON_DOWN) {
+			s_uiButtonDown = TRUE;
+		} else if (type == GameMessage::MSG_RAW_MOUSE_LEFT_BUTTON_UP || type == GameMessage::MSG_RAW_MOUSE_RIGHT_BUTTON_UP) {
+			s_uiButtonDown = FALSE;
+		}
 		GameMessage *msg = TheMessageStream->appendMessage(type);
 		msg->appendPixelArgument(s_uiPointer);
 		msg->appendIntegerArgument(0);
@@ -345,6 +351,16 @@ void FrameShots::setRevealHook(RevealFunc func)
 void FrameShots::setRowHook(RowFunc func)
 {
 	s_uiRow = func;
+}
+
+Bool FrameShots::uiScriptMouse(ICoord2D *pos, Bool *buttonDown)
+{
+	if (!isUiScriptRunning()) {
+		return FALSE;
+	}
+	*pos = s_uiPointer;
+	*buttonDown = s_uiButtonDown;
+	return TRUE;
 }
 
 Bool FrameShots::isUiScriptRunning()

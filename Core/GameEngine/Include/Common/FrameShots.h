@@ -48,6 +48,9 @@ public:
 	/// FrameShots.cpp (runUiScript) for the step format. Test only.
 	static void setUiScript(const char *path);
 	static Bool isUiScriptRunning(); ///< O27: a -uiScript is playing (its mouse button states are not the real mouse's)
+	/// O67: the pointer and the button of a -uiScript (it sends raw mouse messages; TheMouse keeps the real mouse's state):
+	/// FALSE when no script plays.
+	static Bool uiScriptMouse(ICoord2D *pos, Bool *buttonDown);
 	/// O28 (item 8): a screen that keeps windows on hidden pages (the settings sections) sets a function that shows the page
 	/// of a given window; a script step whose window is hidden calls it first. nullptr: none.
 	typedef Bool (*RevealFunc)(GameWindow *window);

@@ -22,7 +22,9 @@
 
 #include "GameClient/DefeatedPlayer.h"
 
+#include "Common/CommandLine.h"
 #include "Common/GameUtility.h"
+#include "Common/MessageStream.h"
 #include "Common/NameKeyGenerator.h"
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
@@ -231,8 +233,28 @@ void DefeatedPlayer::joinObservers()
 	}
 }
 
+namespace
+{
+	UnsignedInt s_testDefeatFrame = 0;   ///< O68: -testDefeatAtFrame (0: none)
+	Bool s_testDefeatSent = FALSE;
+}
+
+void DefeatedPlayer::configureTestDefeat(UnsignedInt frame)
+{
+	s_testDefeatFrame = frame;
+}
+
 void DefeatedPlayer::update()
 {
+	// O68 (test): the surrender at the given frame, once per run, through the normal network message
+	if (s_testDefeatFrame > 0 && !s_testDefeatSent && liveNetworkMatch() && CommandLine::isTestExe() && TheGameLogic != nullptr
+		&& TheGameLogic->getFrame() >= s_testDefeatFrame)
+	{
+		s_testDefeatSent = TRUE;
+		GameMessage *msg = TheMessageStream->appendMessage(GameMessage::MSG_SELF_DESTRUCT);
+		msg->appendBooleanArgument(TRUE);
+		DEBUG_LOG(("DefeatedPlayer: test surrender at frame %u", TheGameLogic->getFrame()));
+	}
 	if (!liveNetworkMatch())
 	{
 		if (s_joined)
