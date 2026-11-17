@@ -468,6 +468,9 @@ public:
 	void OnWatchMatchLeave();
 	/// O62 (H5 #1, #7): a start is under way: the countdown runs, or the host waits for the players' READY.
 	Bool IsStartPending() const { return m_gameStartTime != 0 || m_startChecking; }
+	/// O71: the room's keep-alive while update() does not run (the screen changes: LANbuttonPushed, a shell animation);
+	/// called by the LAN lobby menu's update instead of update()
+	void keepRoomAlive();
 	virtual void OnGameOptions( UnsignedInt playerIP, Int playerSlot, AsciiString options ) override;	///< Someone sent game options
 	virtual void OnGameCreate( ReturnType ret ) override;																							///< Your game is created
 	//virtual void OnSlotList( ReturnType ret, LANGameInfo *theGame );															///< Slotlist for a game in setup
@@ -529,6 +532,9 @@ protected:
 	// 16 s is gone, a seat never heard from after its join is freed after 10 s
 	UnsignedInt					m_lastRoomBeat;
 	UnsignedInt					m_seatJoinedMs[MAX_SLOTS];   ///< the host: a seat given and not yet heard from (0: none)
+	// O71: silence is 30 s; it is not counted while this computer's own loop did not run, nor during a start
+	UnsignedInt					m_lastLoopMs;        ///< the last LANAPI::update in a room
+	UnsignedInt					m_startSeenMs;       ///< a joiner: the host's last start check or countdown message
 	Bool								m_acceptWanted;
 	UnsignedInt					m_acceptDigest;
 	UnsignedInt					m_acceptLastSent;
@@ -594,6 +600,8 @@ protected:
 	/// again until the host's slot list shows them (they were sent once: one lost packet left the host with the old
 	/// state, e.g. never accepted, and nothing repeated it).
 	void pumpConvergence();
+	void pumpRoomBeat(UnsignedInt now);            ///< O71: the 2 s keep-alive (host: its list; joiner: HELLO to the host)
+	void noteHeardFrom(UnsignedInt senderIP);      ///< O71: any packet of a seat (host) or of the host (joiner) is a sign of life
 	void sendAcceptOnly();
 	void noteHostView(const AsciiString &options);   ///< what the host's slot list says about this joiner's seat
 	void handleGameOptions( LANMessage *msg, UnsignedInt senderIP );

@@ -1748,6 +1748,11 @@ Int LanRoom::observerVoicePeers(UnsignedInt *ips, UnicodeString *names, Int maxC
 	return *localIndex >= 0 ? n : 0;
 }
 
+void LanRoom::postNotice(const UnicodeString &text)
+{
+	notice(text);
+}
+
 Bool LanRoom::takeNotice(UnicodeString *text)
 {
 	if (s_notices.empty()) {

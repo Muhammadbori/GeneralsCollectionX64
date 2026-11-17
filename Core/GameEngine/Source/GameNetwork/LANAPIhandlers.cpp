@@ -596,6 +596,9 @@ void LANAPI::handleJoinAccept( LANMessage *msg, UnsignedInt senderIP )
 				return;
 			}
 			m_currentGame = joined;
+			m_startSeenMs = 0;    // O71
+			m_lastLoopMs = 0;
+			m_lastRoomBeat = 0;   // the first HELLO at once (keepRoomAlive, or update): the host's seat is confirmed
 			LanTest::joinLog("joiner: accepted, slot %d", (Int)msg->GameJoined.slotPosition);
 
 			if (!m_currentGame)
@@ -863,6 +866,7 @@ void LANAPI::handleStartCheck( LANMessage *msg, UnsignedInt senderIP )
 		|| msg->StartCheck.magic != LANStartMagic || m_currentGame->getName().compare(msg->StartCheck.gameName) != 0) {
 		return;
 	}
+	m_startSeenMs = timeGetTime();   // O71: a start is under way: the host's silence is not counted meanwhile
 	const UnsignedInt mine = LanStartDigest(m_currentGame);
 	if (mine != msg->StartCheck.digest || m_currentGame->getOptionsRevision() != msg->StartCheck.revision)   // O64: and the revision
 	{
@@ -902,6 +906,7 @@ void LANAPI::handleGameStartTimer( LANMessage *msg, UnsignedInt senderIP )
 {
 	if (!m_inLobby && m_currentGame && m_currentGame->getHostIP() == senderIP && !m_currentGame->isGameInProgress())
 	{
+		m_startSeenMs = timeGetTime();   // O71: the host counts down: its silence is not counted meanwhile
 		OnGameStartTimer(msg->StartTimer.seconds);
 	}
 }

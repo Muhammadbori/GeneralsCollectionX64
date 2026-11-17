@@ -40,6 +40,7 @@ namespace
 NullAudioDevice::NullAudioDevice()
 	: m_listener(nullptr)
 	, m_open(FALSE)
+	, m_generationCounter(0)
 {
 }
 
@@ -121,7 +122,7 @@ void NullAudioDevice::update(UnsignedInt logicFrame, Bool logicIsRunning)
 	{
 		Voice *v = ended[i].voice;
 		if (!v->dead && v->generation == ended[i].generation) {
-			m_listener->onVoiceDone((uintptr_t)v, v->kind);
+			m_listener->onVoiceDone((uintptr_t)v, v->kind, v->generation);
 		}
 	}
 }
@@ -156,7 +157,7 @@ NullAudioDevice::Voice *NullAudioDevice::newVoice(AudioVoiceKind kind)
 	Voice *v = NEW Voice;
 	v->kind = kind;
 	v->debugIndex = 0;
-	v->generation = 0;
+	v->generation = ++m_generationCounter;   // O71
 	v->playing = FALSE;
 	v->ended = FALSE;
 	v->paused = FALSE;
@@ -174,7 +175,7 @@ NullAudioDevice::Voice *NullAudioDevice::newVoice(AudioVoiceKind kind)
 //-------------------------------------------------------------------------------------------------
 void NullAudioDevice::startVoice(Voice *v, Real ms)
 {
-	++v->generation;
+	v->generation = ++m_generationCounter;
 	v->playing = TRUE;
 	v->ended = FALSE;
 	v->paused = FALSE;
@@ -208,12 +209,17 @@ AudioVoice NullAudioDevice::allocVoice(AudioVoiceKind kind, UnsignedInt provider
 void NullAudioDevice::freeVoice(AudioVoice voice, AudioVoiceKind kind)
 {
 	Voice *v = toVoice(voice);
-	++v->generation;
+	v->generation = ++m_generationCounter;
 	v->playing = FALSE;
 	v->dead = TRUE;
 }
 
 //-------------------------------------------------------------------------------------------------
+UnsignedInt NullAudioDevice::voiceGeneration(AudioVoice voice, AudioVoiceKind kind) const
+{
+	return ((const Voice *)voice)->generation;
+}
+
 Int NullAudioDevice::voiceDebugIndex(AudioVoice voice, AudioVoiceKind kind) const
 {
 	return toVoice(voice)->debugIndex;
@@ -225,7 +231,7 @@ Int NullAudioDevice::voiceDebugIndex(AudioVoice voice, AudioVoiceKind kind) cons
 void NullAudioDevice::prepare2D(AudioVoice voice, Real volume, Real pitchShift, Real delaySeconds)
 {
 	Voice *v = toVoice(voice);
-	++v->generation;
+	v->generation = ++m_generationCounter;
 	v->playing = FALSE;
 	v->ended = FALSE;
 	v->paused = FALSE;
@@ -294,7 +300,7 @@ Int NullAudioDevice::streamLoopCount(AudioVoice stream) const
 void NullAudioDevice::release(AudioVoice voice, AudioVoiceKind kind)
 {
 	Voice *v = toVoice(voice);
-	++v->generation;
+	v->generation = ++m_generationCounter;
 	v->playing = FALSE;
 	v->paused = FALSE;
 	if (kind == AVK_Stream) {

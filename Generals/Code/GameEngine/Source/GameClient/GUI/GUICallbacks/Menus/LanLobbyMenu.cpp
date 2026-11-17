@@ -625,6 +625,8 @@ void LanLobbyMenuUpdate( WindowLayout * layout, void *userData)
 
 	if (TheShell->isAnimFinished() && !LANbuttonPushed && TheLAN)
 		TheLAN->update();
+	else if (TheLAN)
+		TheLAN->keepRoomAlive();   // O71: the room's keep-alive while the screen changes
 
 	if (LANSocketErrorDetected == TRUE) {
 		LANSocketErrorDetected = FALSE;

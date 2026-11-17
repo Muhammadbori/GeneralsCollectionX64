@@ -81,7 +81,9 @@ class AudioDeviceListener
 {
 public:
 	virtual ~AudioDeviceListener() {}
-	virtual void onVoiceDone(uintptr_t voice, UnsignedInt kind) = 0;
+	/// O71: generation is the voice's generation when it ended (0: the device has none, Miles). The manager only queues
+	/// the end here and handles it on the main thread (MilesAudioManager::processVoiceEnds).
+	virtual void onVoiceDone(uintptr_t voice, UnsignedInt kind, UnsignedInt generation) = 0;
 	/// A change of the output device ("lost", "rerouted", "null_fallback", "restored", "retry_failed", "no_output")
 	/// with a detail text, called from the device's update() on the main thread.
 	virtual void onDeviceEvent(const char * /*event*/, const char * /*detail*/) {}
@@ -128,6 +130,10 @@ public:
 	virtual AudioVoice allocVoice(AudioVoiceKind kind, UnsignedInt provider, Int debugIndex) = 0;
 	virtual void freeVoice(AudioVoice voice, AudioVoiceKind kind) = 0;
 	virtual Int voiceDebugIndex(AudioVoice voice, AudioVoiceKind kind) const = 0;
+	/// O71: the voice's current generation; it changes, to a number no voice of this device had before, whenever the
+	/// voice is prepared, started, released or freed. An end whose generation is not the current one belongs to an
+	/// earlier sound of the voice. Only for a voice the caller still holds. 0: the device has none (Miles).
+	virtual UnsignedInt voiceGeneration(AudioVoice /*voice*/, AudioVoiceKind /*kind*/) const { return 0; }
 
 	/// The first steps of playSample + initFilters: init, end callback, volume with centre pan, pitch (when
 	/// pitchShift != 0: rate after init x pitchShift), delay filter (when delaySeconds > 0). The manager then
