@@ -207,10 +207,14 @@ void LANAPI::OnGameStart()
 	{
 		LANPreferences pref;
 		AsciiString option;
-		option.format("%d", m_currentGame->getLANSlot( m_currentGame->getLocalSlotNum() )->getPlayerTemplate());
-		pref["PlayerTemplate"] = option;
-		option.format("%d", m_currentGame->getLANSlot( m_currentGame->getLocalSlotNum() )->getColor());
-		pref["Color"] = option;
+		// O60: the admin outside the seats keeps his saved army and colour
+		if (const LANGameSlot *mine = m_currentGame->getLANSlot( m_currentGame->getLocalSlotNum() ))
+		{
+			option.format("%d", mine->getPlayerTemplate());
+			pref["PlayerTemplate"] = option;
+			option.format("%d", mine->getColor());
+			pref["Color"] = option;
+		}
 		if (m_currentGame->amIHost())
     {
     	pref["Map"] = AsciiStringToQuotedPrintable(m_currentGame->getMap());
@@ -289,14 +293,16 @@ void LANAPI::OnGameOptions( UnsignedInt playerIP, Int playerSlot, AsciiString op
 	if (!m_currentGame)
 		return;
 
-	if (m_currentGame->getIP(playerSlot) != playerIP)
+	// O60 (row 46): the host by identity (in a seat, or watching from outside them with no slot)
+	const Bool fromHost = playerIP != 0 && playerIP == m_currentGame->getHostIP();
+	if (!fromHost && (playerSlot < 0 || playerSlot >= MAX_SLOTS || m_currentGame->getIP(playerSlot) != playerIP))
 		return; // He's not in our game?!?
 
 
 	if (m_currentGame->isGameInProgress())
 		return; // we don't want to process any game options while in game.
 
-	if (playerSlot == 0 && !m_currentGame->amIHost())
+	if (fromHost && !m_currentGame->amIHost())
 	{
 		m_currentGame->setLastHeard(timeGetTime());
 		AsciiString oldOptions = GameInfoToAsciiString(m_currentGame); // save these off for if we get booted
@@ -306,7 +312,7 @@ void LANAPI::OnGameOptions( UnsignedInt playerIP, Int playerSlot, AsciiString op
 			updateGameOptions();
 		}
 		Bool booted = true;
-		for(Int player = 1; player< MAX_SLOTS; player++)
+		for(Int player = 0; player< MAX_SLOTS; player++)   // O60: slot 0 is a player's while the admin watches
 		{
 			if(m_currentGame->getIP(player) == m_localIP)
 			{

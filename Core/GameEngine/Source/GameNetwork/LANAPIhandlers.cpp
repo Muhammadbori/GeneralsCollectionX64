@@ -498,12 +498,19 @@ void LANAPI::handleJoinAccept( LANMessage *msg, UnsignedInt senderIP )
 				slot.setHost(m_hostName);
 				m_currentGame->setSlot(pos, slot);
 
-				m_currentGame->getLANSlot(0)->setHost(msg->hostName);
-				m_currentGame->getLANSlot(0)->setLogin(msg->userName);
+				// O60: the admin's login and machine, on his seat (none while he watches from outside the seats)
+				for (Int s = 0; s < MAX_SLOTS; ++s)
+				{
+					if (m_currentGame->getLANSlot(s)->isHuman() && m_currentGame->getIP(s) == m_currentGame->getHostIP())
+					{
+						m_currentGame->getLANSlot(s)->setHost(msg->hostName);
+						m_currentGame->getLANSlot(s)->setLogin(msg->userName);
+					}
+				}
 
 				LANPreferences prefs;
 				AsciiString entry;
-				entry.format("%d.%d.%d.%d:%s", PRINTF_IP_AS_4_INTS(senderIP), UnicodeStringToQuotedPrintable(m_currentGame->getSlot(0)->getName()).str());
+				entry.format("%d.%d.%d.%d:%s", PRINTF_IP_AS_4_INTS(senderIP), UnicodeStringToQuotedPrintable(m_currentGame->getHostName()).str());
 				prefs["RemoteIP0"] = entry;
 				prefs.write();
 
@@ -726,6 +733,10 @@ void LANAPI::handleGameOptions( LANMessage *msg, UnsignedInt senderIP )
 				OnGameOptions(senderIP, player, AsciiString(msg->GameOptions.options));
 				break;
 			}
+		}
+		// O60 (row 46): the admin watching from outside the seats has no slot
+		if (player == MAX_SLOTS && senderIP != 0 && senderIP == m_currentGame->getHostIP()) {
+			OnGameOptions(senderIP, -1, AsciiString(msg->GameOptions.options));
 		}
 	}
 }

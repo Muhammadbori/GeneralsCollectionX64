@@ -432,6 +432,8 @@ public:
 	virtual void SetLocalIP( AsciiString localIP ) override;																		///< For multiple NIC machines
 	virtual Bool AmIHost() override;																											///< Am I hosting a game?
 	virtual UnicodeString GetMyName() override { return m_name; }                 ///< What's my name?
+	AsciiString GetMyUserName() const { return m_userName; }                       ///< O60: login name
+	AsciiString GetMyHostName() const { return m_hostName; }                       ///< O60: machine name
 	virtual LANGameInfo* GetMyGame() override { return m_currentGame; }					      ///< What's my Game?
 	virtual UnsignedInt GetLocalIP() { return m_localIP; }								///< What's my IP?
 	virtual void fillInLANMessage( LANMessage *msg ) override;																	///< Fill in default params

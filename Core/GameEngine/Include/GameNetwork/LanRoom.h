@@ -98,6 +98,11 @@ namespace LanRoom
 	/// Observer places of a room. O56 (row 42): 12 - the slots that can hold a player (not closed): an 8-player map 4,
 	/// a 6-player map 6, a 2-player map 10 (was 12 - the humans in slots). The lobby table shows the same number.
 	Int capacity(const LANGameInfo *game);
+	/// TheSuperHackers @feature O60 (row 46) The admin (the room's creator) watches from outside the 8 seats ('observe')
+	/// or takes a seat again: slot 0 if it is open, else the lowest open one. FALSE: not the admin, or no open seat.
+	/// Sends the new slot list. While he watches he takes one observer place of the room (capacity).
+	Bool hostSetObserves(LANGameInfo *game, Bool observe);
+	Bool hostHasFreeSeat(const LANGameInfo *game);
 	void hostRemove(UnsignedInt ip);                     ///< the host's remove button
 	void hostDropJoined(UnsignedInt ip);                 ///< the host accepted that person's join into a slot
 	void hostStart(LANGameInfo *game, UnsignedInt localIP);   ///< Start: the observers get the players' addresses

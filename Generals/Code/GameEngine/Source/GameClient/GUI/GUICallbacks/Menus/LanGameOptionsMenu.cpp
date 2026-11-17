@@ -230,7 +230,9 @@ void StartPressed()
 	{
 		return;
 	}
-	myGame->getLANSlot(0)->setAccept(); // cause we are, of course!
+	// O60: the admin's own seat, when he plays (none while he watches from outside the seats)
+	if (myGame->getLANSlot(myGame->getLocalSlotNum()) != nullptr)
+		myGame->getLANSlot(myGame->getLocalSlotNum())->setAccept(); // cause we are, of course!
 
 	int i;
 

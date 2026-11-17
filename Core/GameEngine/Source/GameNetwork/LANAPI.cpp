@@ -697,7 +697,7 @@ void LANAPI::update()
 			LANMessage msg;
 			fillInLANMessage( &msg );
 			msg.messageType = LANMessage::MSG_REQUEST_GAME_LEAVE;
-			wcslcpy(msg.name, m_currentGame->getPlayerName(0).str(), ARRAY_SIZE(msg.name));
+			wcslcpy(msg.name, m_currentGame->getHostName().str(), ARRAY_SIZE(msg.name));   // O60
 			handleRequestGameLeave(&msg, m_currentGame->getHostIP());
 			UnicodeString text;
 			text = TheGameText->fetch("LAN:HostNotResponding");
@@ -705,9 +705,12 @@ void LANAPI::update()
 		}
 		else if ( AmIHost() )
 		{
-			// Check each player for timeouts
-			for (int p=1; p<MAX_SLOTS; ++p)
+			// Check each player for timeouts. O60: every seat but the admin's own (slot 0 holds a player while the admin
+			// watches from outside the seats)
+			for (int p=0; p<MAX_SLOTS; ++p)
 			{
+				if (m_currentGame->getIP(p) == m_localIP)
+					continue;
 				if (m_currentGame->getIP(p) && m_currentGame->getPlayerLastHeard(p) + s_resendDelta*8 < now)
 				{
 					LANMessage msg;
@@ -947,7 +950,12 @@ void LANAPI::RequestHasMap()
 	LANMessage msg;
 	fillInLANMessage( &msg );
 	msg.messageType = LANMessage::MSG_MAP_AVAILABILITY;
-	msg.MapStatus.hasMap = m_currentGame->getSlot(m_currentGame->getLocalSlotNum())->hasMap();
+	// O60: the admin outside the seats has no slot (and needs no map of his own for the match)
+	const GameSlot *mySlot = m_currentGame->getSlot(m_currentGame->getLocalSlotNum());
+	if (mySlot == nullptr) {
+		return;
+	}
+	msg.MapStatus.hasMap = mySlot->hasMap();
 	wcslcpy(msg.MapStatus.gameName, m_currentGame->getName().str(), ARRAY_SIZE(msg.MapStatus.gameName));
 	CRC mapNameCRC;
 //mapNameCRC.computeCRC(m_currentGame->getMap().str(), m_currentGame->getMap().getLength());

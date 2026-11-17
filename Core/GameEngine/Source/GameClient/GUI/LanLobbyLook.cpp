@@ -132,6 +132,7 @@ namespace
 	const Text kColGame = { "GUI:LanColGame", L"Game", L"\x0418\x0433\x0440\x0430" };
 	const Text kColMap = { "GUI:LanColMap", L"Map", L"\x041A\x0430\x0440\x0442\x0430" };
 	const Text kColPlayers = { "GUI:LanColPlayers", L"Players", L"\x0418\x0433\x0440\x043E\x043A\x0438" };
+	const Text kAdminSuffix = { "GUI:LanAdminSuffix", L" (host)", L" (\x0445\x043E\x0441\x0442)" };   // O60
 	const Text kColObservers = { "GUI:LanColObservers", L"Obs.", L"\x041D\x0430\x0431\x043B." };
 	const Text kColSpeed = { "GUI:LanColSpeed", L"Speed", L"\x0421\x043A\x043E\x0440." };
 	const Text kColColor = { "GUI:LanColColor", L"Colour", L"\x0426\x0432\x0435\x0442" };
@@ -772,8 +773,10 @@ namespace
 					++r.players;
 				}
 			}
-			r.observers = (Int)LanRoom::observersOf(game->getHostIP()).size();
-			r.observerPlaces = LanRoom::capacity(game);
+			// O60: the admin watching from outside the seats is one of the observers
+			const Int admin = game->getHostObserves() ? 1 : 0;
+			r.observers = (Int)LanRoom::observersOf(game->getHostIP()).size() + admin;
+			r.observerPlaces = LanRoom::capacity(game) + admin;
 			r.files = filesMarkOfIP(game->getHostIP());
 			r.shield = shieldOfIP(game->getHostIP());
 			r.inProgress = game->isGameInProgress();
@@ -1221,6 +1224,16 @@ namespace
 			ry += rh;
 		}
 		// O31: the room's observers (LanRoom), with their files mark and shield
+		// O60: first the admin, when he watches from outside the seats
+		if (r.game != nullptr && r.game->getHostObserves())
+		{
+			Obs o;
+			o.name = r.game->getHostName();
+			o.name.concat(textOf(kAdminSuffix));
+			o.files = filesMarkOfIP(r.game->getHostIP());
+			o.shield = shieldOfIP(r.game->getHostIP());
+			obs.push_back(o);
+		}
 		if (r.game != nullptr)
 		{
 			const std::vector<LanRoom::Observer> room = LanRoom::observersOf(r.game->getHostIP());

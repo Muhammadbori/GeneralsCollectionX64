@@ -38,6 +38,9 @@
 #include "GameNetwork/LANAPI.h"
 #include "GameNetwork/LANAPICallbacks.h"
 #include "GameNetwork/LANGameInfo.h"
+#include "GameNetwork/NetworkDefs.h"
+#include "GameNetwork/FirewallHelper.h"
+#include "Common/UserPreferences.h"
 #include "GameLogic/GameLogic.h"
 
 #include <algorithm>
@@ -111,6 +114,7 @@ namespace
 	struct SlotKeep { Int state, playerTemplate, color, team, startPos; };
 	SlotKeep s_layout[MAX_SLOTS];
 	Bool s_layoutValid = FALSE;
+	Bool s_layoutHostObserves = FALSE;   ///< O60: the admin watched from outside the seats
 	Bool s_rematchRequested = FALSE;
 	Bool s_rematchApplyPending = FALSE;
 	// O42: the host's rules of the running match (RULES), frozen at Start
@@ -515,8 +519,10 @@ Int LanRoom::capacity(const LANGameInfo *game)
 			++playerPlaces;
 		}
 	}
+	// O60: the admin watching from outside the seats takes one of them
+	const Int adminPlace = (game != nullptr && game->getHostObserves()) ? 1 : 0;
 	// never fewer places than the people a room had by the old rule (12 - humans in slots) already holds
-	const Int places = max(MAX_PEOPLE - playerPlaces, min((Int)s_hosted.size(), MAX_PEOPLE - humansInSlots(game)));
+	const Int places = max(MAX_PEOPLE - playerPlaces - adminPlace, min((Int)s_hosted.size(), MAX_PEOPLE - humansInSlots(game) - adminPlace));
 	return places > MAX_OBSERVERS ? MAX_OBSERVERS : (places < 0 ? 0 : places);
 }
 
@@ -1286,6 +1292,7 @@ void LanRoom::rememberMatchLayout(const LANGameInfo *game)
 		k.team = slot != nullptr ? slot->getTeamNumber() : -1;
 		k.startPos = slot != nullptr ? slot->getStartPos() : -1;
 	}
+	s_layoutHostObserves = game->getHostObserves();
 	s_layoutValid = TRUE;
 }
 
@@ -1315,6 +1322,10 @@ void LanRoom::applyRematchLayout(LANGameInfo *game)
 		return;
 	}
 	s_rematchApplyPending = FALSE;
+	// O60: an admin who watched from outside the seats does so again (slot 0 opens for a player)
+	if (s_layoutHostObserves) {
+		hostSetObserves(game, TRUE);
+	}
 	for (Int i = 0; i < MAX_SLOTS; ++i)
 	{
 		GameSlot *slot = game->getSlot(i);
@@ -1322,7 +1333,7 @@ void LanRoom::applyRematchLayout(LANGameInfo *game)
 		if (slot == nullptr) {
 			continue;
 		}
-		if (i == 0)
+		if (i == 0 && !s_layoutHostObserves)
 		{
 			// the host itself: its team and start place (army and colour came from its preferences already)
 			slot->setTeamNumber(k.team);
@@ -1349,6 +1360,76 @@ void LanRoom::applyRematchLayout(LANGameInfo *game)
 			slot->setState(SLOT_OPEN);   // a human's place (or an open one): open for the players to join again
 		}
 	}
+}
+
+Bool LanRoom::hostHasFreeSeat(const LANGameInfo *game)
+{
+	for (Int i = 0; game != nullptr && i < MAX_SLOTS; ++i)
+	{
+		const GameSlot *slot = game->getConstSlot(i);
+		if (slot != nullptr && slot->getState() == SLOT_OPEN) {
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+
+Bool LanRoom::hostSetObserves(LANGameInfo *game, Bool observe)
+{
+	if (game == nullptr || TheLAN == nullptr || !game->amIHost() || game->isGameInProgress()) {
+		return FALSE;
+	}
+	const Int mine = game->getLocalSlotNum();
+	if (observe)
+	{
+		if (game->getHostObserves() && mine < 0) {
+			return TRUE;
+		}
+		if (mine >= 0)
+		{
+			LANGameSlot open;
+			open.setState(SLOT_OPEN);
+			game->setSlot(mine, open);
+		}
+		game->setHostObserves(TRUE);
+	}
+	else
+	{
+		if (!game->getHostObserves() || mine >= 0) {
+			game->setHostObserves(FALSE);
+			return mine >= 0;
+		}
+		Int seat = -1;
+		if (game->getConstSlot(0) != nullptr && game->getConstSlot(0)->getState() == SLOT_OPEN) {
+			seat = 0;
+		}
+		for (Int i = 0; seat < 0 && i < MAX_SLOTS; ++i) {
+			if (game->getConstSlot(i) != nullptr && game->getConstSlot(i)->getState() == SLOT_OPEN) seat = i;
+		}
+		if (seat < 0) {
+			return FALSE;   // every seat is taken or closed
+		}
+		// the admin's seat as at the room's creation (LANAPI::RequestGameCreate), with his saved army and colour
+		LANGameSlot me;
+		me.setState(SLOT_PLAYER, TheLAN->GetMyName());
+		me.setIP(TheLAN->GetLocalIP());
+		me.setPort(NETWORK_BASE_PORT_NUMBER);
+		me.setLastHeard(0);
+		me.setLogin(TheLAN->GetMyUserName());
+		me.setHost(TheLAN->GetMyHostName());
+		LANPreferences pref;
+		me.setColor(pref.getPreferredColor());
+		me.setPlayerTemplate(pref.getPreferredFaction());
+		me.setNATBehavior(FirewallHelperClass::FIREWALL_TYPE_SIMPLE);
+		me.setMapAvailability(TRUE);
+		game->setSlot(seat, me);
+		game->setHostObserves(FALSE);
+	}
+	game->resetAccepted();
+	TheLAN->RequestGameOptions(GenerateGameOptionsString(), true);
+	lanUpdateSlotList();
+	updateGameOptions();
+	return TRUE;
 }
 
 Int LanRoom::upstreamDelaySeconds()
