@@ -676,6 +676,7 @@ namespace
 	{
 		UnicodeString name, map, speed;
 		Int players, maxPlayers, observers;
+		Int observerPlaces;        ///< O56 (row 42): the room's observer places (LanRoom::capacity); observers = its list
 		Int files;
 		Int shield;                ///< O30: the host's anti-cheat verdict
 		Bool inProgress;
@@ -724,6 +725,7 @@ namespace
 				r.players = g.players;
 				r.maxPlayers = g.maxPlayers;
 				r.observers = g.observers;
+				r.observerPlaces = LanRoom::MAX_PEOPLE - g.maxPlayers;
 				r.files = g.files;
 				r.shield = sampleShield(g.files);
 				r.inProgress = FALSE;
@@ -756,14 +758,13 @@ namespace
 			r.map = mapNameOf(game->getMap());
 			r.speed = UnicodeString(L"1x");   // LAN games of this build have no speed setting: they run at the normal speed
 			r.players = r.maxPlayers = r.observers = 0;
+			// TheSuperHackers @tweak O56 (row 42) Players: the map's places (the slots not closed) and who holds one (an
+			// "Observer" army in a slot holds a player place too). Observers: the room's list (the host's LIST) of its
+			// places, 12 - the player places, as the room shows them.
 			for (Int k = 0; k < MAX_SLOTS; ++k)
 			{
 				const GameSlot *slot = game->getConstSlot(k);
 				if (slot == nullptr || slot->getState() == SLOT_CLOSED) {
-					continue;
-				}
-				if (isObserverSlot(slot)) {
-					++r.observers;
 					continue;
 				}
 				++r.maxPlayers;
@@ -771,6 +772,8 @@ namespace
 					++r.players;
 				}
 			}
+			r.observers = (Int)LanRoom::observersOf(game->getHostIP()).size();
+			r.observerPlaces = LanRoom::capacity(game);
 			r.files = filesMarkOfIP(game->getHostIP());
 			r.shield = shieldOfIP(game->getHostIP());
 			r.inProgress = game->isGameInProgress();
@@ -824,7 +827,7 @@ namespace
 		{
 			g.shortHeads = pass == 1;
 			const Int wPlayers = max(textWidth(textOf(*gameHead(COL_PLAYERS, g.shortHeads))), textWidth(UnicodeString(L"8/8"))) + 12;
-			const Int wObs = max(textWidth(textOf(*gameHead(COL_OBS, g.shortHeads))), textWidth(UnicodeString(L"88"))) + 12;
+			const Int wObs = max(textWidth(textOf(*gameHead(COL_OBS, g.shortHeads))), textWidth(UnicodeString(L"10/10"))) + 12;   // O56
 			const Int wSpeed = max(textWidth(textOf(*gameHead(COL_SPEED, g.shortHeads))), textWidth(UnicodeString(L"1,5x"))) + 12;
 			const Int wShield = s.anticheat ? mark + 6 : 0;
 			const Int wFiles = mark + 6;
@@ -943,7 +946,7 @@ namespace
 			UnicodeString t;
 			t.format(L"%d/%d", r.players, r.maxPlayers);
 			drawText(t, cols.x[COL_PLAYERS] + 2, ty, cols.x[COL_OBS] - cols.x[COL_PLAYERS] - 4, (r.maxPlayers > 0 && r.players >= r.maxPlayers) ? kRed : c);
-			t.format(L"%d", r.observers);
+			t.format(L"%d/%d", r.observers, r.observerPlaces);   // O56 (row 42)
 			drawText(t, cols.x[COL_OBS] + 2, ty, cols.x[COL_SPEED] - cols.x[COL_OBS] - 4, c);
 			drawText(r.speed, cols.x[COL_SPEED] + 2, ty, cols.x[COL_SHIELD] - cols.x[COL_SPEED] - 4, c);
 			drawShield(cols.x[COL_SHIELD] + 1, ry + 2, mark, r.shield);
@@ -1862,7 +1865,10 @@ void LanLobbyLook::update(Bool screenReady)
 		Bool outsideAllowed = TRUE;
 		LanRoom::viewerRulesOf(host, &hostDelay, &outsideAllowed);
 		const Bool noViewers = running && !outsideAllowed;
-		const Bool blocked = ownRoom || noViewers;
+		// O56 (row 42): a room whose observer places are all taken cannot be observed (its player places do not matter)
+		const Bool observersFull = have && !running && !observingThis && rows[sel].observerPlaces > 0
+			&& rows[sel].observers >= rows[sel].observerPlaces;
+		const Bool blocked = ownRoom || noViewers || observersFull;
 		if (s.actionButton != nullptr)
 		{
 			// O42: a running match whose host allows no outside viewers: the button says so, disabled

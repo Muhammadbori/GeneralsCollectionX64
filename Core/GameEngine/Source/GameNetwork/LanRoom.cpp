@@ -449,7 +449,17 @@ namespace
 //-------------------------------------------------------------------------------------------------
 Int LanRoom::capacity(const LANGameInfo *game)
 {
-	const Int places = MAX_PEOPLE - humansInSlots(game);
+	// O56 (row 42): the player places of the map (the slots not closed) and the observer places make 12
+	Int playerPlaces = 0;
+	for (Int i = 0; game != nullptr && i < MAX_SLOTS; ++i)
+	{
+		const GameSlot *slot = game->getConstSlot(i);
+		if (slot != nullptr && slot->getState() != SLOT_CLOSED) {
+			++playerPlaces;
+		}
+	}
+	// never fewer places than the people a room had by the old rule (12 - humans in slots) already holds
+	const Int places = max(MAX_PEOPLE - playerPlaces, min((Int)s_hosted.size(), MAX_PEOPLE - humansInSlots(game)));
 	return places > MAX_OBSERVERS ? MAX_OBSERVERS : (places < 0 ? 0 : places);
 }
 
