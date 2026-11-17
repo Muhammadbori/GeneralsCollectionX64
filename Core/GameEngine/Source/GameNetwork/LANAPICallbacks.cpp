@@ -347,10 +347,28 @@ void LANAPI::OnGameOptions( UnsignedInt playerIP, Int playerSlot, AsciiString op
 				break;
 			}
 		}
+		if (!booted) {
+			m_notListedSinceMs = 0;   // O71
+		}
 		if(booted)
 		{
 			// restore the options with us in so we can save prefs
 			ParseGameOptionsString(m_currentGame, oldOptions);
+			// TheSuperHackers @bugfix O71 A list without this computer that comes within 3 s of the first one may be older
+			// than its seat (sent before the join, arrived after the accept): the room stays as it was meanwhile. After
+			// 3 s of such lists (the host sends one every 2 s, and three at a drop) this computer has been removed.
+			const UnsignedInt t = timeGetTime();
+			if (m_notListedSinceMs == 0) {
+				m_notListedSinceMs = t;
+				LanTest::joinLog("player: the host's list does not have this computer: waiting 3 s");
+				lanUpdateSlotList();
+				return;
+			}
+			if ((Int)(t - m_notListedSinceMs) < 3000) {
+				lanUpdateSlotList();
+				return;
+			}
+			m_notListedSinceMs = 0;
 			// TheSuperHackers @bugfix O71 (addendum) Said, not a silent return to the lobby
 			LanTest::joinLog("player: the host's list no longer has this computer: back to the lobby");
 			LanRoom::postNotice(TheGameText->FETCH_OR_SUBSTITUTE("GUI:LanRemovedFromRoom", localizedFallback(

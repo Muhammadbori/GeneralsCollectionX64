@@ -411,6 +411,8 @@ struct MiniaudioVoice
 
 	UnsignedInt generation;          ///< changes when the voice starts again or is released (under the device lock)
 	std::atomic<UnsignedInt> endGeneration;  ///< the generation of the sound now playing, read by the audio thread
+	std::atomic<ma_uint64> endedAt;  ///< O72: engine time + 1 when the audio thread saw the last sound end (0: none)
+	Real restartGapMs;               ///< O72: from that end to the start of the sound now playing (< 0: unknown)
 	bool playing;
 	bool paused;
 	bool ended;
@@ -871,6 +873,7 @@ namespace
 	{
 		MiniaudioVoice *v = (MiniaudioVoice *)userData;
 		MiniaudioDeviceState *s = v->state;
+		v->endedAt.store(ma_engine_get_time_in_pcm_frames(&s->engine) + 1);   // O72 (the gap measurement)
 		{
 			std::lock_guard<std::mutex> guard(s->endQueueLock);
 			MiniaudioEnd e = { v, v->endGeneration.load(std::memory_order_acquire) };
@@ -936,6 +939,8 @@ namespace
 		v->movie = nullptr;
 		v->generation = ++s->generationCounter;   // O71
 		v->endGeneration.store(v->generation);
+		v->endedAt.store(0);
+		v->restartGapMs = -1.0f;
 		v->playing = false;
 		v->paused = false;
 		v->ended = false;
@@ -1070,6 +1075,16 @@ namespace
 		memcpy(w + 12, "fmt ", 4); wr32(w + 16, 16); wr16(w + 20, WAV_FORMAT_PCM); wr16(w + 22, channels);
 		wr32(w + 24, rate); wr32(w + 28, rate * channels * 2); wr16(w + 32, channels * 2); wr16(w + 34, 16);
 		memcpy(w + 36, "data", 4); wr32(w + 40, dataBytes);
+	}
+
+	/// O72: the time from the voice's last end (seen by the audio thread) to this start, on the engine's clock. The sound
+	/// is heard from the next mix, as the old one was until the mix in which it ended, so this is the gap to within one
+	/// mix period.
+	void noteRestartGap(MiniaudioDeviceState *s, MiniaudioVoice *v)
+	{
+		const ma_uint64 ended = v->endedAt.exchange(0);
+		const ma_uint64 now = engineTime(s);
+		v->restartGapMs = (ended != 0 && now + 1 >= ended) ? (Real)((double)(now + 1 - ended) * 1000.0 / kEngineRate) : -1.0f;
 	}
 
 	/// Reports queued ends and stop-time ends through the listener; the device lock is released while it calls.
@@ -1549,6 +1564,48 @@ void MiniaudioAudioDevice::freeVoice(AudioVoice voice, AudioVoiceKind kind)
 	v->dead = true;
 }
 
+Bool MiniaudioAudioDevice::setVoiceLooping(AudioVoice voice, AudioVoiceKind kind, Bool loop)
+{
+	// O72: the data source loops inside miniaudio, with no gap and no end callback; set FALSE, the sound plays the pass it
+	// is in to its end and then ends as any other (onSoundEnd). A new start (startFromBuffer) makes a new ma_sound, which
+	// does not loop, and release/prepare uninit the sound: no voice keeps looping after its sound.
+	std::lock_guard<std::mutex> guard(m_state->lock);
+	MiniaudioVoice *v = toVoice(voice);
+	if (kind == AVK_Stream || !v->soundReady || !v->playing) {
+		return FALSE;
+	}
+	ma_sound_set_looping(&v->sound, loop ? MA_TRUE : MA_FALSE);
+	return TRUE;
+}
+
+void MiniaudioAudioDevice::set3DOcclusion(AudioVoice voice, Bool useOcclusion, Real occlusion)
+{
+	std::lock_guard<std::mutex> guard(m_state->lock);
+	MiniaudioVoice *v = toVoice(voice);
+	v->node.requested = occlusionFor(useOcclusion ? occlusion : 0.0);
+	v->node.requestedVersion.fetch_add(1, std::memory_order_release);
+}
+
+Real MiniaudioAudioDevice::restartGapMs(AudioVoice voice, AudioVoiceKind kind) const
+{
+	std::lock_guard<std::mutex> guard(m_state->lock);
+	return toVoice(voice)->restartGapMs;
+}
+
+Int MiniaudioAudioDevice::playingVoiceCount() const
+{
+	std::lock_guard<std::mutex> guard(m_state->lock);
+	Int n = 0;
+	for (size_t i = 0; i < m_state->voices.size(); ++i)
+	{
+		const MiniaudioVoice *v = m_state->voices[i];
+		if (v->playing && !v->dead && v->movie == nullptr) {
+			++n;
+		}
+	}
+	return n;
+}
+
 UnsignedInt MiniaudioAudioDevice::voiceGeneration(AudioVoice voice, AudioVoiceKind kind) const
 {
 	std::lock_guard<std::mutex> guard(m_state->lock);
@@ -1594,6 +1651,7 @@ Bool MiniaudioAudioDevice::start2D(AudioVoice voice, const AudioSample &sample)
 	v->node.snap.store(1);
 	ma_sound_start(&v->sound);
 	v->playing = true;
+	noteRestartGap(s, v);   // O72
 	return TRUE;
 }
 
@@ -1629,6 +1687,7 @@ void MiniaudioAudioDevice::play3D(AudioVoice voice, const AudioSample &sample, R
 	v->node.snap.store(1);
 	ma_sound_start(&v->sound);
 	v->playing = true;
+	noteRestartGap(s, v);   // O72
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -1729,6 +1788,7 @@ void MiniaudioAudioDevice::release(AudioVoice voice, AudioVoiceKind kind)
 {
 	std::lock_guard<std::mutex> guard(m_state->lock);
 	MiniaudioVoice *v = toVoice(voice);
+	v->endedAt.store(0);   // O72: a released voice's next sound is no restart
 	v->generation = ++m_state->generationCounter;   // O71
 	stopSound(v);
 	v->playing = false;

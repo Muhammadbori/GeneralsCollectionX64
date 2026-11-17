@@ -94,6 +94,7 @@ LANAPI::LANAPI() : m_transport(nullptr)
 	for (Int k = 0; k < MAX_SLOTS; ++k) m_seatJoinedMs[k] = 0;
 	m_lastLoopMs = 0;     // O71
 	m_startSeenMs = 0;
+	m_notListedSinceMs = 0;
 	m_acceptWanted = FALSE;
 	m_hostViewMs = 0;
 	m_mapLastSent = 0;
@@ -152,6 +153,7 @@ void LANAPI::init()
 	for (Int k = 0; k < MAX_SLOTS; ++k) m_seatJoinedMs[k] = 0;
 	m_lastLoopMs = 0;     // O71
 	m_startSeenMs = 0;
+	m_notListedSinceMs = 0;
 	m_acceptWanted = FALSE;
 	m_hostViewMs = 0;
 	m_mapLastSent = 0;
@@ -493,7 +495,7 @@ void LANAPI::update()
 	// After a gap of more than 3 s every room clock starts again from now.
 	if (!m_inLobby && m_currentGame != nullptr && !m_currentGame->isGameInProgress())
 	{
-		if (m_lastLoopMs != 0 && now - m_lastLoopMs > 3000)
+		if (m_lastLoopMs != 0 && (Int)(now - m_lastLoopMs) > 3000)
 		{
 			LanTest::joinLog("room: this computer's loop did not run for %u ms: the room's silence clocks start again", now - m_lastLoopMs);
 			m_currentGame->setLastHeard(now);
@@ -787,6 +789,10 @@ void LANAPI::update()
 			// watches from outside the seats)
 			for (int p=0; p<MAX_SLOTS; ++p)
 			{
+				if (m_currentGame->getIP(p) == 0) {
+					m_seatJoinedMs[p] = 0;   // O71: an open seat keeps no join clock for its next player
+					continue;
+				}
 				if (m_currentGame->getIP(p) == m_localIP)
 					continue;
 				// O70/O71: a joiner says HELLO every 2 s now: 30 s of silence (15 lost in a row; was 80 s), or a seat given at a
@@ -805,7 +811,12 @@ void LANAPI::update()
 					theStr.format(TheGameText->fetch("LAN:PlayerDropped"), m_currentGame->getPlayerName(p).str());
 					msg.messageType = LANMessage::MSG_REQUEST_GAME_LEAVE;
 					wcslcpy(msg.name, m_currentGame->getPlayerName(p).str(), ARRAY_SIZE(msg.name));
-					handleRequestGameLeave(&msg, m_currentGame->getIP(p));
+					const UnsignedInt droppedIP = m_currentGame->getIP(p);
+					handleRequestGameLeave(&msg, droppedIP);   // sends it the list without its seat once
+					// O71: and twice more, so that one lost packet does not leave it in a room it is not in (its own
+					// 2 s keep-alive copies of the list come by broadcast as well)
+					RequestGameOptions(GenerateGameOptionsString(), false, droppedIP);
+					RequestGameOptions(GenerateGameOptionsString(), false, droppedIP);
 					OnChat(UnicodeString::TheEmptyString, m_localIP, theStr, LANCHAT_SYSTEM);
 				}
 			}
@@ -1250,7 +1261,7 @@ void LANAPI::pumpStartCheck()
 		return;
 	}
 	const UnsignedInt kStartCheckMs = 8000;
-	if (now - m_startCheckSince > kStartCheckMs)
+	if ((Int)(now - m_startCheckSince) > (Int)kStartCheckMs)
 	{
 		m_startChecking = FALSE;
 		LanTest::joinLog("host: start check: stopped, no READY from %ls", missing.str());
@@ -1262,7 +1273,7 @@ void LANAPI::pumpStartCheck()
 		LANEnableStartButton(true);
 		return;
 	}
-	if (now - m_lastStartCheck >= 250)
+	if ((Int)(now - m_lastStartCheck) >= 250)
 	{
 		m_lastStartCheck = now;
 		RequestGameOptions(GenerateGameOptionsString(), true);
@@ -1415,19 +1426,19 @@ void LANAPI::pumpConvergence()
 	{
 		if (m_hostSeesAccepted && m_hostViewMs > m_acceptLastSent) {
 			m_acceptWanted = FALSE;
-		} else if (LanStartDigest(m_currentGame) != m_acceptDigest || now - m_acceptSince > 30000) {
+		} else if (LanStartDigest(m_currentGame) != m_acceptDigest || (Int)(now - m_acceptSince) > 30000) {
 			m_acceptWanted = FALSE;
 			// O71 (H8): said, not dropped silently; the room shows this player not accepted, the click accepts again
 			LanTest::joinLog("player: accept no longer sent again (%s)", LanStartDigest(m_currentGame) != m_acceptDigest
 				? "the host changed the room: every accept was reset" : "30 s without the host's list showing it");
-		} else if (now - m_acceptLastSent >= 700) {
+		} else if ((Int)(now - m_acceptLastSent) >= 700) {
 			m_acceptLastSent = now;
 			LanTest::joinLog("player: accept again (the host's list does not show it)");
 			sendAcceptOnly();
 		}
 	}
 	// has the map: this computer's own check (GameInfo::setMapCRC/setMapSize) against what the host's list says
-	if (mine->hasMap() != m_hostSeesMap && now - m_mapLastSent >= 1500 && now - m_hostViewMs < 5000)
+	if (mine->hasMap() != m_hostSeesMap && (Int)(now - m_mapLastSent) >= 1500 && (Int)(now - m_hostViewMs) < 5000)
 	{
 		m_mapLastSent = now;
 		LanTest::joinLog("player: map status again (mine %d, the host's list %d)", mine->hasMap() ? 1 : 0, m_hostSeesMap ? 1 : 0);
@@ -1443,9 +1454,9 @@ void LANAPI::pumpConvergence()
 		}
 		if (m_hostSeesValue[k] == m_optionWanted[k] && m_hostViewMs > m_optionLastSent[k]) {
 			m_optionPending[k] = FALSE;
-		} else if (now - m_optionSince[k] > 5000) {
+		} else if ((Int)(now - m_optionSince[k]) > 5000) {
 			m_optionPending[k] = FALSE;
-		} else if (now - m_optionLastSent[k] >= 700) {
+		} else if ((Int)(now - m_optionLastSent[k]) >= 700) {
 			m_optionLastSent[k] = now;
 			AsciiString request;
 			request.format("%s=%d", kKeys[k], m_optionWanted[k]);

@@ -54,6 +54,7 @@
 #include "Common/GameCommon.h"
 #include "Common/GameSounds.h"
 #include "Common/CRCDebug.h"
+#include "Common/FrameRateLimit.h"
 #include "Common/GlobalData.h"
 #include "Common/ScopedMutex.h"
 
@@ -73,8 +74,22 @@
 #include "MiniaudioAudioDevice/MiniaudioAudioDevice.h"
 #endif
 #include <map>
+#include <algorithm>   // O72
 
 enum { INFINITE_LOOP_COUNT = 1000000 };
+
+namespace
+{
+	// O72 (-audioLog): the gap at each restarted loop pass or portion, and the balance of the sounds
+	enum { GAP_2D_LOOP, GAP_2D_PORTION, GAP_3D_LOOP, GAP_3D_PORTION, GAP_KINDS };
+	const char *const kGapKindName[GAP_KINDS] = { "2D_loop", "2D_portion", "3D_loop", "3D_portion" };
+	std::vector<Real> s_gaps[GAP_KINDS];
+	UnsignedInt s_soundsStarted = 0;
+	UnsignedInt s_soundsEnded = 0;     ///< ended by themselves
+	UnsignedInt s_soundsStopped = 0;   ///< stopped by the game (culled, killed, level end ...)
+	UnsignedInt s_nativeLoops = 0;
+	MilesAudioManager *s_idleManager = nullptr;
+}
 
 //-------------------------------------------------------------------------------------------------
 MilesAudioManager::MilesAudioManager() :
@@ -101,6 +116,10 @@ MilesAudioManager::MilesAudioManager() :
 	m_previewSample.bytes = 0;
 	m_previewSample.ownedByDevice = FALSE;
 	m_audioCache = NEW AudioFileCache(m_device);
+	// O72: the main thread's frame wait wakes for the ends (FrameRateLimit::wait)
+	m_voiceEndsEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+	s_idleManager = this;
+	FrameRateLimit::setIdleWork(&MilesAudioManager::idleVoiceEnds, m_voiceEndsEvent);
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -216,7 +235,13 @@ MilesAudioManager::~MilesAudioManager()
 {
 	DEBUG_ASSERTCRASH(m_binkHandle == nullptr, ("Leaked a Bink handle. Chuybregts"));
 	releaseHandleForBink();
+	FrameRateLimit::setIdleWork(nullptr, nullptr);   // O72
+	s_idleManager = nullptr;
 	closeDevice();
+	if (m_voiceEndsEvent != nullptr) {
+		CloseHandle((HANDLE)m_voiceEndsEvent);
+		m_voiceEndsEvent = nullptr;
+	}
 	delete m_audioCache;
 	delete m_miniaudioDevice;
 	m_miniaudioDevice = nullptr;
@@ -603,6 +628,7 @@ void MilesAudioManager::reset()
 
 	AudioManager::reset();
 	stopAllAudioImmediately();
+	logAudioBalance("reset");   // O72
   removeAllAudioRequests();
   // This must come after stopAllAudioImmediately() and removeAllAudioRequests(), to ensure that
   // sounds pointing to the temporary AudioEventInfo handles are deleted before their info is deleted
@@ -877,6 +903,7 @@ void MilesAudioManager::playAudioEvent( AudioRequest* req )
 					(int)m_playingStreams.size(), fileToPlay.str(), getEffectiveVolume(event), logVol, logPan, (int)m_device->streamLoopCount(stream));
 			}
 
+				++s_soundsStarted;   // O72
 				CriticalSectionClass::LockClass lock(m_playingStreamsCS);
 				m_playingStreams.push_back(newPlaying);
 				newPlaying = nullptr;
@@ -964,6 +991,8 @@ void MilesAudioManager::playAudioEvent( AudioRequest* req )
 							audioLogVoiceId(sample3D), event->getFilename().str(), getEffectiveVolume(event), (float)logVol,
 							(int)logRate, logMin, logMax, logOcclusion, event->getDelay());
 					}
+					armNativeLoop(newPlaying);   // O72
+					++s_soundsStarted;
 					CriticalSectionClass::LockClass lock(m_playing3DSoundsCS);
 					m_playing3DSounds.push_back(newPlaying);
 					newPlaying = nullptr;
@@ -1036,6 +1065,8 @@ void MilesAudioManager::playAudioEvent( AudioRequest* req )
 							audioLogVoiceId(sample), event->getFilename().str(), getEffectiveVolume(event), logVol, logPan,
 							(int)logRate, event->getDelay());
 					}
+					armNativeLoop(newPlaying);   // O72
+					++s_soundsStarted;
 					CriticalSectionClass::LockClass lock(m_playingSoundsCS);
 					m_playingSounds.push_back(newPlaying);
 					newPlaying = nullptr;
@@ -1121,6 +1152,7 @@ void MilesAudioManager::stopAudioEvent( AudioHandle handle )
 
 		if (playing->m_audioEventRTS->getPlayingHandle() == handle) {
 			playing->m_requestStop = true;
+			endNativeLoop(playing);   // O72
 			return;
 		}
 	}
@@ -1133,6 +1165,7 @@ void MilesAudioManager::stopAudioEvent( AudioHandle handle )
 			DEBUG_LOG((" (%s)", playing->m_audioEventRTS->getEventName()));
 		#endif
 			playing->m_requestStop = true;
+			endNativeLoop(playing);   // O72
 			return;
 		}
 	}
@@ -1222,6 +1255,8 @@ PlayingAudio *MilesAudioManager::allocatePlayingAudio()
 //-------------------------------------------------------------------------------------------------
 void MilesAudioManager::releaseMilesHandles( PlayingAudio *playing )
 {
+	playing->m_nativeLoop = FALSE;   // O72: the device's release stops the sound, looping or not
+	playing->m_occluded = -1;
 	switch (playing->m_type)
 	{
 		case PAT_Sample:
@@ -1293,6 +1328,11 @@ void MilesAudioManager::stopPlayingAudio( PlayingAudio *playing, const char *why
 	const long prevStatus = InterlockedCompareExchange(reinterpret_cast<volatile long*>(&playing->m_status), PS_Stopped, PS_Stopping);
 	if (prevStatus != PS_Stopping) {
 		return;
+	}
+	if (endedByItself) {   // O72
+		++s_soundsEnded;
+	} else {
+		++s_soundsStopped;
 	}
 	if (why && playing->m_audioEventRTS != nullptr) {
 		AUDIO_LOG_EVENT("END", playing->m_audioEventRTS.Peek(), "pool=%s why=%s",
@@ -1743,6 +1783,7 @@ void MilesAudioManager::closeDevice()
 			unselectProvider();
 			m_milesLoaded = false;
 		}
+		logAudioBalance("exit");   // O72
 		m_device->close();
 		m_deviceOpened = false;
 		CriticalSectionClass::LockClass lock(m_voiceEndsCS);   // O71: the voices are gone; the end thread too
@@ -1836,9 +1877,107 @@ void MilesAudioManager::onVoiceDone( uintptr_t voice, UnsignedInt kind, Unsigned
 	// event's portion and loop state, the file cache, and the object or drawable whose position a 3D sound follows
 	// (getCurrentPositionFromEvent). processVoiceEnds handles the ends on the main thread at the next update, so none
 	// of it is shared any more, and no list lock is held across a file read on another thread.
-	CriticalSectionClass::LockClass lock(m_voiceEndsCS);
-	VoiceEnd e = { voice, kind, generation };
-	m_voiceEnds.push_back(e);
+	{
+		CriticalSectionClass::LockClass lock(m_voiceEndsCS);
+		VoiceEnd e = { voice, kind, generation };
+		m_voiceEnds.push_back(e);
+	}
+	// TheSuperHackers @bugfix O72 Not only at the next update: the main thread handles the end while it sleeps out its
+	// frame (FrameRateLimit::wait, woken by this event), so a restart waits for the rest of the frame's work at most
+	if (m_voiceEndsEvent != nullptr) {
+		SetEvent((HANDLE)m_voiceEndsEvent);
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
+void MilesAudioManager::idleVoiceEnds()
+{
+	if (s_idleManager != nullptr && s_idleManager->m_deviceOpened) {
+		s_idleManager->processVoiceEnds();
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
+Bool MilesAudioManager::loopsWithoutDecision(AudioEventRTS *event) const
+{
+	// O72: a pass of this loop is like the one before it: endless, one sound (no pick among several, no "all"), no delay
+	// between passes, and the sound portion now (an attack has played; the decay comes only after a stop, and the native
+	// loop is ended then: endNativeLoop)
+	const AudioEventInfo *info = event != nullptr ? event->getAudioEventInfo() : nullptr;
+	return info != nullptr && info->m_soundType == AT_SoundEffect && BitIsSet(info->m_control, AC_LOOP)
+		&& !BitIsSet(info->m_control, AC_ALL) && info->m_loopCount == 0 && info->m_sounds.size() == 1
+		&& info->m_delayMax <= 0 && event->getNextPlayPortion() == PP_Sound;
+}
+
+void MilesAudioManager::armNativeLoop(PlayingAudio *playing)
+{
+	playing->m_nativeLoop = FALSE;
+	playing->m_occluded = -1;
+	if (playing->m_voice == 0 || playing->m_requestStop || !loopsWithoutDecision(playing->m_audioEventRTS.Peek())) {
+		return;
+	}
+	if (playing->m_type != PAT_Sample && playing->m_type != PAT_3DSample) {
+		return;
+	}
+	if (m_device->setVoiceLooping(playing->m_voice, (AudioVoiceKind)playing->m_type, TRUE)) {
+		playing->m_nativeLoop = TRUE;
+		++s_nativeLoops;
+		AUDIO_LOG_EVENT("NATIVELOOP", playing->m_audioEventRTS.Peek(), "voice=%d", audioLogVoiceId(playing->m_voice));
+	}
+}
+
+void MilesAudioManager::endNativeLoop(PlayingAudio *playing)
+{
+	if (playing->m_nativeLoop && playing->m_voice != 0) {
+		m_device->setVoiceLooping(playing->m_voice, (AudioVoiceKind)playing->m_type, FALSE);
+		AUDIO_LOG_EVENT("NATIVELOOPEND", playing->m_audioEventRTS.Peek(), "voice=%d", audioLogVoiceId(playing->m_voice));
+	}
+	playing->m_nativeLoop = FALSE;
+}
+
+void MilesAudioManager::noteRestartGap(PlayingAudio *playing, Bool loop)
+{
+	if (!AudioLog::g_on || playing->m_voice == 0 || playing->m_file == nullptr) {
+		return;
+	}
+	const Bool is3D = playing->m_type == PAT_3DSample;
+	const Real gap = m_device->restartGapMs(playing->m_voice, (AudioVoiceKind)playing->m_type);
+	if (gap < 0.0f) {
+		return;
+	}
+	const Int kind = is3D ? (loop ? GAP_3D_LOOP : GAP_3D_PORTION) : (loop ? GAP_2D_LOOP : GAP_2D_PORTION);
+	s_gaps[kind].push_back(gap);
+	AUDIO_LOG_EVENT("GAP", playing->m_audioEventRTS.Peek(), "kind=%s gap_ms=%.2f voice=%d", kGapKindName[kind], gap,
+		audioLogVoiceId(playing->m_voice));
+}
+
+void MilesAudioManager::logAudioBalance(const char *when)
+{
+	if (!AudioLog::g_on) {
+		return;
+	}
+	Int listed = 0;
+	const std::list<PlayingAudio *> *lists[] = { &m_playingSounds, &m_playing3DSounds, &m_playingStreams, &m_fadingAudio };
+	for (Int l = 0; l < 4; ++l) {
+		for (std::list<PlayingAudio *>::const_iterator it = lists[l]->begin(); it != lists[l]->end(); ++it) {
+			if ((*it)->m_status == PS_Playing) {
+				++listed;
+			}
+		}
+	}
+	AUDIO_LOG("BALANCE", "when=%s started=%u ended=%u stopped=%u still_playing=%d device_voices_playing=%d native_loops=%u",
+		when, s_soundsStarted, s_soundsEnded, s_soundsStopped, listed, (int)m_device->playingVoiceCount(), s_nativeLoops);
+	for (Int k = 0; k < GAP_KINDS; ++k)
+	{
+		std::vector<Real> v = s_gaps[k];
+		if (v.empty()) {
+			AUDIO_LOG("GAPSUM", "when=%s kind=%s count=0", when, kGapKindName[k]);
+			continue;
+		}
+		std::sort(v.begin(), v.end());
+		AUDIO_LOG("GAPSUM", "when=%s kind=%s count=%u median_ms=%.2f p90_ms=%.2f max_ms=%.2f", when, kGapKindName[k],
+			(unsigned)v.size(), v[v.size() / 2], v[(v.size() * 9) / 10], v.back());
+	}
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -1922,6 +2061,8 @@ void MilesAudioManager::notifyOfAudioCompletionLocked( uintptr_t handle, Unsigne
 			// If we don't have a file now, then we should drop to the stopped status so that
 			// We correctly close this handle.
 			if (playing->m_file) {
+				noteRestartGap(playing, FALSE);   // O72
+				armNativeLoop(playing);
 				return;
 			}
 		}
@@ -1936,6 +2077,8 @@ void MilesAudioManager::notifyOfAudioCompletionLocked( uintptr_t handle, Unsigne
 			// If we don't have a file now, then we should drop to the stopped status so that
 			// We correctly close this handle.
 			if (playing->m_file) {
+				noteRestartGap(playing, FALSE);   // O72
+				armNativeLoop(playing);
 				return;
 			}
 		}
@@ -2657,6 +2800,16 @@ void MilesAudioManager::processPlayingList()
 				{
 					DEBUG_ASSERTCRASH(playing->m_voice, ("3D Sample is not expected to be null"));
 					m_device->set3DPosition( playing->m_voice, *pos );
+					const Real lowPass = playing->m_audioEventRTS->getAudioEventInfo()->m_lowPassFreq;
+					if (playing->m_nativeLoop && lowPass > 0.0f)
+					{
+						// O72: a native loop gets no new play3D per pass, which set the occlusion from the screen
+						const Int occluded = isOnScreen(pos) ? 0 : 1;
+						if (occluded != playing->m_occluded) {
+							playing->m_occluded = occluded;
+							m_device->set3DOcclusion(playing->m_voice, occluded != 0, 1.0f - lowPass);
+						}
+					}
 				}
 			}
 		}
@@ -3047,6 +3200,10 @@ Bool MilesAudioManager::startNextLoop( PlayingAudio *playing )
 			playing->m_file = playSample3D(playing->m_audioEventRTS.Peek(), playing->m_voice);
 		} else {
 			playing->m_file = playSample(playing->m_audioEventRTS.Peek(), playing->m_voice);
+		}
+		if (playing->m_file != nullptr) {
+			noteRestartGap(playing, TRUE);   // O72
+			armNativeLoop(playing);
 		}
 
 		return playing->m_file != nullptr;

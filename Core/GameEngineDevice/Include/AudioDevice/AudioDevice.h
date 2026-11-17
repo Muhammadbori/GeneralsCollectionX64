@@ -134,6 +134,17 @@ public:
 	/// voice is prepared, started, released or freed. An end whose generation is not the current one belongs to an
 	/// earlier sound of the voice. Only for a voice the caller still holds. 0: the device has none (Miles).
 	virtual UnsignedInt voiceGeneration(AudioVoice /*voice*/, AudioVoiceKind /*kind*/) const { return 0; }
+	/// O72: TRUE: the 2D or 3D voice now playing loops its sample inside the device, with no gap and no end, until it is
+	/// set FALSE again (it then ends at the end of the pass it is in) or released. FALSE: the device cannot (Miles); the
+	/// manager restarts every pass itself.
+	virtual Bool setVoiceLooping(AudioVoice /*voice*/, AudioVoiceKind /*kind*/, Bool /*loop*/) { return FALSE; }
+	/// O72: the occlusion (low-pass) of a 3D voice that plays on (a native loop: no new play3D per pass)
+	virtual void set3DOcclusion(AudioVoice /*voice*/, Bool /*useOcclusion*/, Real /*occlusion*/) {}
+	/// O72 (-audioLog): milliseconds on the device's clock from the end of the voice's previous sound to the start of the
+	/// one just started on it; < 0: unknown (no end before it, or a device without a clock)
+	virtual Real restartGapMs(AudioVoice /*voice*/, AudioVoiceKind /*kind*/) const { return -1.0f; }
+	/// O72 (-audioLog): 2D, 3D and stream voices playing now; < 0: unknown
+	virtual Int playingVoiceCount() const { return -1; }
 
 	/// The first steps of playSample + initFilters: init, end callback, volume with centre pan, pitch (when
 	/// pitchShift != 0: rate after init x pitchShift), delay filter (when delaySeconds > 0). The manager then

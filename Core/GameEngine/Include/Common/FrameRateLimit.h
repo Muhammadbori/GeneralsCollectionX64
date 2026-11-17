@@ -27,6 +27,13 @@ public:
 	FrameRateLimit();
 
 	Real wait(UnsignedInt maxFps);
+
+	/// TheSuperHackers @feature O72 Work for the main thread while it sleeps out a frame: when wakeEvent (a Win32 event)
+	/// is set during the sleep, work runs at once and the sleep goes on. Used by the audio for the ends of its sounds
+	/// (the next loop or portion starts within about a millisecond instead of at the next frame). Only while allowed
+	/// (the engine's main loop allows it around its own wait; other waits, e.g. a load screen's fade, do not).
+	static void setIdleWork(void (*work)(), void *wakeEvent);
+	static void setIdleWorkAllowed(Bool allowed);
 	void reset(); ///< Move the timing anchor to now, discarding any time elapsed since the last call to wait.
 
 private:

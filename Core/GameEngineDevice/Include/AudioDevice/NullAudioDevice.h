@@ -57,6 +57,8 @@ public:
 	virtual void freeVoice(AudioVoice voice, AudioVoiceKind kind) override;
 	virtual Int voiceDebugIndex(AudioVoice voice, AudioVoiceKind kind) const override;
 	virtual UnsignedInt voiceGeneration(AudioVoice voice, AudioVoiceKind kind) const override;   ///< O71
+	virtual Bool setVoiceLooping(AudioVoice voice, AudioVoiceKind kind, Bool loop) override;     ///< O72
+	virtual Int playingVoiceCount() const override;                                             ///< O72
 
 	virtual void prepare2D(AudioVoice voice, Real volume, Real pitchShift, Real delaySeconds) override;
 	virtual Bool start2D(AudioVoice voice, const AudioSample &sample) override;
@@ -103,6 +105,7 @@ private:
 		Bool ended;               ///< played to its end (a stream's loop counter then reads 1, as Miles')
 		Bool paused;
 		Bool dead;                ///< released stream or freed voice, deleted at the next update
+		Bool loopsNatively;       ///< O72: a 2D/3D sample looping in the device (no end until set FALSE)
 		UnsignedInt64 startTick;
 		UnsignedInt64 pausedTick;
 		UnsignedInt64 passTicks;  ///< one pass

@@ -68,6 +68,8 @@ struct PlayingAudio
 	Bool m_fade;
 	volatile Bool m_rerequestOnNextUpdate;
 	volatile Bool m_requestStop; // Let the audio finish but stop looping if it is looping
+	Bool m_nativeLoop;   ///< O72: the sample loops inside the device (a loop that needs no decision between passes)
+	Int m_occluded;      ///< O72: a native 3D loop's occlusion as last given (-1: as play3D gave it)
 
 	PlayingAudio()
 		: m_voice(0)
@@ -79,6 +81,8 @@ struct PlayingAudio
 		, m_fade(false)
 		, m_rerequestOnNextUpdate(false)
 		, m_requestStop(false)
+		, m_nativeLoop(false)
+		, m_occluded(-1)
 	{}
 
 	Bool isPlaying() const
@@ -195,6 +199,12 @@ class MilesAudioManager : public AudioManager, public AudioDeviceListener
 		virtual PlayingAudio *findPlayingAudioFrom( uintptr_t handle, UnsignedInt flags );
 		virtual void onVoiceDone( uintptr_t voice, UnsignedInt kind, UnsignedInt generation ) override; ///< AudioDeviceListener: on the device's thread; only queues
 		void processVoiceEnds();   ///< O71: the queued ends, on the main thread
+		static void idleVoiceEnds();   ///< O72: FrameRateLimit's idle work: the ends, while the main thread sleeps out a frame
+		Bool loopsWithoutDecision(AudioEventRTS *event) const;   ///< O72
+		void armNativeLoop(PlayingAudio *playing);    ///< O72: after a start of the sound portion
+		void endNativeLoop(PlayingAudio *playing);    ///< O72: the game stops the event: the pass in play is the last
+		void noteRestartGap(PlayingAudio *playing, Bool loop);   ///< O72 (-audioLog)
+		void logAudioBalance(const char *when);       ///< O72 (-audioLog)
 		virtual void onDeviceEvent( const char *event, const char *detail ) override; ///< AudioDeviceListener: a DEVICE log line
 
 		virtual UnsignedInt getProviderCount() const override;
@@ -349,6 +359,7 @@ class MilesAudioManager : public AudioManager, public AudioDeviceListener
 		struct VoiceEnd { uintptr_t voice; UnsignedInt kind; UnsignedInt generation; };
 		CriticalSectionClass m_voiceEndsCS;
 		std::vector<VoiceEnd> m_voiceEnds;
+		void *m_voiceEndsEvent;   ///< O72: set at each queued end; wakes the main thread's frame wait (FrameRateLimit)
 
 		AudioFileCache *m_audioCache;
 		PlayingAudio *m_binkHandle;

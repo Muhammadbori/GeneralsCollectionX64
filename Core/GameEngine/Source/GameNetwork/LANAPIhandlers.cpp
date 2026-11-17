@@ -598,6 +598,10 @@ void LANAPI::handleJoinAccept( LANMessage *msg, UnsignedInt senderIP )
 			m_currentGame = joined;
 			m_startSeenMs = 0;    // O71
 			m_lastLoopMs = 0;
+			m_notListedSinceMs = 0;
+			if (m_currentGame != nullptr) {
+				m_currentGame->setLastHeard(timeGetTime());   // the host's silence counts from its accept
+			}
 			m_lastRoomBeat = 0;   // the first HELLO at once (keepRoomAlive, or update): the host's seat is confirmed
 			LanTest::joinLog("joiner: accepted, slot %d", (Int)msg->GameJoined.slotPosition);
 

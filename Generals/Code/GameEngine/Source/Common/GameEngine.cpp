@@ -913,7 +913,9 @@ void GameEngine::execute()
 				}
 			}
 
+			FrameRateLimit::setIdleWorkAllowed(TRUE);    // O72: the audio's ends are handled during this wait
 			TheFramePacer->update();
+			FrameRateLimit::setIdleWorkAllowed(FALSE);
 		}
 
 #ifdef PERF_TIMERS

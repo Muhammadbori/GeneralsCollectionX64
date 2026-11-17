@@ -76,6 +76,10 @@ public:
 	virtual void freeVoice(AudioVoice voice, AudioVoiceKind kind) override;
 	virtual Int voiceDebugIndex(AudioVoice voice, AudioVoiceKind kind) const override;
 	virtual UnsignedInt voiceGeneration(AudioVoice voice, AudioVoiceKind kind) const override;   ///< O71
+	virtual Bool setVoiceLooping(AudioVoice voice, AudioVoiceKind kind, Bool loop) override;     ///< O72
+	virtual void set3DOcclusion(AudioVoice voice, Bool useOcclusion, Real occlusion) override;   ///< O72
+	virtual Real restartGapMs(AudioVoice voice, AudioVoiceKind kind) const override;            ///< O72
+	virtual Int playingVoiceCount() const override;                                             ///< O72
 
 	virtual void prepare2D(AudioVoice voice, Real volume, Real pitchShift, Real delaySeconds) override;
 	virtual Bool start2D(AudioVoice voice, const AudioSample &sample) override;

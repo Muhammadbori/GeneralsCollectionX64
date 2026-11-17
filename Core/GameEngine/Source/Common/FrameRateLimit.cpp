@@ -30,6 +30,24 @@ FrameRateLimit::FrameRateLimit()
 	m_start = start.QuadPart;
 }
 
+namespace
+{
+	void (*s_idleWork)() = nullptr;
+	HANDLE s_idleWake = nullptr;
+	Bool s_idleWorkAllowed = FALSE;
+}
+
+void FrameRateLimit::setIdleWork(void (*work)(), void *wakeEvent)
+{
+	s_idleWork = work;
+	s_idleWake = (HANDLE)wakeEvent;
+}
+
+void FrameRateLimit::setIdleWorkAllowed(Bool allowed)
+{
+	s_idleWorkAllowed = allowed;
+}
+
 Real FrameRateLimit::wait(UnsignedInt maxFps)
 {
 	PROFILER_SECTION;
@@ -43,7 +61,30 @@ Real FrameRateLimit::wait(UnsignedInt maxFps)
 	{
 		// Non busy wait with Munkee sleep
 		DWORD dwMilliseconds = static_cast<DWORD>(sleepSeconds * 1000);
-		Sleep(dwMilliseconds);
+		if (s_idleWork != nullptr && s_idleWake != nullptr && s_idleWorkAllowed)
+		{
+			// O72: the same sleep, woken for the idle work (the audio's ends) as often as it is signalled
+			LARGE_INTEGER sleepStart;
+			QueryPerformanceCounter(&sleepStart);
+			for (;;)
+			{
+				LARGE_INTEGER nowTick;
+				QueryPerformanceCounter(&nowTick);
+				const double sleptMs = static_cast<double>(nowTick.QuadPart - sleepStart.QuadPart) * 1000.0 / m_freq;
+				if (sleptMs >= (double)dwMilliseconds) {
+					break;
+				}
+				const DWORD left = (DWORD)((double)dwMilliseconds - sleptMs);
+				if (left == 0 || WaitForSingleObject(s_idleWake, left) != WAIT_OBJECT_0) {
+					break;
+				}
+				s_idleWork();
+			}
+		}
+		else
+		{
+			Sleep(dwMilliseconds);
+		}
 	}
 
 	// Busy wait for remaining time
