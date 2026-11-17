@@ -21,6 +21,7 @@
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
 
+#include "GameClient/OwnUiScale.h"
 #include "GameClient/LanRoomLook.h"
 
 #include "Common/NameKeyGenerator.h"
@@ -245,7 +246,7 @@ void LanRoomLook::init(GameWindow *parent)
 	s.chatList = find("ListboxChatWindowLanGame");
 	s.startButton = find("ButtonStart");
 	s.backButton = find("ButtonBack");
-	s.font = s.chatList != nullptr ? s.chatList->winGetFont() : nullptr;
+	s.font = OwnUi::font(s.chatList != nullptr ? s.chatList->winGetFont() : nullptr);   // O53: the observers box
 	Int pw = 800, ph = 600;
 	parent->winGetSize(&pw, &ph);
 

@@ -52,8 +52,10 @@
 #include "GameClient/VoicePreview.h"
 #include "GameClient/HotkeyLetters.h"
 #include "GameClient/GlobalLanguage.h"
+#include "GameClient/OwnUiScale.h"
 #include "GameLogic/GameLogic.h"
 
+#include <algorithm>
 #include <vector>
 
 namespace
@@ -2121,6 +2123,8 @@ void OptionsSections::init(OptionPreferences *pref)
 	s.checkLook = findWindow("CheckAlternateMouse");
 	s.sliderLook = findWindow("SliderMusicVolume");
 	s.detailCombo = findWindow("ComboBoxDetail");
+	// O53: the section buttons keep the game's size (the labels' font before the factor)
+	GameFont *tabFont = s.labelLook != nullptr ? s.labelLook->winGetFont() : nullptr;
 	if (s.frameLook != nullptr)
 	{
 		// the group title: the topmost static text of the sound group
@@ -2173,8 +2177,34 @@ void OptionsSections::init(OptionPreferences *pref)
 	const Int pageX = left + columnW + gap * 2;
 	const Int pageW = right - pageX;
 
+	// TheSuperHackers @feature O53 (row 39) Everything the pages hold is ours: the looks they copy and the old screen's
+	// controls they take get the OwnUiScale factor (font and height), once per build of the screen (the options layout
+	// is made anew each time it opens); rows, sliders, lists and margins follow from them.
+	{
+		OwnUi::reload();
+		std::vector<GameWindow *> done;
+		GameWindow *looks[5] = { s.labelLook, s.checkLook, s.detailCombo, s.titleLook, s.sliderLook };
+		std::vector<GameWindow *> all(looks, looks + 5);
+		for (Int i = 0; i < EXISTING_COUNT; ++i)
+		{
+			all.push_back(findWindow(kExisting[i].control));
+			all.push_back(kExisting[i].labelWindow != nullptr ? findWindow(kExisting[i].labelWindow) : nullptr);
+		}
+		for (size_t i = 0; i < all.size(); ++i)
+		{
+			GameWindow *w = all[i];
+			if (w == nullptr || std::find(done.begin(), done.end(), w) != done.end()) {
+				continue;
+			}
+			done.push_back(w);
+			w->winSetFont(OwnUi::font(w->winGetFont()));
+			const ICoord2D z = sizeOf(w);
+			w->winSetSize(z.x, OwnUi::size(z.y));
+		}
+	}
+
 	// the section buttons, in the menu buttons' look with the labels' font
-	GameFont *buttonFont = s.labelLook != nullptr ? s.labelLook->winGetFont() : nullptr;
+	GameFont *buttonFont = tabFont;
 	for (Int i = 0; i < SEC_COUNT; ++i)
 	{
 		WinInstanceData inst;
@@ -2201,7 +2231,7 @@ void OptionsSections::init(OptionPreferences *pref)
 	s.pageY = top;
 	s.pageW = pageW;
 	s.pageH = height;
-	s.gap = gap;
+	s.gap = max(2, OwnUi::size(gap));   // O53: the pages' margins follow the factor (the section buttons keep 'gap')
 	s.titleH = titleH;
 	for (Int i = 0; i < SEC_COUNT; ++i) {
 		s.pages[i] = makePage(i);
@@ -2223,8 +2253,8 @@ void OptionsSections::init(OptionPreferences *pref)
 	// fill the pages
 	const Int labelH = s.labelLook != nullptr ? sizeOf(s.labelLook).y : 20;
 	const Int checkH = s.checkLook != nullptr ? sizeOf(s.checkLook).y : 18;
-	const Int contentTop = gap * 2 + titleH + gap;
-	const Int colW = (pageW - gap * 8) / 2;
+	const Int contentTop = s.gap * 2 + titleH + s.gap;   // O53
+	const Int colW = (pageW - s.gap * 8) / 2;
 
 	// the pack rows start at the saved choice (it may wait for a restart), else at what this run uses
 	for (Int r = 0; r < PACK_ROW_COUNT; ++r)

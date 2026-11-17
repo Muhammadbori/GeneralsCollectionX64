@@ -21,6 +21,7 @@
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
 
+#include "GameClient/OwnUiScale.h"
 #include "GameClient/ReplayControlBar.h"
 
 #include "Common/FramePacer.h"
@@ -311,9 +312,9 @@ namespace
 		const Int screenW = TheDisplay->getWidth();
 		const Int screenH = TheDisplay->getHeight();
 		const Real scale = min((Real)screenW / 800.0f, (Real)screenH / 600.0f);
-		GameFont *font = TheFontLibrary != nullptr
+		GameFont *font = OwnUi::font(TheFontLibrary != nullptr   // O53
 			? TheFontLibrary->getFont(AsciiString("Arial"), TheGlobalLanguageData != nullptr ? TheGlobalLanguageData->adjustFontSize(12) : 12, TRUE)
-			: nullptr;
+			: nullptr);
 
 		Int textH = 12;
 		measure(font, UnicodeString(L"0:00"), &textH);

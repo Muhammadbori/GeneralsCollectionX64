@@ -21,6 +21,7 @@
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
 
+#include "GameClient/OwnUiScale.h"
 #include "GameClient/VoiceChatUI.h"
 
 #include "Common/NameKeyGenerator.h"
@@ -67,9 +68,9 @@ namespace
 
 	GameFont *uiFont(Int size)
 	{
-		return TheFontLibrary != nullptr
+		return OwnUi::font(TheFontLibrary != nullptr   // O53: the voice and watchers lines
 			? TheFontLibrary->getFont(AsciiString("Arial"), TheGlobalLanguageData != nullptr ? TheGlobalLanguageData->adjustFontSize(size) : size, TRUE)
-			: nullptr;
+			: nullptr);
 	}
 
 	Int textWidth(GameFont *font, const UnicodeString &str)

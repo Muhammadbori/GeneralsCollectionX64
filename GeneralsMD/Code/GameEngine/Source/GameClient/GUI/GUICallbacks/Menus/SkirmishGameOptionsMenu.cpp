@@ -32,6 +32,7 @@
 
 
 #include "Common/BattleHonors.h"
+#include "GameClient/OwnUiScale.h"
 #include "GameClient/Display.h"
 #include "Common/FileSystem.h"
 #include "Common/GameEngine.h"
@@ -173,7 +174,7 @@ static void layoutSkirmishSpeedRows(GameWindow *parent, GameWindow *slider, Game
 	#define SX(v) ((v) * W / 800)
 	#define SY(v) ((v) * H / 600)
 	GameFont *font = speedText != nullptr ? speedText->winGetFont() : slider->winGetFont();
-	const Int fullH = TickSlider::fullHeight(font);
+	const Int fullH = TickSlider::fullHeight(OwnUi::font(font));   // O53: the slider's own font (GameSpeedControl)
 	const Int top = SY(310);
 
 	GameWindow *title = TheWindowManager->winGetWindowFromId(parent, TheNameKeyGenerator->nameToKey("SkirmishGameOptionsMenu.wnd:StaticTextBattleHonors1"));

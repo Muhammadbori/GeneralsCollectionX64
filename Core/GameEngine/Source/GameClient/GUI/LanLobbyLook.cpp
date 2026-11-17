@@ -21,6 +21,7 @@
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
 
+#include "GameClient/OwnUiScale.h"
 #include "GameClient/LanLobbyLook.h"
 
 #include "Common/FrameShots.h"
@@ -525,12 +526,14 @@ namespace
 		// the menus' text since O52): 16 at 1280 x 800, 30 at 2256 x 1504, and a short wide window no longer gets its
 		// height's share when the width is smaller
 		const Real scale = min(TheDisplay->getWidth() / 800.0f, TheDisplay->getHeight() / 600.0f);
-		const Int want = REAL_TO_INT_FLOOR(12.0f * scale + 0.5f);
+		// O53: times the OwnUiScale factor, and the font may get smaller too (at least 8 points)
+		OwnUi::reload();
+		const Int want = REAL_TO_INT_FLOOR(12.0f * scale * OwnUi::scale() + 0.5f);
 		const Int have = TheWindowManager->winFontHeight(font);
-		if (have <= 0 || have >= want - 1) {
+		if (have <= 0 || (have >= want - 1 && have <= want + 1)) {
 			return font;
 		}
-		const Int points = max(font->pointSize + 1, font->pointSize * want / have);
+		const Int points = max(min(font->pointSize, 8), font->pointSize * want / have);
 		GameFont *bigger = TheFontLibrary->getFont(font->nameString, points, font->bold);
 		return bigger != nullptr ? bigger : font;
 	}

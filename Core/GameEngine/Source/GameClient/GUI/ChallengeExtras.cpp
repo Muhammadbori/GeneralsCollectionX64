@@ -20,6 +20,7 @@
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
 
+#include "GameClient/OwnUiScale.h"
 #include "GameClient/ChallengeExtras.h"
 
 #include "Common/GameCommon.h"
@@ -478,7 +479,7 @@ void ChallengeExtras::init(GameWindow *parentMenu, GameWindow *buttonPlay, GameW
 	if (s.parent == nullptr || buttonBack == nullptr) {
 		return;
 	}
-	GameFont *smallFont = labelFontLook != nullptr ? labelFontLook->winGetFont() : nullptr;
+	GameFont *smallFont = OwnUi::font(labelFontLook != nullptr ? labelFontLook->winGetFont() : nullptr);   // O53
 	{
 		const WinInstanceData *look = buttonBack->winGetInstanceData();
 		for (Int d = 0; d < MAX_DRAW_DATA; ++d)
