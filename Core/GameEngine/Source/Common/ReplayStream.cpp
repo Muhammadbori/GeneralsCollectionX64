@@ -1129,13 +1129,22 @@ namespace
 
 	/// O34: the source to ask next: the lowest rank, then the list order, among those not cooling down; when all cool
 	/// down, the one that is free first.
+	/// TheSuperHackers @bugfix O79 A source's retryAfterMs is 0 until it fails ("free now"): tested explicitly. The bare
+	/// signed test (LONG)(0 - now) is positive from 2^31 ms of uptime (24.86 days) to the 49.7-day wrap, so every source
+	/// "cooled down" for weeks and no observer or outside viewer ever connected (S41 co_off, -testClockOffset 26 days;
+	/// in plan3 too, with timeGetTime). A deadline is never 0 (LanClock::stamp).
+	Bool coolingDown(const Source &s, DWORD now)
+	{
+		return s.retryAfterMs != 0 && (LONG)(s.retryAfterMs - now) > 0;
+	}
+
 	Int pickSource(const MirrorConfig &m, DWORD now)
 	{
 		Int best = -1, soonest = 0;
 		for (Int i = 0; i < m.sourceCount; ++i)
 		{
 			const Source &s = m.sources[i];
-			if ((LONG)(s.retryAfterMs - now) <= 0 && (best < 0 || s.rank < m.sources[best].rank)) {
+			if (!coolingDown(s, now) && (best < 0 || s.rank < m.sources[best].rank)) {
 				best = i;
 			}
 			if ((LONG)(s.retryAfterMs - m.sources[soonest].retryAfterMs) < 0) {
@@ -1342,7 +1351,7 @@ namespace
 				break;
 			}
 			const Int source = pickSource(m, LanClock::now());
-			while (current() && (LONG)(m.sources[source].retryAfterMs - LanClock::now()) > 0) {
+			while (current() && coolingDown(m.sources[source], LanClock::now())) {
 				Sleep(100);   // every source cools down: wait for the first free one
 			}
 			if (!current()) {
@@ -1353,7 +1362,7 @@ namespace
 			if (s == INVALID_SOCKET)
 			{
 				logLine("mirror: no answer from %s:%u", src.host, (unsigned)src.port);
-				src.retryAfterMs = LanClock::now() + COOLDOWN_MS;
+				src.retryAfterMs = LanClock::stamp(LanClock::now() + COOLDOWN_MS);
 				continue;
 			}
 			// the hello (version 3): after which frame, and the game key we know
@@ -1371,7 +1380,7 @@ namespace
 			if (!sendAll(s, hello, HELLO_SIZE))
 			{
 				closesocket(s);
-				src.retryAfterMs = LanClock::now() + COOLDOWN_MS;
+				src.retryAfterMs = LanClock::stamp(LanClock::now() + COOLDOWN_MS);
 				continue;
 			}
 			UnsignedInt srcIp = 0;
@@ -1634,11 +1643,11 @@ namespace
 				if (sentOn)
 				{
 					src.redirectedMs = now;   // it may be asked again at once, as the last resort, once the relays failed
-					src.retryAfterMs = now + 500;
+					src.retryAfterMs = LanClock::stamp(now + 500);
 				}
 				else
 				{
-					src.retryAfterMs = now + COOLDOWN_MS;
+					src.retryAfterMs = LanClock::stamp(now + COOLDOWN_MS);
 				}
 				logLine("mirror: leaving %s:%u (%s) after frame %u at byte %u (%u bytes of a frame not finished dropped)", src.host,
 					(unsigned)src.port, leaveWhy, lastFrame, have, pendLen);
