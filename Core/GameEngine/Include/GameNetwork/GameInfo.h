@@ -180,6 +180,9 @@ public:
 	GameSlot* getSlot( Int slotNum );									///< Get the slot
 	const GameSlot* getConstSlot( Int slotNum ) const;	///< Get the slot
 	virtual Bool amIHost() const;															///< Convenience function - is the local player the game host?
+	/// TheSuperHackers @bugfix O60 (row 46) setSlot marks the first seat accepted and with the map as the host's: only
+	/// when this slot is the host's (a LAN room's admin may watch from outside the seats or sit elsewhere).
+	virtual Bool isHostSeat( const GameSlot &slot ) const { return TRUE; }
 	virtual Int getLocalSlotNum() const;				///< Get the local slot number, or -1 if we're not present
 	Int getSlotNum( AsciiString userName ) const;			///< Get the slot number corresponding to a specific user, or -1 if he's not present
 

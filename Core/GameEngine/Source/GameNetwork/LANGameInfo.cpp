@@ -106,7 +106,7 @@ void LANGameInfo::setSlot( Int slotNum, LANGameSlot slotInfo )
 
 	m_LANSlot[slotNum] = slotInfo;
 
-	if (slotNum == 0)
+	if (slotNum == 0 && isHostSeat(m_LANSlot[0]))   // O60: the admin may watch from outside the seats or sit elsewhere
 	{
 		m_LANSlot[slotNum].setAccept();
 		m_LANSlot[slotNum].setMapAvailability(true);
@@ -174,6 +174,21 @@ Bool LANGameInfo::amIHost() const
 
 UnsignedInt LANGameInfo::getHostIP() const
 {
+	const UnsignedInt ip = hostIPFromName();
+	if (ip != 0) {
+		return ip;
+	}
+	return m_LANSlot[0].isHuman() ? m_LANSlot[0].getIP() : 0;
+}
+
+Bool LANGameInfo::isHostSeat( const GameSlot &slot ) const
+{
+	const UnsignedInt host = hostIPFromName();
+	return host == 0 || slot.getIP() == host;
+}
+
+UnsignedInt LANGameInfo::hostIPFromName() const
+{
 	const WideChar *name = m_gameName.str();
 	UnsignedInt ip = 0;
 	Int digits = 0;
@@ -189,10 +204,7 @@ UnsignedInt LANGameInfo::getHostIP() const
 		}
 		ip = (ip << 4) | (UnsignedInt)v;
 	}
-	if (digits == 8 && ip != 0) {
-		return ip;
-	}
-	return m_LANSlot[0].isHuman() ? m_LANSlot[0].getIP() : 0;
+	return digits == 8 ? ip : 0;
 }
 
 UnicodeString LANGameInfo::getHostName() const

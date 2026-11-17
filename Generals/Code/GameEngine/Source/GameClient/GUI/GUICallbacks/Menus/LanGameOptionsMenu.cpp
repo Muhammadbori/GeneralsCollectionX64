@@ -358,6 +358,23 @@ void StartPressed()
 
 	if(isReady)
 	{
+		// TheSuperHackers @feature O60 (row 46) The admin who watches from outside the seats is not in the match and cannot
+		// send the map: every player needs it already
+		{
+			UnicodeString problem;
+			if (LanRoom::hostStartProblem(myGame, &problem))
+			{
+				GadgetListBoxAddEntryText(listboxChatWindowLanGame, problem, chatSystemColor, -1, 0);
+				return;
+			}
+		}
+		// O60: the first seat leads the match (the packet router, the map transfer, the running game's announce): the host
+		// moves there when he plays, else the lowest player when nobody sits there; the players get the slots before START
+		if (LanRoom::hostSeatFirst(myGame))
+		{
+			lanUpdateSlotList();
+			TheLAN->RequestGameOptions(GenerateGameOptionsString(), true);
+		}
 		// TheSuperHackers @bugfix O47 "Play again" keeps the room as it was at the Start click: the open places close just
 		// below (S34: places 5 and 6 of Hostile Dawn were open before the match and closed in the new room)
 		LanRoom::rememberMatchLayout(myGame);

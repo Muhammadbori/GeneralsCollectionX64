@@ -416,6 +416,9 @@ public:
 											 UnicodeString message, ChatType format ) override;														///< Chat message from someone
 	virtual void OnGameStart() override;																													///< The game is starting
 	virtual void OnGameStartTimer( Int seconds ) override;
+	/// TheSuperHackers @feature O60 (row 46) The admin who watches from outside the seats is not in the match: after
+	/// OnGameStart he leaves his room on the next update, without a word to the players, and watches from the lobby.
+	void OnWatchMatchLeave();
 	virtual void OnGameOptions( UnsignedInt playerIP, Int playerSlot, AsciiString options ) override;	///< Someone sent game options
 	virtual void OnGameCreate( ReturnType ret ) override;																							///< Your game is created
 	//virtual void OnSlotList( ReturnType ret, LANGameInfo *theGame );															///< Slotlist for a game in setup
@@ -468,6 +471,7 @@ protected:
 	UnsignedInt					m_lastResendTime; // in ms
 
 	Bool								m_isInLANMenu;		///< true while we are in a LAN menu (lobby, game options, direct connect)
+	Bool								m_watchMatchLeave;	///< O60: the admin's quiet leave at Start is due (OnWatchMatchLeave)
 	Bool								m_inLobby;											///< Are we in the lobby (not in a game)?
 	LANGameInfo *				m_currentGame;							///< Pointer to game (setup screen) we are currently in (null for lobby)
 	//LANGameInfo *m_currentGameInfo;			///< Pointer to game setup info we are currently in.

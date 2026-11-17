@@ -85,6 +85,7 @@ LANAPI::LANAPI() : m_transport(nullptr)
 	m_localIP = 0;
 	m_inLobby = true;
 	m_isInLANMenu = TRUE;
+	m_watchMatchLeave = FALSE;   // O60
 	m_currentGame = nullptr;
 	m_broadcastAddr = INADDR_BROADCAST;
 	m_directConnectRemoteIP = 0;
@@ -129,6 +130,7 @@ void LANAPI::init()
 	m_expiration = 0;
 	m_inLobby = true;
 	m_isInLANMenu = TRUE;
+	m_watchMatchLeave = FALSE;   // O60
 	m_currentGame = nullptr;
 	m_directConnectRemoteIP = 0;
 
@@ -448,6 +450,12 @@ void LANAPI::update()
 {
 	if(LANbuttonPushed)
 		return;
+	// O60 (row 46): the admin who watches his room's match leaves the room now (OnGameStart)
+	if (m_watchMatchLeave)
+	{
+		OnWatchMatchLeave();
+		return;
+	}
 	static const UnsignedInt LANAPIUpdateDelay = 200;
 	UnsignedInt now = timeGetTime();
 

@@ -438,7 +438,7 @@ void GameInfo::setSlot( Int slotNum, GameSlot slotInfo )
 //	Bool isHuman = slotInfo.isHuman();
 //	Bool wasHuman = m_slot[slotNum]->isHuman();
 
-	if (slotNum == 0)
+	if (slotNum == 0 && isHostSeat(slotInfo))   // O60
 	{
 		slotInfo.setAccept();
 		slotInfo.setMapAvailability(true);

@@ -106,6 +106,13 @@ namespace LanRoom
 	void hostRemove(UnsignedInt ip);                     ///< the host's remove button
 	void hostDropJoined(UnsignedInt ip);                 ///< the host accepted that person's join into a slot
 	void hostStart(LANGameInfo *game, UnsignedInt localIP);   ///< Start: the observers get the players' addresses
+	/// TheSuperHackers @feature O60 (row 46) Start while the admin watches from outside the seats: nobody of the match
+	/// can send the map (the host sends it, and he is not in the match). TRUE and the text when a player lacks it.
+	Bool hostStartProblem(const LANGameInfo *game, UnicodeString *text);
+	/// O60: the first seat leads the match (ConnectionManager's packet router, FileTransfer's sender, the announce of
+	/// the running game): at Start the host moves there when he plays, else the lowest player when nobody sits there.
+	/// A slot moves whole (army, colour, team, start). TRUE: the slots changed (the host sends them before START).
+	Bool hostSeatFirst(LANGameInfo *game);
 	/// O33: this host's rules for outside viewers: the delay chosen in the room (O56 row 43), else Options.ini
 	/// LanWatchDelay 10..180, default 60. O56 (row 43): outside viewers are always allowed (an old LanAllowViewers = no
 	/// is ignored).
@@ -184,6 +191,12 @@ namespace LanRoom
 	Int upstreamDelaySeconds();
 	/// The LAN screen opens again: a viewer that played its stream goes back to normal (follow mode off, no mirror).
 	void resetViewer();
+	/// O60 (row 46): the LAN lobby opens: resetViewer, except for the admin who just left his room at Start to watch its
+	/// match (his stream is starting).
+	void lobbyOpened();
+	/// O60: TRUE once after the admin watched his room's match from outside the seats (its replay's score screen offers
+	/// "Play again" as a playing host's does).
+	Bool takeAdminWatchedMatch();
 	/// A line for the screen's chat (removed, full, waiting, lost ...); FALSE when none.
 	Bool takeNotice(UnicodeString *text);
 }

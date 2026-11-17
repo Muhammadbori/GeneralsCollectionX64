@@ -101,6 +101,8 @@ public:
 	// Convenience functions that interface with the LANPlayer held in the slot list
 	virtual void resetAccepted() override;														///< Reset the accepted flag on all players
 	virtual Bool amIHost() const override;																///< Convenience function - is the local player the game host?
+	/// O60 (row 46): the host's seat is the one with the address the game's name starts with (any, for a name without it)
+	virtual Bool isHostSeat( const GameSlot &slot ) const override;
 
 	/// Get the IP of selected player or return 0
 	UnsignedInt getIP( int who )
@@ -161,6 +163,10 @@ public:
 	UnsignedInt getHostIP() const;
 	/// O60: the host's player name (the game's name after its 16 hex digits), or slot 0's.
 	UnicodeString getHostName() const;
+
+private:
+	UnsignedInt hostIPFromName() const;   ///< O60: the address the game's name starts with, or 0
+public:
 
 
 private:

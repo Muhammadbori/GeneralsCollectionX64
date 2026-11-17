@@ -155,6 +155,7 @@ void initSinglePlayer();
 void finishSinglePlayerInit();
 static Bool s_needToFinishSinglePlayerInit = FALSE;
 static Bool buttonIsFinishCampaign = FALSE;
+static Bool s_adminRematch = FALSE;   ///< O60: the admin watched his room's match: "Play again" on its replay's screen
 static WindowLayout *s_blankLayout = nullptr;
 
 void initSkirmish();
@@ -325,6 +326,7 @@ void ScoreScreenInit( WindowLayout *layout, void *userData )
 		buttonSaveReplay->winEnable(FALSE);
 
 	s_needToFinishSinglePlayerInit = FALSE;
+	s_adminRematch = FALSE;
 	if (TheGameLogic->isInReplayGame())
 	{
 		if (buttonSaveReplay)
@@ -562,7 +564,7 @@ WindowMsgHandledType ScoreScreenSystem( GameWindow *window, UnsignedInt msg,
 					TheGameEngine->setQuitting(TRUE);
 				}
 			}
-			else if ( controlID == buttonContinueID && screenType == SCORESCREEN_LAN )
+			else if ( controlID == buttonContinueID && (screenType == SCORESCREEN_LAN || s_adminRematch) )
 			{
 				// O40: "Play again": as OK, and the LAN screen opens the room again (LanRoom::requestRematch)
 				LanRoom::requestRematch();
@@ -1146,8 +1148,16 @@ void initReplayMultiPlayer()
 		staticTextAcademyTitle->winHide( TRUE );
 	if (chatBoxBorder)
 		chatBoxBorder->winHide(TRUE);
+	// TheSuperHackers @feature O60 (row 46) The admin who watched his room's match from outside the seats gets "Play
+	// again" as the playing host of a LAN match does
+	s_adminRematch = LanRoom::takeAdminWatchedMatch() && LanRoom::canOfferRematch() && ReplaySimulation::getReplayCount() == 0;
 	if (buttonContinue)
-		buttonContinue->winHide(!showReplayButtonContinue());
+	{
+		buttonContinue->winHide(!s_adminRematch && !showReplayButtonContinue());
+		if (s_adminRematch) {
+			GadgetButtonSetText(buttonContinue, TheGameText->FETCH_OR_SUBSTITUTE("GUI:LanPlayAgain", localizedFallback(L"Play again", L"\x0418\x0433\x0440\x0430\x0442\x044C \x0441\x043D\x043E\x0432\x0430")));
+		}
+	}
 	if (buttonBuddies)
 		buttonBuddies->winHide(TRUE);
 //	if (buttonRehost)

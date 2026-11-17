@@ -223,6 +223,16 @@ void LANAPI::OnGameStart()
     }
 		pref.write();
 
+		// TheSuperHackers @feature O60 (row 46) The admin who watches from outside the seats is not in the match (no
+		// network, no lockstep, no map transfer): LanRoom::hostStart began his stream. He leaves his room on the next
+		// update without a word to the players (their match does not wait for him and goes on if his computer goes
+		// away) and watches from the lobby.
+		if (m_currentGame->amIHost() && m_currentGame->getHostObserves() && m_currentGame->getLocalSlotNum() < 0)
+		{
+			m_watchMatchLeave = TRUE;
+			return;
+		}
+
 		m_isInLANMenu = FALSE;
 
 		//m_currentGame->startGame(0);
@@ -286,6 +296,22 @@ void LANAPI::OnGameStart()
 		InitRandom( m_currentGame->getSeed() );
 		DEBUG_LOG(("InitRandom( %d )", m_currentGame->getSeed()));
 	}
+}
+
+void LANAPI::OnWatchMatchLeave()
+{
+	m_watchMatchLeave = FALSE;
+	ResetGameStartTimer();
+	if (m_currentGame != nullptr)
+	{
+		removeGame(m_currentGame);
+		delete m_currentGame;
+		m_currentGame = nullptr;
+	}
+	m_inLobby = TRUE;
+	LANbuttonPushed = true;
+	DEBUG_LOG(("OnWatchMatchLeave: the admin watches his room's match from the lobby"));
+	TheShell->pop();
 }
 
 void LANAPI::OnGameOptions( UnsignedInt playerIP, Int playerSlot, AsciiString options )

@@ -1686,7 +1686,7 @@ UnicodeString LanLobbyLook::screenName()
 void LanLobbyLook::init(GameWindow *parent)
 {
 	teardown();
-	LanRoom::resetViewer();   // O31: back from following a stream: follow mode off, no mirror
+	LanRoom::lobbyOpened();   // O31: back from following a stream: follow mode off, no mirror (O60: not the admin's starting one)
 	s.parent = parent;
 	if (s.parent == nullptr) {
 		return;
