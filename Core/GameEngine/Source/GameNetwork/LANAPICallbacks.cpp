@@ -356,6 +356,9 @@ void LANAPI::OnGameOptions( UnsignedInt playerIP, Int playerSlot, AsciiString op
 	}
 	else
 	{
+		if (playerSlot < 0 || playerSlot >= MAX_SLOTS) {
+			return;   // O62 (H5 #9): a host without a seat sends only as the host (the branch above)
+		}
 		// Check for user/host updates
 		{
 			AsciiString key;

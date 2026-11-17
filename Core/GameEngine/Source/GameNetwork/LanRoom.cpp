@@ -49,7 +49,7 @@
 namespace
 {
 	enum Kind { KIND_OBSERVE = 1, KIND_LEAVE = 2, KIND_LIST = 3, KIND_REMOVED = 4, KIND_CHAT = 5, KIND_START = 6, KIND_COUNT = 7,
-		KIND_RULES = 8 };
+		KIND_RULES = 8, KIND_ASK_MAP = 9 /* O62: the host asks a player to say again whether it has the map */ };
 	enum { FLAG_OUTSIDE_ALLOWED = 1, FLAG_TO_PLAYER = 2, FLAG_HOST_WATCHES = 4 /* O60: START to observers */ };
 	const Int kDefaultDelay = 60;
 	const UnsignedInt kKnownKeepMs = 600000;    ///< O33: a room's LIST is kept this long (its delay and flag)
@@ -82,6 +82,7 @@ namespace
 	const Text kObserverLine = { "GUI:LanObserverChatLine", L"%ls (observer): %ls", L"%ls (\x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x044C): %ls" };
 	const Text kObserverOnly = { "GUI:LanObserverChatOnly", L"Your messages go to the room's other observers only.", L"\x0412\x0430\x0448\x0438 \x0441\x043E\x043E\x0431\x0449\x0435\x043D\x0438\x044F \x0432\x0438\x0434\x044F\x0442 \x0442\x043E\x043B\x044C\x043A\x043E \x0434\x0440\x0443\x0433\x0438\x0435 \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x0438 \x043A\x043E\x043C\x043D\x0430\x0442\x044B." };
 	const Text kAdminNoMap = { "GUI:LanRoomAdminNoMap", L"The host watches, so nobody can send the map. These players need it first: %ls", L"\x0425\x043E\x0441\x0442 \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0435\x0442, \x043F\x043E\x044D\x0442\x043E\x043C\x0443 \x043A\x0430\x0440\x0442\x0443 \x043D\x0435\x043A\x043E\x043C\x0443 \x043F\x0435\x0440\x0435\x0434\x0430\x0442\x044C. \x0421\x043D\x0430\x0447\x0430\x043B\x0430 \x043E\x043D\x0430 \x043D\x0443\x0436\x043D\x0430 \x044D\x0442\x0438\x043C \x0438\x0433\x0440\x043E\x043A\x0430\x043C: %ls" };
+	const Text kAdminNobody = { "GUI:LanRoomAdminNobody", L"Nobody sits in a seat: a match needs at least one player.", L"\x041D\x0438\x043A\x0442\x043E \x043D\x0435 \x0441\x0438\x0434\x0438\x0442 \x043D\x0430 \x043C\x0435\x0441\x0442\x0435: \x0434\x043B\x044F \x043C\x0430\x0442\x0447\x0430 \x043D\x0443\x0436\x0435\x043D \x0445\x043E\x0442\x044F \x0431\x044B \x043E\x0434\x0438\x043D \x0438\x0433\x0440\x043E\x043A." };
 	const Text kLeft = { "GUI:LanRoomLeft", L"You no longer observe that game.", L"\x0412\x044B \x0431\x043E\x043B\x044C\x0448\x0435 \x043D\x0435 \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0435\x0442\x0435 \x0437\x0430 \x044D\x0442\x043E\x0439 \x0438\x0433\x0440\x043E\x0439." };
 
 	struct Entry { UnsignedInt ip; UnicodeString name; UnsignedInt lastHeard; };
@@ -636,6 +637,15 @@ void LanRoom::onMessage(const LANMessage *msg, UnsignedInt senderIP, UnsignedInt
 				s_state = STATE_ASKED;
 				s_lastBeat = now;
 				sendSimple(KIND_OBSERVE, s_roomHost, s_roomHost, 0);
+			}
+			break;
+		}
+		case KIND_ASK_MAP:
+		{
+			// O62 (H5 #6): this player's room's host did not hear whether it has the map: it says so again
+			LANGameInfo *mine = TheLAN != nullptr ? TheLAN->GetMyGame() : nullptr;
+			if (mine != nullptr && mine->getHostIP() == senderIP && msg->Room.gameIP == senderIP && !mine->isGameInProgress()) {
+				TheLAN->RequestHasMap();
 			}
 			break;
 		}
@@ -1465,6 +1475,16 @@ Bool LanRoom::hostStartProblem(const LANGameInfo *game, UnicodeString *text)
 	if (game == nullptr || TheLAN == nullptr || !game->getHostObserves() || inSlot(game, TheLAN->GetLocalIP())) {
 		return FALSE;
 	}
+	// O62 (H5 #5): a match needs somebody in a seat
+	Bool anyone = FALSE;
+	for (Int i = 0; i < MAX_SLOTS; ++i) {
+		anyone = anyone || (game->getConstLANSlot(i) != nullptr && game->getConstLANSlot(i)->isHuman());
+	}
+	if (!anyone)
+	{
+		*text = textOf(kAdminNobody);
+		return TRUE;
+	}
 	UnicodeString missing;
 	for (Int i = 0; i < MAX_SLOTS; ++i)
 	{
@@ -1475,6 +1495,8 @@ Bool LanRoom::hostStartProblem(const LANGameInfo *game, UnicodeString *text)
 				missing.concat(L", ");
 			}
 			missing.concat(slot->getName());
+			// O62 (H5 #6): a map flag lost on the way is asked for again, so the refusal is never a dead end
+			sendSimple(KIND_ASK_MAP, TheLAN->GetLocalIP(), slot->getIP(), 0);
 		}
 	}
 	if (missing.isEmpty()) {
@@ -1548,7 +1570,8 @@ Bool LanRoom::hostHasFreeSeat(const LANGameInfo *game)
 
 Bool LanRoom::hostSetObserves(LANGameInfo *game, Bool observe)
 {
-	if (game == nullptr || TheLAN == nullptr || !game->amIHost() || game->isGameInProgress()) {
+	// O62 (H5 #7): not while a start is under way (the countdown, or the start check)
+	if (game == nullptr || TheLAN == nullptr || !game->amIHost() || game->isGameInProgress() || TheLAN->IsStartPending()) {
 		return FALSE;
 	}
 	const Int mine = game->getLocalSlotNum();

@@ -637,7 +637,7 @@ void LanRoomLook::update(Bool screenReady)
 			s.hostToggleShown = want;
 		}
 		const Bool canPlay = LanRoom::hostHasFreeSeat(game);
-		s.hostToggle->winEnable(!want || canPlay);
+		s.hostToggle->winEnable((!want || canPlay) && !TheLAN->IsStartPending());   // O62 (H5 #7): locked while a start is under way
 		s.hostToggle->winSetTooltip(textOf(want ? (canPlay ? kHostPlayTip : kHostNoSeatTip) : kHostWatchTip));
 	}
 	if (s.adminMark != nullptr && game != nullptr)
