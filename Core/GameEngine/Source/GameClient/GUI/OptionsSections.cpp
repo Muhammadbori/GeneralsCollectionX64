@@ -1489,24 +1489,17 @@ namespace
 		const Int room = lineW - 10;
 		UnicodeString shown = status;
 		GameFont *font = labelFont();
-		// O51: shortened only when the wrapped text is taller than the status' room (two lines)
+		// TheSuperHackers @bugfix O69 (row 32) The whole status, never cut: it wraps over the status' four lines; when it
+		// does not fit them, the unit's name goes first ("«...» (1,5 с)"), then the length ("«...»"); the phrase itself,
+		// its closing quote included, is never shortened and no "..." is added (it was cut after two lines)
 		if (font != nullptr && room > 0 && textSize(font, status, room).y > lineH)
 		{
-			const WideChar *all = status.str();
-			Int n = status.getLength();
-			while (n > 0)
-			{
-				--n;
-				UnicodeString part;
-				for (Int i = 0; i < n; ++i) {
-					part.concat(all[i]);
-				}
-				part.trim();
-				part.concat(L"...");
-				if (textSize(font, part, room).y <= lineH) {
-					shown = part;
-					break;
-				}
+			UnicodeString withoutUnit, phraseOnly;
+			VoicePreview::lastStatusShorter(&withoutUnit, &phraseOnly);
+			if (!withoutUnit.isEmpty() && textSize(font, withoutUnit, room).y <= lineH) {
+				shown = withoutUnit;
+			} else if (!phraseOnly.isEmpty()) {
+				shown = phraseOnly;   // the phrase alone, whole, even if it is taller than the room
 			}
 		}
 		GadgetStaticTextSetText(s.listenStatus, shown);
@@ -1558,9 +1551,9 @@ namespace
 		}
 		y += oneRow ? buttonH : VoicePreview::UNIT_COUNT * buttonH + (VoicePreview::UNIT_COUNT - 1) * (s.gap / 2);
 		y += s.gap / 2;
-		// O51: room for two lines under the buttons (the longest status of both languages wraps once at 800x600); a text
-		// that needs more is shortened, the whole of it is the tooltip (setListenStatus)
-		const Int statusH = max(labelH * 2, textSize(labelFont(), UnicodeString(L"Wg"), 0).y * 2 + 6);
+		// O69 (row 32): room for four lines under the buttons (the longest phrases wrap to three at 800x600); a status that
+		// needs more loses the unit's name, then its length, never the phrase (setListenStatus)
+		const Int statusH = max(labelH * 4, textSize(labelFont(), UnicodeString(L"Wg"), 0).y * 4 + 6);
 		s.listenStatus = makeLabel(page, s.labelLook, 0, y, colW, statusH, UnicodeString::TheEmptyString, FALSE);
 		rowAdd(row, s.listenStatus, 0, y);
 		row.height = y + statusH;
