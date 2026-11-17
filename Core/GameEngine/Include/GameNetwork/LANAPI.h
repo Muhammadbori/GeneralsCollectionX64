@@ -535,6 +535,7 @@ protected:
 	// O71: silence is 30 s; it is not counted while this computer's own loop did not run, nor during a start
 	UnsignedInt					m_lastLoopMs;        ///< the last LANAPI::update in a room
 	UnsignedInt					m_startSeenMs;       ///< a joiner: the host's last start check or countdown message
+	UnsignedInt					m_notListedSinceMs;  ///< O71: a joiner: the host's lists have not had this computer since (0: they have)
 	Bool								m_acceptWanted;
 	UnsignedInt					m_acceptDigest;
 	UnsignedInt					m_acceptLastSent;
