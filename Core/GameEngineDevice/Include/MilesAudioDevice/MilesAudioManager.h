@@ -189,11 +189,12 @@ class MilesAudioManager : public AudioManager, public AudioDeviceListener
 		///< NOTE NOTE NOTE !!DO NOT USE THIS IN FOR GAMELOGIC PURPOSES!! NOTE NOTE NOTE
 		virtual Bool isCurrentlyPlaying( AudioHandle handle ) override;
 
-		virtual void notifyOfAudioCompletion( uintptr_t handle, UnsignedInt flags ) override; ///< Is called on MSS Timer thread
-		/// O70: the body of notifyOfAudioCompletion, run with the list's lock held for 2D and 3D samples.
-		void notifyOfAudioCompletionLocked( uintptr_t handle, UnsignedInt flags );
+		virtual void notifyOfAudioCompletion( uintptr_t handle, UnsignedInt flags ) override; ///< O71: on the main thread
+		/// O70/O71: the body of notifyOfAudioCompletion; generation 0: not checked
+		void notifyOfAudioCompletionLocked( uintptr_t handle, UnsignedInt flags, UnsignedInt generation );
 		virtual PlayingAudio *findPlayingAudioFrom( uintptr_t handle, UnsignedInt flags );
-		virtual void onVoiceDone( uintptr_t voice, UnsignedInt kind ) override; ///< AudioDeviceListener: on the device's thread
+		virtual void onVoiceDone( uintptr_t voice, UnsignedInt kind, UnsignedInt generation ) override; ///< AudioDeviceListener: on the device's thread; only queues
+		void processVoiceEnds();   ///< O71: the queued ends, on the main thread
 		virtual void onDeviceEvent( const char *event, const char *detail ) override; ///< AudioDeviceListener: a DEVICE log line
 
 		virtual UnsignedInt getProviderCount() const override;
@@ -343,6 +344,11 @@ class MilesAudioManager : public AudioManager, public AudioDeviceListener
 		CriticalSectionClass m_playing3DSoundsCS;
 		CriticalSectionClass m_playingStreamsCS;
 		CriticalSectionClass m_fadingAudioCS;
+
+		// TheSuperHackers @bugfix O71 The ends the device reports on its own thread, handled on the main thread
+		struct VoiceEnd { uintptr_t voice; UnsignedInt kind; UnsignedInt generation; };
+		CriticalSectionClass m_voiceEndsCS;
+		std::vector<VoiceEnd> m_voiceEnds;
 
 		AudioFileCache *m_audioCache;
 		PlayingAudio *m_binkHandle;

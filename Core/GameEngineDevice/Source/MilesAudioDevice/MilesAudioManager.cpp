@@ -619,6 +619,7 @@ void MilesAudioManager::update()
 	// requests, so that a sound started in this update counts its length from this frame.
 	const Bool logicIsRunning = TheGameLogic != nullptr && TheGameLogic->isInGame() && !TheGameLogic->isLoadingMap();
 	m_device->update(TheGameLogic != nullptr ? TheGameLogic->getFrame() : 0, logicIsRunning);
+	processVoiceEnds();   // O71: the ends reported since the last update (and the null device's of this one)
 
 	processRequestList();
 	processPlayingList();
@@ -673,6 +674,9 @@ void MilesAudioManager::stopAudio( AudioAffect which )
 void MilesAudioManager::pauseAudio( AudioAffect which )
 {
 	AUDIO_LOG("PAUSE", "affect=0x%x", (unsigned)which);
+	// O71: an end reported before the pause starts its next portion or loop now, as it did at once on the device's
+	// thread, so that the pause below pauses it instead of it starting later unpaused
+	processVoiceEnds();
 	std::list<PlayingAudio *>::iterator it;
 
 	PlayingAudio *playing = nullptr;
@@ -1741,6 +1745,8 @@ void MilesAudioManager::closeDevice()
 		}
 		m_device->close();
 		m_deviceOpened = false;
+		CriticalSectionClass::LockClass lock(m_voiceEndsCS);   // O71: the voices are gone; the end thread too
+		m_voiceEnds.clear();
 	}
 }
 
@@ -1796,6 +1802,7 @@ Bool MilesAudioManager::isCurrentlyPlaying( AudioHandle handle )
 //-------------------------------------------------------------------------------------------------
 void MilesAudioManager::notifyOfAudioCompletion( uintptr_t handle, UnsignedInt flags )
 {
+	// O71: now called on the main thread only (processVoiceEnds). The O70 list locks stay: they cost nothing there.
 	// TheSuperHackers @bugfix O70 The end of a sample comes on the device's end thread while the main thread may stop
 	// the same sound: stopPlayingAudio -> releaseMilesHandles cleared playing->m_voice (and gave the voice back to the
 	// pool) between this thread's find and its restart of the next portion or loop, which then prepared voice 0
@@ -1807,24 +1814,75 @@ void MilesAudioManager::notifyOfAudioCompletion( uintptr_t handle, UnsignedInt f
 	if (flags == PAT_Sample)
 	{
 		CriticalSectionClass::LockClass lock(m_playingSoundsCS);
-		notifyOfAudioCompletionLocked(handle, flags);
+		notifyOfAudioCompletionLocked(handle, flags, 0);
 	}
 	else if (flags == PAT_3DSample)
 	{
 		CriticalSectionClass::LockClass lock(m_playing3DSoundsCS);
-		notifyOfAudioCompletionLocked(handle, flags);
+		notifyOfAudioCompletionLocked(handle, flags, 0);
 	}
 	else
 	{
-		notifyOfAudioCompletionLocked(handle, flags);
+		notifyOfAudioCompletionLocked(handle, flags, 0);
 	}
 }
 
-void MilesAudioManager::notifyOfAudioCompletionLocked( uintptr_t handle, UnsignedInt flags )
+//-------------------------------------------------------------------------------------------------
+void MilesAudioManager::onVoiceDone( uintptr_t voice, UnsignedInt kind, UnsignedInt generation )
+{
+	// TheSuperHackers @bugfix O71 Only queued here (the device's end thread, or the main thread for the null device).
+	// Handling the end on the device's thread raced with the main thread on everything the end touches: the
+	// PlayingAudio and its voice (O70 closed that for 2D and 3D samples, not for streams and the fading list), the
+	// event's portion and loop state, the file cache, and the object or drawable whose position a 3D sound follows
+	// (getCurrentPositionFromEvent). processVoiceEnds handles the ends on the main thread at the next update, so none
+	// of it is shared any more, and no list lock is held across a file read on another thread.
+	CriticalSectionClass::LockClass lock(m_voiceEndsCS);
+	VoiceEnd e = { voice, kind, generation };
+	m_voiceEnds.push_back(e);
+}
+
+//-------------------------------------------------------------------------------------------------
+void MilesAudioManager::processVoiceEnds()
+{
+	std::vector<VoiceEnd> ends;
+	{
+		CriticalSectionClass::LockClass lock(m_voiceEndsCS);
+		if (m_voiceEnds.empty()) {
+			return;
+		}
+		ends.swap(m_voiceEnds);
+	}
+	for (size_t i = 0; i < ends.size(); ++i)
+	{
+		const VoiceEnd &e = ends[i];
+		if (e.voice != 0 && e.voice == m_previewVoice) {
+			continue;   // O47: the voice preview ended; stopPreviewSound frees it
+		}
+		if (e.kind == PAT_Sample) {
+			CriticalSectionClass::LockClass lock(m_playingSoundsCS);
+			notifyOfAudioCompletionLocked(e.voice, e.kind, e.generation);
+		} else if (e.kind == PAT_3DSample) {
+			CriticalSectionClass::LockClass lock(m_playing3DSoundsCS);
+			notifyOfAudioCompletionLocked(e.voice, e.kind, e.generation);
+		} else {
+			notifyOfAudioCompletionLocked(e.voice, e.kind, e.generation);
+		}
+	}
+}
+
+void MilesAudioManager::notifyOfAudioCompletionLocked( uintptr_t handle, UnsignedInt flags, UnsignedInt generation )
 {
 	PlayingAudio *playing = findPlayingAudioFrom(handle, flags);
 	if (!playing) {
-		DEBUG_CRASH(("Audio has completed playing, but we can't seem to find it. - jkmcd"));
+		// O71: stopped and released by the main thread between the end and this update: nothing to do
+		AUDIO_LOG("ENDGONE", "voice=%p kind=%u", (void *)handle, (unsigned)flags);
+		return;
+	}
+	// O71: the voice was prepared or started again since this end (the ABA case: the old sound was stopped, its
+	// voice released and taken by a new sound before this update): the end is the old sound's, the new one plays on.
+	// The voice is live here: a PlayingAudio holds it.
+	if (generation != 0 && m_device->voiceGeneration(handle, (AudioVoiceKind)flags) != generation) {
+		AUDIO_LOG("ENDSTALE", "voice=%p kind=%u", (void *)handle, (unsigned)flags);
 		return;
 	}
 	// O70: stopped or being stopped by the main thread meanwhile (its voice may already be gone): nothing to restart
@@ -3342,14 +3400,6 @@ void MilesAudioManager::onDeviceEvent( const char *event, const char *detail )
 	DEBUG_LOG(("Audio output device: %s %s", event, detail));
 }
 
-//-------------------------------------------------------------------------------------------------
-void MilesAudioManager::onVoiceDone( uintptr_t voice, UnsignedInt kind )
-{
-	if (voice != 0 && voice == m_previewVoice) {
-		return;   // O47: the voice preview ended; stopPreviewSound frees it
-	}
-	TheAudio->notifyOfAudioCompletion(voice, kind);
-}
 
 //-------------------------------------------------------------------------------------------------
 //-------------------------------------------------------------------------------------------------

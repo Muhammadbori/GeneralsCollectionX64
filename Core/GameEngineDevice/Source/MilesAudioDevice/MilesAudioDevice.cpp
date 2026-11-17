@@ -46,19 +46,19 @@ namespace
 	void AILCALLBACK sampleCompleted(HSAMPLE sampleCompleted)
 	{
 		if (s_listener)
-			s_listener->onVoiceDone((uintptr_t)sampleCompleted, AVK_2D);
+			s_listener->onVoiceDone((uintptr_t)sampleCompleted, AVK_2D, 0);
 	}
 
 	void AILCALLBACK sample3DCompleted(H3DSAMPLE sample3DCompleted)
 	{
 		if (s_listener)
-			s_listener->onVoiceDone((uintptr_t)sample3DCompleted, AVK_3D);
+			s_listener->onVoiceDone((uintptr_t)sample3DCompleted, AVK_3D, 0);
 	}
 
 	void AILCALLBACK streamCompleted(HSTREAM streamCompleted)
 	{
 		if (s_listener)
-			s_listener->onVoiceDone((uintptr_t)streamCompleted, AVK_Stream);
+			s_listener->onVoiceDone((uintptr_t)streamCompleted, AVK_Stream, 0);
 	}
 
 	// MilesAudioManager.cpp:3070-3100 (streaming file callbacks into TheFileSystem; 32-bit handles)

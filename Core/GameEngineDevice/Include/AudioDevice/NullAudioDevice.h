@@ -56,6 +56,7 @@ public:
 	virtual AudioVoice allocVoice(AudioVoiceKind kind, UnsignedInt provider, Int debugIndex) override;
 	virtual void freeVoice(AudioVoice voice, AudioVoiceKind kind) override;
 	virtual Int voiceDebugIndex(AudioVoice voice, AudioVoiceKind kind) const override;
+	virtual UnsignedInt voiceGeneration(AudioVoice voice, AudioVoiceKind kind) const override;   ///< O71
 
 	virtual void prepare2D(AudioVoice voice, Real volume, Real pitchShift, Real delaySeconds) override;
 	virtual Bool start2D(AudioVoice voice, const AudioSample &sample) override;
@@ -123,6 +124,7 @@ private:
 	mutable AudioFileLengths m_fileLengths;
 
 	std::vector<Voice *> m_voices;          ///< 2D and 3D voices and streams, in creation order
+	UnsignedInt m_generationCounter;        ///< O71: every new generation is a new number, across all voices
 	std::list<Voice *> m_oneShots;
 
 	/// Movie sound: taken in real time, about two seconds ahead at most, as a device with output would.

@@ -25,10 +25,10 @@
 //
 // Threads and lock order (the same for every AudioDevice): the manager's lists first, the device lock second, and
 // no device lock held while the device calls AudioDeviceListener::onVoiceDone.
-// - The audio thread only queues ends (miniaudio forbids starting or freeing a sound inside its end callback, and
-//   the manager starts the next loop or portion from onVoiceDone, as it does on Miles' timer thread).
+// - The audio thread only queues ends (miniaudio forbids starting or freeing a sound inside its end callback).
 // - The end thread reports them through onVoiceDone, with the delivery lock held and the device lock released. It
-//   also reports the ends miniaudio does not call back for: a looping stream reaching its stop time.
+//   also reports the ends miniaudio does not call back for: a looping stream reaching its stop time. O71: the
+//   manager only queues them there and starts the next loop or portion on the main thread, at its next update.
 // - The main thread deletes released voices in update(), with the delivery lock held, so the end thread never
 //   holds a deleted voice.
 //
@@ -481,6 +481,7 @@ struct MiniaudioDeviceState
 	std::mutex deliveryLock;         ///< held while ends are reported and while dead voices are deleted
 	std::mutex endQueueLock;         ///< the audio thread's queue
 	std::vector<MiniaudioEnd> endQueue;
+	UnsignedInt generationCounter;   ///< O71: every new generation is a new number, across all voices (main thread)
 	HANDLE endEvent;
 	HANDLE endThread;
 	std::atomic<int> quit;
@@ -933,8 +934,8 @@ namespace
 		v->nodeReady = false;
 		v->soundReady = false;
 		v->movie = nullptr;
-		v->generation = 0;
-		v->endGeneration.store(0);
+		v->generation = ++s->generationCounter;   // O71
+		v->endGeneration.store(v->generation);
 		v->playing = false;
 		v->paused = false;
 		v->ended = false;
@@ -1076,6 +1077,7 @@ namespace
 	{
 		std::lock_guard<std::mutex> delivery(s->deliveryLock);
 		std::vector<MiniaudioVoice *> ended;
+		std::vector<UnsignedInt> endedGeneration;   // O71: passed with the end, read under the device lock
 		{
 			std::lock_guard<std::mutex> guard(s->lock);
 			std::vector<MiniaudioEnd> queued;
@@ -1092,6 +1094,7 @@ namespace
 				v->playing = false;
 				v->ended = true;
 				ended.push_back(v);
+				endedGeneration.push_back(v->generation);
 			}
 			if (s->engineReady)
 			{
@@ -1103,13 +1106,14 @@ namespace
 						v->playing = false;
 						v->ended = true;
 						ended.push_back(v);
+						endedGeneration.push_back(v->generation);
 					}
 				}
 			}
 		}
 		if (s->listener) {
 			for (size_t i = 0; i < ended.size(); ++i) {
-				s->listener->onVoiceDone((uintptr_t)ended[i], ended[i]->kind);
+				s->listener->onVoiceDone((uintptr_t)ended[i], ended[i]->kind, endedGeneration[i]);
 			}
 		}
 	}
@@ -1259,6 +1263,7 @@ MiniaudioAudioDevice::MiniaudioAudioDevice()
 	m_state->listener = nullptr;
 	m_state->endEvent = nullptr;
 	m_state->endThread = nullptr;
+	m_state->generationCounter = 0;
 	m_state->quit.store(0);
 	m_state->listenerPosition.x = m_state->listenerPosition.y = m_state->listenerPosition.z = 0.0f;
 	m_state->listenerLook.x = 0.0f; m_state->listenerLook.y = 1.0f; m_state->listenerLook.z = 0.0f;
@@ -1538,10 +1543,16 @@ void MiniaudioAudioDevice::freeVoice(AudioVoice voice, AudioVoiceKind kind)
 {
 	std::lock_guard<std::mutex> guard(m_state->lock);
 	MiniaudioVoice *v = toVoice(voice);
-	++v->generation;
+	v->generation = ++m_state->generationCounter;   // O71
 	stopSound(v);
 	v->playing = false;
 	v->dead = true;
+}
+
+UnsignedInt MiniaudioAudioDevice::voiceGeneration(AudioVoice voice, AudioVoiceKind kind) const
+{
+	std::lock_guard<std::mutex> guard(m_state->lock);
+	return toVoice(voice)->generation;
 }
 
 Int MiniaudioAudioDevice::voiceDebugIndex(AudioVoice voice, AudioVoiceKind kind) const
@@ -1554,7 +1565,7 @@ void MiniaudioAudioDevice::prepare2D(AudioVoice voice, Real volume, Real pitchSh
 {
 	std::lock_guard<std::mutex> guard(m_state->lock);
 	MiniaudioVoice *v = toVoice(voice);
-	++v->generation;
+	v->generation = ++m_state->generationCounter;   // O71
 	stopSound(v);
 	v->playing = false;
 	v->paused = false;
@@ -1592,7 +1603,7 @@ void MiniaudioAudioDevice::play3D(AudioVoice voice, const AudioSample &sample, R
 	MiniaudioDeviceState *s = m_state;
 	std::lock_guard<std::mutex> guard(s->lock);
 	MiniaudioVoice *v = toVoice(voice);
-	++v->generation;
+	v->generation = ++m_state->generationCounter;   // O71
 	stopSound(v);
 	v->playing = false;
 	v->paused = false;
@@ -1669,7 +1680,7 @@ void MiniaudioAudioDevice::startStream(AudioVoice stream, Int loopCount)
 	if (loopCount >= 0) {
 		v->loopCount = loopCount;
 	}
-	++v->generation;
+	v->generation = ++m_state->generationCounter;   // O71
 	v->endGeneration.store(v->generation, std::memory_order_release);
 	if (v->startedOnce) {
 		ma_sound_stop(&v->sound);
@@ -1718,7 +1729,7 @@ void MiniaudioAudioDevice::release(AudioVoice voice, AudioVoiceKind kind)
 {
 	std::lock_guard<std::mutex> guard(m_state->lock);
 	MiniaudioVoice *v = toVoice(voice);
-	++v->generation;
+	v->generation = ++m_state->generationCounter;   // O71
 	stopSound(v);
 	v->playing = false;
 	v->paused = false;
