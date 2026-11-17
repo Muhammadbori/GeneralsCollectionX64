@@ -51,6 +51,7 @@
 #include "GameClient/TickSlider.h"
 #include "GameClient/VoicePreview.h"
 #include "GameClient/HotkeyLetters.h"
+#include "GameClient/GlobalLanguage.h"
 #include "GameLogic/GameLogic.h"
 
 #include <vector>
@@ -92,7 +93,9 @@ namespace
 
 	// O49 (row 34): the counters section explains itself
 	const Text kInfoPageTitle = { "GUI:OptionsCountersTitle", L"On-screen counters", L"\x0421\x0447\x0451\x0442\x0447\x0438\x043A\x0438 \x043D\x0430 \x044D\x043A\x0440\x0430\x043D\x0435" };
-	const Text kInfoExplain = { "GUI:OptionsCountersExplain", L"The small numbers at the top of the screen: the text size of each one; \"Off\" hides it. The sample below shows your choice.", L"\x041D\x0435\x0431\x043E\x043B\x044C\x0448\x0438\x0435 \x0447\x0438\x0441\x043B\x0430 \x0432\x0432\x0435\x0440\x0445\x0443 \x044D\x043A\x0440\x0430\x043D\x0430: \x0440\x0430\x0437\x043C\x0435\x0440 \x0442\x0435\x043A\x0441\x0442\x0430 \x043A\x0430\x0436\x0434\x043E\x0433\x043E; \x00AB\x0412\x044B\x043A\x043B.\x00BB \x0441\x043A\x0440\x044B\x0432\x0430\x0435\x0442 \x0435\x0433\x043E. \x041F\x0440\x0438\x043C\x0435\x0440 \x043D\x0438\x0436\x0435 \x043F\x043E\x043A\x0430\x0437\x044B\x0432\x0430\x0435\x0442 \x0432\x0430\x0448 \x0432\x044B\x0431\x043E\x0440." };
+	// O52 (row 39): one short line; the longer wording is its tooltip
+	const Text kInfoExplain = { "GUI:OptionsCountersExplainShort", L"Text size of each counter. \"Off\" hides it.", L"\x0420\x0430\x0437\x043C\x0435\x0440 \x0442\x0435\x043A\x0441\x0442\x0430 \x043A\x0430\x0436\x0434\x043E\x0433\x043E \x0441\x0447\x0451\x0442\x0447\x0438\x043A\x0430. \x00AB\x0412\x044B\x043A\x043B.\x00BB \x0441\x043A\x0440\x044B\x0432\x0430\x0435\x0442 \x0435\x0433\x043E." };
+	const Text kInfoExplainTip = { "GUI:OptionsCountersExplain", L"The small numbers at the top of the screen: the text size of each one; \"Off\" hides it. The sample below shows your choice.", L"\x041D\x0435\x0431\x043E\x043B\x044C\x0448\x0438\x0435 \x0447\x0438\x0441\x043B\x0430 \x0432\x0432\x0435\x0440\x0445\x0443 \x044D\x043A\x0440\x0430\x043D\x0430: \x0440\x0430\x0437\x043C\x0435\x0440 \x0442\x0435\x043A\x0441\x0442\x0430 \x043A\x0430\x0436\x0434\x043E\x0433\x043E; \x00AB\x0412\x044B\x043A\x043B.\x00BB \x0441\x043A\x0440\x044B\x0432\x0430\x0435\x0442 \x0435\x0433\x043E. \x041F\x0440\x0438\x043C\x0435\x0440 \x043D\x0438\x0436\x0435 \x043F\x043E\x043A\x0430\x0437\x044B\x0432\x0430\x0435\x0442 \x0432\x0430\x0448 \x0432\x044B\x0431\x043E\x0440." };
 	const Text kInfoSample = { "GUI:OptionsCountersSample", L"Sample:", L"\x041F\x0440\x0438\x043C\x0435\x0440:" };
 	const Text kInfoSampleNames[5] = { { "GUI:CounterSampleFps", L"frame rate", L"\x043A\x0430\x0434\x0440\x044B" }, { "GUI:CounterSampleClock", L"clock", L"\x0447\x0430\x0441\x044B" }, { "GUI:CounterSampleGameTime", L"game time", L"\x0432\x0440\x0435\x043C\x044F \x0438\x0433\x0440\x044B" }, { "GUI:CounterSampleLatency", L"network delay", L"\x0437\x0430\x0434\x0435\x0440\x0436\x043A\x0430 \x0441\x0435\x0442\x0438" }, { "GUI:CounterSampleMoney", L"observer money list", L"\x0434\x0435\x043D\x044C\x0433\x0438 (\x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x044C)" } };
 
@@ -1289,7 +1292,10 @@ namespace
 	Bool isListSetting(const Setting &set)
 	{
 		static const char *const keys[] = { "RenderFpsLimit", "TextureFilter", "AnisotropyLevel", "SnowStyle", "VoicePushToTalk",
-			"ScreenshotFormat", "CounterStyle", "Windowed", "WindowPosition" };
+			"ScreenshotFormat", "CounterStyle", "Windowed", "WindowPosition",
+			// O52 (row 39): the counters' text sizes are lists (a title and a box, half a slider row's height), so the
+			// Counters section fits one page at every window size
+			"RenderFpsFontSize", "SystemTimeFontSize", "GameTimeFontSize", "NetworkLatencyFontSize", "PlayerInfoListFontSize" };
 		for (Int i = 0; i < (Int)ARRAY_SIZE(keys); ++i) {
 			if (stricmp(set.key, keys[i]) == 0) {
 				return TRUE;
@@ -1621,7 +1627,9 @@ namespace
 			}
 			if (s.sampleSize[k] != size)
 			{
-				s.sampleText[k]->setFont(TheWindowManager->winFindFont(AsciiString("Arial"), size, TRUE));
+				// O52: at the size the counter gets on this screen (InGameUI sizes them with adjustFontSize)
+				s.sampleText[k]->setFont(TheWindowManager->winFindFont(AsciiString("Arial"),
+					TheGlobalLanguageData != nullptr ? TheGlobalLanguageData->adjustFontSize(size) : size, TRUE));
 				s.sampleText[k]->setText(UnicodeString(values[k]));
 				s.sampleSize[k] = size;
 			}
@@ -1662,7 +1670,8 @@ namespace
 	void prepareCounterSample(Row &row, GameWindow *page, Int colW, Int labelH)
 	{
 		// room for the title and five lines at the largest size (16)
-		const Int lineH = max(labelH, textSize(TheWindowManager->winFindFont(AsciiString("Arial"), 16, TRUE), UnicodeString(L"Wg"), 0).y + 2);
+		const Int largest = TheGlobalLanguageData != nullptr ? TheGlobalLanguageData->adjustFontSize(16) : 16;   // O52
+		const Int lineH = max(labelH, textSize(TheWindowManager->winFindFont(AsciiString("Arial"), largest, TRUE), UnicodeString(L"Wg"), 0).y + 2);
 		const Int height = labelH + lineH * 5 + 16;
 		WinInstanceData inst;
 		inst.init();
@@ -2276,7 +2285,11 @@ void OptionsSections::init(OptionPreferences *pref)
 			rowClear(row);
 			const UnicodeString explain = textOf(kInfoExplain);
 			const Int h = labelHeightFor(labelFont(), explain, colW, labelH);
-			rowAdd(row, makeLabel(s.pages[sec], s.labelLook, 0, 0, colW, h, explain, FALSE), 0, 0);
+			GameWindow *explainLabel = makeLabel(s.pages[sec], s.labelLook, 0, 0, colW, h, explain, FALSE);
+			if (explainLabel != nullptr) {
+				explainLabel->winSetTooltip(textOf(kInfoExplainTip));   // O52
+			}
+			rowAdd(row, explainLabel, 0, 0);
 			row.height = h;
 			rows.insert(rows.begin(), row);
 		}

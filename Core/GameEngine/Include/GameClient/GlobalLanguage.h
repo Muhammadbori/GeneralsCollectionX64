@@ -73,9 +73,13 @@ public:
 		ResolutionFontSizeMethod_ClassicNoCeiling, // Uses the original scaling method, but without ceiling. Works ok for the original Game UI and with large resolutions. Scales poorly on very wide screens.
 		ResolutionFontSizeMethod_Strict, // Uses a strict scaling method. Width and height are strictly bounded on upscales. Works well for accurate UI layouts and with large resolutions.
 		ResolutionFontSizeMethod_Balanced, // Uses a balanced scaling method. Width and height are evenly weighted for upscales. Works well for the original Game UI and with large resolutions.
+		// TheSuperHackers @feature O52 (row 39) Text keeps the same share of the window at every size: the size 1280 x 800
+		// gets with the classic method, times the smaller of the window's width and height scales against 1280 x 800. Also
+		// below 800 x 600 (no floor at the 800 x 600 size), and a short wide window no longer gets the text of its width.
+		ResolutionFontSizeMethod_Proportional,
 
 		ResolutionFontSizeMethod_Count,
-		ResolutionFontSizeMethod_Default = ResolutionFontSizeMethod_ClassicNoCeiling,
+		ResolutionFontSizeMethod_Default = ResolutionFontSizeMethod_Proportional,   // O52: was ClassicNoCeiling
 	};
 
 	typedef std::list<AsciiString> StringList; // Used for our font file names that we want to load
