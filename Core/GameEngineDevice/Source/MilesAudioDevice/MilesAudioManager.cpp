@@ -92,9 +92,77 @@ MilesAudioManager::MilesAudioManager() :
 	m_miniaudioDevice(nullptr),
 	m_binkHandle(nullptr),
 	m_pref3DProvider(AsciiString::TheEmptyString),
-	m_prefSpeaker(AsciiString::TheEmptyString)
+	m_prefSpeaker(AsciiString::TheEmptyString),
+	m_previewVoice(0),
+	m_previewBytes(nullptr)
 {
+	m_previewSample.data = nullptr;
+	m_previewSample.bytes = 0;
+	m_previewSample.ownedByDevice = FALSE;
 	m_audioCache = NEW AudioFileCache(m_device);
+}
+
+//-------------------------------------------------------------------------------------------------
+// TheSuperHackers @feature O47 The options' voice preview: a 2D voice of its own (not one of the pools, so nothing the
+// game plays is cut), the sample decoded by the device as for any sample, released by stopPreviewSound.
+Bool MilesAudioManager::playPreviewSound( const void *wavBytes, UnsignedInt size, Real volume )
+{
+	stopPreviewSound();
+	if (!m_deviceOpened || !m_milesLoaded || wavBytes == nullptr || size < 44) {
+		return FALSE;
+	}
+	unsigned char *copy = new unsigned char[size];
+	memcpy(copy, wavBytes, size);
+	AudioSampleInfo info;
+	m_device->readSampleInfo(copy, &info);
+	AudioSample decoded;
+	if (!m_device->decodeSample(&info, copy, size, &decoded))
+	{
+		delete [] copy;
+		return FALSE;
+	}
+	if (decoded.ownedByDevice)
+	{
+		delete [] copy;   // the device made its own image
+		copy = nullptr;
+	}
+	const AudioVoice voice = m_device->allocVoice(AVK_2D, m_selectedProvider, 0);
+	if (voice == 0)
+	{
+		if (decoded.ownedByDevice) {
+			m_device->freeSample(decoded.data);
+		}
+		delete [] copy;
+		return FALSE;
+	}
+	m_previewVoice = voice;
+	m_previewSample = decoded;
+	m_previewBytes = copy;
+	m_device->prepare2D(voice, volume, 1.0f, 0.0f);
+	if (!m_device->start2D(voice, decoded))
+	{
+		stopPreviewSound();
+		return FALSE;
+	}
+	return TRUE;
+}
+
+void MilesAudioManager::stopPreviewSound()
+{
+	if (m_previewVoice != 0)
+	{
+		m_device->release(m_previewVoice, AVK_2D);
+		m_device->freeVoice(m_previewVoice, AVK_2D);
+		m_previewVoice = 0;
+	}
+	if (m_previewSample.data != nullptr && m_previewSample.ownedByDevice) {
+		m_device->freeSample(m_previewSample.data);
+	}
+	m_previewSample.data = nullptr;
+	m_previewSample.bytes = 0;
+	m_previewSample.ownedByDevice = FALSE;
+	delete [] m_previewBytes;
+	m_previewBytes = nullptr;
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -1321,6 +1389,8 @@ void MilesAudioManager::stopAllAudioImmediately()
 //-------------------------------------------------------------------------------------------------
 void MilesAudioManager::freeAllMilesHandles()
 {
+	stopPreviewSound();   // O47: the options' voice preview has a voice of its own
+
 	// First, we need to ensure that we don't have any sample handles open. To that end, we must stop
 	// all of our currently playing audio.
 	stopAllAudioImmediately();
@@ -3190,6 +3260,9 @@ void MilesAudioManager::onDeviceEvent( const char *event, const char *detail )
 //-------------------------------------------------------------------------------------------------
 void MilesAudioManager::onVoiceDone( uintptr_t voice, UnsignedInt kind )
 {
+	if (voice != 0 && voice == m_previewVoice) {
+		return;   // O47: the voice preview ended; stopPreviewSound frees it
+	}
 	TheAudio->notifyOfAudioCompletion(voice, kind);
 }
 

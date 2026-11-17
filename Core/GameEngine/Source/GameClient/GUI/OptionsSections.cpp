@@ -49,6 +49,7 @@
 #include "GameClient/LocalizedFallback.h"
 #include "GameClient/MessageBox.h"
 #include "GameClient/TickSlider.h"
+#include "GameClient/VoicePreview.h"
 #include "GameLogic/GameLogic.h"
 
 #include <vector>
@@ -490,6 +491,10 @@ namespace
 		GameWindow *existingLabels[EXISTING_COUNT];
 		GameWindow *detailCombo;
 		PackRowState packRows[PACK_ROW_COUNT];
+		// O47 (row 32): the voices' "listen" buttons under the voice pack list
+		GameWindow *listen[VoicePreview::UNIT_COUNT];
+		GameWindow *listenTitle;
+		GameWindow *listenStatus;
 		// looks
 		GameWindow *buttonLook;
 		GameWindow *frameLook;
@@ -768,6 +773,14 @@ namespace
 
 	void showSection(Section section)
 	{
+		// O47: a voice line played by the listen buttons ends when the section is left
+		if (section != SEC_LANGUAGE)
+		{
+			VoicePreview::stop();
+			if (s.listenStatus != nullptr) {
+				GadgetStaticTextSetText(s.listenStatus, UnicodeString::TheEmptyString);
+			}
+		}
 		s.current = section;
 		for (Int i = 0; i < SEC_COUNT; ++i)
 		{
@@ -847,6 +860,16 @@ namespace
 		Int col;
 		Int y;
 		Bool overflow;   ///< an item taller than a column
+
+		/// O47: the next item starts the second column (when this page's first column has something already)
+		void breakColumn()
+		{
+			if (col == 0 && y > y0)
+			{
+				col = 1;
+				y = y0;
+			}
+		}
 
 		void begin(Int section, GameWindow *p, Int left, Int top, Int columnWidth, Int g, Int b)
 		{
@@ -973,6 +996,7 @@ namespace
 	struct Row
 	{
 		Int height;              ///< -1: takes no room (a control the .wnd hides)
+		Bool breakBefore;        ///< O47: starts the second column of its page
 		Int count;
 		GameWindow *wins[MAX_ROW_WINDOWS];
 		ICoord2D rel[MAX_ROW_WINDOWS];
@@ -981,6 +1005,7 @@ namespace
 	void rowClear(Row &row)
 	{
 		row.height = 0;
+		row.breakBefore = FALSE;
 		row.count = 0;
 	}
 
@@ -1395,6 +1420,65 @@ namespace
 			TheDisplay->drawFillRect(x, y, w, h, GameMakeColor(0, 0, 0, 128));
 		}
 		TheDisplay->drawOpenRect(x, y, w, h, 1.0f, GameMakeColor(255, 255, 255, 96));
+	}
+
+	/// O47 (row 32): "Listen to the voices:", the three buttons (in one row when their texts fit a third of the column
+	/// each, else one under another) and a status line (the line that plays, or why nothing does).
+	void prepareListenRow(Row &row, GameWindow *page, Int colW, Int labelH)
+	{
+		Int y = 0;
+		s.listenTitle = makeLabel(page, s.labelLook, 0, y, colW, labelH, VoicePreview::title(), FALSE);
+		rowAdd(row, s.listenTitle, 0, y);
+		y += labelH + s.gap / 2;
+		WinInstanceData look;
+		copyLook(look, s.buttonLook, GWS_PUSH_BUTTON | GWS_MOUSE_TRACK);
+		GameFont *font = labelFont() != nullptr ? labelFont() : look.m_font;
+		Int longest = 0;
+		for (Int k = 0; k < VoicePreview::UNIT_COUNT; ++k) {
+			longest = max(longest, textSize(font, VoicePreview::buttonText(k), 0).x);
+		}
+		const Int buttonH = max(labelH + s.gap, textSize(font, UnicodeString(L"Wg"), 0).y + s.gap * 2);
+		const Int needW = longest + s.gap * 4;
+		const Bool oneRow = needW * 3 + s.gap * 2 <= colW;
+		const Int buttonW = oneRow ? (colW - s.gap * 2) / 3 : min(colW, max(needW, colW / 2));
+		for (Int k = 0; k < VoicePreview::UNIT_COUNT; ++k)
+		{
+			WinInstanceData inst;
+			copyLook(inst, s.buttonLook, GWS_PUSH_BUTTON | GWS_MOUSE_TRACK);
+			inst.m_font = font;
+			AsciiString name;
+			name.format("OptionsMenu.wnd:Sections.Listen%d", k);
+			inst.m_id = windowId(name.str());
+			const Int bx = oneRow ? k * (buttonW + s.gap) : 0;
+			const Int by = oneRow ? y : y + k * (buttonH + s.gap / 2);
+			GameWindow *button = TheWindowManager->gogoGadgetPushButton(page, WIN_STATUS_ENABLED | imageStatusOf(s.buttonLook), bx, by,
+				buttonW, buttonH, &inst, inst.m_font, FALSE);
+			if (button != nullptr)
+			{
+				button->winSetWindowId(inst.m_id);
+				button->winSetOwner(s.menuParent);
+				GadgetButtonSetText(button, VoicePreview::buttonText(k));
+				button->winSetTooltip(VoicePreview::tooltip(k));
+			}
+			s.listen[k] = button;
+			rowAdd(row, button, bx, by);
+		}
+		y += oneRow ? buttonH : VoicePreview::UNIT_COUNT * buttonH + (VoicePreview::UNIT_COUNT - 1) * (s.gap / 2);
+		y += s.gap / 2;
+		// room for two lines (a missing line names the file)
+		const Int statusH = max(labelH * 2, labelHeightFor(labelFont(),
+			UnicodeString(L"WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW (vdousea)"), colW, labelH));
+		s.listenStatus = makeLabel(page, s.labelLook, 0, y, colW, statusH, UnicodeString::TheEmptyString, FALSE);
+		rowAdd(row, s.listenStatus, 0, y);
+		row.height = y + statusH;
+	}
+
+	Int voicePackRow()
+	{
+		for (Int r = 0; r < PACK_ROW_COUNT; ++r) {
+			if (kPackRows[r].kind == Packs::KIND_VOICE) return r;
+		}
+		return -1;
 	}
 
 	void preparePackRow(Row &row, GameWindow *page, Int r, Int colW, Int labelH)
@@ -1957,12 +2041,28 @@ void OptionsSections::init(OptionPreferences *pref)
 				rows.push_back(row);
 			}
 		}
+		Int voiceRowAt = -1;
 		for (Int r = 0; r < PACK_ROW_COUNT; ++r) {
 			if (kPackRows[r].section == sec) {
 				rowClear(row);
 				preparePackRow(row, s.pages[sec], r, colW, labelH);
+				if (kPackRows[r].kind == Packs::KIND_VOICE) {
+					voiceRowAt = (Int)rows.size();
+				}
 				rows.push_back(row);
 			}
+		}
+		// O47 (row 32): the voices go to the right column with their listen buttons under them; the interface and the
+		// movie language stay on the left
+		if (sec == SEC_LANGUAGE && voiceRowAt >= 0)
+		{
+			Row voice = rows[voiceRowAt];
+			rows.erase(rows.begin() + voiceRowAt);
+			voice.breakBefore = TRUE;
+			rows.push_back(voice);
+			rowClear(row);
+			prepareListenRow(row, s.pages[sec], colW, labelH);
+			rows.push_back(row);
 		}
 		if (sec == SEC_SOUND)
 		{
@@ -1993,6 +2093,9 @@ void OptionsSections::init(OptionPreferences *pref)
 					nextHeight = rows[m].height;
 				}
 				++leftAfter;
+			}
+			if (rows[k].breakBefore) {
+				flow.breakColumn();
 			}
 			const ICoord2D at = flow.next(rows[k].height, nextHeight, leftAfter);
 			rowPlace(rows[k], flow.page, at);
@@ -2049,6 +2152,7 @@ void OptionsSections::init(OptionPreferences *pref)
 
 void OptionsSections::shutdown()
 {
+	VoicePreview::stop();   // O47: nothing plays on after the screen
 	FrameShots::setRevealHook(nullptr);
 	memset(&s, 0, sizeof(s));
 	s_devices.clear();
@@ -2068,6 +2172,20 @@ Bool OptionsSections::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgD
 	{
 		case GBM_SELECTED:
 		{
+			// O47 (row 32): a voice line from the pack chosen in the list now (not yet applied)
+			for (Int u = 0; u < VoicePreview::UNIT_COUNT; ++u)
+			{
+				if (s.listen[u] != nullptr && control == s.listen[u])
+				{
+					const Int r = voicePackRow();
+					UnicodeString status;
+					VoicePreview::play(u, r >= 0 ? selectedPack(r) : nullptr, &status);
+					if (s.listenStatus != nullptr) {
+						GadgetStaticTextSetText(s.listenStatus, status);
+					}
+					return TRUE;
+				}
+			}
 			for (Int i = 0; i < SEC_COUNT; ++i)
 			{
 				if (control == s.buttons[i]) {
@@ -2151,6 +2269,14 @@ Bool OptionsSections::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgD
 				{
 					st.step = index;
 					showPackRow(r, FALSE);   // the preview follows the chosen entry
+					if (kPackRows[r].kind == Packs::KIND_VOICE)
+					{
+						// O47: another voice pack: the line of the one before stops
+						VoicePreview::stop();
+						if (s.listenStatus != nullptr) {
+							GadgetStaticTextSetText(s.listenStatus, UnicodeString::TheEmptyString);
+						}
+					}
 					if (r == PACK_ROW_TEXT)
 					{
 						// another interface language: the hotkey sets that fit it

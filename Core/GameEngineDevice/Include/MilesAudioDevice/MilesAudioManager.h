@@ -173,6 +173,10 @@ class MilesAudioManager : public AudioManager, public AudioDeviceListener
 		virtual void closeDevice() override;
 		virtual void *getDevice() override { return m_digitalHandle; }
 
+		// TheSuperHackers @feature O47 The options' "listen" buttons: one 2D voice of its own
+		virtual Bool playPreviewSound( const void *wavBytes, UnsignedInt size, Real volume ) override;
+		virtual void stopPreviewSound() override;
+
 		virtual void stopAudio( AudioAffect which ) override;
 		virtual void pauseAudio( AudioAffect which ) override;
 		virtual void resumeAudio( AudioAffect which ) override;
@@ -309,6 +313,11 @@ class MilesAudioManager : public AudioManager, public AudioDeviceListener
 
 		// This is a list of all handles that are forcibly played. They always play as UI sounds.
 		std::list<AudioVoice> m_audioForcePlayed;
+
+		// O47: the options' voice preview (a voice outside the pools, its sample and the file image it plays from)
+		AudioVoice m_previewVoice;
+		AudioSample m_previewSample;
+		unsigned char *m_previewBytes;
 
 		// Available handles for play. Note that there aren't handles open in advance for
 		// streaming things, only 2-D and 3-D sounds.
