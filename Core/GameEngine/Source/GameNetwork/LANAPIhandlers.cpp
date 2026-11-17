@@ -858,8 +858,47 @@ void LANAPI::handleGameStart( LANMessage *msg, UnsignedInt senderIP )
 				L"\x0425\x043E\x0441\x0442 \x043D\x0430\x0447\x0430\x043B \x0441 \x0434\x0440\x0443\x0433\x0438\x043C \x0441\x043F\x0438\x0441\x043A\x043E\x043C \x043C\x0435\x0441\x0442, \x0447\x0435\x043C \x0443 \x044D\x0442\x043E\x0433\x043E \x043A\x043E\x043C\x043F\x044C\x044E\x0442\x0435\x0440\x0430: \x044D\x0442\x043E\x0442 \x043A\x043E\x043C\x043F\x044C\x044E\x0442\x0435\x0440 \x043D\x0435 \x043D\x0430\x0447\x0430\x043B \x0438\x0433\x0440\x0443.")), LANCHAT_SYSTEM);
 			return;
 		}
+		// TheSuperHackers @bugfix O74 A START that is not preceded by this room's start check in the last 30 s is old (a
+		// copy repeated after this computer had started, read after the match, e.g. in a "Play again" room of the same
+		// host, name and layout): ignored
+		if (m_startSeenMs == 0 || (Int)(timeGetTime() - m_startSeenMs) > 30000)
+		{
+			LanTest::joinLog("player: a START without a start check in the last 30 s: ignored");
+			return;
+		}
+		m_startSeenMs = timeGetTime();
 		LanTest::joinLog("player: START with digest %08X: started", mine);
+		// O74: acknowledged before the match takes this computer (LANAPI does not run while it loads): five copies, sent now
+		LANMessage ack;
+		fillInLANMessage(&ack);
+		ack.messageType = LANMessage::MSG_START_ACK;
+		ack.StartCheck.magic = LANStartMagic;
+		ack.StartCheck.digest = mine;
+		ack.StartCheck.revision = m_currentGame->getOptionsRevision();
+		wcslcpy(ack.StartCheck.gameName, m_currentGame->getName().str(), ARRAY_SIZE(ack.StartCheck.gameName));
+		for (Int k = 0; k < 5; ++k) {
+			sendMessage(&ack, senderIP);
+		}
+		m_transport->doSend();
 		OnGameStart();
+	}
+}
+
+void LANAPI::handleStartAck( LANMessage *msg, UnsignedInt senderIP )
+{
+	// O74: the host: a seat has START and leaves for the match
+	if (!m_startDelivering || m_currentGame == nullptr || !m_currentGame->amIHost() || msg->StartCheck.magic != LANStartMagic
+		|| msg->StartCheck.digest != m_startDigest || m_currentGame->getName().compare(msg->StartCheck.gameName) != 0) {
+		return;
+	}
+	for (Int i = 0; i < MAX_SLOTS; ++i)
+	{
+		const LANGameSlot *slot = m_currentGame->getConstLANSlot(i);
+		if (slot != nullptr && slot->isHuman() && slot->getIP() == senderIP && !m_startAcked[i])
+		{
+			m_startAcked[i] = TRUE;
+			LanTest::joinLog("host: START acknowledged by slot %d (%d.%d.%d.%d)", i, PRINTF_IP_AS_4_INTS(senderIP));
+		}
 	}
 }
 

@@ -100,6 +100,7 @@ LANAPI::LANAPI() : m_transport(nullptr)
 	m_mapLastSent = 0;
 	for (Int k = 0; k < CONVERGE_COUNT; ++k) m_optionPending[k] = FALSE;
 	m_startChecking = FALSE;     // O62
+	m_startDelivering = FALSE;   // O74
 	m_startDigest = 0;
 	m_startCheckSince = 0;
 	m_lastStartCheck = 0;
@@ -159,6 +160,7 @@ void LANAPI::init()
 	m_mapLastSent = 0;
 	for (Int k = 0; k < CONVERGE_COUNT; ++k) m_optionPending[k] = FALSE;
 	m_startChecking = FALSE;     // O62
+	m_startDelivering = FALSE;   // O74
 	m_startDigest = 0;
 	m_startCheckSince = 0;
 	m_lastStartCheck = 0;
@@ -622,6 +624,9 @@ void LANAPI::update()
 			case LANMessage::MSG_START_READY:   // O62
 				handleStartReady( msg, senderIP );
 				break;
+			case LANMessage::MSG_START_ACK:     // O74
+				handleStartAck( msg, senderIP );
+				break;
 			case LANMessage::MSG_GAME_START_TIMER:
 				handleGameStartTimer( msg, senderIP );
 				break;
@@ -886,6 +891,7 @@ void LANAPI::update()
 	}
 
 	pumpStartCheck();   // O62
+	pumpStartDelivery();   // O74
 	pumpConvergence();  // O70
 
 	// send out "game starting" messages
@@ -1302,6 +1308,23 @@ void LANAPI::finishStart()
 	LanRoom::hostStart(m_currentGame, m_localIP);
 	// O40: "Play again" keeps the layout; O47: taken at the Start click (LanGameOptionsMenu), before the open places close
 
+	// TheSuperHackers @bugfix O74 START was sent once (to everybody and to each seat): a seat that lost both copies never
+	// started, while the host went on (S41 ww30_02: the watching admin waited for a stream, the player left the room
+	// 30 s later; a playing host would have loaded alone). START is now repeated to every seat that has not
+	// acknowledged it (MSG_START_ACK, sent before the player leaves for its match) every 200 ms, for at most
+	// kStartDeliverMs; then the host starts in any case, as the players that have it are already loading.
+	m_startDelivering = TRUE;
+	m_startDeliverSince = timeGetTime();
+	m_lastStartSend = 0;
+	for (Int i = 0; i < MAX_SLOTS; ++i) {
+		m_startAcked[i] = FALSE;
+	}
+	sendStartMessage(0);   // O62: to everybody once, then to each seat (pumpStartDelivery)
+	pumpStartDelivery();
+}
+
+void LANAPI::sendStartMessage(UnsignedInt ip)
+{
 	LANMessage msg;
 	msg.messageType = LANMessage::MSG_GAME_START;
 	fillInLANMessage( &msg );
@@ -1309,18 +1332,68 @@ void LANAPI::finishStart()
 	msg.StartCheck.digest = m_startDigest;
 	wcslcpy(msg.StartCheck.gameName, m_currentGame->getName().str(), ARRAY_SIZE(msg.StartCheck.gameName));
 	msg.StartCheck.revision = m_currentGame->getOptionsRevision();   // O64
-	// O62: to everybody, and to each seated player once more (a player starts on the first START it gets)
-	sendMessage(&msg);
+	sendMessage(&msg, ip);
+}
+
+void LANAPI::pumpStartDelivery()
+{
+	if (!m_startDelivering) {
+		return;
+	}
+	if (m_inLobby || m_currentGame == nullptr || !m_currentGame->amIHost() || m_currentGame->isGameInProgress())
+	{
+		m_startDelivering = FALSE;
+		return;
+	}
+	const UnsignedInt now = timeGetTime();
+	UnicodeString missing;
+	Bool allAcked = TRUE;
 	for (Int i = 0; i < MAX_SLOTS; ++i)
 	{
 		const LANGameSlot *slot = m_currentGame->getConstLANSlot(i);
-		if (slot != nullptr && slot->isHuman() && slot->getIP() != m_localIP) {
-			sendMessage(&msg, slot->getIP());
+		if (slot != nullptr && slot->isHuman() && slot->getIP() != m_localIP && !m_startAcked[i])
+		{
+			allAcked = FALSE;
+			if (!missing.isEmpty()) {
+				missing.concat(L", ");
+			}
+			missing.concat(slot->getName());
 		}
 	}
-	m_transport->update(); // force a send
-
-	OnGameStart();
+	const UnsignedInt kStartDeliverMs = 3000;
+	if (allAcked || (Int)(now - m_startDeliverSince) > (Int)kStartDeliverMs)
+	{
+		m_startDelivering = FALSE;
+		if (allAcked)
+		{
+			LanTest::joinLog("host: START acknowledged by every player after %u ms", (unsigned)(now - m_startDeliverSince));
+		}
+		else
+		{
+			LanTest::joinLog("host: START not acknowledged by %ls after %u ms: starting anyway", missing.str(), (unsigned)(now - m_startDeliverSince));
+			UnicodeString text;
+			text.format(TheGameText->FETCH_OR_SUBSTITUTE("GUI:LanStartNotAcknowledged", localizedFallback(
+				L"START was not confirmed by: %ls. They probably started (their confirmation was lost); a player that did not is left out at the end of the map load.",
+				L"\x0421\x0442\x0430\x0440\x0442 \x043D\x0435 \x043F\x043E\x0434\x0442\x0432\x0435\x0440\x0434\x0438\x043B\x0438: %ls. \x0421\x043A\x043E\x0440\x0435\x0435 \x0432\x0441\x0435\x0433\x043E, \x043E\x043D\x0438 \x043D\x0430\x0447\x0430\x043B\x0438 (\x043F\x043E\x0434\x0442\x0432\x0435\x0440\x0436\x0434\x0435\x043D\x0438\x0435 \x043F\x043E\x0442\x0435\x0440\x044F\x043B\x043E\x0441\x044C); \x043D\x0435 \x043D\x0430\x0447\x0430\x0432\x0448\x0438\x0439 \x0438\x0433\x0440\x043E\x043A \x043E\x0442\x043A\x043B\x044E\x0447\x0438\x0442\x0441\x044F \x0432 \x043A\x043E\x043D\x0446\x0435 \x0437\x0430\x0433\x0440\x0443\x0437\x043A\x0438 \x043A\x0430\x0440\x0442\x044B.")).str(), missing.str());
+			OnChat(L"SYSTEM", m_localIP, text, LANCHAT_SYSTEM);
+			LanRoom::postNotice(text);   // shown in the lobby after the match too
+		}
+		m_transport->update(); // force a send
+		OnGameStart();
+		return;
+	}
+	if ((Int)(now - m_lastStartSend) >= 200)
+	{
+		m_lastStartSend = now;
+		for (Int i = 0; i < MAX_SLOTS; ++i)
+		{
+			const LANGameSlot *slot = m_currentGame->getConstLANSlot(i);
+			if (slot != nullptr && slot->isHuman() && slot->getIP() != m_localIP && !m_startAcked[i]) {
+				sendStartMessage(slot->getIP());
+			}
+		}
+		m_transport->update(); // force a send
+	}
 }
 
 void LANAPI::pumpRoomBeat(UnsignedInt now)
@@ -1364,7 +1437,7 @@ void LANAPI::noteHeardFrom(UnsignedInt senderIP, Int messageType)
 	case LANMessage::MSG_GAME_OPTIONS: case LANMessage::MSG_SET_ACCEPT: case LANMessage::MSG_MAP_AVAILABILITY:
 	case LANMessage::MSG_CHAT: case LANMessage::MSG_START_READY: case LANMessage::MSG_REQUEST_JOIN:
 	case LANMessage::MSG_JOIN_ACCEPT: case LANMessage::MSG_START_CHECK: case LANMessage::MSG_GAME_START_TIMER:
-	case LANMessage::MSG_INACTIVE:
+	case LANMessage::MSG_INACTIVE: case LANMessage::MSG_START_ACK: case LANMessage::MSG_GAME_START:
 		break;
 	default:
 		return;
@@ -2090,6 +2163,7 @@ void LANAPI::terminateStrings(LANMessage *msg)
 		case LANMessage::MSG_GAME_START:   // O65: the start handshake's room name
 		case LANMessage::MSG_START_CHECK:
 		case LANMessage::MSG_START_READY:
+		case LANMessage::MSG_START_ACK:   // O74
 			msg->StartCheck.gameName[ARRAY_SIZE(msg->StartCheck.gameName) - 1] = 0;
 			break;
 		case LANMessage::MSG_JOIN_DENY:

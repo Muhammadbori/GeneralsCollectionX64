@@ -193,6 +193,10 @@ struct LANMessage
 		// player's answer that its own copy has the same digest (StartCheck). Appended.
 		MSG_START_CHECK,
 		MSG_START_READY,
+
+		// TheSuperHackers @bugfix O74 A player's acknowledgement of START (StartCheck: the digest it started with), sent
+		// before it leaves for the match. Appended.
+		MSG_START_ACK,
 	} messageType;
 
 	WideChar name[g_lanPlayerNameLength+1]; ///< My name, for convenience
@@ -467,7 +471,7 @@ public:
 	/// OnGameStart he leaves his room on the next update, without a word to the players, and watches from the lobby.
 	void OnWatchMatchLeave();
 	/// O62 (H5 #1, #7): a start is under way: the countdown runs, or the host waits for the players' READY.
-	Bool IsStartPending() const { return m_gameStartTime != 0 || m_startChecking; }
+	Bool IsStartPending() const { return m_gameStartTime != 0 || m_startChecking || m_startDelivering; }
 	/// O71: the room's keep-alive while update() does not run (the screen changes: LANbuttonPushed, a shell animation);
 	/// called by the LAN lobby menu's update instead of update()
 	void keepRoomAlive();
@@ -553,6 +557,11 @@ protected:
 	UnsignedInt					m_startCheckSince;
 	UnsignedInt					m_lastStartCheck;
 	Bool								m_startReady[MAX_SLOTS];
+	// O74: START is repeated to every seat until it acknowledges, for at most a few seconds; then the host starts
+	Bool								m_startDelivering;
+	UnsignedInt					m_startDeliverSince;
+	UnsignedInt					m_lastStartSend;
+	Bool								m_startAcked[MAX_SLOTS];
 	Bool								m_inLobby;											///< Are we in the lobby (not in a game)?
 	LANGameInfo *				m_currentGame;							///< Pointer to game (setup screen) we are currently in (null for lobby)
 	//LANGameInfo *m_currentGameInfo;			///< Pointer to game setup info we are currently in.
@@ -595,6 +604,9 @@ protected:
 	Bool announceFromItsHost( LANMessage *msg, UnsignedInt senderIP );
 	void handleStartCheck( LANMessage *msg, UnsignedInt senderIP );   ///< O62
 	void handleStartReady( LANMessage *msg, UnsignedInt senderIP );   ///< O62
+	void handleStartAck( LANMessage *msg, UnsignedInt senderIP );     ///< O74
+	void pumpStartDelivery();                                         ///< O74
+	void sendStartMessage( UnsignedInt ip );                          ///< O74: START with the confirmed digest (0: to all)
 	void pumpStartCheck();   ///< O62: the host: options and START_CHECK again, START once every seated player is READY
 	void finishStart();      ///< O62: the host: the room's observers, START, the match
 	/// TheSuperHackers @bugfix O70 A joiner's room requests (accept, has-map, army/colour/team/start place) are sent
