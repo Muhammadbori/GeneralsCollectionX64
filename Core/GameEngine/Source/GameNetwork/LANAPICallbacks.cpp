@@ -49,6 +49,7 @@
 #include "GameNetwork/LanRoom.h"
 #include "GameClient/LocalizedFallback.h"   // O71
 #include "GameNetwork/networkutil.h"
+#include "Common/LanClock.h"   // O75
 
 LANAPI *TheLAN = nullptr;
 extern Bool LANbuttonPushed;
@@ -331,7 +332,7 @@ void LANAPI::OnGameOptions( UnsignedInt playerIP, Int playerSlot, AsciiString op
 
 	if (fromHost && !m_currentGame->amIHost())
 	{
-		m_currentGame->setLastHeard(timeGetTime());
+		m_currentGame->setLastHeard(LanClock::now());
 		AsciiString oldOptions = GameInfoToAsciiString(m_currentGame); // save these off for if we get booted
 		if(ParseGameOptionsString(m_currentGame,options))
 		{
@@ -357,7 +358,7 @@ void LANAPI::OnGameOptions( UnsignedInt playerIP, Int playerSlot, AsciiString op
 			// TheSuperHackers @bugfix O71 A list without this computer that comes within 3 s of the first one may be older
 			// than its seat (sent before the join, arrived after the accept): the room stays as it was meanwhile. After
 			// 3 s of such lists (the host sends one every 2 s, and three at a drop) this computer has been removed.
-			const UnsignedInt t = timeGetTime();
+			const UnsignedInt t = LanClock::now();
 			if (m_notListedSinceMs == 0) {
 				m_notListedSinceMs = t;
 				LanTest::joinLog("player: the host's list does not have this computer: waiting 3 s");
@@ -406,17 +407,25 @@ void LANAPI::OnGameOptions( UnsignedInt playerIP, Int playerSlot, AsciiString op
 			}
 		}
 
+		// O75 (H10): while START is out, a player's request (army, colour, team ...) would change the room the players
+		// started with: not taken (the request's sender is in the match by then or is told by the room it stays)
+		if (AmIHost() && m_localIP != playerIP && m_startDelivering && options.compare("HELLO") != 0)
+		{
+			m_currentGame->setPlayerLastHeard(playerSlot, LanClock::now());
+			LanTest::joinLog("host: a request from slot %d during START: not taken", playerSlot);
+			return;
+		}
 		// Parse player requests (side, color, etc)
 		if( AmIHost() && m_localIP != playerIP)
 		{
 			m_seatJoinedMs[playerSlot] = 0;   // O70: heard from: the seat is confirmed
 			if (options.compare("HELLO") == 0)
 			{
-				m_currentGame->setPlayerLastHeard(playerSlot, timeGetTime());
+				m_currentGame->setPlayerLastHeard(playerSlot, LanClock::now());
 			}
 			else
 			{
-				m_currentGame->setPlayerLastHeard(playerSlot, timeGetTime());
+				m_currentGame->setPlayerLastHeard(playerSlot, LanClock::now());
 				Bool change = false;
 				Bool shouldUnaccept = false;
 				AsciiString key;

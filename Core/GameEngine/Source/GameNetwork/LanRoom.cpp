@@ -45,6 +45,7 @@
 
 #include <algorithm>
 #include <map>
+#include "Common/LanClock.h"   // O75
 
 namespace
 {
@@ -143,7 +144,7 @@ namespace
 		{
 			AsciiString line;
 			line.translate(text);
-			fprintf(f, "[%10u] %s %u.%u.%u.%u: %s\n", (unsigned)timeGetTime(), what, ip >> 24, (ip >> 16) & 255, (ip >> 8) & 255, ip & 255,
+			fprintf(f, "[%10u] %s %u.%u.%u.%u: %s\n", (unsigned)LanClock::now(), what, ip >> 24, (ip >> 16) & 255, (ip >> 8) & 255, ip & 255,
 				line.str());
 			fclose(f);
 		}
@@ -461,7 +462,7 @@ namespace
 		}
 		msg.Room.count = (UnsignedByte)n;
 		send(msg, 0);
-		s_lastList = timeGetTime();
+		s_lastList = LanClock::now();
 		s_listDirty = FALSE;
 		s_listSentNonEmpty = n > 0;
 	}
@@ -469,7 +470,7 @@ namespace
 	void setState(LanRoom::State st)
 	{
 		s_state = st;
-		s_stateSince = timeGetTime();
+		s_stateSince = LanClock::now();
 	}
 
 	/// A chat line on this computer's current LAN chat (lobby or game room).
@@ -547,7 +548,7 @@ Int LanRoom::capacity(const LANGameInfo *game)
 
 void LanRoom::onMessage(const LANMessage *msg, UnsignedInt senderIP, UnsignedInt localIP)
 {
-	const UnsignedInt now = timeGetTime();
+	const UnsignedInt now = LanClock::now();
 	switch (msg->Room.kind)
 	{
 		case KIND_OBSERVE:
@@ -776,7 +777,7 @@ void LanRoom::onMessage(const LANMessage *msg, UnsignedInt senderIP, UnsignedInt
 
 void LanRoom::update(UnsignedInt localIP)
 {
-	const UnsignedInt now = timeGetTime();
+	const UnsignedInt now = LanClock::now();
 	// host: forget the silent ones, send the list
 	LANGameInfo *game = hostedGame();
 	if (game != nullptr)
@@ -890,7 +891,7 @@ void LanRoom::pollStart()
 		// O33: after the replay (back in the menus, wherever): follow mode off, no mirror, no relay
 		if (TheGameLogic->isInReplayGame()) {
 			s_sawGame = TRUE;
-		} else if (s_sawGame || timeGetTime() - s_stateSince > 120000) {
+		} else if (s_sawGame || LanClock::now() - s_stateSince > 120000) {
 			resetViewer();
 		}
 	}
@@ -1108,7 +1109,7 @@ void LanRoom::configureServing(UnsignedInt localIP)
 	{
 		// no START came: the host's last list (LIST is from the host's own address only)
 		std::map<UnsignedInt, Known>::const_iterator it = s_known.find(host);
-		if (it != s_known.end() && timeGetTime() - it->second.seen < 60000)
+		if (it != s_known.end() && LanClock::now() - it->second.seen < 60000)
 		{
 			for (size_t i = 0; i < it->second.list.size(); ++i) observers.push_back(it->second.list[i].ip);
 			delay = it->second.delay;
@@ -1165,7 +1166,7 @@ void LanRoom::configureServing(UnsignedInt localIP)
 void LanRoom::matchUpdate(UnsignedInt localIP)
 {
 	LANGameInfo *game = TheLAN != nullptr ? TheLAN->GetMyGame() : nullptr;
-	const UnsignedInt now = timeGetTime();
+	const UnsignedInt now = LanClock::now();
 	// O59 (row 47): a defeated player who joined the observers: their text, and JOIN every second to the observers and
 	// the match's other players (each takes him in once its copy of the match shows him defeated)
 	if (s_defeatedChannel && s_chatSocket != INVALID_SOCKET)
@@ -1263,7 +1264,7 @@ std::vector<LanRoom::Observer> LanRoom::observersOf(UnsignedInt hostIP)
 		return out;
 	}
 	std::map<UnsignedInt, Known>::const_iterator it = s_known.find(hostIP);
-	if (it != s_known.end() && timeGetTime() - it->second.seen < kKnownMs) {
+	if (it != s_known.end() && LanClock::now() - it->second.seen < kKnownMs) {
 		out = it->second.list;
 	}
 	return out;
@@ -1296,7 +1297,7 @@ void LanRoom::startObserving(UnsignedInt hostIP)
 	s_roomHost = hostIP;
 	s_watcher = FALSE;
 	setState(STATE_ASKED);
-	s_lastBeat = timeGetTime();
+	s_lastBeat = LanClock::now();
 	s_lastHostList = s_lastBeat;   // O42: 10 s for its first LIST or the lobby's game
 	sendSimple(KIND_OBSERVE, hostIP, hostIP, 0);
 }

@@ -1205,6 +1205,8 @@ WindowMsgHandledType LanGameOptionsMenuSystem( GameWindow *window, UnsignedInt m
 			{
 				if (LANbuttonPushed)
 					break;
+				if (TheLAN != nullptr && TheLAN->IsStartDelivering())
+					break;   // O76: START is out: the room does not change (the players have it as it is)
 				GameWindow *control = (GameWindow *)mData1;
 				Int controlID = control->winGetWindowId();
 				LANGameInfo *myGame = TheLAN->GetMyGame();
@@ -1275,6 +1277,8 @@ WindowMsgHandledType LanGameOptionsMenuSystem( GameWindow *window, UnsignedInt m
 					break;
 				GameWindow *control = (GameWindow *)mData1;
 				Int controlID = control->winGetWindowId();
+				if (TheLAN != nullptr && TheLAN->IsStartDelivering() && controlID != buttonChatID)
+					break;   // O76: START is out: no change, no leave (chat still works)
 
 				if ( controlID == buttonBackID )
 				{
@@ -1384,6 +1388,8 @@ WindowMsgHandledType LanGameOptionsMenuSystem( GameWindow *window, UnsignedInt m
 		{
 			if (LANbuttonPushed)
 				break;
+			if (TheLAN != nullptr && TheLAN->IsStartDelivering())
+				break;   // O76
 
 			GameWindow *control = (GameWindow *)mData1;
 			Int controlID = control->winGetWindowId();

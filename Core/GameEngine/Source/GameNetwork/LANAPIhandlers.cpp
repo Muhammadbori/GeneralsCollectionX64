@@ -43,6 +43,7 @@
 #include "GameClient/GameText.h"
 #include "GameClient/LocalizedFallback.h"
 #include "GameClient/MapUtil.h"
+#include "Common/LanClock.h"   // O75
 
 void LANAPI::handleRequestLocations( LANMessage *msg, UnsignedInt senderIP )
 {
@@ -53,7 +54,7 @@ void LANAPI::handleRequestLocations( LANMessage *msg, UnsignedInt senderIP )
 		reply.messageType = LANMessage::MSG_LOBBY_ANNOUNCE;
 
 		sendMessage(&reply);
-		m_lastResendTime = timeGetTime();
+		m_lastResendTime = LanClock::now();
 	}
 	else
 	{
@@ -96,7 +97,7 @@ void LANAPI::handleRequestLocations( LANMessage *msg, UnsignedInt senderIP )
 	player->setName(UnicodeString(msg->name));
 	player->setHost(msg->hostName);
 	player->setLogin(msg->userName);
-	player->setLastHeard(timeGetTime());
+	player->setLastHeard(LanClock::now());
 
 	addPlayer(player);
 
@@ -193,7 +194,7 @@ void LANAPI::handleGameAnnounce( LANMessage *msg, UnsignedInt senderIP )
 			game->setHostDisplayName(UnicodeString(msg->name));   // O62: a room's announce comes from its host (checked)
 			game->setHostVerified(TRUE);   // O64: announced by its host himself
 		}
-			game->setLastHeard(timeGetTime());
+			game->setLastHeard(LanClock::now());
 			if (!success)
 			{
 				// remove from list
@@ -220,7 +221,7 @@ void LANAPI::handleGameAnnounce( LANMessage *msg, UnsignedInt senderIP )
 			game->setHostDisplayName(UnicodeString(msg->name));   // O62: a room's announce comes from its host (checked)
 			game->setHostVerified(TRUE);   // O64: announced by its host himself
 		}
-		game->setLastHeard(timeGetTime());
+		game->setLastHeard(LanClock::now());
 		if (!success)
 		{
 			// remove from list
@@ -250,7 +251,7 @@ void LANAPI::handleLobbyAnnounce( LANMessage *msg, UnsignedInt senderIP )
 	player->setName(UnicodeString(msg->name));
 	player->setHost(msg->hostName);
 	player->setLogin(msg->userName);
-	player->setLastHeard(timeGetTime());
+	player->setLastHeard(LanClock::now());
 
 	addPlayer(player);
 
@@ -369,7 +370,7 @@ void LANAPI::handleRequestJoin( LANMessage *msg, UnsignedInt senderIP )
 	fillInLANMessage( &reply );
 	if (!m_inLobby && m_currentGame && m_currentGame->getHostIP() == m_localIP)
 	{
-		if (m_currentGame->isGameInProgress())
+		if (m_currentGame->isGameInProgress() || m_startDelivering)   // O75: START is under way
 		{
 			reply.messageType = LANMessage::MSG_JOIN_DENY;
 			reply.GameNotJoined.reason = LANAPIInterface::RET_GAME_STARTED;
@@ -535,8 +536,8 @@ void LANAPI::handleRequestJoin( LANMessage *msg, UnsignedInt senderIP )
 					newSlot.setState(SLOT_PLAYER, UnicodeString(msg->name));
 					newSlot.setIP(senderIP);
 					newSlot.setPort(NETWORK_BASE_PORT_NUMBER);
-					newSlot.setLastHeard(timeGetTime());
-					m_seatJoinedMs[player] = timeGetTime();   // O70: freed if the joiner is never heard from after this
+					newSlot.setLastHeard(LanClock::now());
+					m_seatJoinedMs[player] = LanClock::now();   // O70: freed if the joiner is never heard from after this
 					newSlot.setSerial(msg->GameToJoin.serial);
 					m_currentGame->setSlot(player,newSlot);
 					DEBUG_LOG(("LANAPI::handleRequestJoin - added player %ls at ip 0x%08x to the game", msg->name, senderIP));
@@ -600,7 +601,7 @@ void LANAPI::handleJoinAccept( LANMessage *msg, UnsignedInt senderIP )
 			m_lastLoopMs = 0;
 			m_notListedSinceMs = 0;
 			if (m_currentGame != nullptr) {
-				m_currentGame->setLastHeard(timeGetTime());   // the host's silence counts from its accept
+				m_currentGame->setLastHeard(LanClock::now());   // the host's silence counts from its accept
 			}
 			m_lastRoomBeat = 0;   // the first HELLO at once (keepRoomAlive, or update): the host's seat is confirmed
 			LanTest::joinLog("joiner: accepted, slot %d", (Int)msg->GameJoined.slotPosition);
@@ -670,6 +671,22 @@ void LANAPI::handleJoinDeny( LANMessage *msg, UnsignedInt senderIP )
 
 void LANAPI::handleRequestGameLeave( LANMessage *msg, UnsignedInt senderIP )
 {
+	if (m_startDelivering && m_currentGame != nullptr && m_currentGame->amIHost() && senderIP != m_localIP)
+	{
+		Bool anyAcked = FALSE;
+		for (Int i = 0; i < MAX_SLOTS; ++i) {
+			anyAcked = anyAcked || m_startAcked[i];
+		}
+		if (anyAcked)
+		{
+			// O75 (H10): some players are loading this room's slot list: the host starts with the same list; the player
+			// that left is dropped at the end of their load (the 60 s progress timeout: a known limit, O76)
+			LanTest::joinLog("host: a leave from %d.%d.%d.%d during START after a player started: the seat stays for the match", PRINTF_IP_AS_4_INTS(senderIP));
+			return;
+		}
+		// O76: nobody has started: the start stops (with a line) and the leave is applied as any other
+		stopStartDelivery("a player left during the start");
+	}
 	if (!m_inLobby && m_currentGame && !m_currentGame->isGameInProgress())
 	{
 		// TheSuperHackers @bugfix O62 The host leaving is the host's address, not slot 0: while the admin watches from
@@ -702,7 +719,7 @@ void LANAPI::handleRequestGameLeave( LANMessage *msg, UnsignedInt senderIP )
 					lanPlayer->setName(UnicodeString(m_name));
 					lanPlayer->setHost(m_hostName);
 					lanPlayer->setLogin(m_userName);
-					lanPlayer->setLastHeard(timeGetTime());
+					lanPlayer->setLastHeard(LanClock::now());
 					addPlayer(lanPlayer);
 
 				}
@@ -813,7 +830,7 @@ void LANAPI::handleChat( LANMessage *msg, UnsignedInt senderIP )
 		if((player=LookupPlayer(senderIP)) != nullptr)
 		{
 			OnChat(UnicodeString(player->getName()), player->getIP(), UnicodeString(msg->Chat.message), msg->Chat.chatType);
-			player->setLastHeard(timeGetTime());
+			player->setLastHeard(LanClock::now());
 		}
 	}
 	else
@@ -858,8 +875,48 @@ void LANAPI::handleGameStart( LANMessage *msg, UnsignedInt senderIP )
 				L"\x0425\x043E\x0441\x0442 \x043D\x0430\x0447\x0430\x043B \x0441 \x0434\x0440\x0443\x0433\x0438\x043C \x0441\x043F\x0438\x0441\x043A\x043E\x043C \x043C\x0435\x0441\x0442, \x0447\x0435\x043C \x0443 \x044D\x0442\x043E\x0433\x043E \x043A\x043E\x043C\x043F\x044C\x044E\x0442\x0435\x0440\x0430: \x044D\x0442\x043E\x0442 \x043A\x043E\x043C\x043F\x044C\x044E\x0442\x0435\x0440 \x043D\x0435 \x043D\x0430\x0447\x0430\x043B \x0438\x0433\x0440\x0443.")), LANCHAT_SYSTEM);
 			return;
 		}
+		// TheSuperHackers @bugfix O74 A START that is not preceded by this room's start check in the last 30 s is old (a
+		// copy repeated after this computer had started, read after the match, e.g. in a "Play again" room of the same
+		// host, name and layout): ignored
+		if (m_startSeenMs == 0 || (Int)(LanClock::now() - m_startSeenMs) > 30000)
+		{
+			LanTest::joinLog("player: a START without a start check in the last 30 s: ignored");
+			return;
+		}
+		m_startSeenMs = LanClock::now();
+		// O76: whether this computer can start (the map) was answered at the start check (handleStartCheck); a START
+		// comes only after every seat answered READY that it can
+		LANMessage ack;
+		fillInLANMessage(&ack);
+		ack.messageType = LANMessage::MSG_START_ACK;
+		ack.StartCheck.magic = LANStartMagic;
+		ack.StartCheck.digest = mine;
+		ack.StartCheck.revision = m_currentGame->getOptionsRevision();
+		wcslcpy(ack.StartCheck.gameName, m_currentGame->getName().str(), ARRAY_SIZE(ack.StartCheck.gameName));
+		for (Int k = 0; k < 5; ++k) {
+			sendMessage(&ack, senderIP);
+		}
+		m_transport->doSend();
 		LanTest::joinLog("player: START with digest %08X: started", mine);
 		OnGameStart();
+	}
+}
+
+void LANAPI::handleStartAck( LANMessage *msg, UnsignedInt senderIP )
+{
+	// O74: the host: a seat has START and leaves for the match
+	if (!m_startDelivering || m_currentGame == nullptr || !m_currentGame->amIHost() || msg->StartCheck.magic != LANStartMagic
+		|| msg->StartCheck.digest != m_startDigest || m_currentGame->getName().compare(msg->StartCheck.gameName) != 0) {
+		return;
+	}
+	for (Int i = 0; i < MAX_SLOTS; ++i)
+	{
+		const LANGameSlot *slot = m_currentGame->getConstLANSlot(i);
+		if (slot != nullptr && slot->isHuman() && slot->getIP() == senderIP && !m_startAcked[i])
+		{
+			m_startAcked[i] = TRUE;
+			LanTest::joinLog("host: START acknowledged by slot %d (%d.%d.%d.%d)", i, PRINTF_IP_AS_4_INTS(senderIP));
+		}
 	}
 }
 
@@ -870,7 +927,7 @@ void LANAPI::handleStartCheck( LANMessage *msg, UnsignedInt senderIP )
 		|| msg->StartCheck.magic != LANStartMagic || m_currentGame->getName().compare(msg->StartCheck.gameName) != 0) {
 		return;
 	}
-	m_startSeenMs = timeGetTime();   // O71: a start is under way: the host's silence is not counted meanwhile
+	m_startSeenMs = LanClock::now();   // O71: a start is under way: the host's silence is not counted meanwhile
 	const UnsignedInt mine = LanStartDigest(m_currentGame);
 	if (mine != msg->StartCheck.digest || m_currentGame->getOptionsRevision() != msg->StartCheck.revision)   // O64: and the revision
 	{
@@ -878,10 +935,23 @@ void LANAPI::handleStartCheck( LANMessage *msg, UnsignedInt senderIP )
 			msg->StartCheck.revision, mine, m_currentGame->getOptionsRevision());
 		return;   // the options the host sends with every check bring this copy up to date
 	}
+	// TheSuperHackers @bugfix O76 READY also says that this computer can start: OnGameStart leaves without starting when
+	// the map is not here after the transfer. The map is here (in the map cache), or a transfer for this seat will bring
+	// it (its seat does not have it, and it is not an official map: WouldMapTransfer). Otherwise the answer is "cannot
+	// start: no map", and the host stops the start before anybody loads, naming this player (GUI:PlayerNoMap, the
+	// original's line for a player without the map).
+	const Int localSlot = m_currentGame->getLocalSlotNum();
+	const GameSlot *mySlot = localSlot >= 0 ? m_currentGame->getConstSlot(localSlot) : nullptr;
+	const Bool mapHere = TheMapCache->findMap(m_currentGame->getMap()) != nullptr;
+	const Bool transferComing = mySlot != nullptr && !mySlot->hasMap() && WouldMapTransfer(m_currentGame->getMap());
+	const Bool canStart = mySlot == nullptr || mapHere || transferComing;   // no seat (the watching admin): nothing to load
+	if (!canStart) {
+		LanTest::joinLog("player: start check, but the map %s is not here and no transfer comes: cannot start", m_currentGame->getMap().str());
+	}
 	LANMessage reply;
 	fillInLANMessage(&reply);
 	reply.messageType = LANMessage::MSG_START_READY;
-	reply.StartCheck.magic = LANStartMagic;
+	reply.StartCheck.magic = canStart ? LANStartMagic : LANStartNoMapMagic;
 	reply.StartCheck.digest = mine;
 	reply.StartCheck.revision = m_currentGame->getOptionsRevision();   // O64
 	wcslcpy(reply.StartCheck.gameName, m_currentGame->getName().str(), ARRAY_SIZE(reply.StartCheck.gameName));
@@ -890,7 +960,8 @@ void LANAPI::handleStartCheck( LANMessage *msg, UnsignedInt senderIP )
 
 void LANAPI::handleStartReady( LANMessage *msg, UnsignedInt senderIP )
 {
-	if (!m_startChecking || m_currentGame == nullptr || !m_currentGame->amIHost() || msg->StartCheck.magic != LANStartMagic
+	if (!m_startChecking || m_currentGame == nullptr || !m_currentGame->amIHost()
+		|| (msg->StartCheck.magic != LANStartMagic && msg->StartCheck.magic != LANStartNoMapMagic)   // O76
 		|| msg->StartCheck.digest != m_startDigest || m_currentGame->getName().compare(msg->StartCheck.gameName) != 0
 		|| msg->StartCheck.revision != m_currentGame->getOptionsRevision()) {   // O64
 		return;
@@ -901,7 +972,9 @@ void LANAPI::handleStartReady( LANMessage *msg, UnsignedInt senderIP )
 		if (slot != nullptr && slot->isHuman() && slot->getIP() == senderIP && !m_startReady[i])
 		{
 			m_startReady[i] = TRUE;
-			LanTest::joinLog("host: READY from slot %d (%d.%d.%d.%d)", i, PRINTF_IP_AS_4_INTS(senderIP));
+			m_startCannot[i] = msg->StartCheck.magic == LANStartNoMapMagic;   // O76
+			LanTest::joinLog("host: READY from slot %d (%d.%d.%d.%d)%s", i, PRINTF_IP_AS_4_INTS(senderIP),
+				m_startCannot[i] ? ": cannot start, no map" : "");
 		}
 	}
 }
@@ -910,7 +983,7 @@ void LANAPI::handleGameStartTimer( LANMessage *msg, UnsignedInt senderIP )
 {
 	if (!m_inLobby && m_currentGame && m_currentGame->getHostIP() == senderIP && !m_currentGame->isGameInProgress())
 	{
-		m_startSeenMs = timeGetTime();   // O71: the host counts down: its silence is not counted meanwhile
+		m_startSeenMs = LanClock::now();   // O71: the host counts down: its silence is not counted meanwhile
 		OnGameStartTimer(msg->StartTimer.seconds);
 	}
 }

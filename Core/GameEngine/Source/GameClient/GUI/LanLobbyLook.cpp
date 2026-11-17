@@ -57,6 +57,7 @@
 #include "GameNetwork/LANGameInfo.h"
 
 #include <vector>
+#include "Common/LanClock.h"   // O75
 
 namespace
 {
@@ -992,7 +993,7 @@ namespace
 			static const void *s_lastGame = nullptr;
 			static Int s_lastRow = -1;
 			static UnsignedInt s_lastMs = 0;
-			const UnsignedInt now = timeGetTime();
+			const UnsignedInt now = LanClock::now();
 			if (s_lastGame != (const void *)r.game || s_lastRow != row || now - s_lastMs > 5000)
 			{
 				UnicodeString t;
@@ -1015,7 +1016,7 @@ namespace
 			return FALSE;
 		}
 		static UnsignedInt s_lastMs = 0;
-		const UnsignedInt now = timeGetTime();
+		const UnsignedInt now = LanClock::now();
 		if (s.chatList != nullptr && now - s_lastMs > 3000) {
 			GadgetListBoxAddEntryText(s.chatList, textOf(kOtherVersionLine), chatSystemColor, -1, 0);
 		}
@@ -1063,7 +1064,7 @@ namespace
 				} else if (s.listGames != nullptr) {
 					GadgetListBoxSetSelected(s.listGames, row);
 				}
-				const UnsignedInt now = timeGetTime();
+				const UnsignedInt now = LanClock::now();
 				if (row == s.lastClickRow && now - s.lastClickMs < 450) {
 					joinRow(row);   // a double click joins, as on the old list
 				}
@@ -1967,7 +1968,7 @@ void LanLobbyLook::update(Bool screenReady)
 		GadgetTextEntrySetText(s.addrBox, ipText(ip));
 		s.shownIP = ip;
 	}
-	if (s.copyButton != nullptr && s.copiedUntil != 0 && (Int)(timeGetTime() - s.copiedUntil) > 0)   // O73: signed
+	if (s.copyButton != nullptr && s.copiedUntil != 0 && (Int)(LanClock::now() - s.copiedUntil) > 0)   // O73: signed
 	{
 		GadgetButtonSetText(s.copyButton, textOf(kCopy));
 		s.copiedUntil = 0;
@@ -1997,7 +1998,7 @@ void LanLobbyLook::update(Bool screenReady)
 	{
 		const Int players = s.listPlayers != nullptr ? GadgetListBoxGetNumEntries(s.listPlayers) : 0;
 		const Int games = s.listGames != nullptr ? GadgetListBoxGetNumEntries(s.listGames) : 0;
-		const UnsignedInt now = timeGetTime();
+		const UnsignedInt now = LanClock::now();
 		if (LanTest::sampleData() || TheLAN == nullptr || players > 1 || games > 0 || s_aloneSince == 0) {
 			s_aloneSince = now;
 		}
@@ -2084,7 +2085,7 @@ Bool LanLobbyLook::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgData
 				copyToClipboard(ipText(ip));
 			}
 			GadgetButtonSetText(s.copyButton, textOf(kCopied));
-			s.copiedUntil = timeGetTime() + 2000;
+			s.copiedUntil = LanClock::stamp(LanClock::now() + 2000);   // O75: 0 means "not shown"
 			return TRUE;
 		}
 		if (control == s.connectButton)

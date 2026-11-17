@@ -34,6 +34,7 @@
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
 
 #include "Common/StateTrace.h"
+#include "Common/CommandLine.h"   // O77
 
 #include "Common/FramePacer.h"
 #include "Common/GlobalData.h"
@@ -57,6 +58,9 @@ namespace StateTrace
 		Bool on = FALSE;
 		for (int arg = 1; arg < __argc; ++arg)
 		{
+			if (!CommandLine::isTestSwitchAllowed(__argv[arg])) {
+				continue;   // O77: a test switch, *uitest*.exe only
+			}
 			if (stricmp(__argv[arg], "-stateTrace") == 0) {
 				on = TRUE;
 			} else if (stricmp(__argv[arg], "-stateTraceCalls") == 0 && arg + 1 < __argc) {

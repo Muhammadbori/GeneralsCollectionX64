@@ -27,6 +27,7 @@
 // Author: Matthew D. Campbell, December 2001
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
+#include "Common/LanClock.h"   // O75
 
 #include "GameClient/GameInfoWindow.h"
 #include "GameClient/GameText.h"
@@ -368,7 +369,7 @@ Bool ParseGameOptionsString(LANGameInfo *game, AsciiString options)
 			}
 		}
 		// clean up LAN users, etc.
-		UnsignedInt now = timeGetTime();
+		UnsignedInt now = LanClock::now();
 		for (i=0; i<MAX_SLOTS; ++i)
 		{
 			LANGameSlot *slot = game->getLANSlot(i);
