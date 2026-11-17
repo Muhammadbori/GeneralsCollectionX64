@@ -565,7 +565,8 @@ void PopulateInGameDiplomacyPopup()
 				GadgetStaticTextSetText(staticTextTeam[rowNum], TheGameText->fetch(teamStr) );
 			}
 			// TheSuperHackers @feature The pictures of the lobby table: what is random to this client stays random (item 9).
-			PlayerTable::decorateRow(staticTextPlayer[rowNum], staticTextSide[rowNum], staticTextTeam[rowNum], slot);
+			PlayerTable::decorateRow(staticTextPlayer[rowNum], staticTextSide[rowNum], staticTextTeam[rowNum], slot,
+				TheGameInfo->getAdminSlot() == slotNum);   // O60 (row 46): the admin's gold star
 			// TheSuperHackers @feature The voice volume of a team-mate and its talk light (VoiceChatUI.h).
 			VoiceChatUI::decorateDiplomacyRow(rowNum, staticTextPlayer[rowNum], staticTextStatus[rowNum], slotNum);
 			if (staticTextStatus[rowNum])

@@ -1414,7 +1414,8 @@ void MultiPlayerLoadScreen::init( GameInfo *game )
 		}
 
 		// TheSuperHackers @feature The pictures of the lobby table: what is random to this client stays random (item 9).
-		PlayerTable::decorateRow(m_playerNames[netSlot], m_playerSide[netSlot], teamWin[netSlot], slot);
+		PlayerTable::decorateRow(m_playerNames[netSlot], m_playerSide[netSlot], teamWin[netSlot], slot,
+			game->getAdminSlot() == i);   // O60 (row 46): the admin's gold star
 
 		m_playerLookup[i] = netSlot; // save our mapping so we can update progress correctly
 
@@ -1828,7 +1829,8 @@ GameSlot *lSlot = game->getSlot(game->getLocalSlotNum());
 		}
 
 		// TheSuperHackers @feature The pictures of the lobby table: what is random to this client stays random (item 9).
-		PlayerTable::decorateRow(m_playerNames[netSlot], m_playerSide[netSlot], teamWin[netSlot], slot);
+		PlayerTable::decorateRow(m_playerNames[netSlot], m_playerSide[netSlot], teamWin[netSlot], slot,
+			game->getAdminSlot() == i);   // O60 (row 46): the admin's gold star
 
 		m_playerLookup[i] = netSlot; // save our mapping so we can update progress correctly
 

@@ -103,6 +103,8 @@ public:
 	virtual Bool amIHost() const override;																///< Convenience function - is the local player the game host?
 	/// O60 (row 46): the host's seat is the one with the address the game's name starts with (any, for a name without it)
 	virtual Bool isHostSeat( const GameSlot &slot ) const override;
+	/// O60: the seat with the host's address (-1 while he watches from outside the seats)
+	virtual Int getAdminSlot() const override;
 
 	/// Get the IP of selected player or return 0
 	UnsignedInt getIP( int who )

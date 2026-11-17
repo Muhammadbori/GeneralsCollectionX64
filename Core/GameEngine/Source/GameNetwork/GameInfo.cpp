@@ -736,6 +736,26 @@ Bool GameInfo::isStartPositionTaken(Int positionIdx, Int slotToIgnore ) const
 	return false;
 }
 
+Int GameInfo::getAdminSlot() const
+{
+	if (m_hostObserves) {
+		return -1;
+	}
+	const GameSlot *first = getConstSlot(0);
+	if (first == nullptr || !first->isHuman() || first->getIP() == 0) {
+		return -1;
+	}
+	Int humans = 0;
+	for (Int i = 0; i < MAX_SLOTS; ++i)
+	{
+		const GameSlot *slot = getConstSlot(i);
+		if (slot != nullptr && slot->isHuman() && slot->getIP() != 0) {
+			++humans;
+		}
+	}
+	return humans >= 2 ? 0 : -1;
+}
+
 void GameInfo::resetAccepted()
 {
 	GameSlot *slot = getSlot(0);

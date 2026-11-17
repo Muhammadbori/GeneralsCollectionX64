@@ -36,6 +36,7 @@
 #include "GameClient/GameWindow.h"
 #include "GameClient/GameWindowManager.h"
 #include "GameClient/Image.h"
+#include "GameClient/LocalizedFallback.h"
 #include "GameNetwork/GameInfo.h"
 #include "GameClient/Mouse.h"
 
@@ -151,6 +152,70 @@ namespace
 			// the text starts after the picture
 			textData->centered = FALSE;
 			textData->leftMargin = side + 4;
+		}
+	}
+
+	//---------------------------------------------------------------------------------------------
+	// O60 (row 46, S25): the admin's star in front of a name (a child window of the name text, after the colour picture)
+	const Int kStarTag = 0x50545354;   ///< "PTST"
+
+	void drawStarWindow(GameWindow *window, WinInstanceData *)
+	{
+		Int x = 0, y = 0, w = 0, h = 0;
+		window->winGetScreenPosition(&x, &y);
+		window->winGetSize(&w, &h);
+		PlayerTable::drawAdminStar(x + w / 2, y + h / 2, max(3, min(w, h) / 2 - 1));
+	}
+
+	void setStar(GameWindow *text, Bool show)
+	{
+		if (text == nullptr) {
+			return;
+		}
+		GameWindow *starWin = nullptr;
+		GameWindow *iconWin = nullptr;
+		for (GameWindow *child = text->winGetChild(); child != nullptr; child = child->winGetNext())
+		{
+			if (child->winGetWindowId() == kStarTag) starWin = child;
+			if (child->winGetWindowId() == kIconTag) iconWin = child;
+		}
+		Int w = 0, h = 0;
+		text->winGetSize(&w, &h);
+		const Int side = h;
+		const Bool iconShown = iconWin != nullptr && !iconWin->winIsHidden();
+		TextData *textData = ((text->winGetStyle() & GWS_STATIC_TEXT) != 0) ? (TextData *)text->winGetUserData() : nullptr;
+		if (!show)
+		{
+			if (starWin != nullptr && !starWin->winIsHidden())
+			{
+				starWin->winHide(TRUE);
+				if (textData != nullptr) {
+					textData->leftMargin = iconShown ? side + 4 : 0;
+				}
+			}
+			return;
+		}
+		if (starWin == nullptr)
+		{
+			WinInstanceData inst;
+			inst.init();
+			inst.m_style = GWS_USER_WINDOW | GWS_MOUSE_TRACK;
+			starWin = TheWindowManager->winCreate(text, WIN_STATUS_ENABLED, 0, 0, side, side, PassMessagesToParentSystem, &inst);
+			if (starWin == nullptr) {
+				return;
+			}
+			starWin->winSetWindowId(kStarTag);
+			starWin->winSetDrawFunc(drawStarWindow);
+			starWin->winSetTooltip(PlayerTable::adminTip());
+		}
+		const Int starX = iconShown ? side + 3 : 1;
+		starWin->winSetSize(side, side);
+		starWin->winSetPosition(starX, (h - side) / 2);
+		starWin->winHide(FALSE);
+		if (textData != nullptr)
+		{
+			textData->centered = FALSE;
+			textData->leftMargin = starX + side + 3;
 		}
 	}
 
@@ -444,7 +509,64 @@ void PlayerTable::applyLobbyRow(GameWindow *comboColor, GameWindow *comboPlayerT
 	}
 }
 
-void PlayerTable::decorateRow(GameWindow *nameText, GameWindow *sideText, GameWindow *teamText, const GameSlot *slot)
+void PlayerTable::drawAdminStar(Int cx, Int cy, Int r)
+{
+	if (TheDisplay == nullptr || r < 2) {
+		return;
+	}
+	// ten corners: the points (radius r) and the inner corners (0.45 r), the first point straight up
+	Real px[10], py[10];
+	for (Int i = 0; i < 10; ++i)
+	{
+		const Real a = -1.5707963f + i * 0.62831853f;
+		const Real rad = (i % 2) == 0 ? (Real)r : 0.45f * r;
+		px[i] = cx + rad * cosf(a);
+		py[i] = cy + rad * sinf(a);
+	}
+	const Color gold = GameMakeColor(255, 200, 40, 255);
+	const Color rim = GameMakeColor(70, 45, 0, 255);
+	// filled by rows: the star's edges crossed at each row's middle, the spans between pairs of crossings
+	for (Int y = cy - r; y <= cy + r; ++y)
+	{
+		const Real sy = y + 0.5f;
+		Real xs[10];
+		Int n = 0;
+		for (Int i = 0; i < 10; ++i)
+		{
+			const Int j = (i + 1) % 10;
+			if ((py[i] <= sy && py[j] > sy) || (py[j] <= sy && py[i] > sy)) {
+				xs[n++] = px[i] + (sy - py[i]) * (px[j] - px[i]) / (py[j] - py[i]);
+			}
+		}
+		for (Int a = 1; a < n; ++a)
+		{
+			const Real v = xs[a];
+			Int b = a;
+			for (; b > 0 && xs[b - 1] > v; --b) xs[b] = xs[b - 1];
+			xs[b] = v;
+		}
+		for (Int k = 0; k + 1 < n; k += 2)
+		{
+			const Int x0 = REAL_TO_INT_FLOOR(xs[k] + 0.5f);
+			const Int x1 = REAL_TO_INT_FLOOR(xs[k + 1] + 0.5f);
+			if (x1 > x0) {
+				TheDisplay->drawFillRect(x0, y, x1 - x0, 1, gold);
+			}
+		}
+	}
+	for (Int i = 0; i < 10; ++i)
+	{
+		const Int j = (i + 1) % 10;
+		TheDisplay->drawLine((Int)px[i], (Int)py[i], (Int)px[j], (Int)py[j], 1.0f, rim);
+	}
+}
+
+UnicodeString PlayerTable::adminTip()
+{
+	return TheGameText->FETCH_OR_SUBSTITUTE("GUI:AdminMarkTip", localizedFallback(L"Host (admin)", L"\x0425\x043E\x0441\x0442 (\x0430\x0434\x043C\x0438\x043D)"));
+}
+
+void PlayerTable::decorateRow(GameWindow *nameText, GameWindow *sideText, GameWindow *teamText, const GameSlot *slot, Bool admin)
 {
 	if (slot == nullptr) {
 		return;
@@ -454,12 +576,14 @@ void PlayerTable::decorateRow(GameWindow *nameText, GameWindow *sideText, GameWi
 		setIcon(nameText, nullptr, 0xFFFFFFFF, FALSE);
 		setIcon(sideText, nullptr, 0xFFFFFFFF, FALSE);
 		setIcon(teamText, nullptr, 0xFFFFFFFF, FALSE);
+		setStar(nameText, admin);
 		return;
 	}
 	// what this client may see: a random choice of a player who is not on its team stays random
 	Color tint = 0xFFFFFFFF;
 	const Image *colorImage = colorPicture(slot->getApparentColor(), &tint);
 	setIcon(nameText, colorImage, tint, FALSE, sideText);
+	setStar(nameText, admin);   // O60
 	setIcon(sideText, armyPicture(slot->getApparentPlayerTemplate()), 0xFFFFFFFF, FALSE);
 	if (teamText != nullptr)
 	{

@@ -183,6 +183,10 @@ public:
 	/// TheSuperHackers @bugfix O60 (row 46) setSlot marks the first seat accepted and with the map as the host's: only
 	/// when this slot is the host's (a LAN room's admin may watch from outside the seats or sit elsewhere).
 	virtual Bool isHostSeat( const GameSlot &slot ) const { return TRUE; }
+	/// O60 (row 46, S25): the seat of the room's admin (the LAN host), for his gold star in the lists; -1: none (he
+	/// watched from outside the seats, or no LAN game). In a LAN match and its replay a playing host sits in slot 0
+	/// (LanRoom::hostSeatFirst); a game with one human only is not taken for a LAN game.
+	virtual Int getAdminSlot() const;
 	virtual Int getLocalSlotNum() const;				///< Get the local slot number, or -1 if we're not present
 	Int getSlotNum( AsciiString userName ) const;			///< Get the slot number corresponding to a specific user, or -1 if he's not present
 

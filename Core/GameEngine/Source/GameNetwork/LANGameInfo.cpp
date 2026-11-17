@@ -187,6 +187,18 @@ Bool LANGameInfo::isHostSeat( const GameSlot &slot ) const
 	return host == 0 || slot.getIP() == host;
 }
 
+Int LANGameInfo::getAdminSlot() const
+{
+	const UnsignedInt host = hostIPFromName();
+	if (host == 0) {
+		return GameInfo::getAdminSlot();
+	}
+	for (Int i = 0; i < MAX_SLOTS; ++i) {
+		if (m_LANSlot[i].isHuman() && m_LANSlot[i].getIP() == host) return i;
+	}
+	return -1;
+}
+
 UnsignedInt LANGameInfo::hostIPFromName() const
 {
 	const WideChar *name = m_gameName.str();

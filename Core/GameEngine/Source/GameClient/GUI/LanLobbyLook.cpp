@@ -908,7 +908,10 @@ namespace
 			const Int ty = ry + (rh - fontHeight()) / 2;
 			// O44: the state in brackets is drawn whole; the host's name is cut instead ("(без з..." was cut in S42). When
 			// both marks do not fit next to a few letters of the name, "in game" goes (the row is dimmed for it already).
-			const Int gameW = cols.x[COL_MAP] - cols.x[COL_GAME] - 6;
+			// O60 (row 46, S25): the gold star before the admin's name (each game is named by its admin)
+			const Int starR = max(3, fontHeight() * 2 / 5);
+			const Int starRoom = 2 * starR + 4;
+			const Int gameW = cols.x[COL_MAP] - cols.x[COL_GAME] - 6 - starRoom;
 			UnicodeString suffix;
 			for (Int pass = 0; pass < 2; ++pass)
 			{
@@ -944,7 +947,8 @@ namespace
 				name.concat(L"...");
 			}
 			name.concat(suffix);
-			drawText(name, cols.x[COL_GAME] + 2, ty, gameW, c);
+			PlayerTable::drawAdminStar(cols.x[COL_GAME] + 2 + starR, ty + fontHeight() / 2, starR);
+			drawText(name, cols.x[COL_GAME] + 2 + starRoom, ty, gameW, c);
 			drawText(r.map, cols.x[COL_MAP] + 2, ty, cols.x[COL_PLAYERS] - cols.x[COL_MAP] - 6, c);
 			UnicodeString t;
 			t.format(L"%d/%d", r.players, r.maxPlayers);
@@ -1143,6 +1147,7 @@ namespace
 		Int observers = 0;
 		struct Obs { UnicodeString name; Int files; Int shield; };
 		std::vector<Obs> obs;
+		Int adminObs = -1;   // O60: the admin among them (his star)
 		for (Int k = 0; k < MAX_SLOTS; ++k)
 		{
 			UnicodeString name;
@@ -1191,12 +1196,18 @@ namespace
 				ry += rh;
 				continue;
 			}
-			if (k == 0)
+			// O60 (row 46): the admin by identity (he may sit in any seat), with his gold star
+			const Bool admin = r.game != nullptr ? r.game->getAdminSlot() == k : k == 0;
+			Int nameX = x + pad + 2;
+			if (admin)
 			{
 				name.concat(L" ");
 				name.concat(textOf(kHost));
+				const Int starR = max(3, fontHeight() * 2 / 5);
+				PlayerTable::drawAdminStar(nameX + starR, ty + fontHeight() / 2, starR);
+				nameX += 2 * starR + 3;
 			}
-			drawText(name, x + pad + 2, ty, colColor - x - pad - 6, k == 0 ? kGreen : kText);
+			drawText(name, nameX, ty, colColor - nameX - 4, admin ? kGreen : kText);
 			Color tint = 0xFFFFFFFF;
 			const Image *colorImage = PlayerTable::colorPictureOf(color, &tint);
 			if (colorImage != nullptr) {
@@ -1232,6 +1243,7 @@ namespace
 			o.name.concat(textOf(kAdminSuffix));
 			o.files = filesMarkOfIP(r.game->getHostIP());
 			o.shield = shieldOfIP(r.game->getHostIP());
+			adminObs = (Int)obs.size();
 			obs.push_back(o);
 		}
 		if (r.game != nullptr)
@@ -1254,6 +1266,9 @@ namespace
 			ry += rh + 2;
 			for (size_t i = 0; i < obs.size() && ry + rh < bottom; ++i)
 			{
+				if ((Int)i == adminObs) {
+					PlayerTable::drawAdminStar(x + pad + 6, ry + rh / 2, min(5, max(3, fontHeight() * 2 / 5)));
+				}
 				drawText(obs[i].name, x + pad + 12, ry + (rh - fontHeight()) / 2, colShield - x - pad - 16, kText);
 				drawShield(colShield, ry + 2, icon, obs[i].shield);
 				drawFilesMark(colFiles, ry + 2, icon, obs[i].files);

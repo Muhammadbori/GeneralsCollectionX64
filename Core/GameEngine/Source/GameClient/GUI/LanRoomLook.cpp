@@ -36,6 +36,7 @@
 #include "GameClient/GameWindowManager.h"
 #include "GameClient/LanLobbyLook.h"
 #include "GameClient/LocalizedFallback.h"
+#include "GameClient/PlayerTable.h"
 #include "GameNetwork/LANAPI.h"
 #include "GameNetwork/LANAPICallbacks.h"
 #include "GameNetwork/LANGameInfo.h"
@@ -232,20 +233,9 @@ namespace
 	}
 
 	/// O60: a five-pointed star (the admin's mark), lines only
-	void drawStar(Int cx, Int cy, Int r, Color color)
+	void drawStar(Int cx, Int cy, Int r, Color)
 	{
-		Real px[5], py[5];
-		for (Int i = 0; i < 5; ++i)
-		{
-			const Real a = -1.5707963f + i * 1.2566371f;
-			px[i] = cx + r * cosf(a);
-			py[i] = cy + r * sinf(a);
-		}
-		for (Int i = 0; i < 5; ++i)
-		{
-			const Int j = (i + 2) % 5;
-			TheDisplay->drawLine((Int)px[i], (Int)py[i], (Int)px[j], (Int)py[j], 2.0f, color);
-		}
+		PlayerTable::drawAdminStar(cx, cy, r);   // O60 (S25): the same filled gold star everywhere
 	}
 
 	LANGameInfo *roomGame()
@@ -504,16 +494,19 @@ void LanRoomLook::init(GameWindow *parent)
 				if (s.adminRow != nullptr)
 				{
 					s.adminRow->winSetDrawFunc(drawAdminRow);
+					s.adminRow->winSetTooltip(PlayerTable::adminTip());
 					s.made.push_back(s.adminRow);
 				}
 			}
 			WinInstanceData markInst;
 			markInst.init();
 			markInst.m_style = GWS_USER_WINDOW;
-			s.adminMark = TheWindowManager->winCreate(frame, 0, 0, 0, 16, 16, PassMessagesToParentSystem, &markInst);
+			markInst.m_style |= GWS_MOUSE_TRACK;
+			s.adminMark = TheWindowManager->winCreate(frame, WIN_STATUS_ENABLED, 0, 0, 16, 16, PassMessagesToParentSystem, &markInst);
 			if (s.adminMark != nullptr)
 			{
 				s.adminMark->winSetDrawFunc(drawAdminMark);
+				s.adminMark->winSetTooltip(PlayerTable::adminTip());
 				s.adminMark->winHide(TRUE);
 				s.made.push_back(s.adminMark);
 			}
