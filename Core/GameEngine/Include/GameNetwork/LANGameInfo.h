@@ -98,6 +98,10 @@ public:
 	void setName( UnicodeString name ) { m_gameName = name; }		///< Set the Name of the Game
 	/// O62: the host's player name as his own announce and options name him (sender checked), for an admin without a seat
 	void setHostDisplayName( const UnicodeString &name ) { m_hostDisplayName = name; }
+	/// O64 (H6 #2): this row was announced by its host himself (a room's announce from the address its name claims), not
+	/// only by a seat of a running game. Only such a row is joined or observed.
+	Bool isHostVerified() const { return m_hostVerified; }
+	void setHostVerified( Bool verified ) { m_hostVerified = verified; }
 	UnicodeString getName() { return m_gameName; }					///< Get the Name of the Game
 
 	// Convenience functions that interface with the LANPlayer held in the slot list
@@ -180,6 +184,7 @@ private:
 	UnsignedInt m_lastHeard;														///< The last time we heard from this game (for timeout purposes)
 	UnicodeString m_gameName;														///< Game name.  @todo: are game names based off of host player names?
 	UnicodeString m_hostDisplayName;												///< O62: the host's name from his messages
+	Bool m_hostVerified;																///< O64
 	Bool m_isDirectConnect;															///< Is this game a direct connect game, or a LAN game?
 };
 

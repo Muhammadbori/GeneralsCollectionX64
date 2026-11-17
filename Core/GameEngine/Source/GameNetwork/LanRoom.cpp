@@ -1277,6 +1277,9 @@ void LanRoom::startObserving(UnsignedInt hostIP)
 	if (hostIP == 0 || s_state == STATE_STARTING || s_state == STATE_PLAYING) {
 		return;
 	}
+	if (TheLAN != nullptr && TheLAN->LookupGameByHost(hostIP) != nullptr && !TheLAN->LookupGameByHost(hostIP)->isHostVerified()) {
+		return;   // O64 (H6 #2): only a room its host himself announced is observed
+	}
 	if (TheLAN != nullptr && TheLAN->LookupGameByHost(hostIP) != nullptr
 		&& !LanSameVersion(TheLAN->LookupGameByHost(hostIP)))   // O62/O63
 	{

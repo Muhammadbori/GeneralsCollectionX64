@@ -140,8 +140,24 @@ Bool LANAPI::announceFromItsHost( LANMessage *msg, UnsignedInt senderIP )
 	}
 	if (!seated) {
 		LanTest::joinLog("lobby: announce of a running game from %d.%d.%d.%d dropped: not a seat of it", PRINTF_IP_AS_4_INTS(senderIP));
+		return FALSE;
 	}
-	return seated;
+	// TheSuperHackers @bugfix O64 (H6 #2) ... and the address its name claims is a seat of it too, unless its admin watches
+	// from outside the seats (HO=1: he has none). A row made from a running game's announce is not host-verified
+	// (handleGameAnnounce): it is listed and can be watched (its stream comes from its seats), never joined or observed,
+	// and nothing host-only of its claimed host is taken for it.
+	const UnsignedInt claimed = LANGameInfo::hostIPOfName(name);
+	Bool claimedSeat = FALSE;
+	for (Int i = 0; i < MAX_SLOTS; ++i) {
+		claimedSeat = claimedSeat || (sent.getConstLANSlot(i)->isHuman() && sent.getConstLANSlot(i)->getIP() == claimed);
+	}
+	if (!claimedSeat && !sent.getHostObserves())
+	{
+		LanTest::joinLog("lobby: announce of a running game from %d.%d.%d.%d dropped: its name's address %08X is no seat",
+			PRINTF_IP_AS_4_INTS(senderIP), claimed);
+		return FALSE;
+	}
+	return TRUE;
 }
 
 void LANAPI::handleGameAnnounce( LANMessage *msg, UnsignedInt senderIP )
@@ -175,6 +191,7 @@ void LANAPI::handleGameAnnounce( LANMessage *msg, UnsignedInt senderIP )
 			game->setIsDirectConnect(msg->GameInfo.isDirectConnect);
 		if (!msg->GameInfo.inProgress) {
 			game->setHostDisplayName(UnicodeString(msg->name));   // O62: a room's announce comes from its host (checked)
+			game->setHostVerified(TRUE);   // O64: announced by its host himself
 		}
 			game->setLastHeard(timeGetTime());
 			if (!success)
@@ -201,6 +218,7 @@ void LANAPI::handleGameAnnounce( LANMessage *msg, UnsignedInt senderIP )
 		game->setIsDirectConnect(msg->GameInfo.isDirectConnect);
 		if (!msg->GameInfo.inProgress) {
 			game->setHostDisplayName(UnicodeString(msg->name));   // O62: a room's announce comes from its host (checked)
+			game->setHostVerified(TRUE);   // O64: announced by its host himself
 		}
 		game->setLastHeard(timeGetTime());
 		if (!success)

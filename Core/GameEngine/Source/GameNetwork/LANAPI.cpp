@@ -852,6 +852,14 @@ void LANAPI::RequestGameJoin( LANGameInfo *game, UnsignedInt ip /* = 0 */ )
 		return;
 	}
 	// O62: another version's room is not joined (the lobby says so first; this also covers a direct connect)
+	// O64 (H6 #2): only a room its host himself announced (a row made from a running game's announce is never joined)
+	if (!game->isHostVerified())
+	{
+		LanTest::joinLog("joiner: the room was never announced by its host: not joined");
+		m_pendingAction = ACT_NONE;
+		OnGameJoin( RET_GAME_GONE, nullptr );
+		return;
+	}
 	if (!LanSameVersion(game))   // O63: the build identity too
 	{
 		LanTest::joinLog("joiner: the room is protocol %d build '%s', this one %d '%s': not joined", game->getLanProtocol(),
@@ -1275,6 +1283,7 @@ void LANAPI::RequestGameCreate( UnicodeString gameName, Bool isDirectConnect )
 	myGame->enterGame();
 	myGame->setLanProtocol(LANProtocolVersion);   // O62: this build's rooms carry its protocol
 	myGame->setLanBuild(LanBuildIdentity());       // O63: and its build identity
+	myGame->setHostVerified(TRUE);                 // O64
 	UnicodeString s;
 	s.format(L"%8.8X%8.8X", m_localIP, myGame->getSeed());
 	if (gameName.isEmpty())
