@@ -1222,6 +1222,8 @@ void MilesAudioManager::releaseMilesHandles( PlayingAudio *playing )
 	{
 		case PAT_Sample:
 		{
+			// O70: under the list's lock, as the end thread handles a sample's end (notifyOfAudioCompletion)
+			CriticalSectionClass::LockClass lock(m_playingSoundsCS);
 			if (playing->m_voice && playing->m_voice == s_meteredVoice)
 			{
 				// O55 (-voiceMeter)
@@ -1241,6 +1243,7 @@ void MilesAudioManager::releaseMilesHandles( PlayingAudio *playing )
 		}
 		case PAT_3DSample:
 		{
+			CriticalSectionClass::LockClass lock(m_playing3DSoundsCS);   // O70
 			if (playing->m_voice) {
 				m_device->release(playing->m_voice, AVK_3D);
 				m_available3DSamples.push_back(playing->m_voice);
@@ -1793,9 +1796,39 @@ Bool MilesAudioManager::isCurrentlyPlaying( AudioHandle handle )
 //-------------------------------------------------------------------------------------------------
 void MilesAudioManager::notifyOfAudioCompletion( uintptr_t handle, UnsignedInt flags )
 {
+	// TheSuperHackers @bugfix O70 The end of a sample comes on the device's end thread while the main thread may stop
+	// the same sound: stopPlayingAudio -> releaseMilesHandles cleared playing->m_voice (and gave the voice back to the
+	// pool) between this thread's find and its restart of the next portion or loop, which then prepared voice 0
+	// (crash in prepare2D, S41 hs07). The whole end is handled with the list's lock held, and the main thread releases a
+	// sample's voice under the same lock (releaseMilesHandles), so the two never interleave; a sound that is no longer
+	// playing (stopping or stopped by the main thread) is not restarted. Lock order as everywhere: the list first, the
+	// device second; the device calls this without its own lock. Streams keep their path (their completion only
+	// restarts music, and their lists are also locked in another order by the fading code).
+	if (flags == PAT_Sample)
+	{
+		CriticalSectionClass::LockClass lock(m_playingSoundsCS);
+		notifyOfAudioCompletionLocked(handle, flags);
+	}
+	else if (flags == PAT_3DSample)
+	{
+		CriticalSectionClass::LockClass lock(m_playing3DSoundsCS);
+		notifyOfAudioCompletionLocked(handle, flags);
+	}
+	else
+	{
+		notifyOfAudioCompletionLocked(handle, flags);
+	}
+}
+
+void MilesAudioManager::notifyOfAudioCompletionLocked( uintptr_t handle, UnsignedInt flags )
+{
 	PlayingAudio *playing = findPlayingAudioFrom(handle, flags);
 	if (!playing) {
 		DEBUG_CRASH(("Audio has completed playing, but we can't seem to find it. - jkmcd"));
+		return;
+	}
+	// O70: stopped or being stopped by the main thread meanwhile (its voice may already be gone): nothing to restart
+	if ((flags == PAT_Sample || flags == PAT_3DSample) && (playing->m_status != PS_Playing || playing->m_voice != handle)) {
 		return;
 	}
 

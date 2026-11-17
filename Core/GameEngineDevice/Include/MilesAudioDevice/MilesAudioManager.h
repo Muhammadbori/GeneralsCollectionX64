@@ -190,6 +190,8 @@ class MilesAudioManager : public AudioManager, public AudioDeviceListener
 		virtual Bool isCurrentlyPlaying( AudioHandle handle ) override;
 
 		virtual void notifyOfAudioCompletion( uintptr_t handle, UnsignedInt flags ) override; ///< Is called on MSS Timer thread
+		/// O70: the body of notifyOfAudioCompletion, run with the list's lock held for 2D and 3D samples.
+		void notifyOfAudioCompletionLocked( uintptr_t handle, UnsignedInt flags );
 		virtual PlayingAudio *findPlayingAudioFrom( uintptr_t handle, UnsignedInt flags );
 		virtual void onVoiceDone( uintptr_t voice, UnsignedInt kind ) override; ///< AudioDeviceListener: on the device's thread
 		virtual void onDeviceEvent( const char *event, const char *detail ) override; ///< AudioDeviceListener: a DEVICE log line
