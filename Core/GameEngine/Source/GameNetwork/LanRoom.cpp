@@ -84,6 +84,7 @@ namespace
 	const Text kAdminNoMap = { "GUI:LanRoomAdminNoMap", L"The host watches, so nobody can send the map. These players need it first: %ls", L"\x0425\x043E\x0441\x0442 \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0435\x0442, \x043F\x043E\x044D\x0442\x043E\x043C\x0443 \x043A\x0430\x0440\x0442\x0443 \x043D\x0435\x043A\x043E\x043C\x0443 \x043F\x0435\x0440\x0435\x0434\x0430\x0442\x044C. \x0421\x043D\x0430\x0447\x0430\x043B\x0430 \x043E\x043D\x0430 \x043D\x0443\x0436\x043D\x0430 \x044D\x0442\x0438\x043C \x0438\x0433\x0440\x043E\x043A\x0430\x043C: %ls" };
 	const Text kAdminNobody = { "GUI:LanRoomAdminNobody", L"Nobody sits in a seat: a match needs at least one player.", L"\x041D\x0438\x043A\x0442\x043E \x043D\x0435 \x0441\x0438\x0434\x0438\x0442 \x043D\x0430 \x043C\x0435\x0441\x0442\x0435: \x0434\x043B\x044F \x043C\x0430\x0442\x0447\x0430 \x043D\x0443\x0436\x0435\x043D \x0445\x043E\x0442\x044F \x0431\x044B \x043E\x0434\x0438\x043D \x0438\x0433\x0440\x043E\x043A." };
 	const Text kOtherVersion = { "GUI:LanOtherVersion", L"This game is another version of the game: it cannot be joined or watched.", L"\x042D\x0442\x0430 \x0438\x0433\x0440\x0430 \x0434\x0440\x0443\x0433\x043E\x0439 \x0432\x0435\x0440\x0441\x0438\x0438: \x0432\x043E\x0439\x0442\x0438 \x0432 \x043D\x0435\x0451 \x0438\x043B\x0438 \x0441\x043C\x043E\x0442\x0440\x0435\x0442\x044C \x0435\x0451 \x043D\x0435\x043B\x044C\x0437\x044F." };
+	const Text kThisPcPlays = { "GUI:LanRoomThisPcPlays", L"This computer is a player of this match: it cannot watch it (a second game on a player's computer is refused).", L"\x042D\x0442\x043E\x0442 \x043A\x043E\x043C\x043F\x044C\x044E\x0442\x0435\x0440 \x2014 \x0438\x0433\x0440\x043E\x043A \x044D\x0442\x043E\x0433\x043E \x043C\x0430\x0442\x0447\x0430: \x0441\x043C\x043E\x0442\x0440\x0435\x0442\x044C \x0435\x0433\x043E \x043E\x0442\x0441\x044E\x0434\x0430 \x043D\x0435\x043B\x044C\x0437\x044F (\x0432\x0442\x043E\x0440\x0430\x044F \x0438\x0433\x0440\x0430 \x043D\x0430 \x043A\x043E\x043C\x043F\x044C\x044E\x0442\x0435\x0440\x0435 \x0438\x0433\x0440\x043E\x043A\x0430 \x043D\x0435 \x0434\x043E\x043F\x0443\x0441\x043A\x0430\x0435\x0442\x0441\x044F)." };   // O64
 	const Text kLeft = { "GUI:LanRoomLeft", L"You no longer observe that game.", L"\x0412\x044B \x0431\x043E\x043B\x044C\x0448\x0435 \x043D\x0435 \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0435\x0442\x0435 \x0437\x0430 \x044D\x0442\x043E\x0439 \x0438\x0433\x0440\x043E\x0439." };
 
 	struct Entry { UnsignedInt ip; UnicodeString name; UnsignedInt lastHeard; };
@@ -111,7 +112,7 @@ namespace
 	UnsignedInt s_peerLocalIP = 0;
 	SOCKET s_chatSocket = INVALID_SOCKET;
 	Bool s_chatHinted = FALSE;
-	const UnsignedInt kChatMagic = 0x3148434F;   ///< "OCH1"
+	const UnsignedInt kChatMagic = 0x0048434Fu | ((UnsignedInt)('0' + LANProtocolVersion) << 24);   ///< "OCH<n>" (O64: the protocol number)
 	Int s_upstreamDelay = 0;                     ///< O39: an outside viewer's sources' delay (the host's)
 	// O40: the room layout the host kept at Start (plain values only: nothing of it outlives the memory manager)
 	struct SlotKeep { Int state, playerTemplate, color, team, startPos; };
@@ -152,7 +153,7 @@ namespace
 	Bool s_defeatedChannel = FALSE;
 	UnsignedInt s_lastJoinSent = 0;
 	std::vector<Peer> s_matchRoomObservers;
-	const UnsignedInt kJoinMagic = 0x4E4A4F4Fu;   // "OOJN"
+	const UnsignedInt kJoinMagic = 0x004A4F4Fu | ((UnsignedInt)('0' + LANProtocolVersion) << 24);   // "OOJ<n>" (O64: the protocol number)
 
 	void closeObserverChannel()
 	{
@@ -854,7 +855,7 @@ void LanRoom::update(UnsignedInt localIP)
 		else if (ReplayStream::takeLostNotice() || now - s_stateSince > kStreamWaitMs)
 		{
 			// O42: a source that refused because the host allows no outside viewers says so
-			notice(textOf(ReplayStream::lostBecauseNotAllowed() ? kNoOutside : kLost));
+			notice(textOf(ReplayStream::lostBecausePlayer() ? kThisPcPlays : (ReplayStream::lostBecauseNotAllowed() ? kNoOutside : kLost)));
 			resetViewer();
 		}
 	}

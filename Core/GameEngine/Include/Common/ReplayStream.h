@@ -139,6 +139,8 @@ namespace ReplayStream
 	Bool takeLostNotice();
 	/// O42: the last stream was lost because the host does not allow outside viewers (the room's text says so).
 	Bool lostBecauseNotAllowed();
+	/// O64 (H6, low): the last stream was refused because this computer is a player of the match (O62 H5 #3).
+	Bool lostBecausePlayer();
 	/// TheSuperHackers @feature O61 (row 49) Nothing of a watched match stays on an outside viewer's disk. Its mirror is
 	/// "<user data>\ViewerStreams\Viewer_<pid>_<n>.rep" with its .live and .idx (O64, H6 #1: a folder of its own that only
 	/// the game writes, never the replay folder; a room observer's mirror stays "Replays\Watched_..." and is kept, as

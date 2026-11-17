@@ -109,7 +109,7 @@ namespace
 	Int s_sourceCount = 0;
 	UnsignedInt s_watchFlags = 0;
 	UnsignedInt s_watchBind = 0;      ///< host order; 0: the system's choice
-	enum { NOPE_REFUSED = 0, NOPE_ELSEWHERE = 1, NOPE_NOT_ALLOWED = 2, NOPE_OTHER_GAME = 3 };   ///< O34: NOPE's reason
+	enum { NOPE_REFUSED = 0, NOPE_ELSEWHERE = 1, NOPE_NOT_ALLOWED = 2, NOPE_OTHER_GAME = 3, NOPE_PLAYER = 4 };   ///< O34: NOPE's reason (O64: 4)
 	enum { HELLO_ROOM = 1, HELLO_LAST_RESORT = 2 };   ///< hello flags
 
 	//--- log -----------------------------------------------------------------------------------------
@@ -276,6 +276,7 @@ namespace
 	volatile LONG s_mirrorConnected = 0;     ///< O34: the mirror gets data from a source now            ///< O33: that generation's recording is over: no new viewers, finish the ones there
 	volatile LONG s_countRoom = 0;
 	volatile LONG s_mirrorNotAllowed = 0;    ///< O42: the last loss: a source said the host does not allow outside viewers
+	volatile LONG s_mirrorIsPlayer = 0;      ///< O64: the last loss: a source said this computer is a player of the match
 	volatile LONG s_countOutside = 0;
 
 	struct ServeConfig
@@ -813,7 +814,7 @@ namespace
 					// view and needs no stream) never gets it, delayed or not
 					if (isRefused(c, v.ip))
 					{
-						refuse(v, NOPE_REFUSED, "a player of this match");
+						refuse(v, NOPE_PLAYER, "a player of this match");
 						continue;
 					}
 					v.out = (unsigned char *)HeapAlloc(GetProcessHeap(), 0, OUT_BUFFER);
@@ -1579,7 +1580,14 @@ namespace
 					else if (memcmp(type, "NOPE", 4) == 0)
 					{
 						const UnsignedInt reason = length >= 4 ? get32(payload) : NOPE_REFUSED;
-						if (reason == NOPE_NOT_ALLOWED)
+						if (reason == NOPE_PLAYER)
+						{
+							// O64: every source refuses a player of the match: no use asking the others
+							setFlag(&s_mirrorIsPlayer);
+							loseStream("this computer is a player of the match");
+							leaveWhy = "a player of the match";
+						}
+						else if (reason == NOPE_NOT_ALLOWED)
 						{
 							// O42: the host's rule; the room's screen says so instead of "the stream did not come"
 							setFlag(&s_mirrorNotAllowed);
@@ -1843,6 +1851,7 @@ Bool ReplayStream::beginWatching(AsciiString &localPath)
 		DeleteFileA(m->livePath);
 		DeleteFileA(m->idxPath);
 		InterlockedExchange(&s_mirrorNotAllowed, 0);
+		InterlockedExchange(&s_mirrorIsPlayer, 0);   // O64
 		strlcpy(s_mirrorPath, m->path, sizeof(s_mirrorPath));
 		InterlockedExchange(&s_mirrorHeaderReady, 0);
 		InterlockedExchange(&s_mirrorEnded, 0);
@@ -1981,6 +1990,11 @@ Bool ReplayStream::takeLostNotice()
 Bool ReplayStream::lostBecauseNotAllowed()
 {
 	return InterlockedCompareExchange(&s_mirrorNotAllowed, 0, 0) != 0;
+}
+
+Bool ReplayStream::lostBecausePlayer()
+{
+	return InterlockedCompareExchange(&s_mirrorIsPlayer, 0, 0) != 0;
 }
 
 void ReplayStream::discardViewerFiles()

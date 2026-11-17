@@ -352,7 +352,6 @@ static_assert(sizeof(LANMessage) <= MAX_LANAPI_PACKET_SIZE, "LANMessage struct c
 
 // TheSuperHackers @feature O26 (row 26) What the LAN screen needs beyond the original messages.
 static const UnsignedInt LANFilesInfoMagic = 0x46494C31;   ///< "FIL1"
-static const UnsignedInt LANStartMagic = 0x53545231;       ///< "STR1" (O62)
 // TheSuperHackers @feature O62 The LAN protocol number. A room's options carry it ("PV=n;", GameInfo), and so do the join
 // request and accept (GameToJoin, GameJoined, with LANProtocolMagic); a different number is another version: its room
 // is listed as "другая версия" and cannot be joined or watched, a join of it is refused with the version line. Bump it
@@ -365,6 +364,8 @@ static const UnsignedInt LANStartMagic = 0x53545231;       ///< "STR1" (O62)
 // exes of one build; the ini CRC is the original's and stays unused, see plan1-o63-report.md.)
 static const UnsignedInt LANProtocolMagic = 0x3156504C;    ///< "LPV1"
 static const Int LANProtocolVersion = 2;
+/// O64 (H6, low): the start handshake's magic carries the protocol number ("STR2"): another number is not this game's.
+static const UnsignedInt LANStartMagic = 0x00525453u | ((UnsignedInt)('0' + LANProtocolVersion) << 24);
 /// O63: this build's identity (letters, digits and '~', at most 15).
 AsciiString LanBuildIdentity();
 /// O63: the room is this build's: the same protocol number and the same build identity.
@@ -374,7 +375,8 @@ Bool LanSameVersion(const GameInfo *game);
 /// the same number (GameInfo::startDigest of that copy).
 UnsignedInt LanStartDigest(LANGameInfo *game);
 static const UnsignedInt LANGuardDataMagic = 0x31445247;   ///< "GRD1" (O30)
-static const UnsignedInt LANRoomMagic = 0x324D4F52;        ///< "ROM2" (O31; O62: the room messages of protocol 1, so an older build's and this build's ignore each other)
+/// "ROM<n>" (O31; O62/O64: the room messages carry the protocol number, so builds of other numbers ignore each other)
+static const UnsignedInt LANRoomMagic = 0x004D4F52u | ((UnsignedInt)('0' + LANProtocolVersion) << 24);
 namespace LanFiles
 {
 	/// The files fingerprint a lobby player or a game host sent (MSG_FILES_INFO); FALSE when none came yet.

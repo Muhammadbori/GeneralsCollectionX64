@@ -169,6 +169,7 @@ namespace
 	// O42: the host allows no outside viewers (its LIST, or its RULES during the match)
 	const Text kOtherVersionTag = { "GUI:LanOtherVersionTag", L"other version", L"\x0434\x0440\x0443\x0433\x0430\x044F \x0432\x0435\x0440\x0441\x0438\x044F" };   // O62
 	const Text kOtherVersionLine = { "GUI:LanOtherVersion", L"This game is another version of the game: it cannot be joined or watched.", L"\x042D\x0442\x0430 \x0438\x0433\x0440\x0430 \x0434\x0440\x0443\x0433\x043E\x0439 \x0432\x0435\x0440\x0441\x0438\x0438: \x0432\x043E\x0439\x0442\x0438 \x0432 \x043D\x0435\x0451 \x0438\x043B\x0438 \x0441\x043C\x043E\x0442\x0440\x0435\x0442\x044C \x0435\x0451 \x043D\x0435\x043B\x044C\x0437\x044F." };
+	const Text kAloneHint = { "GUI:LanAloneHint", L"Nobody is heard on %d.%d.%d.%d. If the others are on another network (for example Radmin VPN, 26.x.x.x), choose that address under Options, IP address, and open LAN again.", L"\x041D\x0430 \x0430\x0434\x0440\x0435\x0441\x0435 %d.%d.%d.%d \x043D\x0438\x043A\x043E\x0433\x043E \x043D\x0435 \x0441\x043B\x044B\x0448\x043D\x043E. \x0415\x0441\x043B\x0438 \x0441\x043E\x043F\x0435\x0440\x043D\x0438\x043A\x0438 \x0432 \x0434\x0440\x0443\x0433\x043E\x0439 \x0441\x0435\x0442\x0438 (\x043D\x0430\x043F\x0440\x0438\x043C\x0435\x0440, Radmin VPN, 26.x.x.x), \x0432\x044B\x0431\x0435\x0440\x0438\x0442\x0435 \x044D\x0442\x043E\x0442 \x0430\x0434\x0440\x0435\x0441 \x0432 \x043D\x0430\x0441\x0442\x0440\x043E\x0439\x043A\x0430\x0445 (IP-\x0430\x0434\x0440\x0435\x0441) \x0438 \x043E\x0442\x043A\x0440\x043E\x0439\x0442\x0435 LAN \x0441\x043D\x043E\x0432\x0430." };   // O64
 	const Text kNoViewersTag = { "GUI:LanNoViewersTag", L"no viewers", L"\x0431\x0435\x0437 \x0437\x0440\x0438\x0442\x0435\x043B\x0435\x0439" };
 	const Text kNoViewersButton = { "GUI:LanNoViewersButton", L"No viewers", L"\x0411\x0435\x0437 \x0437\x0440\x0438\x0442\x0435\x043B\x0435\x0439" };
 
@@ -1725,8 +1726,17 @@ UnicodeString LanLobbyLook::screenName()
 	return textOf(kTitle);
 }
 
+namespace
+{
+	// O64: nobody heard on this computer's LAN address
+	UnsignedInt s_aloneSince = 0;
+	Bool s_aloneSaid = FALSE;
+}
+
 void LanLobbyLook::init(GameWindow *parent)
 {
+	s_aloneSince = 0;
+	s_aloneSaid = FALSE;
 	teardown();
 	LanRoom::lobbyOpened();   // O31: back from following a stream: follow mode off, no mirror (O60: not the admin's starting one)
 	s.parent = parent;
@@ -1979,6 +1989,25 @@ void LanLobbyLook::update(Bool screenReady)
 		}
 		if (t.compare(GadgetStaticTextGetText(s.panelLabel)) != 0) {
 			GadgetStaticTextSetText(s.panelLabel, t);
+		}
+	}
+	// TheSuperHackers @feature O64 Nobody heard for 20 s on the address this game listens on (the lobby lists only this
+	// computer and no game): one line naming the address and where to choose another (a Radmin VPN player whose Options
+	// chose the home network's address sees an empty lobby otherwise)
+	{
+		const Int players = s.listPlayers != nullptr ? GadgetListBoxGetNumEntries(s.listPlayers) : 0;
+		const Int games = s.listGames != nullptr ? GadgetListBoxGetNumEntries(s.listGames) : 0;
+		const UnsignedInt now = timeGetTime();
+		if (LanTest::sampleData() || TheLAN == nullptr || players > 1 || games > 0 || s_aloneSince == 0) {
+			s_aloneSince = now;
+		}
+		else if (!s_aloneSaid && now - s_aloneSince > 20000 && s.chatList != nullptr)
+		{
+			s_aloneSaid = TRUE;
+			const UnsignedInt ip = TheLAN->GetLocalIP();
+			UnicodeString t;
+			t.format(textOf(kAloneHint).str(), PRINTF_IP_AS_4_INTS(ip));
+			GadgetListBoxAddEntryText(s.chatList, t, chatSystemColor, -1, 0);
 		}
 	}
 	if (s.lobbyLabel != nullptr)
