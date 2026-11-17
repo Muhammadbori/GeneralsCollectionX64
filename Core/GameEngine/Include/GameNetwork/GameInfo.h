@@ -187,6 +187,12 @@ public:
 	/// watched from outside the seats, or no LAN game). In a LAN match and its replay a playing host sits in slot 0
 	/// (LanRoom::hostSeatFirst); a game with one human only is not taken for a LAN game.
 	virtual Int getAdminSlot() const;
+	/// TheSuperHackers @bugfix O62 (H5 #1) What a match starts from, as one number (FNV-1a): the map (name, CRC, size), the
+	/// seed, the CRC interval, the starting cash, the superweapon limit, the old-factions flag, whether the admin watches,
+	/// and every slot in order (state, address, name, army, colour, team, start place). Not the accept and map flags or
+	/// anything else a player keeps for itself. The host's START carries it; a player whose own copy differs does not
+	/// start.
+	UnsignedInt startDigest() const;
 	virtual Int getLocalSlotNum() const;				///< Get the local slot number, or -1 if we're not present
 	Int getSlotNum( AsciiString userName ) const;			///< Get the slot number corresponding to a specific user, or -1 if he's not present
 

@@ -188,6 +188,11 @@ struct LANMessage
 		// TheSuperHackers @feature O31 (row 21, step 3) The room's observers (LanRoom.h). Appended; a build without it
 		// ignores it.
 		MSG_ROOM,
+
+		// TheSuperHackers @bugfix O62 (H5 #1) The start handshake: the host's check of its slot list's digest, and a
+		// player's answer that its own copy has the same digest (StartCheck). Appended.
+		MSG_START_CHECK,
+		MSG_START_READY,
 	} messageType;
 
 	WideChar name[g_lanPlayerNameLength+1]; ///< My name, for convenience
@@ -316,6 +321,14 @@ struct LANMessage
 			UnsignedShort delaySeconds; ///< O33: list, start: the host's delay for outside viewers (10..180 s)
 			UnsignedShort flags;        ///< O33: list, start: bit 0 outside viewers allowed; start: bit 1 sent to a player
 		} Room;
+		// StartCheck is sent with GAME_START, START_CHECK and START_READY (O62)
+		struct
+		{
+			UnsignedInt magic;        ///< LANStartMagic
+			UnsignedInt digest;       ///< GameInfo::startDigest of the sender's copy of the room
+			WideChar gameName[g_lanGameNameLength+1];
+		} StartCheck;
+
 		static_assert(sizeof(Room) <= sizeof(GameInfo), "MSG_ROOM must not make LANMessage larger");
 		static_assert(sizeof(GuardData) <= sizeof(GameInfo), "MSG_GUARD_DATA must not make LANMessage larger");
 		static_assert(ARRAY_SIZE(GameOptions.options) > m_lanMaxOptionsLength, "GameOptions.options buffer must be larger than m_lanMaxOptionsLength");
@@ -328,6 +341,7 @@ static_assert(sizeof(LANMessage) <= MAX_LANAPI_PACKET_SIZE, "LANMessage struct c
 
 // TheSuperHackers @feature O26 (row 26) What the LAN screen needs beyond the original messages.
 static const UnsignedInt LANFilesInfoMagic = 0x46494C31;   ///< "FIL1"
+static const UnsignedInt LANStartMagic = 0x53545231;       ///< "STR1" (O62)
 static const UnsignedInt LANGuardDataMagic = 0x31445247;   ///< "GRD1" (O30)
 static const UnsignedInt LANRoomMagic = 0x314D4F52;        ///< "ROM1" (O31)
 namespace LanFiles
@@ -419,6 +433,8 @@ public:
 	/// TheSuperHackers @feature O60 (row 46) The admin who watches from outside the seats is not in the match: after
 	/// OnGameStart he leaves his room on the next update, without a word to the players, and watches from the lobby.
 	void OnWatchMatchLeave();
+	/// O62 (H5 #1, #7): a start is under way: the countdown runs, or the host waits for the players' READY.
+	Bool IsStartPending() const { return m_gameStartTime != 0 || m_startChecking; }
 	virtual void OnGameOptions( UnsignedInt playerIP, Int playerSlot, AsciiString options ) override;	///< Someone sent game options
 	virtual void OnGameCreate( ReturnType ret ) override;																							///< Your game is created
 	//virtual void OnSlotList( ReturnType ret, LANGameInfo *theGame );															///< Slotlist for a game in setup
@@ -472,6 +488,11 @@ protected:
 
 	Bool								m_isInLANMenu;		///< true while we are in a LAN menu (lobby, game options, direct connect)
 	Bool								m_watchMatchLeave;	///< O60: the admin's quiet leave at Start is due (OnWatchMatchLeave)
+	Bool								m_startChecking;	///< O62: the host waits for every seated player's READY
+	UnsignedInt					m_startDigest;		///< O62: GameInfo::startDigest of the host's room now
+	UnsignedInt					m_startCheckSince;
+	UnsignedInt					m_lastStartCheck;
+	Bool								m_startReady[MAX_SLOTS];
 	Bool								m_inLobby;											///< Are we in the lobby (not in a game)?
 	LANGameInfo *				m_currentGame;							///< Pointer to game (setup screen) we are currently in (null for lobby)
 	//LANGameInfo *m_currentGameInfo;			///< Pointer to game setup info we are currently in.
@@ -510,6 +531,10 @@ protected:
 	void handleChat( LANMessage *msg, UnsignedInt senderIP );
 	void handleGameStart( LANMessage *msg, UnsignedInt senderIP );
 	void handleGameStartTimer( LANMessage *msg, UnsignedInt senderIP );
+	void handleStartCheck( LANMessage *msg, UnsignedInt senderIP );   ///< O62
+	void handleStartReady( LANMessage *msg, UnsignedInt senderIP );   ///< O62
+	void pumpStartCheck();   ///< O62: the host: options and START_CHECK again, START once every seated player is READY
+	void finishStart();      ///< O62: the host: the room's observers, START, the match
 	void handleGameOptions( LANMessage *msg, UnsignedInt senderIP );
 	void handleInActive( LANMessage *msg, UnsignedInt senderIP );
 

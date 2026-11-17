@@ -33,6 +33,7 @@
 #include "Common/GlobalData.h"
 #include "Common/RandomValue.h"
 #include "GameClient/GameText.h"
+#include "GameClient/LocalizedFallback.h"
 #include "GameClient/MapUtil.h"
 #include "Common/UserPreferences.h"
 #include "GameLogic/GameLogic.h"
@@ -86,6 +87,10 @@ LANAPI::LANAPI() : m_transport(nullptr)
 	m_inLobby = true;
 	m_isInLANMenu = TRUE;
 	m_watchMatchLeave = FALSE;   // O60
+	m_startChecking = FALSE;     // O62
+	m_startDigest = 0;
+	m_startCheckSince = 0;
+	m_lastStartCheck = 0;
 	m_currentGame = nullptr;
 	m_broadcastAddr = INADDR_BROADCAST;
 	m_directConnectRemoteIP = 0;
@@ -131,6 +136,10 @@ void LANAPI::init()
 	m_inLobby = true;
 	m_isInLANMenu = TRUE;
 	m_watchMatchLeave = FALSE;   // O60
+	m_startChecking = FALSE;     // O62
+	m_startDigest = 0;
+	m_startCheckSince = 0;
+	m_lastStartCheck = 0;
 	m_currentGame = nullptr;
 	m_directConnectRemoteIP = 0;
 
@@ -557,6 +566,12 @@ void LANAPI::update()
 			case LANMessage::MSG_GAME_START:					// Hold on; we're starting!
 				handleGameStart( msg, senderIP );
 				break;
+			case LANMessage::MSG_START_CHECK:   // O62
+				handleStartCheck( msg, senderIP );
+				break;
+			case LANMessage::MSG_START_READY:   // O62
+				handleStartReady( msg, senderIP );
+				break;
 			case LANMessage::MSG_GAME_START_TIMER:
 				handleGameStartTimer( msg, senderIP );
 				break;
@@ -785,6 +800,8 @@ void LANAPI::update()
 			m_pendingAction = ACT_NONE;
 		}
 	}
+
+	pumpStartCheck();   // O62
 
 	// send out "game starting" messages
 	if ( m_gameStartTime && m_gameStartSeconds && m_gameStartTime <= now )
@@ -1015,6 +1032,103 @@ void LANAPI::RequestGameStart()
 	if (m_inLobby || !m_currentGame || m_currentGame->getHostIP() != m_localIP)
 		return;
 
+	// TheSuperHackers @bugfix O62 (H5 #1) START no longer overtakes the slot list (a slot list lost on the way left a
+	// player starting from another order): the host sends the options and START_CHECK with the digest of its room
+	// (GameInfo::startDigest) until every seated player answers READY with the same digest, and only then START
+	// (finishStart); a player whose own copy differs answers nothing and does not start. No answer within
+	// kStartCheckMs: the start is stopped with a line naming who did not answer.
+	if (!m_startChecking)
+	{
+		m_startChecking = TRUE;
+		m_startDigest = m_currentGame->startDigest();
+		m_startCheckSince = timeGetTime();
+		m_lastStartCheck = 0;
+		for (Int i = 0; i < MAX_SLOTS; ++i) {
+			m_startReady[i] = FALSE;
+		}
+		LanTest::joinLog("host: start check begins, digest %08X", m_startDigest);
+	}
+	pumpStartCheck();
+}
+
+void LANAPI::pumpStartCheck()
+{
+	if (!m_startChecking) {
+		return;
+	}
+	if (m_inLobby || m_currentGame == nullptr || !m_currentGame->amIHost() || m_currentGame->isGameInProgress())
+	{
+		m_startChecking = FALSE;
+		return;
+	}
+	const UnsignedInt now = timeGetTime();
+	const UnsignedInt digest = m_currentGame->startDigest();
+	if (digest != m_startDigest)
+	{
+		// the room changed meanwhile: every answer again
+		m_startDigest = digest;
+		for (Int i = 0; i < MAX_SLOTS; ++i) {
+			m_startReady[i] = FALSE;
+		}
+		LanTest::joinLog("host: start check: the room changed, digest %08X", digest);
+	}
+	UnicodeString missing;
+	Bool allReady = TRUE;
+	for (Int i = 0; i < MAX_SLOTS; ++i)
+	{
+		const LANGameSlot *slot = m_currentGame->getConstLANSlot(i);
+		if (slot != nullptr && slot->isHuman() && slot->getIP() != m_localIP && !m_startReady[i])
+		{
+			allReady = FALSE;
+			if (!missing.isEmpty()) {
+				missing.concat(L", ");
+			}
+			missing.concat(slot->getName());
+		}
+	}
+	if (allReady)
+	{
+		m_startChecking = FALSE;
+		LanTest::joinLog("host: start check: every player READY after %u ms", (unsigned)(now - m_startCheckSince));
+		finishStart();
+		return;
+	}
+	const UnsignedInt kStartCheckMs = 8000;
+	if (now - m_startCheckSince > kStartCheckMs)
+	{
+		m_startChecking = FALSE;
+		LanTest::joinLog("host: start check: stopped, no READY from %ls", missing.str());
+		UnicodeString text;
+		text.format(TheGameText->FETCH_OR_SUBSTITUTE("GUI:LanStartNotConfirmed", localizedFallback(
+			L"Start stopped: the slot list did not reach %ls. Press Start again.",
+			L"\x0421\x0442\x0430\x0440\x0442 \x043E\x0442\x043C\x0435\x043D\x0451\x043D: \x0441\x043F\x0438\x0441\x043E\x043A \x043C\x0435\x0441\x0442 \x043D\x0435 \x0434\x043E\x0448\x0451\x043B \x0434\x043E: %ls. \x041D\x0430\x0436\x043C\x0438\x0442\x0435 \x00AB\x0421\x0442\x0430\x0440\x0442\x00BB \x0435\x0449\x0451 \x0440\x0430\x0437.")).str(), missing.str());
+		OnChat(L"SYSTEM", m_localIP, text, LANCHAT_SYSTEM);
+		LANEnableStartButton(true);
+		return;
+	}
+	if (now - m_lastStartCheck >= 250)
+	{
+		m_lastStartCheck = now;
+		RequestGameOptions(GenerateGameOptionsString(), true);
+		LANMessage msg;
+		fillInLANMessage(&msg);
+		msg.messageType = LANMessage::MSG_START_CHECK;
+		msg.StartCheck.magic = LANStartMagic;
+		msg.StartCheck.digest = digest;
+		wcslcpy(msg.StartCheck.gameName, m_currentGame->getName().str(), ARRAY_SIZE(msg.StartCheck.gameName));
+		for (Int i = 0; i < MAX_SLOTS; ++i)
+		{
+			const LANGameSlot *slot = m_currentGame->getConstLANSlot(i);
+			if (slot != nullptr && slot->isHuman() && slot->getIP() != m_localIP && !m_startReady[i]) {
+				sendMessage(&msg, slot->getIP());
+			}
+		}
+		m_transport->update(); // force a send
+	}
+}
+
+void LANAPI::finishStart()
+{
 	// O31: the room's observers get the players' addresses and follow the stream; nobody waits for them
 	LanRoom::hostStart(m_currentGame, m_localIP);
 	// O40: "Play again" keeps the layout; O47: taken at the Start click (LanGameOptionsMenu), before the open places close
@@ -1022,7 +1136,18 @@ void LANAPI::RequestGameStart()
 	LANMessage msg;
 	msg.messageType = LANMessage::MSG_GAME_START;
 	fillInLANMessage( &msg );
+	msg.StartCheck.magic = LANStartMagic;   // O62: the digest every player confirmed
+	msg.StartCheck.digest = m_startDigest;
+	wcslcpy(msg.StartCheck.gameName, m_currentGame->getName().str(), ARRAY_SIZE(msg.StartCheck.gameName));
+	// O62: to everybody, and to each seated player once more (a player starts on the first START it gets)
 	sendMessage(&msg);
+	for (Int i = 0; i < MAX_SLOTS; ++i)
+	{
+		const LANGameSlot *slot = m_currentGame->getConstLANSlot(i);
+		if (slot != nullptr && slot->isHuman() && slot->getIP() != m_localIP) {
+			sendMessage(&msg, slot->getIP());
+		}
+	}
 	m_transport->update(); // force a send
 
 	OnGameStart();
@@ -1032,6 +1157,7 @@ void LANAPI::ResetGameStartTimer()
 {
 	m_gameStartTime = 0;
 	m_gameStartSeconds = 0;
+	m_startChecking = FALSE;   // O62: a change of the room (resetAccepted) stops a start check too
 }
 
 void LANAPI::RequestGameStartTimer( Int seconds )

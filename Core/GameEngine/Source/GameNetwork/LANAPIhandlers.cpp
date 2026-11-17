@@ -40,6 +40,8 @@
 #include "GameNetwork/LANAPICallbacks.h"
 #include "Common/GuardLink.h"
 #include "GameNetwork/LanRoom.h"
+#include "GameClient/GameText.h"
+#include "GameClient/LocalizedFallback.h"
 #include "GameClient/MapUtil.h"
 
 void LANAPI::handleRequestLocations( LANMessage *msg, UnsignedInt senderIP )
@@ -709,7 +711,61 @@ void LANAPI::handleGameStart( LANMessage *msg, UnsignedInt senderIP )
 {
 	if (!m_inLobby && m_currentGame && m_currentGame->getHostIP() == senderIP && !m_currentGame->isGameInProgress())
 	{
+		// TheSuperHackers @bugfix O62 (H5 #1) START names the room and the digest every player confirmed: a copy of the
+		// room that differs does not start (another slot order would desynchronise the match)
+		if (msg->StartCheck.magic != LANStartMagic || m_currentGame->getName().compare(msg->StartCheck.gameName) != 0) {
+			return;
+		}
+		const UnsignedInt mine = m_currentGame->startDigest();
+		if (mine != msg->StartCheck.digest)
+		{
+			LanTest::joinLog("player: START with digest %08X, mine %08X: not started", msg->StartCheck.digest, mine);
+			OnChat(L"SYSTEM", m_localIP, TheGameText->FETCH_OR_SUBSTITUTE("GUI:LanStartOtherList", localizedFallback(
+				L"The host started with another slot list than this computer has: this computer did not start.",
+				L"\x0425\x043E\x0441\x0442 \x043D\x0430\x0447\x0430\x043B \x0441 \x0434\x0440\x0443\x0433\x0438\x043C \x0441\x043F\x0438\x0441\x043A\x043E\x043C \x043C\x0435\x0441\x0442, \x0447\x0435\x043C \x0443 \x044D\x0442\x043E\x0433\x043E \x043A\x043E\x043C\x043F\x044C\x044E\x0442\x0435\x0440\x0430: \x044D\x0442\x043E\x0442 \x043A\x043E\x043C\x043F\x044C\x044E\x0442\x0435\x0440 \x043D\x0435 \x043D\x0430\x0447\x0430\x043B \x0438\x0433\x0440\x0443.")), LANCHAT_SYSTEM);
+			return;
+		}
+		LanTest::joinLog("player: START with digest %08X: started", mine);
 		OnGameStart();
+	}
+}
+
+void LANAPI::handleStartCheck( LANMessage *msg, UnsignedInt senderIP )
+{
+	// O62 (H5 #1): the host asks whether this computer's copy of the room is the one it starts; READY only when it is
+	if (m_inLobby || m_currentGame == nullptr || m_currentGame->isGameInProgress() || m_currentGame->getHostIP() != senderIP
+		|| msg->StartCheck.magic != LANStartMagic || m_currentGame->getName().compare(msg->StartCheck.gameName) != 0) {
+		return;
+	}
+	const UnsignedInt mine = m_currentGame->startDigest();
+	if (mine != msg->StartCheck.digest)
+	{
+		LanTest::joinLog("player: start check digest %08X, mine %08X: no READY yet", msg->StartCheck.digest, mine);
+		return;   // the options the host sends with every check bring this copy up to date
+	}
+	LANMessage reply;
+	fillInLANMessage(&reply);
+	reply.messageType = LANMessage::MSG_START_READY;
+	reply.StartCheck.magic = LANStartMagic;
+	reply.StartCheck.digest = mine;
+	wcslcpy(reply.StartCheck.gameName, m_currentGame->getName().str(), ARRAY_SIZE(reply.StartCheck.gameName));
+	sendMessage(&reply, senderIP);
+}
+
+void LANAPI::handleStartReady( LANMessage *msg, UnsignedInt senderIP )
+{
+	if (!m_startChecking || m_currentGame == nullptr || !m_currentGame->amIHost() || msg->StartCheck.magic != LANStartMagic
+		|| msg->StartCheck.digest != m_startDigest || m_currentGame->getName().compare(msg->StartCheck.gameName) != 0) {
+		return;
+	}
+	for (Int i = 0; i < MAX_SLOTS; ++i)
+	{
+		const LANGameSlot *slot = m_currentGame->getConstLANSlot(i);
+		if (slot != nullptr && slot->isHuman() && slot->getIP() == senderIP && !m_startReady[i])
+		{
+			m_startReady[i] = TRUE;
+			LanTest::joinLog("host: READY from slot %d (%d.%d.%d.%d)", i, PRINTF_IP_AS_4_INTS(senderIP));
+		}
 	}
 }
 

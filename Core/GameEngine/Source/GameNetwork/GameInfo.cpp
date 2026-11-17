@@ -736,6 +736,45 @@ Bool GameInfo::isStartPositionTaken(Int positionIdx, Int slotToIgnore ) const
 	return false;
 }
 
+UnsignedInt GameInfo::startDigest() const
+{
+	UnsignedInt h = 2166136261u;
+	auto byte = [&h](UnsignedInt b) { h ^= (b & 0xFF); h *= 16777619u; };
+	auto word = [&byte](UnsignedInt v) { byte(v); byte(v >> 8); byte(v >> 16); byte(v >> 24); };
+	const AsciiString map = getMap();
+	for (const char *c = map.str(); c != nullptr && *c != 0; ++c) {
+		byte((UnsignedInt)(unsigned char)*c);
+	}
+	word(getMapCRC());
+	word(getMapSize());
+	word((UnsignedInt)getSeed());
+	word((UnsignedInt)getCRCInterval());
+	word(getStartingCash().countMoney());
+	word((UnsignedInt)getSuperweaponRestriction());
+	word(oldFactionsOnly() ? 1u : 0u);
+	word(getHostObserves() ? 1u : 0u);
+	for (Int i = 0; i < MAX_SLOTS; ++i)
+	{
+		const GameSlot *slot = getConstSlot(i);
+		if (slot == nullptr)
+		{
+			word(0xFFFFFFFFu);
+			continue;
+		}
+		word((UnsignedInt)slot->getState());
+		word(slot->getIP());
+		const UnicodeString name = slot->getName();
+		for (const WideChar *c = name.str(); c != nullptr && *c != 0; ++c) {
+			word((UnsignedInt)*c);
+		}
+		word((UnsignedInt)slot->getPlayerTemplate());
+		word((UnsignedInt)slot->getColor());
+		word((UnsignedInt)slot->getTeamNumber());
+		word((UnsignedInt)slot->getStartPos());
+	}
+	return h;
+}
+
 Int GameInfo::getAdminSlot() const
 {
 	if (m_hostObserves) {
