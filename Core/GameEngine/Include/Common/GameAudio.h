@@ -265,6 +265,8 @@ class AudioManager : public SubsystemInterface
 		/// turns it to 5 % while the Options screen is open).
 		Real getSystemSoundVolume() const { return m_systemSoundVolume; }
 		Real getScriptSoundVolume() const { return m_scriptSoundVolume; }
+		/// O57: the audio is muted (the window lost the focus): every system volume is 0 until it comes back.
+		Bool isAudioMuted() const { return m_muteReasonBits != 0; }
 
 		// To get a more 3-D feeling from the universe, we adjust the volume of the 3-D samples based
 		// on zoom.

@@ -60,6 +60,7 @@ namespace
 	Int s_next[VoicePreview::UNIT_COUNT] = { 0, 0, 0 };
 	// O55: the preview playing now, for its meter line when it is replaced or the screen goes
 	Bool s_playing = FALSE;
+	Bool s_playingMuted = FALSE;   ///< O57: pressed while the window had lost the focus
 	AsciiString s_playingWhat;
 	Int s_playingMS = 0;
 
@@ -373,12 +374,13 @@ Bool VoicePreview::play(Int unit, const Packs::Pack *pack, UnicodeString *status
 	logLine("%s: pack %s: line %d/%d %s: archive %s, file %s, %u bytes, %d ms, volume %.3f = line %.2f x sound %.2f (now %.3f, script %.2f): %s",
 		kTags[unit], packName(pack).str(), index + 1, count, sound.str(), foundIn.str(), foundAs.str(), (unsigned)bytes.size(), lengthMS,
 		volume, lineVolume, soundVolume, TheAudio->getVolume(AudioAffect_Sound), TheAudio->getScriptSoundVolume(),
-		played ? "PLAYED" : "NOT PLAYED (no audio device or an unknown format)");
+		played ? (TheAudio->isAudioMuted() ? "PLAYED, muted (window not focused)" : "PLAYED") : "NOT PLAYED (no audio device or an unknown format)");
 	if (played)
 	{
 		s_playing = TRUE;
 		s_playingWhat.format("%s: pack %s: line %d/%d %s: volume %.3f", kTags[unit], packName(pack).str(), index + 1, count, sound.str(), volume);
 		s_playingMS = lengthMS;
+		s_playingMuted = TheAudio->isAudioMuted();
 	}
 	if (status != nullptr)
 	{
@@ -395,8 +397,16 @@ Bool VoicePreview::play(Int unit, const Packs::Pack *pack, UnicodeString *status
 	return played;
 }
 
-void VoicePreview::logMeter(const char *what, Real peak, Real rms, UnsignedInt64 frames, UnsignedInt64 expectedFrames, Real systemSoundVolume)
+void VoicePreview::logMeter(const char *what, Real peak, Real rms, UnsignedInt64 frames, UnsignedInt64 expectedFrames, Real systemSoundVolume,
+	Bool muted)
 {
+	if (muted)
+	{
+		char expectedText[32];
+		if (expectedFrames > 0) snprintf(expectedText, sizeof(expectedText), "%llu", (unsigned long long)expectedFrames); else strlcpy(expectedText, "?", sizeof(expectedText));
+		logLine("%s: out muted (window not focused), frames %llu of %s", what, (unsigned long long)frames, expectedText);
+		return;
+	}
 	char peakText[32], rmsText[32], expected[32];
 	if (peak > 0.0f) snprintf(peakText, sizeof(peakText), "%.1f", 20.0 * log10((double)peak)); else strlcpy(peakText, "-inf", sizeof(peakText));
 	if (rms > 0.0f) snprintf(rmsText, sizeof(rmsText), "%.1f", 20.0 * log10((double)rms)); else strlcpy(rmsText, "-inf", sizeof(rmsText));
@@ -414,7 +424,8 @@ void VoicePreview::stop()
 		Real peak = 0.0f, rms = 0.0f;
 		UnsignedInt64 frames = 0;
 		if (TheAudio->previewMeter(&peak, &rms, &frames)) {
-			logMeter(s_playingWhat.str(), peak, rms, frames, (UnsignedInt64)s_playingMS * 44100 / 1000, TheAudio->getSystemSoundVolume());
+			logMeter(s_playingWhat.str(), peak, rms, frames, (UnsignedInt64)s_playingMS * 44100 / 1000, TheAudio->getSystemSoundVolume(),
+				s_playingMuted || TheAudio->isAudioMuted());
 		} else {
 			logLine("%s: no output meter on this audio device", s_playingWhat.str());
 		}

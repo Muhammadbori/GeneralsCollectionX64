@@ -507,7 +507,9 @@ LRESULT CALLBACK WndProc( HWND hWnd, UINT message,
 
 				if( active == WA_INACTIVE )
 				{
-					if (TheAudio)
+					// TheSuperHackers @feature O57 -audioIgnoreFocus (a *uitest*.exe only): tests in a background window
+					// keep their audio
+					if (TheAudio && !CommandLine::isAudioIgnoreFocus())
 						TheAudio->muteAudio(AudioManager::MuteAudioReason_WindowFocus);
 				}
 				else
