@@ -26,6 +26,7 @@
 // numbers (the loss test): the game's logic random generator is never touched.
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
+#include "GameClient/DefeatedPlayer.h"
 
 #include <winsock.h>
 
@@ -843,6 +844,12 @@ namespace
 		if (local < 0 || local >= MAX_PEERS) {
 			return FALSE;
 		}
+		// O59 (row 47): a defeated player who joined the observers speaks on the observers' roster only
+		if (DefeatedPlayer::localJoinedObservers()) {
+			return FALSE;
+		}
+		// O59: in a match of several people a defeated player stays with his team (talks to and hears his team-mates)
+		const Bool teamMatch = DefeatedPlayer::teamMatch();
 		struct Info { Bool human; Int team; Bool observer; Bool defeated; };
 		Info info[MAX_PEERS];
 		for (Int i = 0; i < MAX_PEERS; ++i)
@@ -865,13 +872,16 @@ namespace
 		r.localIp = r.peers[local].ip;
 		r.localSlot = local;
 		const Info &me = info[local];
-		r.mayTalk = me.human && !me.observer && !me.defeated && !s_micOff;
-		s_blocked = me.observer || me.defeated || s_micOff;
+		const Bool meOut = me.defeated && !teamMatch;
+		r.mayTalk = me.human && !me.observer && !meOut && !s_micOff;
+		s_blocked = me.observer || meOut || s_micOff;
 		for (Int i = 0; i < MAX_PEERS; ++i)
 		{
-			const Bool mate = i != local && info[i].human && !info[i].observer && me.team >= 0 && info[i].team == me.team;
+			// O59: a player who has left the match (gone to the observers, or quit) is no longer a team-mate here
+			const Bool connected = i == local || TheNetwork->isPlayerConnected(i);
+			const Bool mate = i != local && info[i].human && !info[i].observer && me.team >= 0 && info[i].team == me.team && connected;
 			r.peers[i].sendTo = mate && !me.observer;
-			r.peers[i].acceptFrom = mate && !info[i].defeated && !me.observer;
+			r.peers[i].acceptFrom = mate && (!info[i].defeated || teamMatch) && !me.observer;
 			r.peers[i].volume = s_volumes[i];
 		}
 		r.active = TRUE;
@@ -885,7 +895,8 @@ namespace
 	Bool buildObserverRoster(Roster &r)
 	{
 		memset(&r, 0, sizeof(r));
-		if (TheGameLogic == nullptr || !TheGameLogic->isInReplayGame()) {
+		// O59 (row 47): also a defeated player of a live match who joined the room's observers
+		if (TheGameLogic == nullptr || (!TheGameLogic->isInReplayGame() && !DefeatedPlayer::localJoinedObservers())) {
 			return FALSE;
 		}
 		UnsignedInt ips[MAX_PEERS];
@@ -923,8 +934,9 @@ namespace
 		}
 		const TestMember &me = s_testRoster[local];
 		r.localSlot = local;
-		r.mayTalk = !me.observer && !me.defeated && !s_micOff;
-		s_blocked = me.observer || me.defeated || s_micOff;
+		// O59 (row 47): the test roster is a match of several people: a defeated member stays with the team
+		r.mayTalk = !me.observer && !s_micOff;
+		s_blocked = me.observer || s_micOff;
 		for (Int i = 0; i < MAX_PEERS; ++i)
 		{
 			const TestMember &m = s_testRoster[i];
@@ -933,7 +945,7 @@ namespace
 			r.peers[i].port = (unsigned short)(TEST_PORT_BASE + i);
 			const Bool mate = m.present && i != local && !m.observer && me.team >= 0 && m.team == me.team;
 			r.peers[i].sendTo = mate && !me.observer;
-			r.peers[i].acceptFrom = mate && !m.defeated && !me.observer;
+			r.peers[i].acceptFrom = mate && !me.observer;   // O59: a defeated team-mate too
 			r.peers[i].volume = s_testVolume[i] >= 0 ? s_testVolume[i] : s_volumes[i];
 			UnicodeString name;
 			name.format(L"Slot %d", i);

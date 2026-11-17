@@ -816,6 +816,19 @@ void GameInfo::adjustSlotsForMap()
 	}
 }
 
+Bool GameInfo::hasSeveralHumanPlayers() const
+{
+	Int humans = 0;
+	for (Int i = 0; i < MAX_SLOTS; ++i)
+	{
+		const GameSlot *slot = getConstSlot(i);
+		if (slot != nullptr && slot->isOccupied() && slot->isHuman() && slot->getPlayerTemplate() != PLAYERTEMPLATE_OBSERVER) {
+			++humans;
+		}
+	}
+	return humans >= 2;
+}
+
 void GameInfo::balanceObserverPlaces()
 {
 	const MapMetaData *md = TheMapCache != nullptr ? TheMapCache->findMap(m_mapName) : nullptr;

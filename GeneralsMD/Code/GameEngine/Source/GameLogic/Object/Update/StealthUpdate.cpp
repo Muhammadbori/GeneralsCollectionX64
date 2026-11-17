@@ -28,6 +28,7 @@
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
+#include "GameClient/DefeatedPlayer.h"
 
 #define DEFINE_STEALTHLEVEL_NAMES
 #define DEFINE_OBJECT_STATUS_NAMES
@@ -497,7 +498,7 @@ StealthLookType StealthUpdate::calcStealthedStatusForPlayer(const Object* obj, c
 	{
 		const Team* team = obj->getTeam();
 		Relationship r = team ? team->getRelationship(player->getDefaultTeam()) : NEUTRAL;
-		if( !player->isPlayerActive() )
+		if( !DefeatedPlayer::viewsAsActive(player) )   // O59: not a defeated player staying with his team
 		{
 			//Observer players are friends to everyone!
 			r = ALLIES;
@@ -1012,7 +1013,7 @@ void StealthUpdate::changeVisualDisguise()
 				TheInGameUI->selectDrawable( draw );
 			}
 			Player *clientPlayer = ThePlayerList->getLocalPlayer();
-			if( self->getControllingPlayer()->getRelationship( clientPlayer->getDefaultTeam() ) != ALLIES && clientPlayer->isPlayerActive() )
+			if( self->getControllingPlayer()->getRelationship( clientPlayer->getDefaultTeam() ) != ALLIES && DefeatedPlayer::viewsAsActive(clientPlayer) )
 			{
 				//Neutrals and enemies will see this disguised unit as the team it's disguised as.
 				if (TheGlobalData->m_timeOfDay == TIME_OF_DAY_NIGHT)

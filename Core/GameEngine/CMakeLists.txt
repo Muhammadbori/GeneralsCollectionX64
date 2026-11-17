@@ -162,6 +162,7 @@ set(GAMEENGINE_SRC
     Include/GameClient/VoicePreview.h
     Include/GameClient/HotkeyLetters.h
     Include/GameClient/OwnUiScale.h
+    Include/GameClient/DefeatedPlayer.h
     Include/GameClient/ChallengeGenerals.h
     Include/GameClient/ClientInstance.h
     Include/GameClient/ClientRandomValue.h
@@ -772,6 +773,7 @@ set(GAMEENGINE_SRC
     Source/GameClient/GUI/VoicePreview.cpp
     Source/GameClient/GUI/HotkeyLetters.cpp
     Source/GameClient/GUI/OwnUiScale.cpp
+    Source/GameClient/GUI/DefeatedPlayer.cpp
     Source/GameClient/GUI/ChallengeGenerals.cpp
     Source/GameClient/GUI/ControlBar/ControlBar.cpp
     Source/GameClient/GUI/ControlBar/ControlBarBeacon.cpp

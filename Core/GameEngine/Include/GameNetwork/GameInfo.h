@@ -220,6 +220,10 @@ public:
 	/// the map's player places are open again: closed slots open (lowest first) until the players and the open slots
 	/// make the map's count; past it, open slots close (highest first). Players are never removed.
 	void balanceObserverPlaces();
+	/// TheSuperHackers @feature O59 (row 47) Two or more human players in slots (the Observer army left out): a network
+	/// match of several people, where a defeated player stays with the team. From the slots alone, so the same on every
+	/// machine, for the room's observers and in a replay of the match; a skirmish (one human) is never one.
+	Bool hasSeveralHumanPlayers() const;
 
 	// CRC checking hack
 	void setCRCInterval( Int val ) { m_crcInterval = (val<100)?val:100; }

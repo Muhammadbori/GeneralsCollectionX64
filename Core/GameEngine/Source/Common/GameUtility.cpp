@@ -19,6 +19,7 @@
 #include "PreRTS.h"
 
 #include "Common/GameUtility.h"
+#include "Common/NameKeyGenerator.h"
 #include "Common/PlayerList.h"
 #include "Common/Player.h"
 #include "Common/Radar.h"
@@ -67,10 +68,17 @@ bool localPlayerHasRadar()
 	return false;
 }
 
+// O59 (row 47): the display as the observer player (setDisplayAsObserver)
+static Bool s_displayAsObserver = FALSE;
+static Player *s_displayObserverPlayer = nullptr;
+
 Player* getObservedOrLocalPlayer()
 {
 	DEBUG_ASSERTCRASH(TheControlBar != nullptr, ("TheControlBar is null"));
 	Player* player = TheControlBar->getObservedPlayer();
+	if (player == nullptr && s_displayAsObserver) {
+		player = s_displayObserverPlayer;
+	}
 	if (player == nullptr)
 	{
 		DEBUG_ASSERTCRASH(ThePlayerList != nullptr, ("ThePlayerList is null"));
@@ -85,6 +93,9 @@ Player* getObservedOrLocalPlayer_Safe()
 
 	if (TheControlBar != nullptr)
 		player = TheControlBar->getObservedPlayer();
+
+	if (player == nullptr && s_displayAsObserver)
+		player = s_displayObserverPlayer;
 
 	if (player == nullptr)
 		if (ThePlayerList != nullptr)
@@ -130,6 +141,27 @@ void changeObservedPlayer(Player* player)
 			becomePlayer = ThePlayerList->findPlayerWithNameKey(TheNameKeyGenerator->nameToKey("ReplayObserver"));
 		detail::changePlayerCommon(becomePlayer);
 	}
+}
+
+void setDisplayAsObserver(Bool on)
+{
+	Player *observer = (on && ThePlayerList != nullptr)
+		? ThePlayerList->findPlayerWithNameKey(TheNameKeyGenerator->nameToKey("ReplayObserver")) : nullptr;
+	const Bool want = on && observer != nullptr;
+	if (want == s_displayAsObserver) {
+		return;
+	}
+	s_displayAsObserver = want;
+	s_displayObserverPlayer = observer;
+	// shroud, ghosts, particles, radar and selection follow the shown player, as when a replay changes its player
+	if (TheGameLogic != nullptr && TheGameLogic->isInGame() && ThePlayerList != nullptr && TheControlBar != nullptr) {
+		detail::changePlayerCommon(getObservedOrLocalPlayer());
+	}
+}
+
+Bool isDisplayAsObserver()
+{
+	return s_displayAsObserver;
 }
 
 void enableLetterBox(Bool enable)

@@ -20,6 +20,9 @@
 // TheSuperHackers @feature O31 (row 21, step 3) See LanRoom.h.
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
+#include "Common/Player.h"
+#include "Common/PlayerList.h"
+#include "GameLogic/VictoryConditions.h"
 
 #include "GameNetwork/LanRoom.h"
 
@@ -135,6 +138,12 @@ namespace
 		}
 	}
 
+	// O59 (row 47): a defeated player's channel; the room's observers of the match this game plays (the host's START)
+	Bool s_defeatedChannel = FALSE;
+	UnsignedInt s_lastJoinSent = 0;
+	std::vector<Peer> s_matchRoomObservers;
+	const UnsignedInt kJoinMagic = 0x4E4A4F4Fu;   // "OOJN"
+
 	void closeObserverChannel()
 	{
 		if (s_chatSocket != INVALID_SOCKET)
@@ -145,6 +154,53 @@ namespace
 		s_peers.clear();
 		s_peerLocalIP = 0;
 		s_chatHinted = FALSE;
+		s_defeatedChannel = FALSE;
+	}
+
+	/// The text socket on this game's LAN address only (never the wildcard address).
+	Bool bindChatSocket(UnsignedInt localIP)
+	{
+		SOCKET s = socket(AF_INET, SOCK_DGRAM, 0);
+		if (s == INVALID_SOCKET) {
+			return FALSE;
+		}
+		sockaddr_in addr;
+		memset(&addr, 0, sizeof(addr));
+		addr.sin_family = AF_INET;
+		addr.sin_port = htons((unsigned short)LanRoom::OBSERVER_CHAT_PORT);
+		addr.sin_addr.s_addr = htonl(localIP);
+		if (localIP == 0 || bind(s, (sockaddr *)&addr, sizeof(addr)) != 0)
+		{
+			closesocket(s);
+			return FALSE;
+		}
+		u_long on = 1;
+		ioctlsocket(s, FIONBIO, &on);
+		s_chatSocket = s;
+		return TRUE;
+	}
+
+	/// O59: 'ip' is a player of this match (a human slot) and that player is defeated in this game's copy of the match;
+	/// the slot's name in 'name'.
+	Bool defeatedMatchPlayer(UnsignedInt ip, UnicodeString *name)
+	{
+		if (ip == 0 || TheGameInfo == nullptr || ThePlayerList == nullptr || TheVictoryConditions == nullptr) {
+			return FALSE;
+		}
+		for (Int i = 0; i < MAX_SLOTS; ++i)
+		{
+			const GameSlot *slot = TheGameInfo->getConstSlot(i);
+			if (slot == nullptr || !slot->isHuman() || slot->getIP() != ip) {
+				continue;
+			}
+			Player *player = ThePlayerList->getPlayerFromSlotIndex(i);
+			if (player == nullptr || player->isPlayerObserver() || !TheVictoryConditions->hasSinglePlayerBeenDefeated(player)) {
+				return FALSE;
+			}
+			*name = slot->getName();
+			return TRUE;
+		}
+		return FALSE;
 	}
 
 	/// The observers of the host's last list, without the players; this game included.
@@ -178,23 +234,7 @@ namespace
 		std::sort(s_peers.begin(), s_peers.end(), [](const Peer &a, const Peer &b) { return a.ip < b.ip; });
 		s_peerLocalIP = localIP;
 		// the text socket: this game's LAN address only, never the wildcard address
-		SOCKET s = socket(AF_INET, SOCK_DGRAM, 0);
-		if (s == INVALID_SOCKET) {
-			return;
-		}
-		sockaddr_in addr;
-		memset(&addr, 0, sizeof(addr));
-		addr.sin_family = AF_INET;
-		addr.sin_port = htons((unsigned short)LanRoom::OBSERVER_CHAT_PORT);
-		addr.sin_addr.s_addr = htonl(localIP);
-		if (localIP == 0 || bind(s, (sockaddr *)&addr, sizeof(addr)) != 0)
-		{
-			closesocket(s);
-			return;
-		}
-		u_long on = 1;
-		ioctlsocket(s, FIONBIO, &on);
-		s_chatSocket = s;
+		bindChatSocket(localIP);
 	}
 
 	const Peer *peerOf(UnsignedInt ip)
@@ -224,6 +264,23 @@ namespace
 			const Peer *peer = peerOf(ip);
 			UnsignedInt magic = 0;
 			memcpy(&magic, packet, 4);
+			// O59 (row 47): a defeated player of this match joins the observers: taken in only when this game's copy of the
+			// match has that address as a player who is defeated
+			if (got >= 4 && magic == kJoinMagic)
+			{
+				UnicodeString name;
+				if (peer == nullptr && ip != s_peerLocalIP && ntohs(from.sin_port) == LanRoom::OBSERVER_CHAT_PORT
+					&& defeatedMatchPlayer(ip, &name))
+				{
+					Peer joined;
+					joined.ip = ip;
+					joined.name = name;
+					s_peers.push_back(joined);
+					std::sort(s_peers.begin(), s_peers.end(), [](const Peer &a, const Peer &b) { return a.ip < b.ip; });
+					chatLog("JOINED (defeated player)", ip, name);
+				}
+				continue;
+			}
 			if (peer == nullptr || ip == s_peerLocalIP || ntohs(from.sin_port) != LanRoom::OBSERVER_CHAT_PORT || got < 6 || magic != kChatMagic) {
 				chatLog("DROPPED from", ip, UnicodeString::TheEmptyString);
 				continue;   // not a room observer of this match: dropped unseen
@@ -955,6 +1012,26 @@ void LanRoom::configureServing(UnsignedInt localIP)
 		}
 	}
 	s_matchStart.valid = FALSE;
+	// O59 (row 47): the room's observers of this match, for a player who joins them after a defeat (names from the
+	// host's last LIST)
+	s_matchRoomObservers.clear();
+	{
+		std::map<UnsignedInt, Known>::const_iterator k = s_known.find(host);
+		for (size_t i = 0; i < observers.size(); ++i)
+		{
+			if (observers[i] == 0 || observers[i] == localIP || inSlot(game, observers[i])) {
+				continue;
+			}
+			Peer p;
+			p.ip = observers[i];
+			if (k != s_known.end()) {
+				for (size_t n = 0; n < k->second.list.size(); ++n) {
+					if (k->second.list[n].ip == observers[i]) p.name = k->second.list[n].name;
+				}
+			}
+			s_matchRoomObservers.push_back(p);
+		}
+	}
 	UnsignedInt live[MAX_OBSERVERS];
 	Int liveCount = 0;
 	for (size_t i = 0; i < observers.size() && liveCount < MAX_OBSERVERS; ++i) {
@@ -978,6 +1055,37 @@ void LanRoom::matchUpdate(UnsignedInt localIP)
 {
 	LANGameInfo *game = TheLAN != nullptr ? TheLAN->GetMyGame() : nullptr;
 	const UnsignedInt now = timeGetTime();
+	// O59 (row 47): a defeated player who joined the observers: their text, and JOIN every second to the observers and
+	// the match's other players (each takes him in once its copy of the match shows him defeated)
+	if (s_defeatedChannel && s_chatSocket != INVALID_SOCKET)
+	{
+		pumpObserverChat();
+		if (now - s_lastJoinSent >= 1000)
+		{
+			s_lastJoinSent = now;
+			std::vector<UnsignedInt> to;
+			for (size_t i = 0; i < s_peers.size(); ++i) {
+				if (s_peers[i].ip != s_peerLocalIP) to.push_back(s_peers[i].ip);
+			}
+			for (Int i = 0; TheGameInfo != nullptr && i < MAX_SLOTS; ++i)
+			{
+				const GameSlot *slot = TheGameInfo->getConstSlot(i);
+				if (slot != nullptr && slot->isHuman() && slot->getIP() != 0 && slot->getIP() != s_peerLocalIP
+					&& std::find(to.begin(), to.end(), slot->getIP()) == to.end()) {
+					to.push_back(slot->getIP());
+				}
+			}
+			for (size_t i = 0; i < to.size(); ++i)
+			{
+				sockaddr_in addr;
+				memset(&addr, 0, sizeof(addr));
+				addr.sin_family = AF_INET;
+				addr.sin_port = htons((unsigned short)OBSERVER_CHAT_PORT);
+				addr.sin_addr.s_addr = htonl(to[i]);
+				sendto(s_chatSocket, (const char *)&kJoinMagic, 4, 0, (sockaddr *)&addr, sizeof(addr));
+			}
+		}
+	}
 	// O42: the host tells the lobby its rules while the match runs (also when nobody may watch and nothing serves)
 	if (game != nullptr && s_hostRulesValid && game->isGameInProgress() && game->getIP(0) == localIP && now - s_lastRules >= kRulesMs)
 	{
@@ -1250,7 +1358,45 @@ Int LanRoom::upstreamDelaySeconds()
 
 Bool LanRoom::observerChannelOpen()
 {
+	if (s_defeatedChannel && s_peerLocalIP != 0 && s_chatSocket != INVALID_SOCKET) {
+		return TRUE;   // O59: a defeated player who joined the observers
+	}
 	return !s_watcher && s_peerLocalIP != 0 && (s_state == STATE_STARTING || s_state == STATE_PLAYING);
+}
+
+void LanRoom::openDefeatedObserverChannel(UnsignedInt localIP)
+{
+	closeObserverChannel();
+	if (localIP == 0) {
+		return;
+	}
+	for (size_t i = 0; i < s_matchRoomObservers.size(); ++i) {
+		if (s_matchRoomObservers[i].ip != localIP) s_peers.push_back(s_matchRoomObservers[i]);
+	}
+	Peer me;
+	me.ip = localIP;
+	if (TheGameInfo != nullptr && TheGameInfo->getLocalSlotNum() >= 0 && TheGameInfo->getConstSlot(TheGameInfo->getLocalSlotNum()) != nullptr) {
+		me.name = TheGameInfo->getConstSlot(TheGameInfo->getLocalSlotNum())->getName();
+	}
+	s_peers.push_back(me);
+	std::sort(s_peers.begin(), s_peers.end(), [](const Peer &a, const Peer &b) { return a.ip < b.ip; });
+	s_peerLocalIP = localIP;
+	if (!bindChatSocket(localIP))
+	{
+		s_peers.clear();
+		s_peerLocalIP = 0;
+		return;
+	}
+	s_defeatedChannel = TRUE;
+	s_lastJoinSent = 0;
+	chatLog("OPENED (defeated player joins the observers)", localIP, me.name);
+}
+
+void LanRoom::closeDefeatedObserverChannel()
+{
+	if (s_defeatedChannel) {
+		closeObserverChannel();
+	}
 }
 
 void LanRoom::sendObserverChat(const UnicodeString &text)
@@ -1296,7 +1442,7 @@ void LanRoom::sendObserverChat(const UnicodeString &text)
 
 Int LanRoom::observerVoicePeers(UnsignedInt *ips, UnicodeString *names, Int maxCount, Int *localIndex)
 {
-	if (!observerChannelOpen() || s_state != STATE_PLAYING) {
+	if (!observerChannelOpen() || (s_state != STATE_PLAYING && !s_defeatedChannel)) {
 		return 0;
 	}
 	Int n = 0;

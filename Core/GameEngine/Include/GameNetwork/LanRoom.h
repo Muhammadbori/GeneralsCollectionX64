@@ -144,8 +144,16 @@ namespace LanRoom
 	void cancelStarting();
 
 	//--- O34: the room observers' own channel during the match ------------------------------------
-	/// TRUE for a room observer whose stream started (an outside viewer: never).
+	/// TRUE for a room observer whose stream started (an outside viewer: never), or a defeated player who joined the
+	/// observers (O59).
 	Bool observerChannelOpen();
+	/// TheSuperHackers @feature O59 (row 47) A defeated player of a LAN match joins the room's observers: the channel
+	/// with the room's observers of this match (the host's list at Start) and himself. Every second he says JOIN on the
+	/// observers' text port to them and to the match's other players; a room observer (from its copy of the match) or
+	/// another defeated player who joined takes the sender in only when the address is a player of this match and that
+	/// player is defeated in its own copy of the game, so nobody still playing can listen to the observers.
+	void openDefeatedObserverChannel(UnsignedInt localIP);
+	void closeDefeatedObserverChannel();
 	/// Sends a line to the other room observers (never to a player or an outside viewer) and shows it here.
 	void sendObserverChat(const UnicodeString &text);
 	/// The room's observers for the voice roster, this game included, in the same order on every observer (by address);

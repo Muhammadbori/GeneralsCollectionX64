@@ -29,6 +29,7 @@
 
 // INCLUDES ///////////////////////////////////////////////////////////////////////////////////////
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
+#include "GameClient/DefeatedPlayer.h"
 
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
@@ -61,7 +62,7 @@ void ShowInGameChat( Bool immediate )
 {
 	// TheSuperHackers @feature O34 In a replay only a LAN room observer has a chat (to the room's other observers); an
 	// outside viewer (or any other replay) has none.
-	if (TheGameLogic->isInReplayGame() && !LanRoom::observerChannelOpen())
+	if ((TheGameLogic->isInReplayGame() || DefeatedPlayer::localJoinedObservers()) && !LanRoom::observerChannelOpen())
 		return;
 
 	if (TheInGameUI->isQuitMenuVisible())
@@ -129,9 +130,14 @@ void SetInGameChatType( InGameChatType chatType )
 	inGameChatType = chatType;
 	if (chatTypeStaticText)
 	{
-		if (TheGameLogic->isInReplayGame())
+		if (TheGameLogic->isInReplayGame() || DefeatedPlayer::localJoinedObservers())
 		{
-			GadgetStaticTextSetText( chatTypeStaticText, TheGameText->fetch("Chat:Observers") );   // O34: the observers' channel
+			GadgetStaticTextSetText( chatTypeStaticText, TheGameText->fetch("Chat:Observers") );   // O34, O59: the observers' channel
+			return;
+		}
+		if (DefeatedPlayer::localStaysWithTeam())
+		{
+			GadgetStaticTextSetText( chatTypeStaticText, TheGameText->fetch("Chat:Allies") );   // O59: a defeated player's team only
 			return;
 		}
 		switch (inGameChatType)
@@ -206,8 +212,8 @@ void ToggleInGameChat( Bool immediate )
 		return;
 	}
 
-	// O34: in a replay, only a LAN room observer's channel
-	const Bool observerChannel = TheGameLogic->isInReplayGame();
+	// O34: in a replay, only a LAN room observer's channel. O59: also a defeated player who joined the observers.
+	const Bool observerChannel = TheGameLogic->isInReplayGame() || DefeatedPlayer::localJoinedObservers();
 	if (observerChannel && !LanRoom::observerChannelOpen())
 		return;
 
@@ -241,7 +247,10 @@ void ToggleInGameChat( Bool immediate )
 					Int playerMask = 0;
 					// TheSuperHackers @feature A defeated player (a spectator from then on) or an observer sends no text to
 					// team-mates (items 19, 20; the same rule as the voice chat): they are left out of every chat.
-					const Bool outOfPlay = localPlayer != nullptr && (localPlayer->isPlayerObserver()
+					// TheSuperHackers @feature O59 (row 47) In a match of several people a defeated player stays with his team: his
+					// text goes to his team-mates only (whatever the chat type), never to enemies or observers.
+					const Bool staysWithTeam = DefeatedPlayer::localStaysWithTeam();
+					const Bool outOfPlay = !staysWithTeam && localPlayer != nullptr && (localPlayer->isPlayerObserver()
 						|| (TheVictoryConditions != nullptr && TheVictoryConditions->hasSinglePlayerBeenDefeated(const_cast<Player *>(localPlayer))));
 
 					for (Int i=0; i<MAX_SLOTS; ++i)
@@ -264,6 +273,19 @@ void ToggleInGameChat( Bool immediate )
 								if ( player == localPlayer )
 									playerMask |= (1<<i);
 								break;
+							}
+						}
+					}
+					if (staysWithTeam && localPlayer != nullptr)
+					{
+						playerMask = 0;
+						for (Int i=0; i<MAX_SLOTS; ++i)
+						{
+							const Player *player = ThePlayerList->getPlayerFromSlotIndex(i);
+							if (player && !player->isPlayerObserver() && DefeatedPlayer::allies(player, localPlayer)
+								&& !TheGameInfo->getConstSlot(i)->isMuted())
+							{
+								playerMask |= (1<<i);
 							}
 						}
 					}
