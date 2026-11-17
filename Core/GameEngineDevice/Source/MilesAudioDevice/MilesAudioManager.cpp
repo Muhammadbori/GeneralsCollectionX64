@@ -189,7 +189,7 @@ namespace
 		{
 			s_state = 0;
 			for (int arg = 1; arg < __argc; ++arg) {
-				if (stricmp(__argv[arg], "-voiceMeter") == 0) {
+				if (stricmp(__argv[arg], "-voiceMeter") == 0 && CommandLine::isTestExe()) {   // O77: *uitest*.exe only
 					s_state = 1;
 				}
 			}

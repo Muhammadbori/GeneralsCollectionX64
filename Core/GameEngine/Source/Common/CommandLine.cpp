@@ -455,7 +455,7 @@ bool CommandLine::getAudioTestDeviceLoss(Real *lossAfterSeconds, Real *backAfter
 {
 	for (int arg = 1; arg + 1 < __argc; ++arg)
 	{
-		if (stricmp(__argv[arg], "-audioTestDeviceLoss") == 0)
+		if (stricmp(__argv[arg], "-audioTestDeviceLoss") == 0 && isTestExe())   // O77
 		{
 			float a = 0.0f, b = -1.0f;
 			const int n = sscanf(__argv[arg + 1], "%f,%f", &a, &b);
@@ -2398,6 +2398,48 @@ static CommandLineParam paramsForEngineInit[] =
 
 };
 
+// TheSuperHackers @bugfix O77 Test switches that give a player in a real LAN game something (the anti-cheat's named
+// findings, no anti-cheat, a desync, scripted input, another logic speed, a live stream of his own match to another PC
+// or instance, the random generators' states, a voice soundboard) work only in a *uitest*.exe; the product exe takes
+// them off the command line with their values and ignores them. (The rename trick, a product exe renamed *uitest*,
+// needs a compile-time split: next round.)
+namespace
+{
+	struct TestOnlySwitch { const char *name; int values; };
+	const TestOnlySwitch kTestOnlySwitches[] =
+	{
+		{ "-guardTest", 0 }, { "-lanNoGuard", 0 },
+		{ "-testPerturbFrame", 1 }, { "-testInput", 1 }, { "-testLogicFps", 1 },
+		{ "-testDefeatAtFrame", 1 }, { "-testClockOffset", 1 }, { "-audioIgnoreFocus", 0 },
+		{ "-voiceTest", 1 }, { "-voiceTestRoster", 1 }, { "-voiceTestTone", 1 }, { "-voiceTestWav", 1 },
+		{ "-voiceTestTalk", 1 }, { "-voiceTestOut", 1 }, { "-voiceTestLoss", 1 }, { "-voiceTestVolume", 1 },
+		{ "-netLab", 1 }, { "-netLabPlayers", 1 }, { "-netLabMap", 1 }, { "-netLabSeed", 1 }, { "-netLabSim", 1 },
+		{ "-netLabQuitAfter", 1 },
+		{ "-serveReplay", 1 }, { "-serveReplayMax", 1 }, { "-serveReplayRate", 1 }, { "-serveReplayStopAfter", 1 },
+		{ "-serveReplayOutsideMax", 1 }, { "-serveReplayDelay", 1 }, { "-serveReplayLiveFor", 1 },
+		{ "-serveReplayLagFor", 1 },
+		{ "-watchReplay", 1 }, { "-watchBind", 1 }, { "-watchRoomObserver", 0 },
+		{ "-followReplay", 1 }, { "-followDelay", 1 }, { "-followCatchUp", 1 }, { "-followReserve", 1 },
+		{ "-stateTrace", 0 }, { "-stateTraceCalls", 1 }, { "-audioTestDeviceLoss", 1 }, { "-voiceMeter", 0 },
+	};
+
+	/// the number of command-line entries a test-only switch takes (itself and its value), 0 when it is no such switch
+	int testOnlySwitchLength(const char *arg)
+	{
+		for (size_t i = 0; i < ARRAY_SIZE(kTestOnlySwitches); ++i) {
+			if (stricmp(arg, kTestOnlySwitches[i].name) == 0) {
+				return 1 + kTestOnlySwitches[i].values;
+			}
+		}
+		return 0;
+	}
+}
+
+Bool CommandLine::isTestSwitchAllowed(const char *name)
+{
+	return testOnlySwitchLength(name) == 0 || isTestExe();
+}
+
 static void parseCommandLine(const CommandLineParam* params, int numParams, BoolVector &parsedArguments)
 {
 	// Startup parsing can run from static constructors, before WinMain.
@@ -2432,6 +2474,18 @@ static void parseCommandLine(const CommandLineParam* params, int numParams, Bool
 		// Skip when already parsed by another pass.
 		if (parsedArguments[arg])
 			continue;
+
+		// O77: a test-only switch in the product exe: taken off with its value, not acted on
+		{
+			const int length = testOnlySwitchLength(argv[arg]);
+			if (length > 0 && !CommandLine::isTestExe())
+			{
+				parsedArgCount = length < argc - arg ? length : argc - arg;
+				for (int i = 0; i < parsedArgCount; ++i)
+					parsedArguments[arg + i] = TRUE;
+				continue;
+			}
+		}
 
 		for (int param = 0; param < numParams; ++param)
 		{

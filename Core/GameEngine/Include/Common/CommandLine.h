@@ -58,6 +58,8 @@ public:
 	static bool isAudioLogEnabled();
 	/// TheSuperHackers @feature O57 TRUE when this program file's name contains "uitest" (a test build, as -guardTest's).
 	static bool isTestExe();
+	/// O77: FALSE for a test-only switch (CommandLine.cpp, kTestOnlySwitches) in an exe that is not a *uitest*.exe
+	static Bool isTestSwitchAllowed(const char *name);
 	/// O57 (tests): -audioIgnoreFocus: the audio is not muted when the window loses the focus. Only a *uitest*.exe
 	/// honours it; the product exe mutes as always.
 	static bool isAudioIgnoreFocus();
