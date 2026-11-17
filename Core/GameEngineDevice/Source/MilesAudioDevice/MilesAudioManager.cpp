@@ -903,7 +903,7 @@ void MilesAudioManager::playAudioEvent( AudioRequest* req )
 					(int)m_playingStreams.size(), fileToPlay.str(), getEffectiveVolume(event), logVol, logPan, (int)m_device->streamLoopCount(stream));
 			}
 
-				++s_soundsStarted;   // O72
+				if (AudioLog::g_on) ++s_soundsStarted;   // O72
 				CriticalSectionClass::LockClass lock(m_playingStreamsCS);
 				m_playingStreams.push_back(newPlaying);
 				newPlaying = nullptr;
@@ -992,7 +992,7 @@ void MilesAudioManager::playAudioEvent( AudioRequest* req )
 							(int)logRate, logMin, logMax, logOcclusion, event->getDelay());
 					}
 					armNativeLoop(newPlaying);   // O72
-					++s_soundsStarted;
+					if (AudioLog::g_on) ++s_soundsStarted;
 					CriticalSectionClass::LockClass lock(m_playing3DSoundsCS);
 					m_playing3DSounds.push_back(newPlaying);
 					newPlaying = nullptr;
@@ -1066,7 +1066,7 @@ void MilesAudioManager::playAudioEvent( AudioRequest* req )
 							(int)logRate, event->getDelay());
 					}
 					armNativeLoop(newPlaying);   // O72
-					++s_soundsStarted;
+					if (AudioLog::g_on) ++s_soundsStarted;
 					CriticalSectionClass::LockClass lock(m_playingSoundsCS);
 					m_playingSounds.push_back(newPlaying);
 					newPlaying = nullptr;
@@ -1329,10 +1329,12 @@ void MilesAudioManager::stopPlayingAudio( PlayingAudio *playing, const char *why
 	if (prevStatus != PS_Stopping) {
 		return;
 	}
-	if (endedByItself) {   // O72
-		++s_soundsEnded;
-	} else {
-		++s_soundsStopped;
+	if (AudioLog::g_on) {   // O72 (-audioLog only)
+		if (endedByItself) {
+			++s_soundsEnded;
+		} else {
+			++s_soundsStopped;
+		}
 	}
 	if (why && playing->m_audioEventRTS != nullptr) {
 		AUDIO_LOG_EVENT("END", playing->m_audioEventRTS.Peek(), "pool=%s why=%s",
@@ -1678,6 +1680,7 @@ void MilesAudioManager::openDevice()
 	// For now, we're only interested in the digital handle.
 	m_digitalHandle = m_device->nativeDevice();
 
+	m_device->setMeasureRestartGaps(AudioLog::g_on);   // O73: the gap measurement only with -audioLog
 	if (openResult == AudioDevice::OPEN_OK) {
 		buildProviderList();
 	} else {
@@ -1921,7 +1924,7 @@ void MilesAudioManager::armNativeLoop(PlayingAudio *playing)
 	}
 	if (m_device->setVoiceLooping(playing->m_voice, (AudioVoiceKind)playing->m_type, TRUE)) {
 		playing->m_nativeLoop = TRUE;
-		++s_nativeLoops;
+		if (AudioLog::g_on) ++s_nativeLoops;
 		AUDIO_LOG_EVENT("NATIVELOOP", playing->m_audioEventRTS.Peek(), "voice=%d", audioLogVoiceId(playing->m_voice));
 	}
 }

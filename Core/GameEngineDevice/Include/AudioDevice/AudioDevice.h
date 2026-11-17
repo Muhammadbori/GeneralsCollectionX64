@@ -143,6 +143,8 @@ public:
 	/// O72 (-audioLog): milliseconds on the device's clock from the end of the voice's previous sound to the start of the
 	/// one just started on it; < 0: unknown (no end before it, or a device without a clock)
 	virtual Real restartGapMs(AudioVoice /*voice*/, AudioVoiceKind /*kind*/) const { return -1.0f; }
+	/// O73: the gap measurement on (-audioLog) or off (nothing measured, no cost)
+	virtual void setMeasureRestartGaps(Bool /*on*/) {}
 	/// O72 (-audioLog): 2D, 3D and stream voices playing now; < 0: unknown
 	virtual Int playingVoiceCount() const { return -1; }
 

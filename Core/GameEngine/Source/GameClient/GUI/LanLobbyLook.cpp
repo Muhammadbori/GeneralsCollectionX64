@@ -1967,7 +1967,7 @@ void LanLobbyLook::update(Bool screenReady)
 		GadgetTextEntrySetText(s.addrBox, ipText(ip));
 		s.shownIP = ip;
 	}
-	if (s.copyButton != nullptr && s.copiedUntil != 0 && timeGetTime() > s.copiedUntil)
+	if (s.copyButton != nullptr && s.copiedUntil != 0 && (Int)(timeGetTime() - s.copiedUntil) > 0)   // O73: signed
 	{
 		GadgetButtonSetText(s.copyButton, textOf(kCopy));
 		s.copiedUntil = 0;
