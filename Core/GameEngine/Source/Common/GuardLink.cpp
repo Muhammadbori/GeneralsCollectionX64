@@ -22,6 +22,7 @@
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
 
 #include "Common/GuardLink.h"
+#include "Common/CommandLine.h"
 
 #include "Common/GlobalData.h"
 #include "Common/OptionPreferences.h"
@@ -112,7 +113,10 @@ namespace
 	const Text kJoinRefused = { "GUI:GuardJoinRefused",
 		L"The host accepts only players with a verified anti-cheat. Yours is not verified (yet): wait a few seconds and try again.",
 		L"\x0425\x043E\x0441\x0442 \x043F\x0440\x0438\x043D\x0438\x043C\x0430\x0435\x0442 \x0442\x043E\x043B\x044C\x043A\x043E \x0438\x0433\x0440\x043E\x043A\x043E\x0432 \x0441 \x043F\x0440\x043E\x0432\x0435\x0440\x0435\x043D\x043D\x044B\x043C \x0430\x043D\x0442\x0438\x0447\x0438\x0442\x043E\x043C. \x0412\x0430\x0448 \x0435\x0449\x0451 \x043D\x0435 \x043F\x0440\x043E\x0432\x0435\x0440\x0435\x043D: \x043F\x043E\x0434\x043E\x0436\x0434\x0438\x0442\x0435 \x043D\x0435\x0441\x043A\x043E\x043B\x044C\x043A\x043E \x0441\x0435\x043A\x0443\x043D\x0434 \x0438 \x043F\x043E\x043F\x0440\x043E\x0431\x0443\x0439\x0442\x0435 \x0441\x043D\x043E\x0432\x0430." };
-	const Text kJoinRefusedOwnFailed = { "GUI:GuardJoinRefusedOwnFailed", L"The host accepts only players with a verified anti-cheat. Yours found a problem with your game or its files: see the line about it in the chat.", L"\x0425\x043E\x0441\x0442 \x043F\x0440\x0438\x043D\x0438\x043C\x0430\x0435\x0442 \x0442\x043E\x043B\x044C\x043A\x043E \x0438\x0433\x0440\x043E\x043A\x043E\x0432 \x0441 \x043F\x0440\x043E\x0432\x0435\x0440\x0435\x043D\x043D\x044B\x043C \x0430\x043D\x0442\x0438\x0447\x0438\x0442\x043E\x043C. \x0412\x0430\x0448 \x0430\x043D\x0442\x0438\x0447\x0438\x0442 \x043D\x0430\x0448\x0451\x043B \x043F\x0440\x043E\x0431\x043B\x0435\x043C\x0443 \x0432 \x0432\x0430\x0448\x0435\x0439 \x0438\x0433\x0440\x0435 \x0438\x043B\x0438 \x0435\x0451 \x0444\x0430\x0439\x043B\x0430\x0445: \x0441\x043C. \x0441\x0442\x0440\x043E\x043A\x0443 \x043E\x0431 \x044D\x0442\x043E\x043C \x0432 \x0447\x0430\x0442\x0435." };
+	// O58 (row 45): short, and no pointer to a chat line
+	const Text kJoinRefusedOwnFailed = { "GUI:GuardJoinRefusedNotWorking", L"The host accepts only players with a working anti-cheat. Yours is not working.", L"\x0425\x043E\x0441\x0442 \x043F\x0440\x0438\x043D\x0438\x043C\x0430\x0435\x0442 \x0442\x043E\x043B\x044C\x043A\x043E \x0438\x0433\x0440\x043E\x043A\x043E\x0432 \x0441 \x0440\x0430\x0431\x043E\x0442\x0430\x044E\x0449\x0438\x043C \x0430\x043D\x0442\x0438\x0447\x0438\x0442\x043E\x043C. \x0412\x0430\x0448 \x0430\x043D\x0442\x0438\x0447\x0438\x0442 \x043D\x0435 \x0440\x0430\x0431\x043E\x0442\x0430\x0435\x0442." };
+	// O58 (row 45): this player's own failure in the chat (the product names nothing)
+	const Text kOwnNotWorking = { "GUI:GuardOwnNotWorking", L"Anti-cheat is not working.", L"\x0410\x043D\x0442\x0438\x0447\x0438\x0442 \x043D\x0435 \x0440\x0430\x0431\x043E\x0442\x0430\x0435\x0442." };
 	// O38: a joiner whose game runs without the anti-cheat (not "wait": it never gets verified)
 	const Text kJoinRefusedNoGuard = { "GUI:GuardJoinRefusedNoGuard", L"The host accepts only players with a verified anti-cheat, and your game runs without it (started without the anti-cheat, or it has stopped). Start the game again in the normal way, with the anti-cheat.", L"\x0425\x043E\x0441\x0442 \x043F\x0440\x0438\x043D\x0438\x043C\x0430\x0435\x0442 \x0442\x043E\x043B\x044C\x043A\x043E \x0438\x0433\x0440\x043E\x043A\x043E\x0432 \x0441 \x043F\x0440\x043E\x0432\x0435\x0440\x0435\x043D\x043D\x044B\x043C \x0430\x043D\x0442\x0438\x0447\x0438\x0442\x043E\x043C, \x0430 \x0432\x0430\x0448\x0430 \x0438\x0433\x0440\x0430 \x0440\x0430\x0431\x043E\x0442\x0430\x0435\x0442 \x0431\x0435\x0437 \x043D\x0435\x0433\x043E (\x0437\x0430\x043F\x0443\x0449\x0435\x043D\x0430 \x0431\x0435\x0437 \x0430\x043D\x0442\x0438\x0447\x0438\x0442\x0430 \x0438\x043B\x0438 \x043E\x043D \x043E\x0441\x0442\x0430\x043D\x043E\x0432\x0438\x043B\x0441\x044F). \x0417\x0430\x043F\x0443\x0441\x0442\x0438\x0442\x0435 \x0438\x0433\x0440\x0443 \x0437\x0430\x043D\x043E\x0432\x043E \x043E\x0431\x044B\x0447\x043D\x044B\x043C \x0441\x043F\x043E\x0441\x043E\x0431\x043E\x043C, \x0441 \x0430\x043D\x0442\x0438\x0447\x0438\x0442\x043E\x043C." };
 	// O38: a listed file that is there but cannot be read
@@ -566,8 +570,24 @@ UnicodeString GuardLink::joinRefusedText()
 	}
 	return textOf(ownVerdict() == VERDICT_FAILED ? kJoinRefusedOwnFailed : kJoinRefused);
 }
+namespace
+{
+	/// O58 (row 45): the named finding only for a test (-guardTest, or a *uitest*.exe)
+	Bool ownFindingNamed()
+	{
+		return s_testMode || CommandLine::isTestExe();
+	}
+	Bool s_ownShortSaid = FALSE;   ///< O58: the short line was said for this failure
+}
+
 UnicodeString GuardLink::ownFailureText()
 {
+	// TheSuperHackers @tweak O58 (row 45) The product says only that the anti-cheat is not working: naming the file,
+	// module or program would tell a cheater what to change. A test build keeps the named line (S-runs prove which
+	// finding fired).
+	if (!ownFindingNamed()) {
+		return textOf(kOwnNotWorking);
+	}
 	// O32: the file, module or program this player's own check found (only this player sees it)
 	const Text *t = s_reasonKind == 5 ? &kOwnUnreadable : s_reasonKind == 1 ? &kOwnExe : (s_reasonKind == 2 ? &kOwnFile : (s_reasonKind == 3 ? &kOwnModule
 		: (s_reasonKind == 4 ? &kOwnProgram : nullptr)));
@@ -608,10 +628,21 @@ UnicodeString GuardLink::failKindOf(UnsignedInt ip)
 
 Bool GuardLink::takeOwnFailureNotice(UnicodeString *text)
 {
+	if (ownVerdict() != VERDICT_FAILED) {
+		s_ownShortSaid = FALSE;   // O58: a later failure says it again
+	}
 	if (!s_reasonNew || ownVerdict() != VERDICT_FAILED) {
 		return FALSE;
 	}
 	s_reasonNew = FALSE;
+	// O58 (row 45): the product's one short line once per failure (a finding that changes says nothing new)
+	if (!ownFindingNamed())
+	{
+		if (s_ownShortSaid) {
+			return FALSE;
+		}
+		s_ownShortSaid = TRUE;
+	}
 	*text = ownFailureText();
 	return TRUE;
 }
