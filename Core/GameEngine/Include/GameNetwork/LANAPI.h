@@ -238,6 +238,7 @@ struct LANMessage
 			UnsignedInt exeCRC;
 			UnsignedInt iniCRC;
 			char serial[g_maxSerialLength];
+			WideChar gameName[g_lanGameNameLength+1];   ///< O62 (H5 #2): the room asked for (the host checks it is his)
 		} GameToJoin;
 
 		// GameJoined is sent with JOIN_ACCEPT
@@ -531,6 +532,8 @@ protected:
 	void handleChat( LANMessage *msg, UnsignedInt senderIP );
 	void handleGameStart( LANMessage *msg, UnsignedInt senderIP );
 	void handleGameStartTimer( LANMessage *msg, UnsignedInt senderIP );
+	/// O62 (H5 #2): an announce comes from its host (a room) or from a seat of it (a running game: its packet router).
+	Bool announceFromItsHost( LANMessage *msg, UnsignedInt senderIP );
 	void handleStartCheck( LANMessage *msg, UnsignedInt senderIP );   ///< O62
 	void handleStartReady( LANMessage *msg, UnsignedInt senderIP );   ///< O62
 	void pumpStartCheck();   ///< O62: the host: options and START_CHECK again, START once every seated player is READY

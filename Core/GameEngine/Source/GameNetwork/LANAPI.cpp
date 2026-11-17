@@ -855,6 +855,7 @@ void LANAPI::RequestGameJoin( LANGameInfo *game, UnsignedInt ip /* = 0 */ )
 	msg.messageType = LANMessage::MSG_REQUEST_JOIN;
 	fillInLANMessage( &msg );
 	msg.GameToJoin.gameIP = game->getHostIP();   // O60: the admin, in a seat or not
+	wcslcpy(msg.GameToJoin.gameName, game->getName().str(), ARRAY_SIZE(msg.GameToJoin.gameName));   // O62
 	msg.GameToJoin.exeCRC = TheGlobalData->m_exeCRC;
 	msg.GameToJoin.iniCRC = TheGlobalData->m_iniCRC;
 

@@ -96,6 +96,8 @@ public:
 	void setSeed( Int seed );														///< Set the random seed for the game
 
 	void setName( UnicodeString name ) { m_gameName = name; }		///< Set the Name of the Game
+	/// O62: the host's player name as his own announce and options name him (sender checked), for an admin without a seat
+	void setHostDisplayName( const UnicodeString &name ) { m_hostDisplayName = name; }
 	UnicodeString getName() { return m_gameName; }					///< Get the Name of the Game
 
 	// Convenience functions that interface with the LANPlayer held in the slot list
@@ -165,6 +167,8 @@ public:
 	UnsignedInt getHostIP() const;
 	/// O60: the host's player name (the game's name after its 16 hex digits), or slot 0's.
 	UnicodeString getHostName() const;
+	/// O62 (H5 #2): the address a game's name starts with (8 hex digits), 0 when it has none.
+	static UnsignedInt hostIPOfName(const UnicodeString &name);
 
 private:
 	UnsignedInt hostIPFromName() const;   ///< O60: the address the game's name starts with, or 0
@@ -175,6 +179,7 @@ private:
 	LANGameInfo *m_next;																///< Pointer for linked list
 	UnsignedInt m_lastHeard;														///< The last time we heard from this game (for timeout purposes)
 	UnicodeString m_gameName;														///< Game name.  @todo: are game names based off of host player names?
+	UnicodeString m_hostDisplayName;												///< O62: the host's name from his messages
 	Bool m_isDirectConnect;															///< Is this game a direct connect game, or a LAN game?
 };
 

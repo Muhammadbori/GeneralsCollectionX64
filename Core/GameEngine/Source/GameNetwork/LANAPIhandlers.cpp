@@ -103,11 +103,56 @@ void LANAPI::handleRequestLocations( LANMessage *msg, UnsignedInt senderIP )
 	OnNameChange(player->getIP(), player->getName());
 }
 
+Bool LANAPI::announceFromItsHost( LANMessage *msg, UnsignedInt senderIP )
+{
+	// TheSuperHackers @bugfix O62 (H5 #2) The host of a room is the address its announce comes from, never what the
+	// sender writes: a room that is not running is announced only from the address its name starts with
+	// (RequestGameCreate writes the creator's own); a running game is announced by one of its seats (its packet router),
+	// which must be a seat of the row this lobby has already and of the slot list it sends. Anything else is dropped,
+	// so nobody can list a room in another computer's name.
+	const UnicodeString name(msg->GameInfo.gameName);
+	if (!msg->GameInfo.inProgress)
+	{
+		if (LANGameInfo::hostIPOfName(name) == senderIP) {
+			return TRUE;
+		}
+		LanTest::joinLog("lobby: announce of a room from %d.%d.%d.%d dropped: its name claims %08X",
+			PRINTF_IP_AS_4_INTS(senderIP), LANGameInfo::hostIPOfName(name));
+		return FALSE;
+	}
+	LANGameInfo sent;
+	sent.setName(name);
+	Bool seated = FALSE;
+	if (ParseGameOptionsString(&sent, AsciiString(msg->GameInfo.options)))
+	{
+		for (Int i = 0; i < MAX_SLOTS; ++i) {
+			seated = seated || (sent.getConstLANSlot(i)->isHuman() && sent.getConstLANSlot(i)->getIP() == senderIP);
+		}
+	}
+	LANGameInfo *known = LookupGame(name);
+	if (seated && known != nullptr)
+	{
+		Bool knownSeat = FALSE;
+		for (Int i = 0; i < MAX_SLOTS; ++i) {
+			knownSeat = knownSeat || (known->getConstLANSlot(i)->isHuman() && known->getConstLANSlot(i)->getIP() == senderIP);
+		}
+		seated = knownSeat;
+	}
+	if (!seated) {
+		LanTest::joinLog("lobby: announce of a running game from %d.%d.%d.%d dropped: not a seat of it", PRINTF_IP_AS_4_INTS(senderIP));
+	}
+	return seated;
+}
+
 void LANAPI::handleGameAnnounce( LANMessage *msg, UnsignedInt senderIP )
 {
 	if (senderIP == m_localIP)
 	{
 		return; // Don't try to update own info
+	}
+	if (!announceFromItsHost(msg, senderIP))
+	{
+		return; // O62 (H5 #2)
 	}
 	else if (m_currentGame && m_currentGame->isGameInProgress())
 	{
@@ -128,6 +173,9 @@ void LANAPI::handleGameAnnounce( LANMessage *msg, UnsignedInt senderIP )
 			Bool success = ParseGameOptionsString(game,AsciiString(msg->GameInfo.options));
 			game->setGameInProgress(msg->GameInfo.inProgress);
 			game->setIsDirectConnect(msg->GameInfo.isDirectConnect);
+		if (!msg->GameInfo.inProgress) {
+			game->setHostDisplayName(UnicodeString(msg->name));   // O62: a room's announce comes from its host (checked)
+		}
 			game->setLastHeard(timeGetTime());
 			if (!success)
 			{
@@ -151,6 +199,9 @@ void LANAPI::handleGameAnnounce( LANMessage *msg, UnsignedInt senderIP )
 		Bool success = ParseGameOptionsString(game,AsciiString(msg->GameInfo.options));
 		game->setGameInProgress(msg->GameInfo.inProgress);
 		game->setIsDirectConnect(msg->GameInfo.isDirectConnect);
+		if (!msg->GameInfo.inProgress) {
+			game->setHostDisplayName(UnicodeString(msg->name));   // O62: a room's announce comes from its host (checked)
+		}
 		game->setLastHeard(timeGetTime());
 		if (!success)
 		{
@@ -269,6 +320,13 @@ void LANAPI::handleRequestJoin( LANMessage *msg, UnsignedInt senderIP )
 	{
 		return; // Not us.  Ignore it.
 	}
+	// TheSuperHackers @bugfix O62 (H5 #2) ... and the room it asks for is this host's room (a joiner of a row that names
+	// this computer falsely is not let into the real room)
+	if (m_currentGame != nullptr && m_currentGame->getName().compare(msg->GameToJoin.gameName) != 0)
+	{
+		LanTest::joinLog("host: join request from %d.%d.%d.%d for another room: ignored", PRINTF_IP_AS_4_INTS(senderIP));
+		return;
+	}
 	LANMessage reply;
 	fillInLANMessage( &reply );
 	if (!m_inLobby && m_currentGame && m_currentGame->getHostIP() == m_localIP)
@@ -289,7 +347,8 @@ void LANAPI::handleRequestJoin( LANMessage *msg, UnsignedInt senderIP )
 			// TheSuperHackers @bugfix O45 The same player asking again (its accept was lost on the way: the joiner repeats
 			// its request every second): the same answer with the slot it has, never a second slot ("duplicate name"
 			// before)
-			for (player = 1; player < MAX_SLOTS; ++player)
+			// O62 (H5 #4): from slot 0 (a player sits there while the admin watches from outside the seats)
+			for (player = 0; player < MAX_SLOTS; ++player)
 			{
 				LANGameSlot *slot = m_currentGame->getLANSlot(player);
 				if (slot->isHuman() && slot->getIP() == senderIP && slot->getName().compare(msg->name) == 0)
@@ -474,7 +533,14 @@ void LANAPI::handleJoinAccept( LANMessage *msg, UnsignedInt senderIP )
 	{
 		if (m_pendingAction == ACT_JOIN) // Are we trying to join?
 		{
-			m_currentGame = LookupGame(UnicodeString(msg->GameJoined.gameName));
+			// O62 (H5 #8): only the host of the room asked for accepts (its address, as its announce came)
+			LANGameInfo *joined = LookupGame(UnicodeString(msg->GameJoined.gameName));
+			if (joined != nullptr && joined->getHostIP() != senderIP)
+			{
+				LanTest::joinLog("joiner: an accept from %d.%d.%d.%d, not the room's host: ignored", PRINTF_IP_AS_4_INTS(senderIP));
+				return;
+			}
+			m_currentGame = joined;
 			LanTest::joinLog("joiner: accepted, slot %d", (Int)msg->GameJoined.slotPosition);
 
 			if (!m_currentGame)
@@ -544,12 +610,16 @@ void LANAPI::handleRequestGameLeave( LANMessage *msg, UnsignedInt senderIP )
 {
 	if (!m_inLobby && m_currentGame && !m_currentGame->isGameInProgress())
 	{
+		// TheSuperHackers @bugfix O62 The host leaving is the host's address, not slot 0: while the admin watches from
+		// outside the seats the player in slot 0 leaving is a player leaving, and the admin (no seat) leaving closes the
+		// room (he is matched at the last slot when he has none)
+		const Bool hostLeaves = senderIP == m_currentGame->getHostIP();
 		int player;
 		for (player = 0; player < MAX_SLOTS; ++player)
 		{
-			if (m_currentGame->getIP(player) == senderIP)
+			if (m_currentGame->getIP(player) == senderIP || (hostLeaves && player == MAX_SLOTS - 1))
 			{
-				if (player == 0)
+				if (hostLeaves)
 				{
 					OnHostLeave();
 					removeGame(m_currentGame);
@@ -600,7 +670,8 @@ void LANAPI::handleRequestGameLeave( LANMessage *msg, UnsignedInt senderIP )
 		LANGameInfo *game = m_games;
 		while (game)
 		{
-			if (game->getName().compare(msg->GameToLeave.gameName) == 0)
+			// O62 (H5 #2): only its host takes a room off the lobby's list (a player leaving it does not)
+			if (game->getName().compare(msg->GameToLeave.gameName) == 0 && LANGameInfo::hostIPOfName(game->getName()) == senderIP)
 			{
 				removeGame(game);
 				delete game;
@@ -789,6 +860,10 @@ void LANAPI::handleGameOptions( LANMessage *msg, UnsignedInt senderIP )
 				OnGameOptions(senderIP, player, AsciiString(msg->GameOptions.options));
 				break;
 			}
+		}
+		// O62: the host's name, from his own options (he may have no seat)
+		if (senderIP != 0 && senderIP == m_currentGame->getHostIP()) {
+			m_currentGame->setHostDisplayName(UnicodeString(msg->name));
 		}
 		// O60 (row 46): the admin watching from outside the seats has no slot
 		if (player == MAX_SLOTS && senderIP != 0 && senderIP == m_currentGame->getHostIP()) {

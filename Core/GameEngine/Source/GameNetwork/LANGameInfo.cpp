@@ -201,7 +201,12 @@ Int LANGameInfo::getAdminSlot() const
 
 UnsignedInt LANGameInfo::hostIPFromName() const
 {
-	const WideChar *name = m_gameName.str();
+	return hostIPOfName(m_gameName);
+}
+
+UnsignedInt LANGameInfo::hostIPOfName(const UnicodeString &gameName)
+{
+	const WideChar *name = gameName.str();
 	UnsignedInt ip = 0;
 	Int digits = 0;
 	for (; digits < 8 && name != nullptr && name[digits] != 0; ++digits)
@@ -221,17 +226,23 @@ UnsignedInt LANGameInfo::hostIPFromName() const
 
 UnicodeString LANGameInfo::getHostName() const
 {
-	if (m_gameName.getLength() > 16)
-	{
-		const UnsignedInt host = getHostIP();
-		for (Int i = 0; i < MAX_SLOTS; ++i) {
-			if (m_LANSlot[i].isHuman() && m_LANSlot[i].getIP() == host) {
-				return m_LANSlot[i].getName();   // in a seat: his slot's (full) name
-			}
+	// TheSuperHackers @bugfix O62 The room's name is only the 16 hex digits of address and seed (RequestGameCreate cuts
+	// it there), so the host's name is: his seat's; else this computer's own name when it is the host; else the name his
+	// own announce and options carry (the sender is checked: handleGameAnnounce, handleGameOptions). Slot 0's name was
+	// wrong while the admin watched from outside the seats (a player sits there then).
+	const UnsignedInt host = getHostIP();
+	for (Int i = 0; i < MAX_SLOTS; ++i) {
+		if (m_LANSlot[i].isHuman() && m_LANSlot[i].getIP() == host) {
+			return m_LANSlot[i].getName();
 		}
-		return UnicodeString(m_gameName.str() + 16);
 	}
-	return m_LANSlot[0].isHuman() ? m_LANSlot[0].getName() : UnicodeString::TheEmptyString;
+	if (TheLAN != nullptr && host != 0 && host == TheLAN->GetLocalIP()) {
+		return TheLAN->GetMyName();
+	}
+	if (!m_hostDisplayName.isEmpty()) {
+		return m_hostDisplayName;
+	}
+	return (m_gameName.getLength() > 16) ? UnicodeString(m_gameName.str() + 16) : UnicodeString::TheEmptyString;
 }
 
 void LANGameInfo::setMap( AsciiString mapName )
