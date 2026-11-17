@@ -1358,6 +1358,12 @@ void LANAPI::finishStart()
 	pumpStartDelivery();
 }
 
+// O78 (H12) Known limits of the start, as in the original: (1) a custom map whose transfer fails after START (the
+// player leaves inside OnGameStart while the host transfers and reads no LAN message); (2) a leave after another player
+// acknowledged START (the seat stays so every list matches): in both, the others wait the 60 s load-complete timeout
+// (PROGRESS_COMPLETE_TIMEOUT), then the match goes on without that player; (3) a player whose five acknowledgements
+// were all lost when the start is then stopped: it loads alone, waits that timeout and ends on the original's
+// disconnect screen.
 void LANAPI::stopStartDelivery(const char *why)
 {
 	// O76: START is called back while nobody has acknowledged it (a player whose five acknowledgements were all lost has

@@ -2405,13 +2405,14 @@ static CommandLineParam paramsForEngineInit[] =
 // needs a compile-time split: next round.)
 namespace
 {
+	// values: the arguments after the switch that its parser takes (H12: each row checked against its parser, O78)
 	struct TestOnlySwitch { const char *name; int values; };
 	const TestOnlySwitch kTestOnlySwitches[] =
 	{
 		{ "-guardTest", 0 }, { "-lanNoGuard", 0 },
 		{ "-testPerturbFrame", 1 }, { "-testInput", 1 }, { "-testLogicFps", 1 },
 		{ "-testDefeatAtFrame", 1 }, { "-testClockOffset", 1 }, { "-audioIgnoreFocus", 0 },
-		{ "-voiceTest", 1 }, { "-voiceTestRoster", 1 }, { "-voiceTestTone", 1 }, { "-voiceTestWav", 1 },
+		{ "-voiceTest", 1 }, { "-voiceTestRoster", 1 }, { "-voiceTestTone", 0 }, { "-voiceTestWav", 1 },
 		{ "-voiceTestTalk", 1 }, { "-voiceTestOut", 1 }, { "-voiceTestLoss", 1 }, { "-voiceTestVolume", 1 },
 		{ "-netLab", 1 }, { "-netLabPlayers", 1 }, { "-netLabMap", 1 }, { "-netLabSeed", 1 }, { "-netLabSim", 1 },
 		{ "-netLabQuitAfter", 1 },
