@@ -239,6 +239,8 @@ struct LANMessage
 			UnsignedInt iniCRC;
 			char serial[g_maxSerialLength];
 			WideChar gameName[g_lanGameNameLength+1];   ///< O62 (H5 #2): the room asked for (the host checks it is his)
+			UnsignedInt protocolMagic;                  ///< O62: LANProtocolMagic
+			Int protocol;                               ///< O62: LANProtocolVersion
 		} GameToJoin;
 
 		// GameJoined is sent with JOIN_ACCEPT
@@ -248,6 +250,8 @@ struct LANMessage
 			UnsignedInt gameIP;
 			UnsignedInt playerIP;
 			Int slotPosition;
+			UnsignedInt protocolMagic;   ///< O62: LANProtocolMagic
+			Int protocol;                ///< O62: LANProtocolVersion
 		} GameJoined;
 
 		// GameNotJoined is sent with JOIN_DENY
@@ -343,8 +347,15 @@ static_assert(sizeof(LANMessage) <= MAX_LANAPI_PACKET_SIZE, "LANMessage struct c
 // TheSuperHackers @feature O26 (row 26) What the LAN screen needs beyond the original messages.
 static const UnsignedInt LANFilesInfoMagic = 0x46494C31;   ///< "FIL1"
 static const UnsignedInt LANStartMagic = 0x53545231;       ///< "STR1" (O62)
+// TheSuperHackers @feature O62 The LAN protocol number. A room's options carry it ("PV=n;", GameInfo), and so do the join
+// request and accept (GameToJoin, GameJoined, with LANProtocolMagic); a different number is another version: its room
+// is listed as "другая версия" and cannot be joined or watched, a join of it is refused with the version line. Bump it
+// whenever the wire of the room, the start, the observers' channel or the stream changes. 1 = O59..O62 (plan3/plan4 and
+// older have none: 0).
+static const UnsignedInt LANProtocolMagic = 0x3156504C;    ///< "LPV1"
+static const Int LANProtocolVersion = 1;
 static const UnsignedInt LANGuardDataMagic = 0x31445247;   ///< "GRD1" (O30)
-static const UnsignedInt LANRoomMagic = 0x314D4F52;        ///< "ROM1" (O31)
+static const UnsignedInt LANRoomMagic = 0x324D4F52;        ///< "ROM2" (O31; O62: the room messages of protocol 1, so an older build's and this build's ignore each other)
 namespace LanFiles
 {
 	/// The files fingerprint a lobby player or a game host sent (MSG_FILES_INFO); FALSE when none came yet.

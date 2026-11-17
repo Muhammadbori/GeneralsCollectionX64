@@ -850,12 +850,22 @@ void LANAPI::RequestGameJoin( LANGameInfo *game, UnsignedInt ip /* = 0 */ )
 		OnGameJoin( RET_GAME_GONE, nullptr );
 		return;
 	}
+	// O62: another version's room is not joined (the lobby says so first; this also covers a direct connect)
+	if (game->getLanProtocol() != LANProtocolVersion)
+	{
+		LanTest::joinLog("joiner: the room is protocol %d, this build %d: not joined", game->getLanProtocol(), LANProtocolVersion);
+		m_pendingAction = ACT_NONE;
+		OnGameJoin( RET_CRC_MISMATCH, nullptr );
+		return;
+	}
 
 	LANMessage msg;
 	msg.messageType = LANMessage::MSG_REQUEST_JOIN;
 	fillInLANMessage( &msg );
 	msg.GameToJoin.gameIP = game->getHostIP();   // O60: the admin, in a seat or not
 	wcslcpy(msg.GameToJoin.gameName, game->getName().str(), ARRAY_SIZE(msg.GameToJoin.gameName));   // O62
+	msg.GameToJoin.protocolMagic = LANProtocolMagic;
+	msg.GameToJoin.protocol = LANProtocolVersion;
 	msg.GameToJoin.exeCRC = TheGlobalData->m_exeCRC;
 	msg.GameToJoin.iniCRC = TheGlobalData->m_iniCRC;
 
@@ -1239,6 +1249,7 @@ void LANAPI::RequestGameCreate( UnicodeString gameName, Bool isDirectConnect )
 
 //	myGame->setInProgress(false);
 	myGame->enterGame();
+	myGame->setLanProtocol(LANProtocolVersion);   // O62: this build's rooms carry its protocol
 	UnicodeString s;
 	s.format(L"%8.8X%8.8X", m_localIP, myGame->getSeed());
 	if (gameName.isEmpty())

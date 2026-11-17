@@ -47,7 +47,7 @@ namespace
 		CHUNK = 32 * 1024,            ///< the most file bytes in one DATA message
 		IN_BUFFER = 2 * (CHUNK + 16),
 		HELLO_SIZE = 28,              ///< O42: version 3 (by frame); older hellos are refused
-		HELLO_VERSION = 3,
+		HELLO_VERSION = 4,            ///< O62: 4 = LAN protocol 1 (an older viewer or source is "another game")
 		FIDX_MAX = 64,                ///< O42: frame ends in one FIDX message
 		RESUME_WAIT_MS = 30000,       ///< O42: a viewer ahead of this source waits this long for the source to reach its frame
 		PEND_START = 256 * 1024,      ///< O42: a mirror's bytes not yet part of a whole frame

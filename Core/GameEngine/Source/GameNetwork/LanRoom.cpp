@@ -83,6 +83,7 @@ namespace
 	const Text kObserverOnly = { "GUI:LanObserverChatOnly", L"Your messages go to the room's other observers only.", L"\x0412\x0430\x0448\x0438 \x0441\x043E\x043E\x0431\x0449\x0435\x043D\x0438\x044F \x0432\x0438\x0434\x044F\x0442 \x0442\x043E\x043B\x044C\x043A\x043E \x0434\x0440\x0443\x0433\x0438\x0435 \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x0438 \x043A\x043E\x043C\x043D\x0430\x0442\x044B." };
 	const Text kAdminNoMap = { "GUI:LanRoomAdminNoMap", L"The host watches, so nobody can send the map. These players need it first: %ls", L"\x0425\x043E\x0441\x0442 \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0435\x0442, \x043F\x043E\x044D\x0442\x043E\x043C\x0443 \x043A\x0430\x0440\x0442\x0443 \x043D\x0435\x043A\x043E\x043C\x0443 \x043F\x0435\x0440\x0435\x0434\x0430\x0442\x044C. \x0421\x043D\x0430\x0447\x0430\x043B\x0430 \x043E\x043D\x0430 \x043D\x0443\x0436\x043D\x0430 \x044D\x0442\x0438\x043C \x0438\x0433\x0440\x043E\x043A\x0430\x043C: %ls" };
 	const Text kAdminNobody = { "GUI:LanRoomAdminNobody", L"Nobody sits in a seat: a match needs at least one player.", L"\x041D\x0438\x043A\x0442\x043E \x043D\x0435 \x0441\x0438\x0434\x0438\x0442 \x043D\x0430 \x043C\x0435\x0441\x0442\x0435: \x0434\x043B\x044F \x043C\x0430\x0442\x0447\x0430 \x043D\x0443\x0436\x0435\x043D \x0445\x043E\x0442\x044F \x0431\x044B \x043E\x0434\x0438\x043D \x0438\x0433\x0440\x043E\x043A." };
+	const Text kOtherVersion = { "GUI:LanOtherVersion", L"This game is another version of the game: it cannot be joined or watched.", L"\x042D\x0442\x0430 \x0438\x0433\x0440\x0430 \x0434\x0440\x0443\x0433\x043E\x0439 \x0432\x0435\x0440\x0441\x0438\x0438: \x0432\x043E\x0439\x0442\x0438 \x0432 \x043D\x0435\x0451 \x0438\x043B\x0438 \x0441\x043C\x043E\x0442\x0440\x0435\x0442\x044C \x0435\x0451 \x043D\x0435\x043B\x044C\x0437\x044F." };
 	const Text kLeft = { "GUI:LanRoomLeft", L"You no longer observe that game.", L"\x0412\x044B \x0431\x043E\x043B\x044C\x0448\x0435 \x043D\x0435 \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0435\x0442\x0435 \x0437\x0430 \x044D\x0442\x043E\x0439 \x0438\x0433\x0440\x043E\x0439." };
 
 	struct Entry { UnsignedInt ip; UnicodeString name; UnsignedInt lastHeard; };
@@ -1276,6 +1277,12 @@ void LanRoom::startObserving(UnsignedInt hostIP)
 	if (hostIP == 0 || s_state == STATE_STARTING || s_state == STATE_PLAYING) {
 		return;
 	}
+	if (TheLAN != nullptr && TheLAN->LookupGameByHost(hostIP) != nullptr
+		&& TheLAN->LookupGameByHost(hostIP)->getLanProtocol() != LANProtocolVersion)
+	{
+		notice(textOf(kOtherVersion));   // O62: another version's room is not observed
+		return;
+	}
 	if (TheLAN != nullptr && hostIP == TheLAN->GetLocalIP()) {
 		return;   // O33 (low): not one's own room
 	}
@@ -1323,6 +1330,11 @@ void LanRoom::sendChat(const UnicodeString &text)
 void LanRoom::startWatching(LANGameInfo *game, Int extraSeconds)
 {
 	if (game == nullptr || TheLAN == nullptr || s_state == STATE_STARTING || s_state == STATE_PLAYING) {
+		return;
+	}
+	if (game->getLanProtocol() != LANProtocolVersion)
+	{
+		notice(textOf(kOtherVersion));   // O62: another version's match is not watched
 		return;
 	}
 	if (game->getHostIP() == TheLAN->GetLocalIP()) {

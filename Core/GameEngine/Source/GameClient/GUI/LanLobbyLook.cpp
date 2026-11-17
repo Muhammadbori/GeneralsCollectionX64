@@ -167,6 +167,8 @@ namespace
 	const Text kWaiting = { "GUI:LanWaitingStream", L"Waiting...", L"\x041E\x0436\x0438\x0434\x0430\x043D\x0438\x0435..." };
 	const Text kInProgress = { "GUI:LanInProgress", L"in game", L"\x0438\x0434\x0451\x0442 \x0438\x0433\x0440\x0430" };
 	// O42: the host allows no outside viewers (its LIST, or its RULES during the match)
+	const Text kOtherVersionTag = { "GUI:LanOtherVersionTag", L"other version", L"\x0434\x0440\x0443\x0433\x0430\x044F \x0432\x0435\x0440\x0441\x0438\x044F" };   // O62
+	const Text kOtherVersionLine = { "GUI:LanOtherVersion", L"This game is another version of the game: it cannot be joined or watched.", L"\x042D\x0442\x0430 \x0438\x0433\x0440\x0430 \x0434\x0440\x0443\x0433\x043E\x0439 \x0432\x0435\x0440\x0441\x0438\x0438: \x0432\x043E\x0439\x0442\x0438 \x0432 \x043D\x0435\x0451 \x0438\x043B\x0438 \x0441\x043C\x043E\x0442\x0440\x0435\x0442\x044C \x0435\x0451 \x043D\x0435\x043B\x044C\x0437\x044F." };
 	const Text kNoViewersTag = { "GUI:LanNoViewersTag", L"no viewers", L"\x0431\x0435\x0437 \x0437\x0440\x0438\x0442\x0435\x043B\x0435\x0439" };
 	const Text kNoViewersButton = { "GUI:LanNoViewersButton", L"No viewers", L"\x0411\x0435\x0437 \x0437\x0440\x0438\x0442\x0435\x043B\x0435\x0439" };
 
@@ -682,6 +684,7 @@ namespace
 		Int shield;                ///< O30: the host's anti-cheat verdict
 		Bool inProgress;
 		Bool noViewers;            ///< O42: its host allows no outside viewers
+		Bool otherVersion;         ///< O62: another LAN protocol (cannot be joined or watched)
 		LANGameInfo *game;
 		const SampleGame *sample;
 	};
@@ -731,6 +734,7 @@ namespace
 				r.shield = sampleShield(g.files);
 				r.inProgress = FALSE;
 				r.noViewers = FALSE;
+				r.otherVersion = FALSE;
 				r.game = nullptr;
 				r.sample = &g;
 				rows.push_back(r);
@@ -780,6 +784,7 @@ namespace
 			r.files = filesMarkOfIP(game->getHostIP());
 			r.shield = shieldOfIP(game->getHostIP());
 			r.inProgress = game->isGameInProgress();
+			r.otherVersion = game->getLanProtocol() != LANProtocolVersion;   // O62
 			{
 				Int hostDelay = 60;
 				Bool outsideAllowed = TRUE;
@@ -904,7 +909,7 @@ namespace
 				TheDisplay->drawFillRect(x + 2, ry, inner + pad * 2 - 4, rh, kRowSelected);
 				TheDisplay->drawOpenRect(x + 2, ry, inner + pad * 2 - 4, rh, 1.0f, kFrame);
 			}
-			const Color c = r.inProgress ? kTextDim : (sel ? kGreen : kText);
+			const Color c = (r.inProgress || r.otherVersion) ? kTextDim : (sel ? kGreen : kText);
 			const Int ty = ry + (rh - fontHeight()) / 2;
 			// O44: the state in brackets is drawn whole; the host's name is cut instead ("(без з..." was cut in S42). When
 			// both marks do not fit next to a few letters of the name, "in game" goes (the row is dimmed for it already).
@@ -936,6 +941,11 @@ namespace
 				if (suffix.isEmpty() || textWidth(suffix) + textWidth(UnicodeString(L"W...")) <= gameW) {
 					break;
 				}
+			}
+			if (r.otherVersion)
+			{
+				// O62: another version: that alone, the row dimmed
+				suffix.format(L" (%ls)", textOf(kOtherVersionTag).str());
 			}
 			UnicodeString name = r.name;
 			const Int suffixW = textWidth(suffix);
@@ -995,9 +1005,26 @@ namespace
 		return TRUE;
 	}
 
+	/// O62: another version's room: one line, no join or watch.
+	Bool refuseOtherVersion(Int row)
+	{
+		std::vector<GameRow> rows;
+		collectRows(rows);
+		if (row < 0 || row >= (Int)rows.size() || !rows[row].otherVersion) {
+			return FALSE;
+		}
+		static UnsignedInt s_lastMs = 0;
+		const UnsignedInt now = timeGetTime();
+		if (s.chatList != nullptr && now - s_lastMs > 3000) {
+			GadgetListBoxAddEntryText(s.chatList, textOf(kOtherVersionLine), chatSystemColor, -1, 0);
+		}
+		s_lastMs = now;
+		return TRUE;
+	}
+
 	void joinRow(Int row)
 	{
-		if (refuseFull(row) || LanTest::sampleData() || TheLAN == nullptr || s.listGames == nullptr) {
+		if (refuseFull(row) || refuseOtherVersion(row) || LanTest::sampleData() || TheLAN == nullptr || s.listGames == nullptr) {
 			return;
 		}
 		LANGameInfo *game = (LANGameInfo *)GadgetListBoxGetItemData(s.listGames, row, 0);
@@ -2042,7 +2069,7 @@ Bool LanLobbyLook::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgData
 			openHistory();
 			return TRUE;
 		}
-		if (control == s.joinButton && refuseFull(selectedRow())) {
+		if (control == s.joinButton && (refuseFull(selectedRow()) || refuseOtherVersion(selectedRow()))) {
 			return TRUE;   // O29 (item 9): the menu does not ask the host
 		}
 		if (control == s.actionButton)
@@ -2051,7 +2078,7 @@ Bool LanLobbyLook::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgData
 			std::vector<GameRow> rows;
 			collectRows(rows);
 			const Int sel = selectedRow();
-			if (sel >= 0 && sel < (Int)rows.size() && rows[sel].game != nullptr && !LanTest::sampleData())
+			if (sel >= 0 && sel < (Int)rows.size() && rows[sel].game != nullptr && !LanTest::sampleData() && !refuseOtherVersion(sel))
 			{
 				LANGameInfo *game = rows[sel].game;
 				const UnsignedInt host = game->getHostIP();

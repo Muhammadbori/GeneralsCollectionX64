@@ -258,6 +258,9 @@ public:
 	/// "HO=1" (absent when he plays, so a playing admin's options are as before).
 	Bool getHostObserves() const { return m_hostObserves; }
 	void setHostObserves( Bool observes ) { m_hostObserves = observes; }
+	/// O62: the LAN protocol of the room ("PV=n;" in the options; 0: none, an older build's room)
+	Int getLanProtocol() const { return m_lanProtocol; }
+	void setLanProtocol( Int protocol ) { m_lanProtocol = protocol; }
 
 protected:
 	Int m_preorderMask;
@@ -281,6 +284,7 @@ protected:
   UnsignedShort m_superweaponRestriction;
   Bool m_oldFactionsOnly; // Only USA, China, GLA -- not USA Air Force General, GLA Toxic General, et al
 	Bool m_hostObserves;    ///< O60
+	Int m_lanProtocol;      ///< O62
 };
 
 extern GameInfo *TheGameInfo;

@@ -320,6 +320,24 @@ void LANAPI::handleRequestJoin( LANMessage *msg, UnsignedInt senderIP )
 	{
 		return; // Not us.  Ignore it.
 	}
+	// TheSuperHackers @feature O62 Another version's join (no protocol number, or another one) is refused with the
+	// version line (an older build shows its own "version" text for RET_CRC_MISMATCH), never seated
+	if (msg->GameToJoin.protocolMagic != LANProtocolMagic || msg->GameToJoin.protocol != LANProtocolVersion)
+	{
+		LanTest::joinLog("host: join request from %d.%d.%d.%d of another protocol: refused", PRINTF_IP_AS_4_INTS(senderIP));
+		LANMessage deny;
+		fillInLANMessage(&deny);
+		deny.messageType = LANMessage::MSG_JOIN_DENY;
+		deny.GameNotJoined.gameName[0] = 0;
+		if (m_currentGame != nullptr) {
+			wcslcpy(deny.GameNotJoined.gameName, m_currentGame->getName().str(), ARRAY_SIZE(deny.GameNotJoined.gameName));
+		}
+		deny.GameNotJoined.reason = LANAPIInterface::RET_CRC_MISMATCH;
+		deny.GameNotJoined.gameIP = m_localIP;
+		deny.GameNotJoined.playerIP = senderIP;
+		sendMessage(&deny, senderIP);
+		return;
+	}
 	// TheSuperHackers @bugfix O62 (H5 #2) ... and the room it asks for is this host's room (a joiner of a row that names
 	// this computer falsely is not let into the real room)
 	if (m_currentGame != nullptr && m_currentGame->getName().compare(msg->GameToJoin.gameName) != 0)
@@ -358,6 +376,8 @@ void LANAPI::handleRequestJoin( LANMessage *msg, UnsignedInt senderIP )
 					reply.GameJoined.slotPosition = player;
 					reply.GameJoined.gameIP = m_localIP;
 					reply.GameJoined.playerIP = senderIP;
+					reply.GameJoined.protocolMagic = LANProtocolMagic;   // O62
+					reply.GameJoined.protocol = LANProtocolVersion;
 					LanTest::joinLog("host: join request again from %d.%d.%d.%d: accepted again, slot %d", PRINTF_IP_AS_4_INTS(senderIP), player);
 					sendMessage(&reply, 0);   // as the first accept
 					RequestGameOptions(GenerateGameOptionsString(), true);
@@ -486,6 +506,8 @@ void LANAPI::handleRequestJoin( LANMessage *msg, UnsignedInt senderIP )
 					reply.GameJoined.slotPosition = player;
 					reply.GameJoined.gameIP = m_localIP;
 					reply.GameJoined.playerIP = senderIP;
+					reply.GameJoined.protocolMagic = LANProtocolMagic;   // O62
+					reply.GameJoined.protocol = LANProtocolVersion;
 
 					LANGameSlot newSlot;
 					newSlot.setState(SLOT_PLAYER, UnicodeString(msg->name));
@@ -538,6 +560,14 @@ void LANAPI::handleJoinAccept( LANMessage *msg, UnsignedInt senderIP )
 			if (joined != nullptr && joined->getHostIP() != senderIP)
 			{
 				LanTest::joinLog("joiner: an accept from %d.%d.%d.%d, not the room's host: ignored", PRINTF_IP_AS_4_INTS(senderIP));
+				return;
+			}
+			// O62: an accept of another protocol (an older host) is no join
+			if (msg->GameJoined.protocolMagic != LANProtocolMagic || msg->GameJoined.protocol != LANProtocolVersion)
+			{
+				LanTest::joinLog("joiner: an accept of another protocol: not joined");
+				m_pendingAction = ACT_NONE;
+				OnGameJoin(RET_CRC_MISMATCH, nullptr);
 				return;
 			}
 			m_currentGame = joined;
