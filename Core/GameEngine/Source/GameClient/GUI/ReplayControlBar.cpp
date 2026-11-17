@@ -74,9 +74,11 @@ namespace
 	UnsignedInt s_rewindSinceMs = 0;
 	Bool s_reachedLive = FALSE;            ///< row 49: this followed replay was at its live point once
 	UnsignedInt s_runLastFrame = 0;        ///< O64 (H6 #6): a run that stops moving is ended
+	UnsignedInt s_runLastNewest = 0;       ///< O65: ... only while no new data comes and the game is not paused
 	UnsignedInt s_runLastMoveMs = 0;
-	const UnsignedInt kRunStallMs = 15000;
+	const UnsignedInt kRunStallMs = 30000;
 	const UnsignedInt kRestartFailMs = 60000;   ///< O64 (H6 #7): a restarted replay whose logic never runs
+	UnsignedInt s_rewindLoadedMs = 0;           ///< O65: when the restarted replay's map load ended (its clock)
 
 	// what the panel shows now, to set its texts only when they change
 	Int s_shownSpeed = -2;
@@ -225,6 +227,7 @@ namespace
 		ReplayControl::setSpeed(ReplayControl::SPEED_MAX);
 		s_seekTarget = frame;
 		s_runLastFrame = TheGameLogic->getFrame();
+		s_runLastNewest = ReplayFollow::newestFrame();
 		s_runLastMoveMs = timeGetTime();
 		if (TheGameLogic->isGamePaused()) {
 			TheGameLogic->setGamePaused(FALSE);
@@ -1043,9 +1046,12 @@ void ReplayControl::update()
 		{
 			// O64 (H6 #6): a run whose frame stops moving (a followed stream without more data) ends, and the keys and
 			// the panel are free again
-			if (now != s_runLastFrame)
+			// O65: a slow stream (a source hop takes 5-8 s) or a pause is no stall: only no new frame AND no new data
+			const UnsignedInt newest = ReplayFollow::newestFrame();
+			if (now != s_runLastFrame || newest != s_runLastNewest || TheGameLogic->isGamePaused())
 			{
 				s_runLastFrame = now;
+				s_runLastNewest = newest;
 				s_runLastMoveMs = timeGetTime();
 			}
 			else if (timeGetTime() - s_runLastMoveMs > kRunStallMs)
@@ -1072,9 +1078,15 @@ void ReplayControl::update()
 		}
 	}
 
-	// O64 (H6 #7): a restarted replay whose logic never gets going: the seek is given up and the input is free again
-	if (inReplay && s_rewindTarget != kNone && timeGetTime() - s_rewindSinceMs > kRestartFailMs
-		&& (loading || !TheGameLogic->isInGame() || TheGameLogic->getFrame() == 0))
+	// O64 (H6 #7): a restarted replay whose logic never gets going: the seek is given up and the input is free again.
+	// O65: the clock starts when its map load has ended (a long load on a slow PC is no failure)
+	if (s_rewindTarget == kNone || !inReplay) {
+		s_rewindLoadedMs = 0;
+	} else if (s_rewindLoadedMs == 0 && !loading && TheGameLogic->isInGame()) {
+		s_rewindLoadedMs = timeGetTime();
+	}
+	if (inReplay && s_rewindTarget != kNone && s_rewindLoadedMs != 0 && timeGetTime() - s_rewindLoadedMs > kRestartFailMs
+		&& TheGameLogic->getFrame() == 0)
 	{
 		s_rewindTarget = kNone;
 		s_seekKind = SEEK_NONE;

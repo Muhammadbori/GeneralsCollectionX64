@@ -35,6 +35,7 @@
 #include "GameClient/GameText.h"
 #include "GameClient/LocalizedFallback.h"
 #include "Common/version.h"
+#include "gitinfo.h"
 #include "GameClient/MapUtil.h"
 #include "Common/UserPreferences.h"
 #include "GameLogic/GameLogic.h"
@@ -1058,8 +1059,14 @@ AsciiString LanBuildIdentity()
 		s_made = TRUE;
 		// letters, digits and '~' only: it travels in the room's options ("BV=") and in the join
 		const AsciiString full = TheVersion->getAsciiGitShortHash();
-		for (const char *c = full.str(); c != nullptr && *c != 0 && s_id.getLength() < 15; ++c) {
+		for (const char *c = full.str(); GitHaveInfo && c != nullptr && *c != 0 && s_id.getLength() < 15; ++c) {
 			if (isalnum((unsigned char)*c) || *c == '~') s_id.concat(*c);
+		}
+		// O65: a build made without git info has an explicit identity of its own (never an empty one): "nogit" and its
+		// exe CRC, so two such builds meet only when their exes are the same
+		if (s_id.isEmpty() || (s_id.getLength() == 1 && s_id.str()[0] == '~'))
+		{
+			s_id.format("nogit%08X", TheGlobalData != nullptr ? TheGlobalData->m_exeCRC : 0u);
 		}
 	}
 	return s_id;
@@ -1545,12 +1552,16 @@ LANGameInfo* LANAPI::LookupGameByHost(UnsignedInt hostIP)
 	LANGameInfo* lastGame = nullptr;
 	UnsignedInt lastHeard = 0;
 
-	for (LANGameInfo* game = m_games; game; game = game->getNext())
+	// O65: a row its host announced himself (host-verified) before one made from a running game's announce
+	for (Int pass = 0; pass < 2 && lastGame == nullptr; ++pass)
 	{
-		if (game->getHostIP() == hostIP && game->getLastHeard() >= lastHeard)
+		for (LANGameInfo* game = m_games; game; game = game->getNext())
 		{
-			lastGame = game;
-			lastHeard = game->getLastHeard();
+			if (game->getHostIP() == hostIP && (pass == 1 || game->isHostVerified()) && game->getLastHeard() >= lastHeard)
+			{
+				lastGame = game;
+				lastHeard = game->getLastHeard();
+			}
 		}
 	}
 
@@ -1775,9 +1786,17 @@ void LANAPI::terminateStrings(LANMessage *msg)
 			break;
 		case LANMessage::MSG_REQUEST_JOIN:
 			msg->GameToJoin.serial[ARRAY_SIZE(msg->GameToJoin.serial) - 1] = 0;
+			msg->GameToJoin.gameName[ARRAY_SIZE(msg->GameToJoin.gameName) - 1] = 0;   // O65
+			msg->GameToJoin.build[ARRAY_SIZE(msg->GameToJoin.build) - 1] = 0;
 			break;
 		case LANMessage::MSG_JOIN_ACCEPT:
 			msg->GameJoined.gameName[ARRAY_SIZE(msg->GameJoined.gameName) - 1] = 0;
+			msg->GameJoined.build[ARRAY_SIZE(msg->GameJoined.build) - 1] = 0;   // O65
+			break;
+		case LANMessage::MSG_GAME_START:   // O65: the start handshake's room name
+		case LANMessage::MSG_START_CHECK:
+		case LANMessage::MSG_START_READY:
+			msg->StartCheck.gameName[ARRAY_SIZE(msg->StartCheck.gameName) - 1] = 0;
 			break;
 		case LANMessage::MSG_JOIN_DENY:
 			msg->GameNotJoined.gameName[ARRAY_SIZE(msg->GameNotJoined.gameName) - 1] = 0;

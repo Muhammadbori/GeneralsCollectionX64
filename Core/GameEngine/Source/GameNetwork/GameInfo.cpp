@@ -779,7 +779,9 @@ UnsignedInt GameInfo::startDigest() const
 
 Int GameInfo::getAdminSlot() const
 {
-	if (m_hostObserves) {
+	// O65: a replay recorded before the LAN protocol (no "PV", so no "HO" either) cannot say whether its admin watched:
+	// no star rather than a possibly wrong one
+	if (m_hostObserves || m_lanProtocol <= 0) {
 		return -1;
 	}
 	const GameSlot *first = getConstSlot(0);
