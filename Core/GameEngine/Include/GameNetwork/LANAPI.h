@@ -341,9 +341,17 @@ struct LANMessage
 			UnsignedInt digest;       ///< LanStartDigest of the sender's copy of the room
 			WideChar gameName[g_lanGameNameLength+1];
 			UnsignedInt revision;     ///< O64 (H6 #4): the revision of the host's slot list it checks
+			// TheSuperHackers @feature O89 GAME_START only (not read in START_CHECK and READY): the room observers that get the
+			// stream live (and the watching admin), frozen at Start; was the room's own KIND_START to the players, sent
+			// once, so a player that lost it held them behind the delay. A player takes it before it acknowledges START.
+			UnsignedByte liveCount;
+			UnsignedByte liveFlags;   ///< bit 0: outside viewers allowed
+			UnsignedShort liveDelaySeconds;   ///< the host's delay for outside viewers (10..180 s)
+			UnsignedInt liveIps[13];  ///< LanRoom::MAX_OBSERVERS and the watching admin
 		} StartCheck;
 
 		static_assert(sizeof(Room) <= sizeof(GameInfo), "MSG_ROOM must not make LANMessage larger");
+		static_assert(sizeof(StartCheck) <= sizeof(GameInfo), "O89: the start's live list must not make LANMessage larger");
 		static_assert(sizeof(GameOptions) <= sizeof(GameInfo), "O64: the options' revision must not make LANMessage larger");
 		static_assert(sizeof(GuardData) <= sizeof(GameInfo), "MSG_GUARD_DATA must not make LANMessage larger");
 		static_assert(ARRAY_SIZE(GameOptions.options) > m_lanMaxOptionsLength, "GameOptions.options buffer must be larger than m_lanMaxOptionsLength");
@@ -360,14 +368,15 @@ static const UnsignedInt LANFilesInfoMagic = 0x46494C31;   ///< "FIL1"
 // request and accept (GameToJoin, GameJoined, with LANProtocolMagic); a different number is another version: its room
 // is listed as "другая версия" and cannot be joined or watched, a join of it is refused with the version line. Bump it
 // whenever the wire of the room, the start, the observers' channel or the stream changes. 1 = O59..O62 (plan3/plan4 and
-// older have none: 0); 2 = O63 (the build identity in the join).
+// older have none: 0); 2 = O63 (the build identity in the join); 3 = O89 (the live list inside GAME_START, the room's
+// KIND_START no longer to the players; KIND_START_CANCEL).
 // TheSuperHackers @feature O63 Next to the number, the BUILD IDENTITY: the git commit of the build (Version's short hash,
 // "~" first when it was built with uncommitted changes), the same for every exe of one build (the product and the
 // uitest exe) and not changed by any pack. A room carries it ("BV=<hash>;"), and so do the join request and accept; a
 // different identity is "другая версия" as a different number. (The exe CRC differs between the product and uitest
 // exes of one build; the ini CRC is the original's and stays unused, see plan1-o63-report.md.)
 static const UnsignedInt LANProtocolMagic = 0x3156504C;    ///< "LPV1"
-static const Int LANProtocolVersion = 2;
+static const Int LANProtocolVersion = 3;
 /// O64 (H6, low): the start handshake's magic carries the protocol number ("STR2"): another number is not this game's.
 static const UnsignedInt LANStartMagic = 0x00525453u | ((UnsignedInt)('0' + LANProtocolVersion) << 24);
 /// O76: a player's answer to START_CHECK (MSG_START_READY) when it cannot start: the map is not on it and no transfer

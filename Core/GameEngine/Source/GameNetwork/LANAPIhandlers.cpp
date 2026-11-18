@@ -884,6 +884,11 @@ void LANAPI::handleGameStart( LANMessage *msg, UnsignedInt senderIP )
 			return;
 		}
 		m_startSeenMs = LanClock::now();
+		// TheSuperHackers @feature O89 the room's live observers come with START, before it is acknowledged: a started
+		// player always has them
+		LanRoom::takeStartList(senderIP, msg->StartCheck.liveIps,
+			min((Int)msg->StartCheck.liveCount, (Int)ARRAY_SIZE(msg->StartCheck.liveIps)),
+			msg->StartCheck.liveDelaySeconds, msg->StartCheck.liveFlags);
 		// O76: whether this computer can start (the map) was answered at the start check (handleStartCheck); a START
 		// comes only after every seat answered READY that it can
 		LANMessage ack;

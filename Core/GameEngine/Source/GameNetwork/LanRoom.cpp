@@ -105,6 +105,11 @@ namespace
 	// O33: what a player of the coming match got in its host's START (or, as the host, froze itself)
 	struct MatchStart { Bool valid; UnsignedInt host; std::vector<UnsignedInt> observers; Int delay; Bool outsideAllowed; };
 	MatchStart s_matchStart = { FALSE, 0, std::vector<UnsignedInt>(), kDefaultDelay, TRUE };
+	// O89: what hostStart froze for the players (LANAPI sends it inside GAME_START)
+	UnsignedInt s_playerStartIps[LanRoom::MAX_OBSERVERS + 1] = { 0 };
+	Int s_playerStartCount = 0;
+	Int s_playerStartDelay = kDefaultDelay;
+	UnsignedInt s_playerStartFlags = 0;
 	// O33: the running match this game serves as a player
 	Bool s_matchServing = FALSE;
 	Int s_matchObservers = 0;
@@ -1015,6 +1020,33 @@ void LanRoom::pollStart()
 	}
 }
 
+Int LanRoom::hostStartList(UnsignedInt *ips, Int *delaySeconds, UnsignedInt *flags)
+{
+	for (Int i = 0; i < s_playerStartCount; ++i) {
+		ips[i] = s_playerStartIps[i];
+	}
+	*delaySeconds = s_playerStartDelay;
+	*flags = s_playerStartFlags;
+	return s_playerStartCount;
+}
+
+void LanRoom::takeStartList(UnsignedInt hostIP, const UnsignedInt *ips, Int count, Int delaySeconds, UnsignedInt flags)
+{
+	// as the room's KIND_START to a player was taken (O33): the observers frozen at Start, from the room's host only
+	LANGameInfo *mine = TheLAN != nullptr ? TheLAN->GetMyGame() : nullptr;
+	if (mine == nullptr || mine->getHostIP() != hostIP) {
+		return;
+	}
+	s_matchStart.valid = TRUE;
+	s_matchStart.host = hostIP;
+	s_matchStart.observers.clear();
+	for (Int i = 0; i < count && i < MAX_OBSERVERS + 1; ++i) {
+		if (ips[i] != 0 && !inSlot(mine, ips[i])) s_matchStart.observers.push_back(ips[i]);
+	}
+	s_matchStart.delay = delaySeconds != 0 ? clampDelay(delaySeconds) : kDefaultDelay;
+	s_matchStart.outsideAllowed = delaySeconds == 0 || (flags & FLAG_OUTSIDE_ALLOWED) != 0;
+}
+
 void LanRoom::cancelStarting()
 {
 	if (s_state == STATE_STARTING) {
@@ -1119,24 +1151,20 @@ void LanRoom::hostStart(LANGameInfo *game, UnsignedInt localIP)
 	// O60 (row 46): the admin who watches from outside the seats is not in the match; the players' servers have him live
 	// like a room observer
 	const Bool adminWatches = game->getHostObserves() && !inSlot(game, localIP);
-	// to the players: the observer list, the delay and the flag (their servers decide by it)
+	// to the players: the observer list, the delay and the flag (their servers decide by it). TheSuperHackers @bugfix O89
+	// It travels inside every GAME_START now (LANAPI::sendStartMessage, hostStartList), which is repeated until each
+	// player acknowledges it; the room's KIND_START to the players went once and a player that lost it held the room's
+	// observers behind the delay ("0 live addresses"). The admin who watches has his place in it as before.
 	{
-		LANMessage msg;
-		prepare(msg, KIND_START, localIP);
-		Int count = 0;
-		for (size_t i = 0; i < observers.size() && count < MAX_OBSERVERS; ++i) {
-			msg.Room.ips[count++] = observers[i];
+		s_playerStartCount = 0;
+		for (size_t i = 0; i < observers.size() && s_playerStartCount < MAX_OBSERVERS; ++i) {
+			s_playerStartIps[s_playerStartCount++] = observers[i];
 		}
-		if (adminWatches && count < MAX_OBSERVERS) {
-			msg.Room.ips[count++] = localIP;
+		if (adminWatches && s_playerStartCount < MAX_OBSERVERS + 1) {
+			s_playerStartIps[s_playerStartCount++] = localIP;
 		}
-		msg.Room.count = (UnsignedByte)count;
-		msg.Room.port = STREAM_PORT;
-		msg.Room.delaySeconds = (UnsignedShort)delay;
-		msg.Room.flags = (UnsignedShort)(FLAG_TO_PLAYER | (outside ? FLAG_OUTSIDE_ALLOWED : 0));
-		for (Int i = 0; i < n; ++i) {
-			if (ips[i] != localIP) send(msg, ips[i]);
-		}
+		s_playerStartDelay = delay;
+		s_playerStartFlags = outside ? FLAG_OUTSIDE_ALLOWED : 0;
 	}
 	// to the observers: the players' addresses
 	if (!observers.empty())

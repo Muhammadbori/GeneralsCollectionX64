@@ -1450,6 +1450,14 @@ void LANAPI::sendStartMessage(UnsignedInt ip)
 	msg.StartCheck.digest = m_startDigest;
 	wcslcpy(msg.StartCheck.gameName, m_currentGame->getName().str(), ARRAY_SIZE(msg.StartCheck.gameName));
 	msg.StartCheck.revision = m_currentGame->getOptionsRevision();   // O64
+	// TheSuperHackers @feature O89 the room's live list (LanRoom::hostStart froze it just before)
+	static_assert(ARRAY_SIZE(msg.StartCheck.liveIps) == LanRoom::MAX_OBSERVERS + 1, "O89: the live list holds the observers and the admin");
+	Int delay = 0;
+	UnsignedInt flags = 0;
+	const Int count = LanRoom::hostStartList(msg.StartCheck.liveIps, &delay, &flags);
+	msg.StartCheck.liveCount = (UnsignedByte)count;
+	msg.StartCheck.liveFlags = (UnsignedByte)flags;
+	msg.StartCheck.liveDelaySeconds = (UnsignedShort)delay;
 	sendMessage(&msg, ip);
 }
 

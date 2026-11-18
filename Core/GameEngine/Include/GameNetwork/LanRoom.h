@@ -106,6 +106,11 @@ namespace LanRoom
 	void hostRemove(UnsignedInt ip);                     ///< the host's remove button
 	void hostDropJoined(UnsignedInt ip);                 ///< the host accepted that person's join into a slot
 	void hostStart(LANGameInfo *game, UnsignedInt localIP);   ///< Start: the observers get the players' addresses
+	/// TheSuperHackers @feature O89 The list hostStart froze for the players (the live observers and the watching admin,
+	/// the delay, bit 0: outside viewers allowed); LANAPI puts it into every GAME_START. 'ips' holds MAX_OBSERVERS + 1.
+	Int hostStartList(UnsignedInt *ips, Int *delaySeconds, UnsignedInt *flags);
+	/// O89: a player takes that list from its host's GAME_START, before it acknowledges START (was KIND_START)
+	void takeStartList(UnsignedInt hostIP, const UnsignedInt *ips, Int count, Int delaySeconds, UnsignedInt flags);
 	/// TheSuperHackers @feature O60 (row 46) Start while the admin watches from outside the seats: nobody of the match
 	/// can send the map (the host sends it, and he is not in the match). TRUE and the text when a player lacks it.
 	Bool hostStartProblem(const LANGameInfo *game, UnicodeString *text);
