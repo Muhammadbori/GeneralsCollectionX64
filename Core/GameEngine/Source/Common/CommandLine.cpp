@@ -1200,6 +1200,17 @@ Int parseLanTestLoss(char *args[], int num)
 	}
 	return 1;
 }
+// TheSuperHackers @feature O88 (test switch) -lanTestLossSeed <n>: the seed of -lanTestLoss's drops (decimal or 0x hex);
+// 0: a fresh seed per process. Without it the drops follow the fixed default seed (the same in every process and run).
+Int parseLanTestLossSeed(char *args[], int num)
+{
+	if (num > 1)
+	{
+		LanTest::setLossSeed((UnsignedInt)strtoul(args[1], nullptr, 0));
+		return 2;
+	}
+	return 1;
+}
 
 // TheSuperHackers @feature O30 (row 15) Anti-cheat test switches (GuardLink.h): -lanNoGuard starts no anti-cheat and lets
 // this game into LAN without one (it shows no shield to others); -guardTest starts the anti-cheat in its test mode (an
@@ -2185,6 +2196,7 @@ static CommandLineParam paramsForStartup[] =
 	{ "-restartWait", parseRestartWait },
 	{ "-restartScript", parseRestartScript },
 	{ "-lanTestLoss", parseLanTestLoss },
+	{ "-lanTestLossSeed", parseLanTestLossSeed },   // O88
 	{ "-lanSample", parseLanSample },
 	{ "-lanNoGuard", parseLanNoGuard },
 	{ "-guardTest", parseGuardTest },

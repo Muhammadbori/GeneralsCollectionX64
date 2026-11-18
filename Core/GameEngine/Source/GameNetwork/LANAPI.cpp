@@ -248,7 +248,8 @@ namespace
 	Bool s_sampleData = FALSE;
 	// O45: the test loss and the join log
 	Int s_lossPercent = -1;
-	UnsignedInt s_lossSeed = 0x2545F491u;
+	UnsignedInt s_lossSeed = 0x2545F491u;   // O88: the default stays fixed (reproducible); -lanTestLossSeed changes it
+	Bool s_lossSaid = FALSE;
 	// O45: the join request, repeated every second while no answer came (the request and its accept are single UDP
 	// packets; one lost made the join time out after 5 s). The host answers a repeat with the same slot.
 	const UnsignedInt kJoinRepeatMs = 1000;
@@ -283,13 +284,53 @@ Bool LanTest::sampleData() { return s_sampleData; }
 void LanTest::setLossPercent(Int percent) { s_lossPercent = percent < 0 ? -1 : (percent > 90 ? 90 : percent); }
 Int LanTest::lossPercent() { return s_lossPercent; }
 
-Bool LanTest::dropForTest()
+void LanTest::setLossSeed(UnsignedInt seed)
+{
+	if (seed == 0)
+	{
+		// a fresh seed per process: the time and the process id mixed (two processes started in the same millisecond
+		// still differ by their ids)
+		LARGE_INTEGER counter;
+		counter.QuadPart = 0;
+		QueryPerformanceCounter(&counter);
+		seed = (UnsignedInt)timeGetTime() ^ ((UnsignedInt)GetCurrentProcessId() * 0x9E3779B9u)
+			^ ((UnsignedInt)counter.LowPart * 0x85EBCA6Bu);
+	}
+	s_lossSeed = seed;
+}
+
+Bool LanTest::dropForTest(UnsignedInt senderIP, const void *data, Int length)
 {
 	if (s_lossPercent <= 0) {
 		return FALSE;
 	}
+	if (!s_lossSaid)
+	{
+		s_lossSaid = TRUE;
+		joinLog("loss: %d %%, seed 0x%08X", s_lossPercent, s_lossSeed);
+	}
 	s_lossSeed = s_lossSeed * 1103515245u + 12345u;
-	return (Int)((s_lossSeed >> 16) % 100u) < s_lossPercent;
+	const Bool drop = (Int)((s_lossSeed >> 16) % 100u) < s_lossPercent;
+	// O88: what the instrument did to the messages a join or a start depends on
+	if (drop && data != nullptr && length >= (Int)sizeof(LANMessage))
+	{
+		const char *kind = nullptr;
+		switch (((const LANMessage *)data)->messageType)
+		{
+			case LANMessage::MSG_REQUEST_JOIN: kind = "join request"; break;
+			case LANMessage::MSG_JOIN_ACCEPT: kind = "join accept"; break;
+			case LANMessage::MSG_JOIN_DENY: kind = "join deny"; break;
+			case LANMessage::MSG_START_CHECK: kind = "START_CHECK"; break;
+			case LANMessage::MSG_START_READY: kind = "READY"; break;
+			case LANMessage::MSG_GAME_START: kind = "START"; break;
+			case LANMessage::MSG_START_ACK: kind = "START_ACK"; break;
+			default: break;
+		}
+		if (kind != nullptr) {
+			joinLog("loss: dropped %s from %d.%d.%d.%d", kind, PRINTF_IP_AS_4_INTS(senderIP));
+		}
+	}
+	return drop;
 }
 
 void LanTest::joinLog(const char *format, ...)
@@ -563,7 +604,7 @@ void LANAPI::update()
 			}
 
 			// O45 (test): a lossy link (-lanTestLoss)
-			if (LanTest::dropForTest())
+			if (LanTest::dropForTest(senderIP, m_transport->m_inBuffer[i].data, m_transport->m_inBuffer[i].length))
 			{
 				m_transport->m_inBuffer[i].length = 0;
 				continue;
