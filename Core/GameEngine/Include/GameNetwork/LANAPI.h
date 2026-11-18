@@ -406,7 +406,13 @@ namespace LanTest
 	/// timeout, on the joiner and on the host). -1: off.
 	void setLossPercent(Int percent);
 	Int lossPercent();
-	Bool dropForTest();
+	/// O88 (test): -lanTestLossSeed <n>: the seed of the drops (0: a fresh one per process, from the time and the process
+	/// id; without the switch the fixed default, so every process and run drops the same message numbers). Used only with
+	/// -lanTestLoss; the first drop decision writes "loss: P %, seed 0x........" to LanJoin.log.
+	void setLossSeed(UnsignedInt seed);
+	/// O45: TRUE when this received message is dropped. O88: the dropped join requests, join answers and start messages
+	/// (START_CHECK, READY, START, ACK) are written to LanJoin.log with their sender.
+	Bool dropForTest(UnsignedInt senderIP, const void *data, Int length);
 	void joinLog(const char *format, ...);
 }
 
