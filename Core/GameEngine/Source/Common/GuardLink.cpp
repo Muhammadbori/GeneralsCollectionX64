@@ -798,9 +798,115 @@ void GuardLink::notePeer(UnsignedInt ip, UnsignedInt ownIp, PeerClass peerClass)
 	p.lastSeen = now;
 }
 
+namespace
+{
+	void guardLog(const char *line)
+	{
+		if (TheGlobalData == nullptr) {
+			return;
+		}
+		AsciiString path = TheGlobalData->getPath_UserData();
+		path.concat("GuardLink.log");
+		if (FILE *f = fopen(path.str(), "a"))
+		{
+			fprintf(f, "[%10u] %s\n", (unsigned)LanClock::now(), line);
+			fclose(f);
+		}
+	}
+
+	// O87: the questions of addresses this player does not track (a lobby that opened after his match started, a
+	// stranger): admitted at most one per address a second and 16 per 500 ms in all. A guard answers a question
+	// without keeping anything (GenGuard onChallenge), so nothing here fills a table; the 64 places below are reused.
+	struct Asker { UnsignedInt ip; UnsignedInt lastMs; };
+	Asker s_askers[64] = {};
+	UnsignedInt s_askWindowMs = 0;
+	Int s_askInWindow = 0;
+	UnsignedInt s_askRefused = 0;
+	UnsignedInt s_askRefusedSaidMs = 0;
+
+	Bool admitUntrackedQuestion(UnsignedInt ip, UnsignedInt now)
+	{
+		if (LanClock::silentFor(now, s_askWindowMs, 500))
+		{
+			s_askWindowMs = now;
+			s_askInWindow = 0;
+		}
+		Int slot = -1, oldest = 0;
+		for (Int i = 0; i < 64; ++i)
+		{
+			if (s_askers[i].ip == ip) {
+				slot = i;
+			}
+			if (now - s_askers[i].lastMs > now - s_askers[oldest].lastMs) {
+				oldest = i;
+			}
+		}
+		const Bool admit = s_askInWindow < 16 && (slot < 0 || LanClock::silentFor(now, s_askers[slot].lastMs, 1000));
+		if (!admit)
+		{
+			++s_askRefused;
+			if (CommandLine::isTestExe() && LanClock::silentFor(now, s_askRefusedSaidMs, 5000))
+			{
+				s_askRefusedSaidMs = now;
+				char line[128];
+				snprintf(line, sizeof(line), "questions of untracked addresses refused by the rate bound: %u so far", (unsigned)s_askRefused);
+				guardLog(line);
+			}
+			return FALSE;
+		}
+		if (slot < 0) {
+			slot = oldest;
+		}
+		s_askers[slot].ip = ip;
+		s_askers[slot].lastMs = now;
+		++s_askInWindow;
+		return TRUE;
+	}
+
+	AsciiString s_namedLogged[GuardLink::PEER_CLASSES];
+}
+
+void GuardLink::logNamedChanges()
+{
+	if (!CommandLine::isTestExe() || !s_started) {
+		return;
+	}
+	static const char *const kNames[PEER_CLASSES] = { "room", "join", "lobby" };
+	const UnsignedInt now = LanClock::now();
+	for (Int c = 0; c < PEER_CLASSES; ++c)
+	{
+		AsciiString set;
+		for (std::map<UnsignedInt, Peer>::const_iterator it = s_peers.begin(); it != s_peers.end(); ++it)
+		{
+			if (!namedNow(it->second, c, now)) {
+				continue;
+			}
+			AsciiString one;
+			const UnsignedInt ip = it->first;
+			const Verdict v = verdictOf(ip);
+			one.format("%s%u.%u.%u.%u%s", set.isEmpty() ? "" : " ", ip >> 24, (ip >> 16) & 255, (ip >> 8) & 255, ip & 255,
+				v == VERDICT_VERIFIED ? "+" : (v == VERDICT_FAILED ? "!" : "?"));
+			set.concat(one);
+		}
+		// the verdict marks change the line too, so a verdict that arrives (or goes) is seen
+		if (set != s_namedLogged[c])
+		{
+			s_namedLogged[c] = set;
+			AsciiString line;
+			line.format("named %s: %s", kNames[c], set.isEmpty() ? "(none)" : set.str());
+			guardLog(line.str());
+		}
+	}
+}
+
 void GuardLink::onLanData(UnsignedInt fromIp, UnsignedInt ownIp, const UnsignedByte *data, Int length)
 {
 	if (!s_connected || length <= 0 || length > kMaxRelay) {
+		return;
+	}
+	// TheSuperHackers @bugfix O87 Bounded by the sender: a tracked address passes; any other only with a question
+	// ('C', the guard's question; its answer 'A' is useful only for a question of ours, which only a tracked address has)
+	if (s_peers.find(fromIp) == s_peers.end() && (data[0] != 'C' || !admitUntrackedQuestion(fromIp, LanClock::now()))) {
 		return;
 	}
 	UnsignedByte payload[8 + kMaxRelay];

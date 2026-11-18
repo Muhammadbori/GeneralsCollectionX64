@@ -98,7 +98,12 @@ namespace GuardLink
 	/// - a spoofed join-request flood from 8 addresses holds PEER_JOIN; a stranger is checked about 5 s after it stops.
 	enum PeerClass { PEER_ROOM = 0, PEER_JOIN = 1, PEER_LOBBY = 2, PEER_CLASSES = 3 };
 	void notePeer(UnsignedInt ip, UnsignedInt ownIp, PeerClass peerClass = PEER_ROOM);
+	/// The anti-cheat's LAN bytes for this player's guard. O87: from a tracked address everything passes; from any other
+	/// address only a question (the guard answers it without keeping anything), at most one per address a second and 16
+	/// per 500 ms in all, so a late lobby is answered and nobody can make this player answer a flood.
 	void onLanData(UnsignedInt fromIp, UnsignedInt ownIp, const UnsignedByte *data, Int length);
+	/// O87 (test exe only): when the addresses named per class (within the last 2 s) changed, one line in GuardLink.log.
+	void logNamedChanges();
 	void setSender(SendFunc func);
 
 	/// The host's rule: refuse players without a verified shield (Options.ini LanRequireGuard, default yes); only when
