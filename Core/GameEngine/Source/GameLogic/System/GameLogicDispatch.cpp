@@ -2208,7 +2208,12 @@ bool GameLogic::onRemoveBeacon(MAYBE_UNUSED GameMessage *msg)
 			if (beacon)
 			{
 				// TheSuperHackers @bugfix Prevent runtime crashing when a beacon is no longer associated with an initialized player.
-				const PlayerTemplate *playerTemplate = beacon->getControllingPlayer()->getPlayerTemplate();
+				// TheSuperHackers @bugfix O92 (row 58e) ... and with no controlling player at all (an object whose team is gone,
+				// e.g. while a replay is being quit): it was read without a test, before the template test
+				const Player *beaconOwner = beacon->getControllingPlayer();
+				if (beaconOwner == nullptr)
+					continue;
+				const PlayerTemplate *playerTemplate = beaconOwner->getPlayerTemplate();
 				if (!playerTemplate)
 					continue;
 
