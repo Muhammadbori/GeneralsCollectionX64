@@ -710,6 +710,7 @@ void LANAPI::update()
 		}
 	}
 	noteGuardPeers();   // O83: the anti-cheat asks the addresses this player's screens show, not every packet's source
+	GuardLink::logNamedChanges();   // O87 (test exe): what is named, when it changes
 	LanRoom::update(m_localIP);   // O31: observers (heartbeats, the host's list, the stream start)
 	// O70: the room's keep-alive every 2 s: the host's slot list (the joiners take the host for alive by it), a joiner's
 	// HELLO (the host takes the seat for alive by it)
@@ -2356,13 +2357,19 @@ void LANAPI::pumpGuard()
 		const UnsignedInt senderIP = m_transport->m_inBuffer[i].addr;
 		const LANMessage *msg = (const LANMessage *)(m_transport->m_inBuffer[i].data);
 		// O33 (review 5): during the match only the match's players are heard here (an observer or anybody else is not)
+		// TheSuperHackers @bugfix O87 ... except the anti-cheat's questions. The lobby's own update also runs during a
+		// match (LanLobbyMenuUpdate stays on the shell's stack and announces the running game), and the two read the same
+		// socket every 200 ms: a question that landed here was dropped. The phase of a lobby's 500 ms question pass against
+		// these two is fixed, so a lobby that opened after the start could lose every question (no host mark, no seat
+		// marks) while one that knew the match before kept its marks. GuardLink::onLanData bounds what an untracked
+		// address may send (questions only, rate-limited).
 		Bool fromPlayer = FALSE;
 		for (Int k = 0; m_currentGame != nullptr && k < MAX_SLOTS && !fromPlayer; ++k)
 		{
 			const LANGameSlot *slot = m_currentGame->getLANSlot(k);
 			fromPlayer = slot != nullptr && slot->isHuman() && slot->getIP() == senderIP;
 		}
-		if (fromPlayer && senderIP != m_localIP && m_transport->m_inBuffer[i].length >= (Int)sizeof(LANMessage)
+		if (senderIP != m_localIP && m_transport->m_inBuffer[i].length >= (Int)sizeof(LANMessage)
 			&& msg->messageType == LANMessage::MSG_GUARD_DATA && msg->GuardData.magic == LANGuardDataMagic
 			&& msg->GuardData.length > 0 && msg->GuardData.length <= LANGuardDataMax)
 		{
@@ -2386,6 +2393,7 @@ void LANAPI::pumpGuard()
 			}
 		}
 	}
+	GuardLink::logNamedChanges();   // O87 (test exe)
 	LanRoom::matchUpdate(m_localIP);   // O33: this player's viewer count to the other players
 	// O32: this player's own new finding, named, during the match too
 	{

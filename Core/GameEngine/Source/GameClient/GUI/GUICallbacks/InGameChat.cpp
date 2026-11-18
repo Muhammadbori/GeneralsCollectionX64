@@ -49,6 +49,7 @@
 #include "GameNetwork/GameInfo.h"
 #include "GameNetwork/NetworkInterface.h"
 #include "GameNetwork/LanRoom.h"
+#include "Common/LanClock.h"
 
 static GameWindow *chatWindow = nullptr;
 static GameWindow *chatTextEntry = nullptr;
@@ -205,11 +206,21 @@ Bool handleInGameSlashCommands(UnicodeString uText)
 // ------------------------------------------------------------------------------------------------
 void ToggleInGameChat( Bool immediate )
 {
+	// The Enter that sends a line reaches this twice: as the text entry's edit end (the WM_CHAR) and as the chat key
+	// itself (MSG_META_CHAT_EVERYONE, from the keyboard's key-down), which must not open the box again at once.
+	// TheSuperHackers @bugfix O86 That second call does not always come: the key-down can reach the open box first
+	// (the key pressed in the part of a frame before the keyboard is read, ahead of the message pump), the numeric
+	// keypad's Enter is not the chat key, and a scripted key gives its character on the key-up. The flag then stayed set
+	// and swallowed the player's NEXT Enter, so his second line never opened. Now it only swallows a call within 250 ms
+	// of the send, which the same key press always is.
 	static Bool justHid = false;
+	static UnsignedInt justHidMs = 0;
 	if (justHid)
 	{
 		justHid = false;
-		return;
+		if (!LanClock::silentFor(LanClock::now(), justHidMs, 250)) {
+			return;
+		}
 	}
 
 	// O34: in a replay, only a LAN room observer's channel. O59: also a defeated player who joined the observers.
@@ -279,6 +290,7 @@ void ToggleInGameChat( Bool immediate )
 					if (staysWithTeam && localPlayer != nullptr)
 					{
 						playerMask = 0;
+						Bool anyMate = FALSE;
 						for (Int i=0; i<MAX_SLOTS; ++i)
 						{
 							const Player *player = ThePlayerList->getPlayerFromSlotIndex(i);
@@ -286,7 +298,16 @@ void ToggleInGameChat( Bool immediate )
 								&& !TheGameInfo->getConstSlot(i)->isMuted())
 							{
 								playerMask |= (1<<i);
+								anyMate = anyMate || player != localPlayer;
 							}
+						}
+						// O86: a defeated player without a team-mate in this match (no team, or alone on his) is told so
+						// instead of typing to nobody
+						if (!anyMate)
+						{
+							TheInGameUI->message(TheGameText->FETCH_OR_SUBSTITUTE("GUI:ChatNoTeamMate",
+								localizedFallback(L"You have no team-mate in this match: nobody gets your messages.",
+									L"\x0412 \x044D\x0442\x043E\x0439 \x0438\x0433\x0440\x0435 \x0443 \x0432\x0430\x0441 \x043D\x0435\x0442 \x0441\x043E\x044E\x0437\x043D\x0438\x043A\x043E\x0432: \x0432\x0430\x0448\x0438 \x0441\x043E\x043E\x0431\x0449\x0435\x043D\x0438\x044F \x043D\x0438\x043A\x0442\x043E \x043D\x0435 \x043F\x043E\x043B\x0443\x0447\x0438\x0442.")));
 						}
 					}
 					if (outOfPlay && localPlayer != nullptr)
@@ -314,6 +335,7 @@ void ToggleInGameChat( Bool immediate )
 				GadgetTextEntrySetText( chatTextEntry, UnicodeString::TheEmptyString );
 				HideInGameChat( immediate );
 				justHid = true;
+				justHidMs = LanClock::now();
 			}
 		}
 	}
