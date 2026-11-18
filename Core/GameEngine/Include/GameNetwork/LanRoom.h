@@ -163,6 +163,12 @@ namespace LanRoom
 	void pollStart();
 	/// O33: the LAN screen closes: a stream that has not started yet is given up.
 	void cancelStarting();
+	/// TheSuperHackers @bugfix O93 (H24 #1) The host called its start back (LANAPI::stopStartDelivery, only there): the
+	/// room observers that got KIND_START are told (KIND_START_CANCEL). Not part of cancelStarting, which the lobby's
+	/// shutdown also calls after a start that went on.
+	void hostStartCalledBack();
+	/// O93 (H24 #2): the start went on (LANAPI, before OnGameStart): no later call may address its observers
+	void hostStartDelivered();
 
 	//--- O34: the room observers' own channel during the match ------------------------------------
 	/// TRUE for a room observer whose stream started (an outside viewer: never), or a defeated player who joined the

@@ -892,6 +892,7 @@ void LANAPI::handleGameStart( LANMessage *msg, UnsignedInt senderIP )
 		// O76: whether this computer can start (the map) was answered at the start check (handleStartCheck); a START
 		// comes only after every seat answered READY that it can
 		LANMessage ack;
+		memset(&ack, 0, sizeof(ack));   // O93 (H24 #3)
 		fillInLANMessage(&ack);
 		ack.messageType = LANMessage::MSG_START_ACK;
 		ack.StartCheck.magic = LANStartMagic;
@@ -954,6 +955,7 @@ void LANAPI::handleStartCheck( LANMessage *msg, UnsignedInt senderIP )
 		LanTest::joinLog("player: start check, but the map %s is not here and no transfer comes: cannot start", m_currentGame->getMap().str());
 	}
 	LANMessage reply;
+	memset(&reply, 0, sizeof(reply));   // O93 (H24 #3)
 	fillInLANMessage(&reply);
 	reply.messageType = LANMessage::MSG_START_READY;
 	reply.StartCheck.magic = canStart ? LANStartMagic : LANStartNoMapMagic;

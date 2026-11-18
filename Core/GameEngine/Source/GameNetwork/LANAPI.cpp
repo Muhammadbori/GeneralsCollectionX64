@@ -1380,6 +1380,7 @@ void LANAPI::pumpStartCheck()
 		m_lastStartCheck = now;
 		RequestGameOptions(GenerateGameOptionsString(), true);
 		LANMessage msg;
+		memset(&msg, 0, sizeof(msg));   // O93 (H24 #3): no stack bytes on the wire (the unused live list)
 		fillInLANMessage(&msg);
 		msg.messageType = LANMessage::MSG_START_CHECK;
 		msg.StartCheck.magic = LANStartMagic;
@@ -1435,6 +1436,7 @@ void LANAPI::stopStartDelivery(const char *why)
 	// TheSuperHackers @bugfix O88 The watching admin's stream (LanRoom::hostStart began it) ends with the start: he stays
 	// in his room, and his replay waits for a lobby that will not open now
 	LanRoom::cancelStarting();
+	LanRoom::hostStartCalledBack();   // O89/O93: the room's observers back in the room
 	OnChat(L"SYSTEM", m_localIP, TheGameText->FETCH_OR_SUBSTITUTE("GUI:LanStartRoomChanged", localizedFallback(
 		L"The room changed during the start: start stopped. Press Start again.",
 		L"\x041A\x043E\x043C\x043D\x0430\x0442\x0430 \x0438\x0437\x043C\x0435\x043D\x0438\x043B\x0430\x0441\x044C \x0432\x043E \x0432\x0440\x0435\x043C\x044F \x0441\x0442\x0430\x0440\x0442\x0430: \x0441\x0442\x0430\x0440\x0442 \x043E\x0442\x043C\x0435\x043D\x0451\x043D. \x041D\x0430\x0436\x043C\x0438\x0442\x0435 \x00AB\x0421\x0442\x0430\x0440\x0442\x00BB \x0435\x0449\x0451 \x0440\x0430\x0437.")), LANCHAT_SYSTEM);
@@ -1444,6 +1446,7 @@ void LANAPI::stopStartDelivery(const char *why)
 void LANAPI::sendStartMessage(UnsignedInt ip)
 {
 	LANMessage msg;
+	memset(&msg, 0, sizeof(msg));   // O93 (H24 #3): no stack bytes on the wire (the unused part of the live list)
 	msg.messageType = LANMessage::MSG_GAME_START;
 	fillInLANMessage( &msg );
 	msg.StartCheck.magic = LANStartMagic;   // O62: the digest every player confirmed
@@ -1521,6 +1524,7 @@ void LANAPI::pumpStartDelivery()
 			LanRoom::postNotice(text);   // shown in the lobby after the match too
 		}
 		m_transport->update(); // force a send
+		LanRoom::hostStartDelivered();   // O93 (H24 #2)
 		OnGameStart();
 		return;
 	}

@@ -1067,10 +1067,19 @@ void LanRoom::cancelStarting()
 	if (s_state == STATE_STARTING) {
 		resetViewer();
 	}
+}
+
+void LanRoom::hostStartDelivered()
+{
+	s_startObservers.clear();
+}
+
+void LanRoom::hostStartCalledBack()
+{
 	// TheSuperHackers @bugfix O89 (H19/H20) The room's observers that got KIND_START were waiting for a stream that will
 	// not come (up to kStreamWaitMs, 180 s): they are told, take their place in the room again, and the start can be
 	// pressed again. Three copies (UDP); the players have nothing to undo: a player has the live list only with START,
-	// and a START is not called back once acknowledged.
+	// and a START is not called back once acknowledged. O93 (H24 #1): only from LANAPI::stopStartDelivery.
 	if (TheLAN != nullptr && !s_startObservers.empty())
 	{
 		const UnsignedInt localIP = TheLAN->GetLocalIP();
