@@ -239,7 +239,10 @@ namespace
 		return PlayerTable::picture(PlayerTable::PICTURE_COLOR);
 	}
 
-	/// The army picture of a player template index: the random army emblem, or the template's side icon.
+	/// The army picture of a player template index: the random army emblem, or the template's own emblem.
+	/// TheSuperHackers @tweak O91 (row 53) A general shows its own emblem (PlayerTemplate GeneralImage, the one of its
+	/// command centre: Zero Hour's twelve armies), not only its side's icon (three for all twelve); a template without one
+	/// (the base game, a FactionBossGeneral "None") keeps its side icon.
 	const Image *armyPicture(Int playerTemplate)
 	{
 		if (playerTemplate == PLAYERTEMPLATE_OBSERVER) {
@@ -249,7 +252,11 @@ namespace
 			return PlayerTable::picture(PlayerTable::PICTURE_RANDOM_ARMY);
 		}
 		const PlayerTemplate *pt = ThePlayerTemplateStore != nullptr ? ThePlayerTemplateStore->getNthPlayerTemplate(playerTemplate) : nullptr;
-		return pt != nullptr ? pt->getSideIconImage() : nullptr;
+		if (pt == nullptr) {
+			return nullptr;
+		}
+		const Image *emblem = pt->getGeneralImage();
+		return emblem != nullptr ? emblem : pt->getSideIconImage();
 	}
 
 	Int heightOf(GameWindow *w) { Int x = 0, y = 0; w->winGetSize(&x, &y); return y; }
