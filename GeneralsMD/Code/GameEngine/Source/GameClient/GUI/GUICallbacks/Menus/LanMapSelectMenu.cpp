@@ -380,7 +380,10 @@ WindowMsgHandledType LanMapSelectMenuSystem( GameWindow *window, UnsignedInt msg
 					std::map<AsciiString, MapMetaData>::iterator it = TheMapCache->find(asciiMap);
 					if (it != TheMapCache->end())
 					{
-						TheLAN->GetMyGame()->getSlot(0)->setMapAvailability(true);
+						// TheSuperHackers @bugfix O92 (O90 finding) the host's own seat has the map, not slot 0: while the admin
+						// watches from outside the seats, slot 0 can be a joiner's, who says himself whether he has it
+						if (TheLAN->GetMyGame()->getLANSlot(TheLAN->GetMyGame()->getLocalSlotNum()) != nullptr)
+							TheLAN->GetMyGame()->getLANSlot(TheLAN->GetMyGame()->getLocalSlotNum())->setMapAvailability(true);
 						TheLAN->GetMyGame()->setMapCRC( it->second.m_CRC );
 						TheLAN->GetMyGame()->setMapSize( it->second.m_filesize );
 
