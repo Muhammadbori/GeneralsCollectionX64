@@ -206,6 +206,9 @@ namespace LanRoom
 	/// O60: TRUE once after the admin watched his room's match from outside the seats (its replay's score screen offers
 	/// "Play again" as a playing host's does).
 	Bool takeAdminWatchedMatch();
+	/// TheSuperHackers @tweak O92 (H23) TRUE while this process plays a LAN match's stream back (a room observer, the
+	/// watching admin, an outside viewer): never in its own match. GameInfo's player views show every pick then.
+	Bool viewerPlaysBack();
 	/// A line for the screen's chat (removed, full, waiting, lost ...); FALSE when none.
 	Bool takeNotice(UnicodeString *text);
 	/// O71: a line for the LAN lobby's chat from LANAPI (this computer left its room without asking)

@@ -382,7 +382,8 @@ WindowMsgHandledType LanMapSelectMenuSystem( GameWindow *window, UnsignedInt msg
 					{
 						// TheSuperHackers @bugfix O92 (O90 finding) the host's own seat has the map, not slot 0: while the admin
 						// watches from outside the seats, slot 0 can be a joiner's, who says himself whether he has it
-						if (TheLAN->GetMyGame()->getLANSlot(TheLAN->GetMyGame()->getLocalSlotNum()) != nullptr)
+						// O92 (H23): only with a seat of his own (getLANSlot(-1) asserts in a debug build)
+						if (TheLAN->GetMyGame()->getLocalSlotNum() >= 0)
 							TheLAN->GetMyGame()->getLANSlot(TheLAN->GetMyGame()->getLocalSlotNum())->setMapAvailability(true);
 						TheLAN->GetMyGame()->setMapCRC( it->second.m_CRC );
 						TheLAN->GetMyGame()->setMapSize( it->second.m_filesize );

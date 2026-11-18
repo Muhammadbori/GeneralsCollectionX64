@@ -1769,6 +1769,11 @@ void LanRoom::lobbyOpened()
 	resetViewer();
 }
 
+Bool LanRoom::viewerPlaysBack()
+{
+	return ReplayStream::isWatching() && TheRecorder != nullptr && TheRecorder->isPlaybackMode();
+}
+
 Bool LanRoom::takeAdminWatchedMatch()
 {
 	const Bool watched = s_adminWatchedMatch;
