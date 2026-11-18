@@ -1370,7 +1370,9 @@ winName.format("ScoreScreen.wnd:StaticTextScore%d", pos);
 	const PlayerTemplate *fact = player->getPlayerTemplate();
 	if(fact != nullptr)
 	{
-		win->winSetEnabledImage(0, fact->getSideIconImage());
+		// TheSuperHackers @tweak O91 (row 53) the general's own emblem when its template names one, else the side icon
+		const Image *emblem = fact->getGeneralImage();
+		win->winSetEnabledImage(0, emblem != nullptr ? emblem : fact->getSideIconImage());
 	}
 
 
@@ -2161,7 +2163,9 @@ winName.format("ScoreScreen.wnd:StaticTextScore%d", i);
 	const PlayerTemplate *fact = player->getPlayerTemplate();
 	if(fact != nullptr)
 	{
-		win->winSetEnabledImage(0, fact->getSideIconImage());
+		// TheSuperHackers @tweak O91 (row 53) the general's own emblem when its template names one, else the side icon
+		const Image *emblem = fact->getGeneralImage();
+		win->winSetEnabledImage(0, emblem != nullptr ? emblem : fact->getSideIconImage());
 	}
 
 //	// set the Buttons

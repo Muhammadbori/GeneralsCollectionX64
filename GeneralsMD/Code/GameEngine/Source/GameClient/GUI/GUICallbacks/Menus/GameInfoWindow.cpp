@@ -184,7 +184,9 @@ void RefreshGameInfoWindow(GameInfo *gameInfo, UnicodeString gameName)
 		else
 		{
 			const PlayerTemplate *fact = ThePlayerTemplateStore->getNthPlayerTemplate(playerTemplate);
-			GadgetListBoxAddEntryImage(listBoxPlayers, fact->getSideIconImage(),addedRow, 0, 22,25);
+			// TheSuperHackers @tweak O91 (row 53) the general's own emblem when its template names one, else the side icon
+			const Image *emblem = fact->getGeneralImage();
+			GadgetListBoxAddEntryImage(listBoxPlayers, emblem != nullptr ? emblem : fact->getSideIconImage(),addedRow, 0, 22,25);
 			//GadgetListBoxAddEntryText(listBoxPlayers,fact->getDisplayName(),playerColor,addedRow, 0);
 		}
 
