@@ -67,7 +67,8 @@ namespace
 		Bool asked = FALSE;
 		Int misses = 0;             ///< answers missed in a row
 		UnsignedInt verdictMs = 0;  ///< O32: when the verdict was given
-		UnsignedInt stateSeen = 0;  ///< O83: when this player's own room/lobby state last named this address (0: never)
+		GuardLink::PeerClass owner = GuardLink::PEER_LOBBY;   ///< O84: the class whose room this entry takes
+		UnsignedInt named[GuardLink::PEER_CLASSES] = { 0, 0, 0 };   ///< O84: when each class last named it (0: never)
 		GuardLink::Verdict verdict = GuardLink::VERDICT_NONE;
 		UnsignedInt bits = 0;
 	};
@@ -281,7 +282,11 @@ namespace
 					memcpy(&ip, p, 4);
 					memcpy(&verdict, p + 4, 4);
 					memcpy(&bits, p + 8, 4);
-					Peer &peer = s_peers[ip];
+					std::map<UnsignedInt, Peer>::iterator found = s_peers.find(ip);
+					if (found == s_peers.end()) {
+						break;   // O84: no longer tracked (dropped from its class): its answer is not kept
+					}
+					Peer &peer = found->second;
 					const GuardLink::Verdict v = verdict == 1 ? GuardLink::VERDICT_VERIFIED : (verdict == 2 ? GuardLink::VERDICT_FAILED : GuardLink::VERDICT_NONE);
 					if (v == GuardLink::VERDICT_FAILED && peer.verdict != GuardLink::VERDICT_FAILED) {
 						s_newFailures.push_back(ip);
@@ -522,22 +527,34 @@ void GuardLink::update()
 	s_lastPeerPass = now;
 	for (std::map<UnsignedInt, Peer>::iterator it = s_peers.begin(); it != s_peers.end();)
 	{
-		Peer &p = it->second;
-		if (now - p.lastSeen > kForgetMs)
-		{
+		if (now - it->second.lastSeen > kForgetMs) {
 			it = s_peers.erase(it);
-			continue;
+		} else {
+			++it;
 		}
-		if (now - p.lastSeen < kSeenWindowMs && (p.lastCheck == 0 || now - p.lastCheck >= kRecheckMs))
+	}
+	// O84 (H16): at most 24 questions a pass (48 a second), the room's first, so no flood of addresses makes this game
+	// send the anti-cheat (and the LAN) a question per junk address
+	Int budget = 24;
+	for (Int c = 0; c < GuardLink::PEER_CLASSES && budget > 0; ++c)
+	{
+		for (std::map<UnsignedInt, Peer>::iterator it = s_peers.begin(); it != s_peers.end() && budget > 0; ++it)
 		{
-			p.lastCheck = now;
-			const UnsignedInt check[2] = { it->first, p.ownIp };
-			writeFrame(PIPE_CHECK, check, sizeof(check));
-			if (!s_connected) {
-				return;
+			Peer &p = it->second;
+			if (p.owner != (GuardLink::PeerClass)c) {
+				continue;
+			}
+			if (now - p.lastSeen < kSeenWindowMs && (p.lastCheck == 0 || now - p.lastCheck >= kRecheckMs))
+			{
+				p.lastCheck = now;
+				--budget;
+				const UnsignedInt check[2] = { it->first, p.ownIp };
+				writeFrame(PIPE_CHECK, check, sizeof(check));
+				if (!s_connected) {
+					return;
+				}
 			}
 		}
-		++it;
 	}
 }
 
@@ -672,54 +689,113 @@ GuardLink::Verdict GuardLink::verdictOf(UnsignedInt ip)
 	return LanClock::now() - it->second.verdictMs <= kVerdictLifeMs ? it->second.verdict : VERDICT_NONE;
 }
 
-void GuardLink::notePeer(UnsignedInt ip, UnsignedInt ownIp, Bool fromState)
+namespace
 {
-	if (!s_started || s_dead || ip == 0 || ip == ownIp) {
+	const UnsignedInt kClassRoom[GuardLink::PEER_CLASSES] = { 24, 8, 96 };   ///< O84: the room of each class
+	const UnsignedInt kNamedMs = 2000;                                        ///< named within this time: shown
+
+	Bool namedNow(const Peer &p, Int c, UnsignedInt now)
+	{
+		return p.named[c] != 0 && now - p.named[c] < kNamedMs;
+	}
+
+	UnsignedInt ownedBy(GuardLink::PeerClass c)
+	{
+		UnsignedInt n = 0;
+		for (std::map<UnsignedInt, Peer>::const_iterator it = s_peers.begin(); it != s_peers.end(); ++it) {
+			n += it->second.owner == c ? 1 : 0;
+		}
+		return n;
+	}
+
+	void sayClassFull(GuardLink::PeerClass c, UnsignedInt now)
+	{
+		static Bool s_said[GuardLink::PEER_CLASSES] = { FALSE, FALSE, FALSE };
+		if (s_said[c] || TheGlobalData == nullptr) {
+			return;
+		}
+		s_said[c] = TRUE;
+		static const char *const kNames[GuardLink::PEER_CLASSES] = { "room", "join requests", "lobby" };
+		AsciiString path = TheGlobalData->getPath_UserData();
+		path.concat("GuardLink.log");
+		if (FILE *f = fopen(path.str(), "a"))
+		{
+			fprintf(f, "[%10u] the %s class is full (%u, all of them shown): a new address of it is not checked until one leaves\n",
+				(unsigned)now, kNames[c], (unsigned)kClassRoom[c]);
+			fclose(f);
+		}
+	}
+}
+
+void GuardLink::notePeer(UnsignedInt ip, UnsignedInt ownIp, PeerClass peerClass)
+{
+	if (!s_started || s_dead || ip == 0 || ip == ownIp || (Int)peerClass >= (Int)PEER_CLASSES) {
 		return;   // O32 (review 21): nothing is collected once the guard is gone
 	}
 	const UnsignedInt now = LanClock::now();
-	// TheSuperHackers @bugfix O83 (H15) Only addresses that matter to this player come here (LANAPI::noteGuardPeers: the
-	// seats, games, lobby players and observers his screens show, from his own state; and join requests to his room), not
-	// every packet's source. The 256 are a backstop: a full table makes room for an address of his state by dropping the
-	// oldest one his state no longer names (a join requester, a game gone from the list), and refuses anything else.
-	const size_t kMaxPeers = 256;
-	if (s_peers.size() >= kMaxPeers && s_peers.find(ip) == s_peers.end())
+	std::map<UnsignedInt, Peer>::iterator found = s_peers.find(ip);
+	if (found != s_peers.end())
+	{
+		Peer &p = found->second;
+		p.ownIp = ownIp;
+		p.lastSeen = now;
+		p.named[peerClass] = now;
+		// a class above its owner takes it over when it has room (a lobby player who sits down in this room)
+		if (peerClass < p.owner && ownedBy(peerClass) < kClassRoom[peerClass]) {
+			p.owner = peerClass;
+		}
+		return;
+	}
+	// TheSuperHackers @bugfix O84 (H16) A new address takes room in its own class only. A full class makes room within
+	// itself: the room and the lobby drop the oldest address they no longer name (never one still shown, so no verdict on
+	// screen turns into "unknown"); the join requests drop the oldest request older than 5 s. An entry still named by
+	// another class stays, owned by that one.
+	if (ownedBy(peerClass) >= kClassRoom[peerClass])
 	{
 		std::map<UnsignedInt, Peer>::iterator drop = s_peers.end();
-		if (fromState)
+		for (std::map<UnsignedInt, Peer>::iterator it = s_peers.begin(); it != s_peers.end(); ++it)
 		{
-			for (std::map<UnsignedInt, Peer>::iterator it = s_peers.begin(); it != s_peers.end(); ++it)
+			const Peer &p = it->second;
+			if (p.owner != peerClass) {
+				continue;
+			}
+			if (peerClass == PEER_JOIN)
 			{
-				const Bool named = it->second.stateSeen != 0 && now - it->second.stateSeen < 2000;
-				if (!named && (drop == s_peers.end() || now - it->second.lastSeen > now - drop->second.lastSeen)) {
+				// the oldest request leaves first, but not within 5 s of its last request (the admission decision takes one
+				// or two seconds; a joiner repeats his request every second while he waits)
+				if (now - p.named[PEER_JOIN] >= 5000
+					&& (drop == s_peers.end() || now - p.named[PEER_JOIN] > now - drop->second.named[PEER_JOIN])) {
 					drop = it;
 				}
 			}
-		}
-		static Bool s_fullSaid = FALSE;
-		if (!s_fullSaid && TheGlobalData != nullptr)
-		{
-			s_fullSaid = TRUE;
-			AsciiString path = TheGlobalData->getPath_UserData();
-			path.concat("GuardLink.log");
-			if (FILE *f = fopen(path.str(), "a"))
+			else if (!namedNow(p, peerClass, now)
+				&& (drop == s_peers.end() || now - p.lastSeen > now - drop->second.lastSeen))
 			{
-				fprintf(f, "[%10u] the table of players to check is full (%u): %s\n", (unsigned)now, (unsigned)kMaxPeers,
-					drop != s_peers.end() ? "the oldest one no longer shown makes room" : "this address is not checked");
-				fclose(f);
+				drop = it;
 			}
 		}
-		if (drop == s_peers.end()) {
+		if (drop == s_peers.end())
+		{
+			sayClassFull(peerClass, now);
 			return;
 		}
-		s_peers.erase(drop);
+		// O85 (H17): it goes over to another class that still names it only when that class has room, so no class's
+		// count exceeds its room (24/8/96); otherwise it is dropped, and that class names it again into its own room
+		Int other = -1;
+		for (Int c = 0; c < PEER_CLASSES && other < 0; ++c) {
+			if (c != peerClass && namedNow(drop->second, c, now) && ownedBy((PeerClass)c) < kClassRoom[c]) other = c;
+		}
+		if (other >= 0) {
+			drop->second.owner = (PeerClass)other;
+		} else {
+			s_peers.erase(drop);
+		}
 	}
 	Peer &p = s_peers[ip];
+	p.owner = peerClass;
+	p.named[peerClass] = now;
 	p.ownIp = ownIp;
 	p.lastSeen = now;
-	if (fromState) {
-		p.stateSeen = now;
-	}
 }
 
 void GuardLink::onLanData(UnsignedInt fromIp, UnsignedInt ownIp, const UnsignedByte *data, Int length)

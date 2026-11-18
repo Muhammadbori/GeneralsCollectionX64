@@ -476,6 +476,8 @@ public:
 	/// O62 (H5 #1, #7): a start is under way: the countdown runs, or the host waits for the players' READY.
 	Bool IsStartPending() const { return m_gameStartTime != 0 || m_startChecking || m_startDelivering; }
 	Bool IsStartDelivering() const { return m_startDelivering; }   ///< O76: START is out: the room must not change
+	/// O84: the host of the game row selected in the lobby (0: none); its seats and observers are checked (GuardLink)
+	void SetLobbySelectedHost(UnsignedInt hostIP) { m_lobbySelectedHost = hostIP; }
 	/// O71: the room's keep-alive while update() does not run (the screen changes: LANbuttonPushed, a shell animation);
 	/// called by the LAN lobby menu's update instead of update()
 	void keepRoomAlive();
@@ -542,6 +544,7 @@ protected:
 	UnsignedInt					m_seatJoinedMs[MAX_SLOTS];   ///< the host: a seat given and not yet heard from (0: none)
 	// O71: silence is 30 s; it is not counted while this computer's own loop did not run, nor during a start
 	UnsignedInt					m_lastLoopMs;        ///< the last LANAPI::update in a room
+	UnsignedInt					m_lobbySelectedHost; ///< O84: SetLobbySelectedHost
 	UnsignedInt					m_startSeenMs;       ///< a joiner: the host's last start check or countdown message
 	UnsignedInt					m_notListedSinceMs;  ///< O71: a joiner: the host's lists have not had this computer since (0: they have)
 	Bool								m_acceptWanted;
