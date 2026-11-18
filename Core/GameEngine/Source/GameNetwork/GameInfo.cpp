@@ -36,6 +36,7 @@
 #include "GameClient/MapUtil.h"
 #include "Common/MultiplayerSettings.h"
 #include "Common/PlayerTemplate.h"
+#include "Common/ReplayStream.h"   // O92
 #include "Common/Xfer.h"
 #include "GameNetwork/FileTransfer.h"
 #include "GameNetwork/GameInfo.h"
@@ -106,6 +107,12 @@ static Bool isSlotLocalAlly(const GameSlot *slot)
 	Int slotIndex = getSlotIndex(slot);
 	Int localIndex = TheGameInfo->getLocalSlotNum();
 	const GameSlot *localSlot = TheGameInfo->getConstSlot(localIndex);
+
+	// TheSuperHackers @tweak O92 A viewer of a LAN match's stream (a room observer, the admin who watches, an outside
+	// viewer) is an observer too: it sees every random pick, not the view of the player whose recording it plays (which
+	// may have no local slot at all)
+	if (slotIndex >= 0 && ReplayStream::isWatching())
+		return TRUE;
 
 	// if either doesn't exist, not an ally
 	if (slotIndex < 0 || localIndex < 0)
