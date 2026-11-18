@@ -52,6 +52,7 @@
 #include "GameClient/MapUtil.h"
 #include "GameClient/Mouse.h"
 #include "GameClient/PlayerTable.h"
+#include "GameClient/LookPalette.h"   // O94
 #include "GameNetwork/LANAPI.h"
 #include "GameNetwork/LANAPICallbacks.h"
 #include "GameNetwork/LANGameInfo.h"
@@ -106,11 +107,11 @@ namespace
 
 	//---------------------------------------------------------------------------------------------
 	// Colours of the mock
-	const Color kFrame = GameMakeColor(30, 140, 255, 255);
+	const Color kFrame = LookPalette::kFrame;   // O94: gold in the base game
 	const Color kFill = GameMakeColor(0, 0, 0, 170);
-	const Color kRowSelected = GameMakeColor(20, 30, 110, 230);
+	const Color kRowSelected = LookPalette::kRowSelected;   // O94
 	const Color kText = GameMakeColor(255, 255, 255, 255);
-	const Color kTextDim = GameMakeColor(150, 156, 172, 255);
+	const Color kTextDim = LookPalette::kTextDim;   // O94
 	const Color kTextHeader = GameMakeColor(220, 224, 236, 255);
 	const Color kGreen = GameMakeColor(140, 255, 50, 255);
 	const Color kRed = GameMakeColor(255, 70, 70, 255);
@@ -368,7 +369,7 @@ namespace
 		return t;
 	}
 
-	const Color kBarTrack = GameMakeColor(42, 46, 72, 255);
+	const Color kBarTrack = LookPalette::kTrack;   // O94
 	const Int kBarW = 6;
 
 	/// O29 (item 5): a thin scroll bar when not all rows are shown: the track and a thumb for the shown part.

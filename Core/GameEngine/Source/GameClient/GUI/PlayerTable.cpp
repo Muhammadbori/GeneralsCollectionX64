@@ -39,6 +39,7 @@
 #include "GameClient/LocalizedFallback.h"
 #include "GameNetwork/GameInfo.h"
 #include "GameClient/Mouse.h"
+#include "GameClient/LookPalette.h"   // O94
 #include "Common/FrameShots.h"
 
 #include <map>
@@ -614,7 +615,7 @@ namespace
 		Int x0, x1;
 	};
 	std::map<const GameWindow *, GroupLines> s_groupLines;
-	const Color kGroupLine = GameMakeColor(110, 190, 255, 230);
+	const Color kGroupLine = LookPalette::kGroupLine;   // O94: gold in the base game
 
 	void drawGroupLines(GameWindow *window, WinInstanceData *)
 	{
