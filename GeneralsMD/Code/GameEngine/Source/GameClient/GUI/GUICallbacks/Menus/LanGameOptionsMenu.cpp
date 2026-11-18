@@ -269,6 +269,18 @@ void StartPressed()
 		return;
 	}
 
+	// TheSuperHackers @feature O90 (row 52) The admin who watches from outside the seats starts a match of at least two
+	// playing sides with a human among them (a match of one, or of computer players only, is refused: one line, and no
+	// start check is sent). A host who plays keeps the checks below (alone: the sandbox match).
+	{
+		UnicodeString problem;
+		if (TheLAN->AmIHost() && LanRoom::hostWatchSidesProblem(myGame, &problem))
+		{
+			TheLAN->OnChat(L"SYSTEM", TheLAN->GetLocalIP(), problem, LANAPI::LANCHAT_SYSTEM);
+			return;
+		}
+	}
+
 	// Check for observer + AI players
 	if (TheGlobalData->m_netMinPlayers && !numHumans)
 	{
