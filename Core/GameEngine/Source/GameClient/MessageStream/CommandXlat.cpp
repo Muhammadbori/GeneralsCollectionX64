@@ -91,6 +91,7 @@
 #include "GameNetwork/GameSpy/BuddyThread.h"
 #include "GameClient/ReplayControlBar.h"
 #include "GameNetwork/LanRoom.h"
+#include "GameClient/DefeatedPlayer.h"
 
 #include "WW3D2/ww3d.h"
 
@@ -3257,7 +3258,10 @@ GameMessageDisposition CommandTranslator::translateGameMessage(const GameMessage
 			if (TheGameLogic->isInMultiplayerGame() && !TheGameLogic->isInReplayGame())
 			{
 				Player *localPlayer = ThePlayerList->getLocalPlayer();
-				if ((localPlayer && localPlayer->isPlayerActive()) || !TheGlobalData->m_netMinPlayers)
+				// O86 (row 47): also a defeated player who stays with his team (DefeatedPlayer.h); his text goes to his
+				// team-mates whatever the chat type, and the allies key must open the box for him too
+				if ((localPlayer && localPlayer->isPlayerActive()) || DefeatedPlayer::localStaysWithTeam()
+					|| !TheGlobalData->m_netMinPlayers)
 				{
 					ToggleInGameChat();
 					SetInGameChatType( INGAME_CHAT_ALLIES );
