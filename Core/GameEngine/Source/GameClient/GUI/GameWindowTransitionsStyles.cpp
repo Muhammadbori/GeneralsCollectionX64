@@ -134,6 +134,14 @@ void FlashTransition::update( Int frame )
 		DEBUG_CRASH(("FlashTransition::update - Frame is out of the range the this update can handle %d", frame));
 		return;
 	}
+	// TheSuperHackers @bugfix O88 Its window is gone (destroyed during the transition: TransitionWindow::unlinkGameWindow)
+	// or was never found: nothing to show, and the transition is over. It used to read the null window in some frames (a
+	// crash) and to stop before "finished" in the others (a group that never finished: a shell that waited forever).
+	if (m_win == nullptr)
+	{
+		m_isFinished = TRUE;
+		return;
+	}
 	switch (frame) {
 	case FLASHTRANSITION_START:
 		{
@@ -288,6 +296,12 @@ void ButtonFlashTransition::update( Int frame )
 	if(frame < BUTTONFLASHTRANSITION_START || frame > BUTTONFLASHTRANSITION_END)
 	{
 		DEBUG_CRASH(("ButtonFlashTransition::update - Frame is out of the range the this update can handle %d", frame));
+		return;
+	}
+	// O88: a missing window ends the transition (FlashTransition::update)
+	if (m_win == nullptr)
+	{
+		m_isFinished = TRUE;
 		return;
 	}
 	switch (frame) {
@@ -663,6 +677,12 @@ void FadeTransition::update( Int frame )
 		DEBUG_CRASH(("FadeTransition::update - Frame is out of the range the this update can handle %d", frame));
 		return;
 	}
+	// O88: a missing window ends the transition (FlashTransition::update)
+	if (m_win == nullptr)
+	{
+		m_isFinished = TRUE;
+		return;
+	}
 	switch (frame) {
 	case FADETRANSITION_START:
 		{
@@ -806,6 +826,12 @@ void ScaleUpTransition::update( Int frame )
 		DEBUG_CRASH(("ScaleUpTransition::update - Frame is out of the range the this update can handle %d", frame));
 		return;
 	}
+	// O88: a missing window ends the transition (FlashTransition::update)
+	if (m_win == nullptr)
+	{
+		m_isFinished = TRUE;
+		return;
+	}
 	switch (frame) {
 	case SCALEUPTRANSITION_START:
 		{
@@ -929,6 +955,12 @@ void ScoreScaleUpTransition::update( Int frame )
 		DEBUG_CRASH(("ScoreScaleUpTransition::update - Frame is out of the range the this update can handle %d", frame));
 		return;
 	}
+	// O88: a missing window ends the transition (FlashTransition::update)
+	if (m_win == nullptr)
+	{
+		m_isFinished = TRUE;
+		return;
+	}
 	switch (frame) {
 	case SCORESCALEUPTRANSITION_START:
 		{
@@ -1032,6 +1064,11 @@ void MainMenuScaleUpTransition::init( GameWindow *win )
 		m_win->winGetSize(&m_size.x, &m_size.y);
 		m_win->winGetScreenPosition(&m_pos.x, &m_pos.y );
 	}
+	if (m_win == nullptr)
+	{
+		m_isFinished = TRUE;   // O88: no window: nothing to do (it read the null window here)
+		return;
+	}
 	m_growWin = TheWindowManager->winGetWindowFromId(nullptr, TheNameKeyGenerator->nameToKey("MainMenu.wnd:WinGrowMarker"));
 	if(!m_growWin)
 		return;
@@ -1058,6 +1095,12 @@ void MainMenuScaleUpTransition::update( Int frame )
 	if(frame < MAINMENUSCALEUPTRANSITION_START || frame > MAINMENUSCALEUPTRANSITION_END)
 	{
 		DEBUG_CRASH(("MainMenuScaleUpTransition::update - Frame is out of the range the this update can handle %d", frame));
+		return;
+	}
+	// O88: a missing window ends the transition (FlashTransition::update)
+	if (m_win == nullptr || m_growWin == nullptr)
+	{
+		m_isFinished = TRUE;
 		return;
 	}
 	switch (frame) {
@@ -1149,6 +1192,11 @@ void MainMenuMediumScaleUpTransition::init( GameWindow *win )
 		m_win->winGetSize(&m_size.x, &m_size.y);
 		m_win->winGetScreenPosition(&m_pos.x, &m_pos.y );
 	}
+	if (m_win == nullptr)
+	{
+		m_isFinished = TRUE;   // O88: no window: nothing to do (it read the null window here)
+		return;
+	}
 	AsciiString growWinName;
 	growWinName = m_win->winGetInstanceData()->m_decoratedNameString;
 	growWinName.concat("Medium");
@@ -1177,6 +1225,12 @@ void MainMenuMediumScaleUpTransition::update( Int frame )
 	if(frame < MAINMENUMEDIUMSCALEUPTRANSITION_START || frame > MAINMENUMEDIUMSCALEUPTRANSITION_END)
 	{
 		DEBUG_CRASH(("MainMenuMediumScaleUpTransition::update - Frame is out of the range the this update can handle %d", frame));
+		return;
+	}
+	// O88: a missing window ends the transition (FlashTransition::update)
+	if (m_win == nullptr || m_growWin == nullptr)
+	{
+		m_isFinished = TRUE;
 		return;
 	}
 	switch (frame) {
@@ -1222,6 +1276,11 @@ void MainMenuMediumScaleUpTransition::reverse()
 {
 	m_isFinished = FALSE;
 	m_isForward = FALSE;
+	if (m_win == nullptr || m_growWin == nullptr)
+	{
+		m_isFinished = TRUE;   // O88: no window: nothing to do
+		return;
+	}
 	m_win->winHide(TRUE);
 	m_growWin->winHide(TRUE);
 
@@ -1268,6 +1327,11 @@ void MainMenuSmallScaleDownTransition::init( GameWindow *win )
 		m_win->winGetSize(&m_size.x, &m_size.y);
 		m_win->winGetScreenPosition(&m_pos.x, &m_pos.y );
 	}
+	if (m_win == nullptr)
+	{
+		m_isFinished = TRUE;   // O88: no window: nothing to do (it read the null window here)
+		return;
+	}
 	AsciiString growWinName;
 	growWinName = m_win->winGetInstanceData()->m_decoratedNameString;
 	growWinName.concat("Small");
@@ -1296,6 +1360,12 @@ void MainMenuSmallScaleDownTransition::update( Int frame )
 	if(frame < MAINMENUSMALLSCALEDOWNTRANSITION_START || frame > MAINMENUSMALLSCALEDOWNTRANSITION_END)
 	{
 		DEBUG_CRASH(("MainMenuSmallScaleDownTransition::update - Frame is out of the range the this update can handle %d", frame));
+		return;
+	}
+	// O88: a missing window ends the transition (FlashTransition::update)
+	if (m_win == nullptr || m_growWin == nullptr)
+	{
+		m_isFinished = TRUE;
 		return;
 	}
 	switch (frame) {
@@ -1390,6 +1460,11 @@ void TextTypeTransition::init( GameWindow *win )
 	m_isFinished = FALSE;
 	m_isForward = TRUE;
 	m_dStr = TheDisplayStringManager->newDisplayString();
+	if (m_win == nullptr)
+	{
+		m_isFinished = TRUE;   // O88: no window: nothing to do (it read the null window here)
+		return;
+	}
 	m_fullText = GadgetStaticTextGetText(m_win);
 	Int length = m_fullText.getLength();
 	m_frameLength = MIN(length, TEXTTYPETRANSITION_END);
@@ -1401,6 +1476,12 @@ void TextTypeTransition::update( Int frame )
 	if(frame < TEXTTYPETRANSITION_START || frame > TEXTTYPETRANSITION_END)
 	{
 		DEBUG_CRASH(("TextTypeTransition::update - Frame is out of the range the this update can handle %d", frame));
+		return;
+	}
+	// O88: a missing window ends the transition (FlashTransition::update)
+	if (m_win == nullptr)
+	{
+		m_isFinished = TRUE;
 		return;
 	}
 	switch (frame) {
@@ -1502,6 +1583,11 @@ void CountUpTransition::init( GameWindow *win )
 			return;
 		}
 	}
+	if (m_win == nullptr)
+	{
+		m_isFinished = TRUE;   // O88: no window: nothing to do (it read the null window here)
+		return;
+	}
 	m_fullText = GadgetStaticTextGetText(m_win);
 	m_isForward = FALSE;
 	update(COUNTUPTRANSITION_START);
@@ -1540,6 +1626,12 @@ void CountUpTransition::update( Int frame )
 	if(frame < COUNTUPTRANSITION_START || frame > COUNTUPTRANSITION_END)
 	{
 		DEBUG_CRASH(("CountUpTransition::update - Frame is out of the range the this update can handle %d", frame));
+		return;
+	}
+	// O88: a missing window ends the transition (FlashTransition::update)
+	if (m_win == nullptr)
+	{
+		m_isFinished = TRUE;
 		return;
 	}
 	switch (frame) {
@@ -1597,7 +1689,7 @@ void CountUpTransition::update( Int frame )
 
 void CountUpTransition::reverse()
 {
-	if( m_win->winIsHidden() )
+	if( m_win == nullptr || m_win->winIsHidden() )   // O88: no window: nothing to do
 	{
 		m_isForward = FALSE;
 		m_isFinished = TRUE;
@@ -1847,6 +1939,12 @@ void FullFadeTransition::update( Int frame )
 		DEBUG_CRASH(("FullFadeTransition::update - Frame is out of the range the this update can handle %d", frame));
 		return;
 	}
+	// O88: a missing window ends the transition (FlashTransition::update)
+	if (m_win == nullptr)
+	{
+		m_isFinished = TRUE;
+		return;
+	}
 	switch (frame) {
 	case FULLFADETRANSITION_START:
 		{
@@ -1886,6 +1984,9 @@ void FullFadeTransition::reverse()
 
 void FullFadeTransition::draw()
 {
+	if (m_win == nullptr || m_drawState < FULLFADETRANSITION_START) {
+		return;   // O88
+	}
 	Int alpha;
 	if(m_drawState > (FULLFADETRANSITION_END/2))
 		alpha = m_percent * 255 * (FULLFADETRANSITION_END - m_drawState);
@@ -1926,7 +2027,7 @@ void TextOnFrameTransition::init( GameWindow *win )
 	{
 		m_win = win;
 	}
-	if(m_win->winIsHidden())
+	if(m_win == nullptr || m_win->winIsHidden())   // O88: no window: nothing to do
 	{
 		m_isFinished = TRUE;
 		m_isForward = TRUE;
@@ -1946,6 +2047,12 @@ void TextOnFrameTransition::update( Int frame )
 	if(frame < TEXTONFRAMETRANSITION_START || frame > TEXTONFRAMETRANSITION_END)
 	{
 		DEBUG_CRASH(("TextOnFrameTransition::update - Frame is out of the range the this update can handle %d", frame));
+		return;
+	}
+	// O88: a missing window ends the transition (FlashTransition::update)
+	if (m_win == nullptr)
+	{
+		m_isFinished = TRUE;
 		return;
 	}
 	switch (frame) {
@@ -1975,7 +2082,7 @@ void TextOnFrameTransition::reverse()
 {
 	m_isFinished = FALSE;
 	m_isForward = FALSE;
-	if(m_win->winIsHidden())
+	if(m_win == nullptr || m_win->winIsHidden())   // O88: no window: nothing to do
 	{
 		m_isFinished = TRUE;
 		m_frameLength = 0;
