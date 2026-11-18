@@ -109,6 +109,10 @@ namespace LanRoom
 	/// TheSuperHackers @feature O60 (row 46) Start while the admin watches from outside the seats: nobody of the match
 	/// can send the map (the host sends it, and he is not in the match). TRUE and the text when a player lacks it.
 	Bool hostStartProblem(const LANGameInfo *game, UnicodeString *text);
+	/// TheSuperHackers @feature O90 (row 52) Start while the admin watches from outside the seats needs two playing sides
+	/// (occupied seats that are not observers: humans or computer players) and a human among them. TRUE and the text when
+	/// the room has fewer. A host who plays keeps the original rules (alone: the sandbox match).
+	Bool hostWatchSidesProblem(const LANGameInfo *game, UnicodeString *text);
 	/// O60: the first seat leads the match (ConnectionManager's packet router, FileTransfer's sender, the announce of
 	/// the running game): at Start the host moves there when he plays, else the lowest player when nobody sits there.
 	/// A slot moves whole (army, colour, team, start). TRUE: the slots changed (the host sends them before START).

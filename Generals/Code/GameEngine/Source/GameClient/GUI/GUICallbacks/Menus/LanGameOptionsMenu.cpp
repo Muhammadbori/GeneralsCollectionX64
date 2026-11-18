@@ -262,6 +262,18 @@ void StartPressed()
 		return;
 	}
 
+	// TheSuperHackers @feature O90 (row 52) The admin who watches from outside the seats starts a match of at least two
+	// playing sides with a human among them (a match of one, or of computer players only, is refused: one line, and no
+	// start check is sent). A host who plays keeps the checks below (alone: the sandbox match).
+	{
+		UnicodeString problem;
+		if (TheLAN->AmIHost() && LanRoom::hostWatchSidesProblem(myGame, &problem))
+		{
+			TheLAN->OnChat(L"SYSTEM", TheLAN->GetLocalIP(), problem, LANAPI::LANCHAT_SYSTEM);
+			return;
+		}
+	}
+
 	// Check for observer + AI players
 	if (TheGlobalData->m_netMinPlayers && !numHumans)
 	{
@@ -631,6 +643,25 @@ void lanUpdateSlotList()
 {
 	if(!AreSlotListUpdatesEnabled() || s_isIniting)
 		return;
+	// TheSuperHackers @bugfix O90 (row 51) A seat's list (open, closed, the computer players) is made at the menu's start for
+	// every seat but the local one. The admin who leaves his seat to watch (LanRoom::hostSetObserves) left a seat without
+	// that list: his screen kept his name in it and he could not open, close or give it to the computer. The seat that is
+	// no longer his gets the list now, and shows its state like any other seat.
+	LANGameInfo *roomGame = TheLAN->GetMyGame();
+	if (roomGame != nullptr && roomGame->amIHost())
+	{
+		for (Int i = 0; i < MAX_SLOTS; ++i)
+		{
+			if (i != roomGame->getLocalSlotNum() && comboBoxPlayer[i] != nullptr && GadgetComboBoxGetLength(comboBoxPlayer[i]) == 0)
+			{
+				GadgetComboBoxAddEntry(comboBoxPlayer[i],TheGameText->fetch("GUI:Open"),white);
+				GadgetComboBoxAddEntry(comboBoxPlayer[i],TheGameText->fetch("GUI:Closed"),white);
+				GadgetComboBoxAddEntry(comboBoxPlayer[i],TheGameText->fetch("GUI:EasyAI"),white);
+				GadgetComboBoxAddEntry(comboBoxPlayer[i],TheGameText->fetch("GUI:MediumAI"),white);
+				GadgetComboBoxAddEntry(comboBoxPlayer[i],TheGameText->fetch("GUI:HardAI"),white);
+			}
+		}
+	}
 	UpdateSlotList( TheLAN->GetMyGame(), comboBoxPlayer, comboBoxColor,
 		comboBoxPlayerTemplate, comboBoxTeam, buttonAccept, buttonStart, buttonMapStartPosition);
 

@@ -85,6 +85,8 @@ namespace
 	const Text kObserverOnly = { "GUI:LanObserverChatOnly", L"Your messages go to the room's other observers only.", L"\x0412\x0430\x0448\x0438 \x0441\x043E\x043E\x0431\x0449\x0435\x043D\x0438\x044F \x0432\x0438\x0434\x044F\x0442 \x0442\x043E\x043B\x044C\x043A\x043E \x0434\x0440\x0443\x0433\x0438\x0435 \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x0438 \x043A\x043E\x043C\x043D\x0430\x0442\x044B." };
 	const Text kAdminNoMap = { "GUI:LanRoomAdminNoMap", L"The host watches, so nobody can send the map. These players need it first: %ls", L"\x0425\x043E\x0441\x0442 \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0435\x0442, \x043F\x043E\x044D\x0442\x043E\x043C\x0443 \x043A\x0430\x0440\x0442\x0443 \x043D\x0435\x043A\x043E\x043C\x0443 \x043F\x0435\x0440\x0435\x0434\x0430\x0442\x044C. \x0421\x043D\x0430\x0447\x0430\x043B\x0430 \x043E\x043D\x0430 \x043D\x0443\x0436\x043D\x0430 \x044D\x0442\x0438\x043C \x0438\x0433\x0440\x043E\x043A\x0430\x043C: %ls" };
 	const Text kAdminNobody = { "GUI:LanRoomAdminNobody", L"Nobody sits in a seat: a match needs at least one player.", L"\x041D\x0438\x043A\x0442\x043E \x043D\x0435 \x0441\x0438\x0434\x0438\x0442 \x043D\x0430 \x043C\x0435\x0441\x0442\x0435: \x0434\x043B\x044F \x043C\x0430\x0442\x0447\x0430 \x043D\x0443\x0436\x0435\x043D \x0445\x043E\x0442\x044F \x0431\x044B \x043E\x0434\x0438\x043D \x0438\x0433\x0440\x043E\x043A." };
+	// O90 (row 52)
+	const Text kAdminTwoSides = { "GUI:LanRoomAdminTwoSides", L"To start the match, at least two players are needed.", L"\x0427\x0442\x043E\x0431\x044B \x043D\x0430\x0447\x0430\x0442\x044C \x0438\x0433\x0440\x0443, \x043D\x0443\x0436\x043D\x044B \x043C\x0438\x043D\x0438\x043C\x0443\x043C \x0434\x0432\x0430 \x0438\x0433\x0440\x043E\x043A\x0430." };
 	const Text kOtherVersion = { "GUI:LanOtherVersion", L"This game is another version of the game: it cannot be joined or watched.", L"\x042D\x0442\x0430 \x0438\x0433\x0440\x0430 \x0434\x0440\x0443\x0433\x043E\x0439 \x0432\x0435\x0440\x0441\x0438\x0438: \x0432\x043E\x0439\x0442\x0438 \x0432 \x043D\x0435\x0451 \x0438\x043B\x0438 \x0441\x043C\x043E\x0442\x0440\x0435\x0442\x044C \x0435\x0451 \x043D\x0435\x043B\x044C\x0437\x044F." };
 	const Text kThisPcPlays = { "GUI:LanRoomThisPcPlays", L"This computer is a player of this match: it cannot watch it (a second game on a player's computer is refused).", L"\x042D\x0442\x043E\x0442 \x043A\x043E\x043C\x043F\x044C\x044E\x0442\x0435\x0440 \x2014 \x0438\x0433\x0440\x043E\x043A \x044D\x0442\x043E\x0433\x043E \x043C\x0430\x0442\x0447\x0430: \x0441\x043C\x043E\x0442\x0440\x0435\x0442\x044C \x0435\x0433\x043E \x043E\x0442\x0441\x044E\x0434\x0430 \x043D\x0435\x043B\x044C\x0437\x044F (\x0432\x0442\x043E\x0440\x0430\x044F \x0438\x0433\x0440\x0430 \x043D\x0430 \x043A\x043E\x043C\x043F\x044C\x044E\x0442\x0435\x0440\x0435 \x0438\x0433\x0440\x043E\x043A\x0430 \x043D\x0435 \x0434\x043E\x043F\x0443\x0441\x043A\x0430\x0435\x0442\x0441\x044F)." };   // O64
 	const Text kChatPortBusy = { "GUI:LanObserverChatPortBusy", L"The observers' chat could not open (port 8091 is in use on this computer): no text or voice with the other observers in this match.", L"\x0427\x0430\x0442 \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x0435\x0439 \x043D\x0435 \x043E\x0442\x043A\x0440\x044B\x043B\x0441\x044F (\x043F\x043E\x0440\x0442 8091 \x043D\x0430 \x044D\x0442\x043E\x043C \x043A\x043E\x043C\x043F\x044C\x044E\x0442\x0435\x0440\x0435 \x0437\x0430\x043D\x044F\x0442): \x0432 \x044D\x0442\x043E\x043C \x043C\x0430\x0442\x0447\x0435 \x043D\x0435\x0442 \x0442\x0435\x043A\x0441\x0442\x0430 \x0438 \x0433\x043E\x043B\x043E\x0441\x0430 \x0441 \x0434\x0440\x0443\x0433\x0438\x043C\x0438 \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x044F\x043C\x0438." };   // O82
@@ -1638,6 +1640,31 @@ Bool LanRoom::hostStartProblem(const LANGameInfo *game, UnicodeString *text)
 		return FALSE;
 	}
 	text->format(textOf(kAdminNoMap).str(), missing.str());
+	return TRUE;
+}
+
+Bool LanRoom::hostWatchSidesProblem(const LANGameInfo *game, UnicodeString *text)
+{
+	if (game == nullptr || TheLAN == nullptr || !game->amIHost() || !game->getHostObserves() || inSlot(game, TheLAN->GetLocalIP())) {
+		return FALSE;
+	}
+	Int sides = 0;
+	Int humans = 0;
+	for (Int i = 0; i < MAX_SLOTS; ++i)
+	{
+		const GameSlot *slot = game->getConstSlot(i);
+		if (slot != nullptr && slot->isOccupied() && slot->getPlayerTemplate() != PLAYERTEMPLATE_OBSERVER)
+		{
+			++sides;
+			if (slot->isHuman()) {
+				++humans;
+			}
+		}
+	}
+	if (sides >= 2 && humans >= 1) {
+		return FALSE;
+	}
+	*text = textOf(kAdminTwoSides);
 	return TRUE;
 }
 
