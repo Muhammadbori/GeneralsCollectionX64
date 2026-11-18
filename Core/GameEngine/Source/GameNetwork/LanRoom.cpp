@@ -32,6 +32,7 @@
 #include "Common/ReplayFollow.h"
 #include "Common/ReplayStream.h"
 #include "GameClient/GameText.h"
+#include "GameClient/GameWindowTransitions.h"   // O88
 #include "GameClient/InGameUI.h"
 #include "GameClient/LanguageFilter.h"
 #include "GameClient/LocalizedFallback.h"
@@ -981,7 +982,17 @@ void LanRoom::pollStart()
 	pumpObserverChat();
 	if (s_state == STATE_STARTING)
 	{
-		if (ReplayStream::headerReady() && TheRecorder != nullptr && TheWritableGlobalData != nullptr
+		// TheSuperHackers @bugfix O88 (row 46) The admin who watches his room's match from outside the seats: his stream
+		// begins at Start (hostStart), but he leaves the room only after every player acknowledged START (O74:
+		// OnGameStart, then OnWatchMatchLeave pops the room). The replay waits until his lobby is open (lobbyOpened clears
+		// s_adminStarting). It used to start as soon as the header came (about 0.5 s), which since O74 is often before
+		// the room was gone: the replay's start (Shell::hideShell, an immediate shutdown) completed the room's pending
+		// pop under the replay, the lobby's init then reset this viewer (lobbyOpened saw a playing stream, not a starting
+		// one: the mirror stopped at frame 0, an empty score screen), and the room's closing fade lost its windows (a
+		// crash in FullFadeTransition, or a shell that waited for it forever). It also waits for the screen transitions
+		// to end, so a replay never starts over a screen still fading in or out.
+		const Bool screensSettled = TheTransitionHandler == nullptr || TheTransitionHandler->isFinished();
+		if (!s_adminStarting && screensSettled && ReplayStream::headerReady() && TheRecorder != nullptr && TheWritableGlobalData != nullptr
 			&& (TheGameLogic == nullptr || !TheGameLogic->isInGame() || TheGameLogic->isInShellGame()))
 		{
 			setState(STATE_PLAYING);
@@ -1664,6 +1675,7 @@ Bool LanRoom::hostSeatFirst(LANGameInfo *game)
 
 void LanRoom::lobbyOpened()
 {
+	// O88: his replay has not started yet in any case (pollStart waits for this)
 	if (s_adminStarting && s_state == STATE_STARTING)
 	{
 		s_adminStarting = FALSE;   // O60: the admin left his room at Start to watch its match: his stream goes on

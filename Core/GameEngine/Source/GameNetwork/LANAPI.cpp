@@ -1391,6 +1391,9 @@ void LANAPI::stopStartDelivery(const char *why)
 	// without them, on the original's disconnect screen)
 	m_startDelivering = FALSE;
 	LanTest::joinLog("host: %s, nobody started yet: start stopped", why);
+	// TheSuperHackers @bugfix O88 The watching admin's stream (LanRoom::hostStart began it) ends with the start: he stays
+	// in his room, and his replay waits for a lobby that will not open now
+	LanRoom::cancelStarting();
 	OnChat(L"SYSTEM", m_localIP, TheGameText->FETCH_OR_SUBSTITUTE("GUI:LanStartRoomChanged", localizedFallback(
 		L"The room changed during the start: start stopped. Press Start again.",
 		L"\x041A\x043E\x043C\x043D\x0430\x0442\x0430 \x0438\x0437\x043C\x0435\x043D\x0438\x043B\x0430\x0441\x044C \x0432\x043E \x0432\x0440\x0435\x043C\x044F \x0441\x0442\x0430\x0440\x0442\x0430: \x0441\x0442\x0430\x0440\x0442 \x043E\x0442\x043C\x0435\x043D\x0451\x043D. \x041D\x0430\x0436\x043C\x0438\x0442\x0435 \x00AB\x0421\x0442\x0430\x0440\x0442\x00BB \x0435\x0449\x0451 \x0440\x0430\x0437.")), LANCHAT_SYSTEM);
