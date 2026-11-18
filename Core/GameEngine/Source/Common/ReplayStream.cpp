@@ -1060,6 +1060,10 @@ namespace
 	//=============================================================================================
 	volatile LONG s_mirrorGen = 0;
 	volatile LONG s_mirrorRunning = 0;       ///< the current generation's mirror thread exists
+	/// TheSuperHackers @bugfix O92 (H19) A mirror thread's "is my generation current, then set the flag" and the game
+	/// thread's "new generation, then clear the flags" are each done under this lock: an old thread could otherwise pass
+	/// its test, lose the processor, and set a flag (header ready, ended, lost, ...) of the next viewing after it was cleared.
+	SRWLOCK s_mirrorFlagLock = SRWLOCK_INIT;
 	volatile LONG s_mirrorHeaderReady = 0;
 	volatile LONG s_mirrorEnded = 0;
 	volatile LONG s_mirrorLost = 0;          ///< every source was gone for NO_SOURCE_END_MS (the game thread tells the watcher once)
@@ -1297,7 +1301,12 @@ namespace
 		MirrorConfig *cfg = (MirrorConfig *)param;
 		MirrorConfig &m = *cfg;
 		const auto current = [&]() { return InterlockedCompareExchange(&s_mirrorGen, 0, 0) == m.gen; };
-		const auto setFlag = [&](volatile LONG *flag) { if (current()) InterlockedExchange(flag, 1); };
+		const auto setFlag = [&](volatile LONG *flag)
+		{
+			AcquireSRWLockExclusive(&s_mirrorFlagLock);   // O92 (H19)
+			if (current()) InterlockedExchange(flag, 1);
+			ReleaseSRWLockExclusive(&s_mirrorFlagLock);
+		};
 		orderSourcesByConnectTime(m);
 		HANDLE file = openShared(m.path, GENERIC_READ | GENERIC_WRITE, CREATE_ALWAYS);
 		HANDLE liveFile = openShared(m.livePath, GENERIC_WRITE, CREATE_ALWAYS);
@@ -1854,7 +1863,15 @@ Bool ReplayStream::beginWatching(AsciiString &localPath)
 		if (m == nullptr) {
 			return FALSE;
 		}
+		// O92 (H19): the new generation and its cleared flags at once for the mirror threads (s_mirrorFlagLock)
+		AcquireSRWLockExclusive(&s_mirrorFlagLock);
 		m->gen = InterlockedIncrement(&s_mirrorGen);
+		InterlockedExchange(&s_mirrorNotAllowed, 0);
+		InterlockedExchange(&s_mirrorIsPlayer, 0);
+		InterlockedExchange(&s_mirrorHeaderReady, 0);
+		InterlockedExchange(&s_mirrorEnded, 0);
+		InterlockedExchange(&s_mirrorLost, 0);
+		ReleaseSRWLockExclusive(&s_mirrorFlagLock);
 		memcpy(m->sources, s_sources, sizeof(s_sources));
 		m->sourceCount = s_sourceCount;
 		m->flags = s_watchFlags;
@@ -1910,9 +1927,11 @@ Bool ReplayStream::headerReady()
 
 void ReplayStream::stopWatching()
 {
+	AcquireSRWLockExclusive(&s_mirrorFlagLock);   // O92 (H19): see s_mirrorFlagLock
 	InterlockedIncrement(&s_mirrorGen);   // the mirror ends by itself within a fraction of a second (no wait)
 	InterlockedExchange(&s_mirrorRunning, 0);
 	InterlockedExchange(&s_mirrorHeaderReady, 0);
+	ReleaseSRWLockExclusive(&s_mirrorFlagLock);
 	s_sourceCount = 0;
 	s_watchFlags = 0;
 	s_watchBind = 0;
