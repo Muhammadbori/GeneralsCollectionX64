@@ -202,6 +202,13 @@ void LANAPI::OnGameStartTimer( Int seconds )
 
 void LANAPI::OnGameStart()
 {
+	// O101: never the player start for a seatless room observer (any path): back to the lobby, the stream follows there
+	if (m_seatless)
+	{
+		LanTest::joinLog("observer: a player start reached the room observer: back to the lobby instead");
+		LeaveRoomAsObserver(FALSE);
+		return;
+	}
 	//DEBUG_LOG(("Map is '%s', preview is '%s'", m_currentGame->getMap().str(), GetPreviewFromMap(m_currentGame->getMap()).str()));
 	//DEBUG_LOG(("Map is '%s', INI is '%s'", m_currentGame->getMap().str(), GetINIFromMap(m_currentGame->getMap()).str()));
 
