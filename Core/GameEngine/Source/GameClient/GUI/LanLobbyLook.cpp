@@ -197,7 +197,26 @@ namespace
 			{ L"B1", 2, 4, 1, 2, -1 }, { L"B2", 2, 5, 2, 2, -1 }, { L"B3", 2, 6, 0, 2, -1 }, { L"B4", 2, 7, 1, 2, -1 } } },
 	};
 	// TheSuperHackers @tweak O100 (P5-g) The lobby's own watch delay (the slider after "Delay", O31/P5-d) is gone: Watch
-	// always adds +0, so an outside viewer gets only the host's viewer delay (Options: LanWatchDelay).
+	// always adds +0, so an outside viewer gets only the host's viewer delay (Options: LanWatchDelay). In its place a
+	// read-only line says that delay for the selected running game, in the watch panel's words (ReplayControlBar).
+	const Text kHostDelay = { "GUI:ReplayBarHostDelay", L"Host delay: %ls", L"1730343540363A30 453E414230: %ls" };
+	const Text kDelaySeconds = { "GUI:ReplayBarSeconds", L"%d s", L"%d 41" };
+	const Text kDelayMinutes = { "GUI:ReplayBarMinutes", L"%d min", L"%d 3C383D" };
+	const Text kDelayMinSec = { "GUI:ReplayBarMinutesSeconds", L"%d min %d s", L"%d 3C383D %d 41" };
+	UnicodeString hostDelayText(Int seconds)
+	{
+		UnicodeString amount;
+		if (seconds < 60) {
+			amount.format(textOf(kDelaySeconds).str(), seconds);
+		} else if (seconds % 60 == 0) {
+			amount.format(textOf(kDelayMinutes).str(), seconds / 60);
+		} else {
+			amount.format(textOf(kDelayMinSec).str(), seconds / 60, seconds % 60);
+		}
+		UnicodeString line;
+		line.format(textOf(kHostDelay).str(), amount.str());
+		return line;
+	}
 
 	const WideChar *const kSampleLobby[] = { L"Vova", L"Alisher", L"Sardor_K", L"DESKTOP-IVQ416R", L"Timur", L"Lola", L"Bek" };
 	const Int kSampleLobbyFiles[] = { 1, 1, 1, 1, 0, 1, -1 };
@@ -236,6 +255,8 @@ namespace
 		GameWindow *lobbyLabel;
 		GameWindow *historyPopup;
 		GameWindow *actionButton;  ///< O31: Observe / Stop observing / Watch
+		GameWindow *hostDelayLabel;   ///< O100 (P5-g): "Host delay: 1 min" of the selected running game (read-only)
+		Int hostDelayShown;           ///< the seconds it shows (-1: none)
 		const Text *actionLabel;   ///< O31: the action button's text now
 		GameFont *font;
 		Bool shown;
@@ -1866,11 +1887,30 @@ void LanLobbyLook::init(GameWindow *parent)
 
 	FrameShots::setRowHook(&scriptRowPoint);   // O29 (item 9): clickrow / dclickrow of a -uiScript
 
-	// O31: Observe (a room before its start) / Watch (a running game). O100 (P5-g): the whole row, no delay slider
+	// O31: Observe (a room before its start) / Watch (a running game). O100 (P5-g): no delay slider; the rest of the row
+	// holds the host's delay as text
 	{
 		const Rect &a = L.panelActions;
-		s.actionButton = makeButton(a, textOf(kObserve), "LanLobbyMenu.wnd:Look.Observe");
+		// O44: the button is as wide as its longest label needs, at least 40 % and at most 60 % of the row
+		Int widest = 0;
+		{
+			const Text *labels[] = { &kObserve, &kStopObserving, &kWatch, &kWaiting, &kNoViewersButton };
+			for (Int k = 0; k < (Int)ARRAY_SIZE(labels); ++k) {
+				widest = max(widest, textWidth(textOf(*labels[k])));
+			}
+		}
+		// the text is measured in screen pixels, the layout is in 800-wide design units
+		const Int screen800 = max(1, sx(800));
+		const Int widestDesign = (widest + 28) * 800 / screen800;
+		const Int rowW = a.x1 - a.x0;
+		const Int buttonW = min(rowW * 60 / 100, max(rowW * 40 / 100, widestDesign));
+		const Int mid = a.x0 + buttonW;
+		const Rect buttonRect = { a.x0, a.y0, mid - 4, a.y1 };
+		s.actionButton = makeButton(buttonRect, textOf(kObserve), "LanLobbyMenu.wnd:Look.Observe");
 		s.actionLabel = &kObserve;
+		const Rect delayRect = { mid + 4, a.y0, a.x1, a.y1 };
+		s.hostDelayLabel = makeLabel(delayRect, UnicodeString::TheEmptyString, kTextDim, FALSE);
+		s.hostDelayShown = -1;
 	}
 
 	// everything made here waits for the end of the enter fade (row 27)
@@ -1942,6 +1982,21 @@ void LanLobbyLook::update(Bool screenReady)
 			}
 			s.actionButton->winHide(!have || ownRoom);
 			s.actionButton->winEnable(have && !busy && !blocked);
+		}
+		// O100 (P5-g): the delay the admin set for outside viewers of the selected running game, as its LIST said it;
+		// nothing when the lobby has not heard it (no guess)
+		if (s.hostDelayLabel != nullptr)
+		{
+			Int delay = 0;
+			Bool allowed = TRUE;
+			const Bool known = have && running && !ownRoom && LanRoom::viewerRulesOf(host, &delay, &allowed) && allowed && delay > 0;
+			const Int shown = known ? delay : -1;
+			if (shown != s.hostDelayShown)
+			{
+				GadgetStaticTextSetText(s.hostDelayLabel, known ? hostDelayText(delay) : UnicodeString::TheEmptyString);
+				s.hostDelayShown = shown;
+			}
+			s.hostDelayLabel->winHide(!known);
 		}
 	}
 	// O30: this player's own anti-cheat check failed: said once in the chat (others see the red mark)
@@ -2054,7 +2109,8 @@ void LanLobbyLook::teardown()
 	s.ownFailureSaid = FALSE;
 	s.addrBox = s.copyButton = s.connectEntry = s.historyButton = s.connectButton = nullptr;
 	s.gamesTable = s.panel = s.panelLabel = s.lobbyList = s.lobbyLabel = s.historyPopup = nullptr;
-	s.actionButton = nullptr;
+	s.actionButton = s.hostDelayLabel = nullptr;
+	s.hostDelayShown = -1;
 	s.actionLabel = nullptr;
 	s.font = nullptr;
 	s.shown = FALSE;
