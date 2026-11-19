@@ -40,7 +40,6 @@
 #include "GameClient/GadgetStaticText.h"
 #include "GameClient/GadgetTextEntry.h"
 #include "GameClient/GadgetSlider.h"
-#include "GameClient/TickSlider.h"
 #include "GameNetwork/LanRoom.h"
 #include "GameClient/GameFont.h"
 #include "GameClient/GameInfoWindow.h"
@@ -75,7 +74,7 @@ namespace
 		Rect panelLabel, panel;
 		Rect lobbyLabel, lobbyList;
 		Rect chatLabel, chatList, chatEntry, chatButton;
-		Rect panelActions;             ///< O31: Observe / Watch and the delay slider, under the panel
+		Rect panelActions;             ///< O31: Observe / Watch, under the panel (O100 P5-g: no delay slider)
 	};
 
 	// A: games list left, the selected game's panel right, lobby and chat under the list (01_variant_A_...png)
@@ -197,16 +196,8 @@ namespace
 			{ L"A1", 2, 0, 0, 1, -1 }, { L"A2", 2, 1, 1, 1, -1 }, { L"A3", 2, 2, 2, 1, -1 }, { L"A4", 2, 3, 0, 1, -1 },
 			{ L"B1", 2, 4, 1, 2, -1 }, { L"B2", 2, 5, 2, 2, -1 }, { L"B3", 2, 6, 0, 2, -1 }, { L"B4", 2, 7, 1, 2, -1 } } },
 	};
-	/// O31: the outside viewers' delay choices (seconds) and their labels. O33: the players' servers keep the host's delay;
-	/// the viewer's choice only adds to it.
-	const Int kDelays[8] = { 0, 10, 20, 30, 60, 90, 120, 180 };
-	const WideChar *const kDelayEnglish[8] = { L"+0", L"+10s", L"+20s", L"+30s", L"+1m", L"+1.5m", L"+2m", L"+3m" };
-	const WideChar *const kDelayRussian[8] = { L"+0", L"+10\x0441", L"+20\x0441", L"+30\x0441", L"+1\x043C", L"+1,5\x043C", L"+2\x043C", L"+3\x043C" };
-
-	/// TheSuperHackers @tweak O97 (P5-d) The caption beside the delay slider (its row is too low for the tick labels) and
-	/// its tooltip
-	const Text kDelayCaption = { "GUI:LanWatchDelayCaption", L"Delay: %s", L"\x0417\x0430\x0434\x0435\x0440\x0436\x043A\x0430: %s" };
-	const Text kDelayTip = { "GUI:LanWatchDelayTip", L"Extra delay you add on top of the host's delay for outside viewers (0 to 3 minutes).", L"\x0414\x043E\x043F\x043E\x043B\x043D\x0438\x0442\x0435\x043B\x044C\x043D\x0430\x044F \x0437\x0430\x0434\x0435\x0440\x0436\x043A\x0430, \x043A\x043E\x0442\x043E\x0440\x0443\x044E \x0432\x044B \x0434\x043E\x0431\x0430\x0432\x043B\x044F\x0435\x0442\x0435 \x043A \x0437\x0430\x0434\x0435\x0440\x0436\x043A\x0435 \x0445\x043E\x0441\x0442\x0430 \x0434\x043B\x044F \x0432\x043D\x0435\x0448\x043D\x0438\x0445 \x0437\x0440\x0438\x0442\x0435\x043B\x0435\x0439 (\x043E\x0442 0 \x0434\x043E 3 \x043C\x0438\x043D\x0443\x0442)." };
+	// TheSuperHackers @tweak O100 (P5-g) The lobby's own watch delay (the slider after "Delay", O31/P5-d) is gone: Watch
+	// always adds +0, so an outside viewer gets only the host's viewer delay (Options: LanWatchDelay).
 
 	const WideChar *const kSampleLobby[] = { L"Vova", L"Alisher", L"Sardor_K", L"DESKTOP-IVQ416R", L"Timur", L"Lola", L"Bek" };
 	const Int kSampleLobbyFiles[] = { 1, 1, 1, 1, 0, 1, -1 };
@@ -245,9 +236,6 @@ namespace
 		GameWindow *lobbyLabel;
 		GameWindow *historyPopup;
 		GameWindow *actionButton;  ///< O31: Observe / Stop observing / Watch
-		GameWindow *delaySlider;   ///< O31: the outside viewer's delay
-		GameWindow *delayCaption;  ///< O97 (P5-d): "Delay: +30s" beside it
-		Int delayCaptionStep;      ///< the step the caption shows (-1: none yet)
 		const Text *actionLabel;   ///< O31: the action button's text now
 		GameFont *font;
 		Bool shown;
@@ -1878,65 +1866,11 @@ void LanLobbyLook::init(GameWindow *parent)
 
 	FrameShots::setRowHook(&scriptRowPoint);   // O29 (item 9): clickrow / dclickrow of a -uiScript
 
-	// O31: Observe (a room before its start) / Watch (a running game) and the watch delay
+	// O31: Observe (a room before its start) / Watch (a running game). O100 (P5-g): the whole row, no delay slider
 	{
 		const Rect &a = L.panelActions;
-		// O44: the button is as wide as its longest label needs ("Без зрителей", "Не наблюдать"), at least 40 % and at
-		// most 60 % of the row; the delay slider takes the rest
-		Int widest = 0;
-		{
-			const Text *labels[] = { &kObserve, &kStopObserving, &kWatch, &kWaiting, &kNoViewersButton };
-			for (Int k = 0; k < (Int)ARRAY_SIZE(labels); ++k) {
-				widest = max(widest, textWidth(textOf(*labels[k])));
-			}
-		}
-		// the text is measured in screen pixels, the layout is in 800-wide design units
-		const Int screen800 = max(1, sx(800));
-		const Int widestDesign = (widest + 28) * 800 / screen800;
-		const Int rowW = a.x1 - a.x0;
-		const Int buttonW = min(rowW * 60 / 100, max(rowW * 40 / 100, widestDesign));
-		const Int mid = a.x0 + buttonW;
-		const Rect buttonRect = { a.x0, a.y0, mid - 4, a.y1 };
-		s.actionButton = makeButton(buttonRect, textOf(kObserve), "LanLobbyMenu.wnd:Look.Observe");
+		s.actionButton = makeButton(a, textOf(kObserve), "LanLobbyMenu.wnd:Look.Observe");
 		s.actionLabel = &kObserve;
-		WinInstanceData inst;
-		inst.init();
-		inst.m_style = GWS_HORZ_SLIDER | GWS_MOUSE_TRACK;
-		inst.m_font = s.font;
-		inst.m_id = (Int)TheNameKeyGenerator->nameToKey(AsciiString("LanLobbyMenu.wnd:Look.WatchDelay"));
-		SliderData data;
-		memset(&data, 0, sizeof(data));
-		data.minVal = 0;
-		data.maxVal = 7;
-		// O97 (P5-d): the caption takes the widest of its texts (at most half the rest of the row), the slider the rest
-		Int widestCaption = 0;
-		for (Int i = 0; i < 8; ++i)
-		{
-			UnicodeString t;
-			t.format(textOf(kDelayCaption).str(), localizedFallback(kDelayEnglish[i], kDelayRussian[i]));
-			widestCaption = max(widestCaption, textWidth(t));
-		}
-		const Int restW = a.x1 - (mid + 4);
-		const Int captionW = min(restW / 2, (widestCaption + 8) * 800 / screen800);
-		const Int sliderX = mid + 4 + captionW;
-		const Rect captionRect = { mid + 4, a.y0, sliderX - 2, a.y1 };
-		s.delayCaption = makeLabel(captionRect, UnicodeString::TheEmptyString, kTextDim, FALSE);
-		s.delayCaptionStep = -1;
-		s.delaySlider = TheWindowManager->gogoGadgetSlider(s.parent, WIN_STATUS_ENABLED, sx(sliderX), sy(a.y0), sx(a.x1) - sx(sliderX),
-			sy(a.y1) - sy(a.y0), &inst, &data, s.font, TRUE);
-		if (s.delaySlider != nullptr)
-		{
-			s.delaySlider->winSetWindowId(inst.m_id);
-			s.delaySlider->winSetOwner(s.parent);
-			TickSlider::attach(s.delaySlider, s.font, FALSE);
-			UnicodeString labels[8];
-			for (Int i = 0; i < 8; ++i) {
-				labels[i] = localizedFallback(kDelayEnglish[i], kDelayRussian[i]);
-			}
-			TickSlider::setLabels(s.delaySlider, labels, 8);
-			s.delaySlider->winSetTooltip(textOf(kDelayTip));   // O97 (P5-d)
-			s.made.push_back(s.delaySlider);
-		}
 	}
 
 	// everything made here waits for the end of the enter fade (row 27)
@@ -2008,27 +1942,6 @@ void LanLobbyLook::update(Bool screenReady)
 			}
 			s.actionButton->winHide(!have || ownRoom);
 			s.actionButton->winEnable(have && !busy && !blocked);
-		}
-		if (s.delaySlider != nullptr) {
-			s.delaySlider->winHide(!running || busy || blocked);
-		}
-		// O97 (P5-d): the caption follows the handle, also while it is dragged (TickSlider reports the step it would take)
-		if (s.delayCaption != nullptr)
-		{
-			const Bool hidden = s.delaySlider == nullptr || !running || busy || blocked;
-			s.delayCaption->winHide(hidden);
-			if (!hidden)
-			{
-				Int step = (Int)(TickSlider::position(s.delaySlider) + 0.5f);
-				step = step < 0 ? 0 : (step > 7 ? 7 : step);
-				if (step != s.delayCaptionStep)
-				{
-					UnicodeString t;
-					t.format(textOf(kDelayCaption).str(), localizedFallback(kDelayEnglish[step], kDelayRussian[step]));
-					GadgetStaticTextSetText(s.delayCaption, t);
-					s.delayCaptionStep = step;
-				}
-			}
 		}
 	}
 	// O30: this player's own anti-cheat check failed: said once in the chat (others see the red mark)
@@ -2141,8 +2054,7 @@ void LanLobbyLook::teardown()
 	s.ownFailureSaid = FALSE;
 	s.addrBox = s.copyButton = s.connectEntry = s.historyButton = s.connectButton = nullptr;
 	s.gamesTable = s.panel = s.panelLabel = s.lobbyList = s.lobbyLabel = s.historyPopup = nullptr;
-	s.actionButton = s.delaySlider = s.delayCaption = nullptr;
-	s.delayCaptionStep = -1;
+	s.actionButton = nullptr;
 	s.actionLabel = nullptr;
 	s.font = nullptr;
 	s.shown = FALSE;
@@ -2200,8 +2112,7 @@ Bool LanLobbyLook::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgData
 				const LanRoom::State st = LanRoom::state();
 				if (rows[sel].inProgress)
 				{
-					const Int step = s.delaySlider != nullptr ? GadgetSliderGetPosition(s.delaySlider) : 0;
-					LanRoom::startWatching(game, kDelays[step < 0 ? 0 : (step > 7 ? 7 : step)]);
+					LanRoom::startWatching(game, 0);   // O100 (P5-g): only the host's viewer delay
 				}
 				else if (LanRoom::observedHost() == host && (st == LanRoom::STATE_ASKED || st == LanRoom::STATE_IN_ROOM))
 				{
