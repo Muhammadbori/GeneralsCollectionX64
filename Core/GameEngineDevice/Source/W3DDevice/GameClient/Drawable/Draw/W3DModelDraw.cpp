@@ -3713,7 +3713,8 @@ Bool W3DModelDraw::handleWeaponFireFX(WeaponSlotType wslot, Int specificBarrelTo
 
 	Bool handled = false;
 
-	if (specificBarrelToUse < 0 || specificBarrelToUse > wbvec.size())
+	// TheSuperHackers @bugfix O99 The last valid barrel is size() - 1 (was "> size()": one past the end was let through).
+	if (specificBarrelToUse < 0 || specificBarrelToUse >= (Int)wbvec.size())
 		specificBarrelToUse = 0;
 
 	const ModelConditionInfo::WeaponBarrelInfo& info = wbvec[specificBarrelToUse];
@@ -3757,7 +3758,18 @@ Bool W3DModelDraw::handleWeaponFireFX(WeaponSlotType wslot, Int specificBarrelTo
 		}
 	}
 
-	if (info.m_recoilBone || info.m_muzzleFlashBone)
+	// TheSuperHackers @bugfix O99 The recoil list of this drawable is sized from the barrel list in setModelState. The barrel
+	// list belongs to the condition state, which all drawables of the template share, and it is only filled during a logic
+	// update (isValidTimeToCalcLogicStuff). A drawable that took its state outside one (an object made from the client
+	// side, as the -testCommands spawn did) kept an empty recoil list; a later logic query (getProjectileLaunchOffset)
+	// filled the shared barrels, and the first shot wrote m_weaponRecoilInfoVec[wslot][1] of an empty vector (S46, the
+	// write to 0xC). The update code beside it (doRecoil) already clamps a count mismatch; size the list here as well.
+	if ((info.m_recoilBone || info.m_muzzleFlashBone) && m_weaponRecoilInfoVec[wslot].size() != wbvec.size())
+	{
+		rebuildWeaponRecoilInfo(m_curState);
+	}
+
+	if ((info.m_recoilBone || info.m_muzzleFlashBone) && specificBarrelToUse < (Int)m_weaponRecoilInfoVec[wslot].size())
 	{
 		//DEBUG_LOG(("START muzzleflash %08lx for Draw %08lx state %s at frame %d",info.m_muzzleFlashBone,this,m_curState->m_description.str(),TheGameLogic->getFrame()));
 		WeaponRecoilInfo& recoil = m_weaponRecoilInfoVec[wslot][specificBarrelToUse];
