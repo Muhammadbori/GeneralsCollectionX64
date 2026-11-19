@@ -62,6 +62,14 @@
 #include "GameClient/GadgetStaticText.h"
 #include "GameClient/ControlBar.h"
 
+// TheSuperHackers @bugfix O92 (H19) The main menu styles' second window (the grow marker) is not linked to its transition
+// (only m_win is: TransitionWindow::unlinkGameWindow), so a destroyed one stayed a dangling pointer. It is looked up again
+// by its id before each use: a window that is gone is no longer in the window list.
+static GameWindow *liveGrowWindow(NameKeyType id)
+{
+	return id != NAMEKEY_INVALID ? TheWindowManager->winGetWindowFromId(nullptr, id) : nullptr;
+}
+
 //-----------------------------------------------------------------------------
 // DEFINES ////////////////////////////////////////////////////////////////////
 //-----------------------------------------------------------------------------
@@ -1047,6 +1055,8 @@ MainMenuScaleUpTransition::MainMenuScaleUpTransition ()
 {
 	m_frameLength = MAINMENUSCALEUPTRANSITION_END;
 	m_win = nullptr;
+	m_growWin = nullptr;
+	m_growWinID = NAMEKEY_INVALID;
 	m_drawState = -1;
 	m_isForward = TRUE;
 }
@@ -1069,7 +1079,8 @@ void MainMenuScaleUpTransition::init( GameWindow *win )
 		m_isFinished = TRUE;   // O88: no window: nothing to do (it read the null window here)
 		return;
 	}
-	m_growWin = TheWindowManager->winGetWindowFromId(nullptr, TheNameKeyGenerator->nameToKey("MainMenu.wnd:WinGrowMarker"));
+	m_growWinID = TheNameKeyGenerator->nameToKey("MainMenu.wnd:WinGrowMarker");
+	m_growWin = liveGrowWindow(m_growWinID);
 	if(!m_growWin)
 		return;
 
@@ -1091,6 +1102,7 @@ void MainMenuScaleUpTransition::init( GameWindow *win )
 
 void MainMenuScaleUpTransition::update( Int frame )
 {
+	m_growWin = liveGrowWindow(m_growWinID);   // O92 (H19): the grow window may be gone
 	m_drawState = -1;
 	if(frame < MAINMENUSCALEUPTRANSITION_START || frame > MAINMENUSCALEUPTRANSITION_END)
 	{
@@ -1152,7 +1164,8 @@ void MainMenuScaleUpTransition::reverse()
 
 void MainMenuScaleUpTransition::draw()
 {
-	if(!m_win)
+	m_growWin = liveGrowWindow(m_growWinID);   // O92 (H19): the grow window may be gone
+	if(!m_win || !m_growWin)
 		return;
 	if(m_drawState <= MAINMENUSCALEUPTRANSITION_START || m_drawState >= MAINMENUSCALEUPTRANSITION_END)
 		return;
@@ -1175,6 +1188,8 @@ MainMenuMediumScaleUpTransition::MainMenuMediumScaleUpTransition ()
 {
 	m_frameLength = MAINMENUMEDIUMSCALEUPTRANSITION_END;
 	m_win = nullptr;
+	m_growWin = nullptr;
+	m_growWinID = NAMEKEY_INVALID;
 	m_drawState = -1;
 	m_isForward = TRUE;
 }
@@ -1200,7 +1215,8 @@ void MainMenuMediumScaleUpTransition::init( GameWindow *win )
 	AsciiString growWinName;
 	growWinName = m_win->winGetInstanceData()->m_decoratedNameString;
 	growWinName.concat("Medium");
-	m_growWin = TheWindowManager->winGetWindowFromId(nullptr, TheNameKeyGenerator->nameToKey(growWinName));
+	m_growWinID = TheNameKeyGenerator->nameToKey(growWinName);
+	m_growWin = liveGrowWindow(m_growWinID);
 	if(!m_growWin)
 		return;
 
@@ -1221,6 +1237,7 @@ void MainMenuMediumScaleUpTransition::init( GameWindow *win )
 
 void MainMenuMediumScaleUpTransition::update( Int frame )
 {
+	m_growWin = liveGrowWindow(m_growWinID);   // O92 (H19): the grow window may be gone
 	m_drawState = -1;
 	if(frame < MAINMENUMEDIUMSCALEUPTRANSITION_START || frame > MAINMENUMEDIUMSCALEUPTRANSITION_END)
 	{
@@ -1274,6 +1291,7 @@ void MainMenuMediumScaleUpTransition::update( Int frame )
 
 void MainMenuMediumScaleUpTransition::reverse()
 {
+	m_growWin = liveGrowWindow(m_growWinID);   // O92 (H19): the grow window may be gone
 	m_isFinished = FALSE;
 	m_isForward = FALSE;
 	if (m_win == nullptr || m_growWin == nullptr)
@@ -1310,6 +1328,8 @@ MainMenuSmallScaleDownTransition::MainMenuSmallScaleDownTransition ()
 {
 	m_frameLength = MAINMENUSMALLSCALEDOWNTRANSITION_END;
 	m_win = nullptr;
+	m_growWin = nullptr;
+	m_growWinID = NAMEKEY_INVALID;
 	m_drawState = -1;
 	m_isForward = TRUE;
 }
@@ -1335,7 +1355,8 @@ void MainMenuSmallScaleDownTransition::init( GameWindow *win )
 	AsciiString growWinName;
 	growWinName = m_win->winGetInstanceData()->m_decoratedNameString;
 	growWinName.concat("Small");
-	m_growWin = TheWindowManager->winGetWindowFromId(nullptr, TheNameKeyGenerator->nameToKey(growWinName));
+	m_growWinID = TheNameKeyGenerator->nameToKey(growWinName);
+	m_growWin = liveGrowWindow(m_growWinID);
 	if(!m_growWin)
 		return;
 
@@ -1356,6 +1377,7 @@ void MainMenuSmallScaleDownTransition::init( GameWindow *win )
 
 void MainMenuSmallScaleDownTransition::update( Int frame )
 {
+	m_growWin = liveGrowWindow(m_growWinID);   // O92 (H19): the grow window may be gone
 	m_drawState = -1;
 	if(frame < MAINMENUSMALLSCALEDOWNTRANSITION_START || frame > MAINMENUSMALLSCALEDOWNTRANSITION_END)
 	{

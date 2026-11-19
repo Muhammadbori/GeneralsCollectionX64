@@ -45,6 +45,7 @@
 #include "GameClient/GlobalLanguage.h"
 #include "GameClient/InGameUI.h"
 #include "GameClient/LocalizedFallback.h"
+#include "GameClient/LookPalette.h"   // O94
 #include "GameLogic/GameLogic.h"
 #include "GameNetwork/LanRoom.h"
 #include "Common/FrameShots.h"
@@ -317,8 +318,8 @@ namespace
 	const Color kButtonHilite = GameMakeColor(80, 92, 118, 240);
 	const Color kLive = GameMakeColor(255, 80, 64, 255);
 	// the seek line: the colours of the ticked slider (TickSlider.cpp)
-	const Color kTrack = GameMakeColor(42, 46, 72, 255);
-	const Color kTrackFill = GameMakeColor(30, 140, 255, 255);
+	const Color kTrack = LookPalette::kTrack;   // O94: gold in the base game
+	const Color kTrackFill = LookPalette::kFrame;
 	const Color kHandle = GameMakeColor(255, 255, 255, 255);
 	const Color kHeld = GameMakeColor(140, 255, 50, 255);
 

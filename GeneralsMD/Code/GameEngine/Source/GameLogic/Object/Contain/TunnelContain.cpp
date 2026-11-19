@@ -268,6 +268,11 @@ void TunnelContain::onSelling()
 	TunnelTracker *tunnelTracker = owningPlayer->getTunnelSystem();
 	if( tunnelTracker == nullptr )
 		return;
+#if !RETAIL_COMPATIBLE_CRC
+	// O92 (row 58b): a scaffold is not in the network yet: its sale must not empty the network's last tunnel
+	if( !m_isCurrentlyRegistered )
+		return;
+#endif
 
 	// We are the last tunnel, so kick everyone out.  This makes tunnels act like Palace and Bunker
 	// rather than killing the occupants as if the last tunnel died.
@@ -464,6 +469,15 @@ void TunnelContain::onObjectCreated()
 	if( ! shouldDoOnBuildComplete() )
 		return;
 
+#if !RETAIL_COMPATIBLE_CRC
+	// TheSuperHackers @bugfix O92 (row 58b) A tunnel placed by a dozer is created as a scaffold: it joins the network
+	// only when it is built (onBuildComplete), as in Generals. It used to join here at once, so the network's passengers
+	// could be let out of a scaffold (the retail "tunnel bug"). The sneak attack's tunnel is not a scaffold: it still
+	// joins here.
+	if( getObject()->testStatus( OBJECT_STATUS_UNDER_CONSTRUCTION ) )
+		return;
+#endif
+
 	m_needToRunOnBuildComplete = false;
 
 	Player *owningPlayer = getObject()->getControllingPlayer();
@@ -480,6 +494,23 @@ void TunnelContain::onObjectCreated()
 //-------------------------------------------------------------------------------------------------
 void TunnelContain::onBuildComplete()
 {
+#if !RETAIL_COMPATIBLE_CRC
+	// O92 (row 58b): a scaffold joins the network now (onObjectCreated left it out)
+	if( ! shouldDoOnBuildComplete() )
+		return;
+
+	m_needToRunOnBuildComplete = false;
+
+	Player *owningPlayer = getObject()->getControllingPlayer();
+	if( owningPlayer == nullptr )
+		return;
+	TunnelTracker *tunnelTracker = owningPlayer->getTunnelSystem();
+	if( tunnelTracker == nullptr )
+		return;
+
+	tunnelTracker->onTunnelCreated( getObject() );
+	m_isCurrentlyRegistered = TRUE;
+#endif
 	//Kris: July 29, 2003
 	//Obsolete -- onObjectCreated handles it before this function gets called.
 	/*

@@ -106,6 +106,11 @@ namespace LanRoom
 	void hostRemove(UnsignedInt ip);                     ///< the host's remove button
 	void hostDropJoined(UnsignedInt ip);                 ///< the host accepted that person's join into a slot
 	void hostStart(LANGameInfo *game, UnsignedInt localIP);   ///< Start: the observers get the players' addresses
+	/// TheSuperHackers @feature O89 The list hostStart froze for the players (the live observers and the watching admin,
+	/// the delay, bit 0: outside viewers allowed); LANAPI puts it into every GAME_START. 'ips' holds MAX_OBSERVERS + 1.
+	Int hostStartList(UnsignedInt *ips, Int *delaySeconds, UnsignedInt *flags);
+	/// O89: a player takes that list from its host's GAME_START, before it acknowledges START (was KIND_START)
+	void takeStartList(UnsignedInt hostIP, const UnsignedInt *ips, Int count, Int delaySeconds, UnsignedInt flags);
 	/// TheSuperHackers @feature O60 (row 46) Start while the admin watches from outside the seats: nobody of the match
 	/// can send the map (the host sends it, and he is not in the match). TRUE and the text when a player lacks it.
 	Bool hostStartProblem(const LANGameInfo *game, UnicodeString *text);
@@ -158,6 +163,12 @@ namespace LanRoom
 	void pollStart();
 	/// O33: the LAN screen closes: a stream that has not started yet is given up.
 	void cancelStarting();
+	/// TheSuperHackers @bugfix O93 (H24 #1) The host called its start back (LANAPI::stopStartDelivery, only there): the
+	/// room observers that got KIND_START are told (KIND_START_CANCEL). Not part of cancelStarting, which the lobby's
+	/// shutdown also calls after a start that went on.
+	void hostStartCalledBack();
+	/// O93 (H24 #2): the start went on (LANAPI, before OnGameStart): no later call may address its observers
+	void hostStartDelivered();
 
 	//--- O34: the room observers' own channel during the match ------------------------------------
 	/// TRUE for a room observer whose stream started (an outside viewer: never), or a defeated player who joined the
@@ -201,6 +212,9 @@ namespace LanRoom
 	/// O60: TRUE once after the admin watched his room's match from outside the seats (its replay's score screen offers
 	/// "Play again" as a playing host's does).
 	Bool takeAdminWatchedMatch();
+	/// TheSuperHackers @tweak O92 (H23) TRUE while this process plays a LAN match's stream back (a room observer, the
+	/// watching admin, an outside viewer): never in its own match. GameInfo's player views show every pick then.
+	Bool viewerPlaysBack();
 	/// A line for the screen's chat (removed, full, waiting, lost ...); FALSE when none.
 	Bool takeNotice(UnicodeString *text);
 	/// O71: a line for the LAN lobby's chat from LANAPI (this computer left its room without asking)

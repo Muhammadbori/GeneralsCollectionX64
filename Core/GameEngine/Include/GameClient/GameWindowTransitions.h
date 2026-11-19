@@ -346,6 +346,7 @@ protected:
 	ICoord2D m_incrementPos;
 	ICoord2D m_incrementSize;
 	GameWindow *m_growWin;
+	NameKeyType m_growWinID;   ///< O92: m_growWin is looked up again by this before each use (it is not linked to us)
 };
 
 
@@ -375,6 +376,7 @@ protected:
 	ICoord2D m_growSize;
 	ICoord2D m_incrementSize;
 	GameWindow *m_growWin;
+	NameKeyType m_growWinID;   ///< O92: m_growWin is looked up again by this before each use (it is not linked to us)
 };
 
 //-----------------------------------------------------------------------------
@@ -408,6 +410,7 @@ protected:
 	ICoord2D m_growSize;
 	ICoord2D m_incrementSize;
 	GameWindow *m_growWin;
+	NameKeyType m_growWinID;   ///< O92: m_growWin is looked up again by this before each use (it is not linked to us)
 };
 
 //-----------------------------------------------------------------------------

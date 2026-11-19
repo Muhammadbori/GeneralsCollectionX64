@@ -31,6 +31,7 @@
 #include "GameClient/GameWindow.h"
 #include "GameClient/GameWindowManager.h"
 #include "GameClient/KeyDefs.h"
+#include "GameClient/LookPalette.h"   // O94
 #include "Common/FrameShots.h"
 
 #include <map>
@@ -41,19 +42,20 @@ namespace
 {
 	//---------------------------------------------------------------------------------------------
 	// The colours of the chosen mock (staging\mock-controls\02_slider_ticks.png).
-	const Color kTrack = GameMakeColor(42, 46, 72, 255);
-	const Color kFill = GameMakeColor(30, 140, 255, 255);
+	// O94: the theme colours come from LookPalette (gold in the base game)
+	const Color kTrack = LookPalette::kTrack;
+	const Color kFill = LookPalette::kFrame;
 	const Color kFillOff = GameMakeColor(96, 100, 112, 255);
-	const Color kTick = GameMakeColor(150, 156, 172, 255);
-	const Color kLabel = GameMakeColor(160, 166, 184, 255);
+	const Color kTick = LookPalette::kTextDim;
+	const Color kLabel = LookPalette::kTextLabel;
 	const Color kLabelChosen = GameMakeColor(255, 255, 255, 255);
 	const Color kValue = GameMakeColor(255, 255, 255, 255);
 	const Color kHeld = GameMakeColor(140, 255, 50, 255);
 	const Color kHeldGlow = GameMakeColor(140, 255, 50, 70);
 	const Color kHandle = GameMakeColor(255, 255, 255, 255);
 	const Color kHandleOff = GameMakeColor(176, 180, 188, 255);
-	const Color kRing = GameMakeColor(30, 140, 255, 255);
-	const Color kRingHover = GameMakeColor(110, 190, 255, 255);
+	const Color kRing = LookPalette::kFrame;
+	const Color kRingHover = LookPalette::kFrameLight;
 	const Color kRingOff = GameMakeColor(96, 100, 112, 255);
 	const Color kDrop = GameMakeColor(0, 0, 0, 255);
 

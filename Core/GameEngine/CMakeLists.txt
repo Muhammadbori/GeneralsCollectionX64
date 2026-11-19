@@ -215,6 +215,7 @@ set(GAMEENGINE_SRC
     Include/GameClient/LocalizedFallback.h
     Include/GameClient/OptionsSections.h
     Include/GameClient/PlayerTable.h
+    Include/GameClient/LookPalette.h
     Include/GameClient/GlobalLanguage.h
     Include/GameClient/GraphDraw.h
 #    Include/GameClient/GUICallbacks.h

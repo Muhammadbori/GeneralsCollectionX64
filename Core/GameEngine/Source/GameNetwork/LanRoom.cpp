@@ -51,7 +51,8 @@
 namespace
 {
 	enum Kind { KIND_OBSERVE = 1, KIND_LEAVE = 2, KIND_LIST = 3, KIND_REMOVED = 4, KIND_CHAT = 5, KIND_START = 6, KIND_COUNT = 7,
-		KIND_RULES = 8, KIND_ASK_MAP = 9 /* O62: the host asks a player to say again whether it has the map */ };
+		KIND_RULES = 8, KIND_ASK_MAP = 9 /* O62: the host asks a player to say again whether it has the map */,
+		KIND_START_CANCEL = 10 /* O89: the host called its start back: the room's observers are in the room again */ };
 	enum { FLAG_OUTSIDE_ALLOWED = 1, FLAG_TO_PLAYER = 2, FLAG_HOST_WATCHES = 4 /* O60: START to observers */ };
 	const Int kDefaultDelay = 60;
 	const UnsignedInt kKnownKeepMs = 600000;    ///< O33: a room's LIST is kept this long (its delay and flag)
@@ -77,6 +78,7 @@ namespace
 	const Text kNoRoom = { "GUI:LanRoomNoRoom", L"That game does not take observers now.", L"\x042D\x0442\x0430 \x0438\x0433\x0440\x0430 \x0441\x0435\x0439\x0447\x0430\x0441 \x043D\x0435 \x043F\x0440\x0438\x043D\x0438\x043C\x0430\x0435\x0442 \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x0435\x0439." };
 	const Text kStarting = { "GUI:LanRoomStarting", L"The match has started: waiting for its stream...", L"\x041C\x0430\x0442\x0447 \x043D\x0430\x0447\x0430\x043B\x0441\x044F: \x0436\x0434\x0451\x043C \x0435\x0433\x043E \x0442\x0440\x0430\x043D\x0441\x043B\x044F\x0446\x0438\x044E..." };
 	const Text kLost = { "GUI:LanRoomLost", L"The match stream did not come.", L"\x0422\x0440\x0430\x043D\x0441\x043B\x044F\x0446\x0438\x044F \x043C\x0430\x0442\x0447\x0430 \x043D\x0435 \x043F\x0440\x0438\x0448\x043B\x0430." };
+	const Text kStartCalledBack = { "GUI:LanRoomStartCalledBack", L"The host called the start back: you observe the room again.", L"\x0425\x043E\x0441\x0442 \x043E\x0442\x043C\x0435\x043D\x0438\x043B \x0441\x0442\x0430\x0440\x0442: \x0432\x044B \x0441\x043D\x043E\x0432\x0430 \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0435\x0442\x0435 \x0437\x0430 \x043A\x043E\x043C\x043D\x0430\x0442\x043E\x0439." };   // O89
 	const Text kWatching = { "GUI:LanRoomWatching", L"Watching with a delay of %d s: waiting for the stream...", L"\x041F\x0440\x043E\x0441\x043C\x043E\x0442\x0440 \x0441 \x0437\x0430\x0434\x0435\x0440\x0436\x043A\x043E\x0439 %d \x0441: \x0436\x0434\x0451\x043C \x0442\x0440\x0430\x043D\x0441\x043B\x044F\x0446\x0438\x044E..." };
 	const Text kGone = { "GUI:LanRoomGone", L"The game you observed is gone.", L"\x0418\x0433\x0440\x0430, \x0437\x0430 \x043A\x043E\x0442\x043E\x0440\x043E\x0439 \x0432\x044B \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x043B\x0438, \x0438\x0441\x0447\x0435\x0437\x043B\x0430." };
 	const Text kWatchingTotal = { "GUI:LanRoomWatchingTotal", L"Watching with a delay of %d s (the host's %d s + %d s): waiting for the stream...", L"\x041F\x0440\x043E\x0441\x043C\x043E\x0442\x0440 \x0441 \x0437\x0430\x0434\x0435\x0440\x0436\x043A\x043E\x0439 %d \x0441 (\x0445\x043E\x0441\x0442\x0430 %d \x0441 + %d \x0441): \x0436\x0434\x0451\x043C \x0442\x0440\x0430\x043D\x0441\x043B\x044F\x0446\x0438\x044E..." };
@@ -105,6 +107,12 @@ namespace
 	// O33: what a player of the coming match got in its host's START (or, as the host, froze itself)
 	struct MatchStart { Bool valid; UnsignedInt host; std::vector<UnsignedInt> observers; Int delay; Bool outsideAllowed; };
 	MatchStart s_matchStart = { FALSE, 0, std::vector<UnsignedInt>(), kDefaultDelay, TRUE };
+	// O89: what hostStart froze for the players (LANAPI sends it inside GAME_START)
+	UnsignedInt s_playerStartIps[LanRoom::MAX_OBSERVERS + 1] = { 0 };
+	Int s_playerStartCount = 0;
+	Int s_playerStartDelay = kDefaultDelay;
+	UnsignedInt s_playerStartFlags = 0;
+	std::vector<UnsignedInt> s_startObservers;   ///< O89: the room observers that got KIND_START (told if it is called back)
 	// O33: the running match this game serves as a player
 	Bool s_matchServing = FALSE;
 	Int s_matchObservers = 0;
@@ -878,6 +886,18 @@ void LanRoom::onMessage(const LANMessage *msg, UnsignedInt senderIP, UnsignedInt
 			openObserverChannel(senderIP, localIP, ips, n, hostWatches ? senderIP : 0, adminName);
 			break;
 		}
+		case KIND_START_CANCEL:
+		{
+			// O89: this room's host called its start back: the stream will not come; observe the room again
+			if (senderIP != s_roomHost || s_state != STATE_STARTING || s_watcher) {
+				return;
+			}
+			const UnsignedInt host = s_roomHost;
+			resetViewer();
+			notice(textOf(kStartCalledBack));
+			startObserving(host);
+			break;
+		}
 		default:
 			break;
 	}
@@ -1015,11 +1035,59 @@ void LanRoom::pollStart()
 	}
 }
 
+Int LanRoom::hostStartList(UnsignedInt *ips, Int *delaySeconds, UnsignedInt *flags)
+{
+	for (Int i = 0; i < s_playerStartCount; ++i) {
+		ips[i] = s_playerStartIps[i];
+	}
+	*delaySeconds = s_playerStartDelay;
+	*flags = s_playerStartFlags;
+	return s_playerStartCount;
+}
+
+void LanRoom::takeStartList(UnsignedInt hostIP, const UnsignedInt *ips, Int count, Int delaySeconds, UnsignedInt flags)
+{
+	// as the room's KIND_START to a player was taken (O33): the observers frozen at Start, from the room's host only
+	LANGameInfo *mine = TheLAN != nullptr ? TheLAN->GetMyGame() : nullptr;
+	if (mine == nullptr || mine->getHostIP() != hostIP) {
+		return;
+	}
+	s_matchStart.valid = TRUE;
+	s_matchStart.host = hostIP;
+	s_matchStart.observers.clear();
+	for (Int i = 0; i < count && i < MAX_OBSERVERS + 1; ++i) {
+		if (ips[i] != 0 && !inSlot(mine, ips[i])) s_matchStart.observers.push_back(ips[i]);
+	}
+	s_matchStart.delay = delaySeconds != 0 ? clampDelay(delaySeconds) : kDefaultDelay;
+	s_matchStart.outsideAllowed = delaySeconds == 0 || (flags & FLAG_OUTSIDE_ALLOWED) != 0;
+}
+
 void LanRoom::cancelStarting()
 {
 	if (s_state == STATE_STARTING) {
 		resetViewer();
 	}
+}
+
+void LanRoom::hostStartDelivered()
+{
+	s_startObservers.clear();
+}
+
+void LanRoom::hostStartCalledBack()
+{
+	// TheSuperHackers @bugfix O89 (H19/H20) The room's observers that got KIND_START were waiting for a stream that will
+	// not come (up to kStreamWaitMs, 180 s): they are told, take their place in the room again, and the start can be
+	// pressed again. Three copies (UDP); the players have nothing to undo: a player has the live list only with START,
+	// and a START is not called back once acknowledged. O93 (H24 #1): only from LANAPI::stopStartDelivery.
+	if (TheLAN != nullptr && !s_startObservers.empty())
+	{
+		const UnsignedInt localIP = TheLAN->GetLocalIP();
+		for (Int copy = 0; copy < 3; ++copy) {
+			for (size_t i = 0; i < s_startObservers.size(); ++i) sendSimple(KIND_START_CANCEL, localIP, s_startObservers[i], 0);
+		}
+	}
+	s_startObservers.clear();
 }
 
 static Int s_hostDelay = -1;   ///< O56 (row 43): the delay the host chose in the room; -1: Options.ini's
@@ -1091,6 +1159,7 @@ void LanRoom::hostStart(LANGameInfo *game, UnsignedInt localIP)
 	if (game == nullptr) {
 		return;
 	}
+	s_startObservers.clear();   // O89: only this start's observers are told if it is called back
 	Int delay = kDefaultDelay;
 	Bool outside = TRUE;
 	hostViewerRules(&delay, &outside);
@@ -1119,24 +1188,20 @@ void LanRoom::hostStart(LANGameInfo *game, UnsignedInt localIP)
 	// O60 (row 46): the admin who watches from outside the seats is not in the match; the players' servers have him live
 	// like a room observer
 	const Bool adminWatches = game->getHostObserves() && !inSlot(game, localIP);
-	// to the players: the observer list, the delay and the flag (their servers decide by it)
+	// to the players: the observer list, the delay and the flag (their servers decide by it). TheSuperHackers @bugfix O89
+	// It travels inside every GAME_START now (LANAPI::sendStartMessage, hostStartList), which is repeated until each
+	// player acknowledges it; the room's KIND_START to the players went once and a player that lost it held the room's
+	// observers behind the delay ("0 live addresses"). The admin who watches has his place in it as before.
 	{
-		LANMessage msg;
-		prepare(msg, KIND_START, localIP);
-		Int count = 0;
-		for (size_t i = 0; i < observers.size() && count < MAX_OBSERVERS; ++i) {
-			msg.Room.ips[count++] = observers[i];
+		s_playerStartCount = 0;
+		for (size_t i = 0; i < observers.size() && s_playerStartCount < MAX_OBSERVERS; ++i) {
+			s_playerStartIps[s_playerStartCount++] = observers[i];
 		}
-		if (adminWatches && count < MAX_OBSERVERS) {
-			msg.Room.ips[count++] = localIP;
+		if (adminWatches && s_playerStartCount < MAX_OBSERVERS + 1) {
+			s_playerStartIps[s_playerStartCount++] = localIP;
 		}
-		msg.Room.count = (UnsignedByte)count;
-		msg.Room.port = STREAM_PORT;
-		msg.Room.delaySeconds = (UnsignedShort)delay;
-		msg.Room.flags = (UnsignedShort)(FLAG_TO_PLAYER | (outside ? FLAG_OUTSIDE_ALLOWED : 0));
-		for (Int i = 0; i < n; ++i) {
-			if (ips[i] != localIP) send(msg, ips[i]);
-		}
+		s_playerStartDelay = delay;
+		s_playerStartFlags = outside ? FLAG_OUTSIDE_ALLOWED : 0;
 	}
 	// to the observers: the players' addresses
 	if (!observers.empty())
@@ -1153,6 +1218,7 @@ void LanRoom::hostStart(LANGameInfo *game, UnsignedInt localIP)
 		for (size_t i = 0; i < observers.size(); ++i) {
 			send(msg, observers[i]);
 		}
+		s_startObservers = observers;   // O89
 	}
 	if (adminWatches)
 	{
@@ -1710,6 +1776,11 @@ void LanRoom::lobbyOpened()
 	}
 	s_adminStarting = FALSE;
 	resetViewer();
+}
+
+Bool LanRoom::viewerPlaysBack()
+{
+	return ReplayStream::isWatching() && TheRecorder != nullptr && TheRecorder->isPlaybackMode();
 }
 
 Bool LanRoom::takeAdminWatchedMatch()

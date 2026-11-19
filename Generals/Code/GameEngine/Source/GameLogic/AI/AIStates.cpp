@@ -5360,6 +5360,19 @@ StateReturnType AIAttackState::onEnter()
 	}
 #endif
 
+#if !RETAIL_COMPATIBLE_CRC
+	// TheSuperHackers @bugfix O93 (the "Scud bug") The Scud Storm's special power launches through the building's own
+	// weapon: its OCL (SUPERWEAPON_ScudStorm, an Attack nugget) locks the PRIMARY slot and orders this attack with
+	// CMD_FROM_AI. Any other attack order reached the same weapon: a soldier and the Scud Storm selected together and a
+	// force attack on the ground fired the missiles at once, whatever the power's timer said (a ground attack takes the
+	// PRIMARY weapon without the AutoChooseSources test, and a busy group's force attack even locks it). Only the special
+	// power's own launch may fire it: locked, and not a player's order. Its timer is not touched.
+	if( source->hasSpecialPower( SPECIAL_SCUD_STORM ) && ( !source->isCurWeaponLocked() || ai->getLastCommandSource() == CMD_FROM_PLAYER ) )
+	{
+		return STATE_FAILURE;
+	}
+#endif
+
 	// if all of our weapons are out of ammo, can't attack.
 	// (this can happen for units which never auto-reload, like the Raptor)
 	if (source->isOutOfAmmo() && !source->isKindOf(KINDOF_PROJECTILE))

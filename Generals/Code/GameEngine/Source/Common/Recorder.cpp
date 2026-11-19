@@ -1098,8 +1098,9 @@ Bool RecorderClass::replayMatchesGameVersion(AsciiString filename)
 Bool RecorderClass::replayMatchesGameVersion(const ReplayHeader& header)
 {
 	// TheSuperHackers @fix No longer checks the build time here to prevent incorrect Replay playback incompatibility messages when the Replay playback would actually be technically compatible.
-	if (header.versionString != TheVersion->getUnicodeVersion())
-		return false;
+	// TheSuperHackers @fix O95 No longer compares the version text either: it is formatted with the text pack's
+	// "Version:Format" strings, so the same build under another language read as an older version. The version number,
+	// the exe CRC and the INI CRC identify the build and its game data.
 	if (header.versionNumber != TheVersion->getVersionNumber())
 		return false;
 	if (header.exeCRC != TheGlobalData->m_exeCRC)
@@ -1202,7 +1203,16 @@ Bool RecorderClass::playbackFile(AsciiString filename)
 	Bool versionTimeStringDiff = header.versionTimeString != TheVersion->getUnicodeBuildTime();
 	Bool versionNumberDiff = header.versionNumber != TheVersion->getVersionNumber();
 	Bool exeCRCDiff = header.exeCRC != TheGlobalData->m_exeCRC;
-	Bool exeDifferent = versionStringDiff || versionTimeStringDiff || versionNumberDiff || exeCRCDiff;
+	// O95: the version text depends on the text pack: logged, not part of "different"
+	Bool exeDifferent = versionTimeStringDiff || versionNumberDiff || exeCRCDiff;
+	if (versionStringDiff)
+	{
+		UnicodeString versionLine;
+		versionLine.format(L"Replay version text [%s] vs this game's [%s] (another text pack?)", header.versionString.str(), TheVersion->getUnicodeVersion().str());
+		AsciiString versionLineAscii;
+		versionLineAscii.translate(versionLine);
+		DEBUG_LOG(("%s", versionLineAscii.str()));
+	}
 	Bool iniDifferent = header.iniCRC != TheGlobalData->m_iniCRC;
 
 	AsciiString debugString;

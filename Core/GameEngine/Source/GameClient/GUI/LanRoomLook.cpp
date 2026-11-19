@@ -37,6 +37,7 @@
 #include "GameClient/LanLobbyLook.h"
 #include "GameClient/LocalizedFallback.h"
 #include "GameClient/PlayerTable.h"
+#include "GameClient/LookPalette.h"   // O94
 #include "GameNetwork/LANAPI.h"
 #include "GameNetwork/LANAPICallbacks.h"
 #include "GameNetwork/LANGameInfo.h"
@@ -66,10 +67,10 @@ namespace
 	const Color kAdminGold = GameMakeColor(255, 210, 90, 255);
 	const Text kBecome = { "GUI:LanRoomBecomeObserver", L"Become observer", L"\x0421\x0442\x0430\x0442\x044C \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x0435\x043C" };
 
-	const Color kFrame = GameMakeColor(30, 140, 255, 255);
+	const Color kFrame = LookPalette::kFrame;   // O94: gold in the base game
 	const Color kFill = GameMakeColor(0, 0, 0, 170);
 	const Color kText = GameMakeColor(255, 255, 255, 255);
-	const Color kDim = GameMakeColor(150, 156, 172, 255);
+	const Color kDim = LookPalette::kTextDim;   // O94
 	const Color kHeader = GameMakeColor(140, 255, 50, 255);
 	const Color kRemove = GameMakeColor(255, 90, 90, 255);
 	const Color kDrop = GameMakeColor(0, 0, 0, 255);

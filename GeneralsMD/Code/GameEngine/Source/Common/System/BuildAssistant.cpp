@@ -1371,6 +1371,14 @@ CanMakeType BuildAssistant::canMakeUnit( Object *builder, const ThingTemplate *w
 	if (builder->testScriptStatusBit(OBJECT_STATUS_SCRIPT_DISABLED) || builder->testScriptStatusBit(OBJECT_STATUS_SCRIPT_UNPOWERED))
 		return CANMAKE_FACTORY_IS_DISABLED;
 
+#if !RETAIL_COMPATIBLE_CRC
+	// TheSuperHackers @bugfix O92 (row 55) A building that is still a scaffold (or that is being sold) produces nothing.
+	// Only the control bar kept its build buttons away (CB_CONTEXT_UNDER_CONSTRUCTION); a production message for it was
+	// queued and built here like for a finished one (the retail "units from a scaffold" exploit, also a modified client).
+	if (builder->testStatus(OBJECT_STATUS_UNDER_CONSTRUCTION) || builder->testStatus(OBJECT_STATUS_SOLD))
+		return CANMAKE_FACTORY_IS_DISABLED;
+#endif
+
 	ProductionUpdateInterface* pu = builder->getProductionUpdateInterface();
 	Player *player = builder->getControllingPlayer();
 

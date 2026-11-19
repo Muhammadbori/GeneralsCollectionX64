@@ -281,6 +281,13 @@ Bool ProductionUpdate::queueUpgrade( const UpgradeTemplate *upgrade )
 	if( isUpgradeInQueue( upgrade ) == TRUE )
 		return FALSE;
 
+#if !RETAIL_COMPATIBLE_CRC
+	// TheSuperHackers @bugfix O92 (row 55) no upgrade from a scaffold or from a building being sold (see
+	// BuildAssistant::canMakeUnit): only the control bar kept the buttons away
+	if( getObject()->testStatus( OBJECT_STATUS_UNDER_CONSTRUCTION ) || getObject()->testStatus( OBJECT_STATUS_SOLD ) )
+		return FALSE;
+#endif
+
 	// STOP cheaters by making sure they can actually build this
 	if( !getObject()->canProduceUpgrade(upgrade) )
 		return FALSE;
