@@ -376,7 +376,10 @@ static const UnsignedInt LANFilesInfoMagic = 0x46494C31;   ///< "FIL1"
 // different identity is "другая версия" as a different number. (The exe CRC differs between the product and uitest
 // exes of one build; the ini CRC is the original's and stays unused, see plan1-o63-report.md.)
 static const UnsignedInt LANProtocolMagic = 0x3156504C;    ///< "LPV1"
-static const Int LANProtocolVersion = 3;
+// TheSuperHackers @feature O98 (P5-b) Protocol 4: a room observer is in the room (LANAPI::EnterRoomAsObserver) and needs
+// the host's slot list and the players' chat in a direct-connect room too (sent to the observers as well); a protocol 3
+// host would leave such an observer with an empty room. plan5 is not released: 3 and 4 builds do not meet.
+static const Int LANProtocolVersion = 4;
 /// O64 (H6, low): the start handshake's magic carries the protocol number ("STR2"): another number is not this game's.
 static const UnsignedInt LANStartMagic = 0x00525453u | ((UnsignedInt)('0' + LANProtocolVersion) << 24);
 /// O76: a player's answer to START_CHECK (MSG_START_READY) when it cannot start: the map is not on it and no transfer
@@ -493,6 +496,17 @@ public:
 	Bool IsStartDelivering() const { return m_startDelivering; }   ///< O76: START is out: the room must not change
 	/// O84: the host of the game row selected in the lobby (0: none); its seats and observers are checked (GuardLink)
 	void SetLobbySelectedHost(UnsignedInt hostIP) { m_lobbySelectedHost = hostIP; }
+	/// TheSuperHackers @feature O98 (P5-b) A room observer (LanRoom IN_ROOM) is in the room without a seat: the room screen
+	/// shows that host's room (its slot list from the host's GAME_OPTIONS), the room chat goes through LanRoom (the host
+	/// passes it on), and nothing of a seat is sent (no options, accept, map or HELLO). Back, the host's REMOVED, the room
+	/// gone, or the match's start (it is watched from the stream, as from the lobby) take it back to the lobby. FALSE: not
+	/// possible now (not in the lobby, an action under way).
+	Bool EnterRoomAsObserver(LANGameInfo *game);
+	Bool IsSeatlessObserver() const { return m_seatless; }
+	/// O98: out of the room screen to the lobby; 'stopObserving': also off the host's observer list (Back)
+	void LeaveRoomAsObserver(Bool stopObserving);
+	/// O98: "Take a slot" of a room observer: off the list, back to the lobby, and a normal join of that room from there
+	void TakeSeatFromObserver();
 	/// O71: the room's keep-alive while update() does not run (the screen changes: LANbuttonPushed, a shell animation);
 	/// called by the LAN lobby menu's update instead of update()
 	void keepRoomAlive();
@@ -560,6 +574,8 @@ protected:
 	// O71: silence is 30 s; it is not counted while this computer's own loop did not run, nor during a start
 	UnsignedInt					m_lastLoopMs;        ///< the last LANAPI::update in a room
 	UnsignedInt					m_lobbySelectedHost; ///< O84: SetLobbySelectedHost
+	Bool								m_seatless;          ///< O98: in a room as its observer (EnterRoomAsObserver)
+	UnsignedInt					m_seatJoinHost;      ///< O98: TakeSeatFromObserver: join this host's room once in the lobby
 	UnsignedInt					m_startSeenMs;       ///< a joiner: the host's last start check or countdown message
 	UnsignedInt					m_notListedSinceMs;  ///< O71: a joiner: the host's lists have not had this computer since (0: they have)
 	Bool								m_acceptWanted;

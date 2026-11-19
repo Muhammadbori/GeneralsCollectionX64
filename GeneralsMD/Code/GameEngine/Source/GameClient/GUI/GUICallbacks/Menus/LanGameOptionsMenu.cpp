@@ -1022,7 +1022,7 @@ void updateGameOptions()
 		const MapMetaData *mapData = TheMapCache->findMap( TheLAN->GetMyGame()->getMap() );
 		// TheSuperHackers @bugfix O66 The admin who watches from outside the seats has no slot, but he chose the map and
 		// has it: its name and preview as for a seated player who has it (it showed the file name and "?")
-		const Bool haveMap = localSlot != nullptr ? localSlot->hasMap() : theGame->amIHost();
+		const Bool haveMap = localSlot != nullptr ? localSlot->hasMap() : (theGame->amIHost() || TheLAN->IsSeatlessObserver());   // O98: a room observer too (mapData is null when it lacks the map)
 		if (mapData && haveMap)
 		{
 			mapDisplayName.format(L"%ls", mapData->m_displayName.str());

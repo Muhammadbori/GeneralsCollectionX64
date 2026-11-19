@@ -1957,6 +1957,16 @@ void LanLobbyLook::update(Bool screenReady)
 		if (TheLAN != nullptr) TheLAN->SetLobbySelectedHost(0);   // O84
 		return;
 	}
+	// TheSuperHackers @feature O98 (P5-b) A room observer goes into the room: once the host's list has this computer
+	// (Observe, Join on a room with no free seat, or Become observer from a seat), the room screen, without a seat
+	if (TheLAN != nullptr && TheLAN->GetMyGame() == nullptr && !TheLAN->IsSeatlessObserver() && !LanTest::sampleData()
+		&& LanRoom::state() == LanRoom::STATE_IN_ROOM && !LanRoom::isWatcher())
+	{
+		LANGameInfo *room = TheLAN->LookupGameByHost(LanRoom::observedHost());
+		if (room != nullptr && TheLAN->EnterRoomAsObserver(room)) {
+			return;
+		}
+	}
 	// O40: "Play again" on the score screen: the room again, with the same layout (LanRoom::applyRematchLayout)
 	if (TheLAN != nullptr && TheLAN->GetMyGame() == nullptr && !LanTest::sampleData() && LanRoom::takeRematchRequest()) {
 		TheLAN->RequestGameCreate(UnicodeString::TheEmptyString, FALSE);
@@ -2096,8 +2106,12 @@ void LanLobbyLook::shutdown()
 {
 	// O31: leaving the LAN screen (main menu, or into a slot) ends observing a room; following a started stream goes on.
 	// O33: a stream whose replay has not started yet is given up (it would start a replay over another screen).
-	LanRoom::stopObserving();
-	LanRoom::cancelStarting();
+	// O98: not when the lobby gives way to the room screen of a room observer (it observes on, from inside the room)
+	if (TheLAN == nullptr || !TheLAN->IsSeatlessObserver())
+	{
+		LanRoom::stopObserving();
+		LanRoom::cancelStarting();
+	}
 	teardown();
 }
 

@@ -300,6 +300,61 @@ void LANAPI::OnGameStart()
 	}
 }
 
+Bool LANAPI::EnterRoomAsObserver(LANGameInfo *game)
+{
+	if (game == nullptr || !m_inLobby || m_currentGame != nullptr || m_pendingAction != ACT_NONE || m_seatless
+		|| game->isGameInProgress() || !LanSameVersion(game))
+	{
+		return FALSE;
+	}
+	// as a joiner's accept (handleJoinAccept): the lobby's copy of the room becomes this computer's room, here without a seat
+	const AsciiString options = GameInfoToAsciiString(game);
+	m_currentGame = game;
+	m_inLobby = false;
+	m_seatless = TRUE;
+	m_startSeenMs = 0;
+	m_notListedSinceMs = 0;
+	m_currentGame->enterGame();
+	ParseAsciiStringToGameInfo(m_currentGame, options);
+	m_currentGame->setLastHeard(LanClock::now());   // the host's silence (30 s) counts from here
+	LanTest::joinLog("observer: into the room of %d.%d.%d.%d without a seat", PRINTF_IP_AS_4_INTS(game->getHostIP()));
+	LANbuttonPushed = true;
+	TheShell->push( "Menus/LanGameOptionsMenu.wnd" );
+	return TRUE;
+}
+
+void LANAPI::LeaveRoomAsObserver(Bool stopObserving)
+{
+	if (!m_seatless) {
+		return;
+	}
+	m_seatless = FALSE;
+	if (stopObserving) {
+		LanRoom::stopObserving();
+	}
+	if (m_currentGame != nullptr)
+	{
+		// it stays in the lobby's list as the host last showed it (leaveGame resets it; the next announce refreshes it)
+		const AsciiString options = GameInfoToAsciiString(m_currentGame);
+		m_currentGame->leaveGame();
+		ParseAsciiStringToGameInfo(m_currentGame, options);
+		m_currentGame = nullptr;
+	}
+	m_inLobby = TRUE;
+	ResetGameStartTimer();
+	LANbuttonPushed = true;
+	TheShell->pop();
+}
+
+void LANAPI::TakeSeatFromObserver()
+{
+	if (!m_seatless || m_currentGame == nullptr) {
+		return;
+	}
+	m_seatJoinHost = m_currentGame->getHostIP();
+	LeaveRoomAsObserver(TRUE);
+}
+
 void LANAPI::OnWatchMatchLeave()
 {
 	m_watchMatchLeave = FALSE;
@@ -339,7 +394,7 @@ void LANAPI::OnGameOptions( UnsignedInt playerIP, Int playerSlot, AsciiString op
 			lanUpdateSlotList();
 			updateGameOptions();
 		}
-		Bool booted = true;
+		Bool booted = !m_seatless;   // O98: a room observer is never in the slot list
 		for(Int player = 0; player< MAX_SLOTS; player++)   // O60: slot 0 is a player's while the admin watches
 		{
 			if(m_currentGame->getIP(player) == m_localIP)

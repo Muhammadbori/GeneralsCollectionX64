@@ -65,6 +65,7 @@ namespace
 	const Text kHostNoSeatTip = { "GUI:LanRoomHostNoSeatTip", L"No free seat.", L"\x041D\x0435\x0442 \x0441\x0432\x043E\x0431\x043E\x0434\x043D\x043E\x0433\x043E \x043C\x0435\x0441\x0442\x0430." };
 	const Text kAdminRow = { "GUI:LanRoomAdminRow", L"%ls - observer (host)", L"%ls - \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x044C (\x0445\x043E\x0441\x0442)" };
 	const Color kAdminGold = GameMakeColor(255, 210, 90, 255);
+	const Text kObserverPlayTip = { "GUI:LanRoomObserverPlayTip", L"You observe from the room. Take a free player place (you leave the observers list).", L"\x0412\x044B \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0435\x0442\x0435 \x0438\x0437 \x043A\x043E\x043C\x043D\x0430\x0442\x044B. \x0417\x0430\x043D\x044F\x0442\x044C \x0441\x0432\x043E\x0431\x043E\x0434\x043D\x043E\x0435 \x043C\x0435\x0441\x0442\x043E \x0438\x0433\x0440\x043E\x043A\x0430 (\x0432\x044B \x043F\x043E\x043A\x0438\x043D\x0435\x0442\x0435 \x0441\x043F\x0438\x0441\x043E\x043A \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x0435\x0439)." };   // O98
 	const Text kBecome = { "GUI:LanRoomBecomeObserver", L"Become observer", L"\x0421\x0442\x0430\x0442\x044C \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x0435\x043C" };
 
 	const Color kFrame = LookPalette::kFrame;   // O94: gold in the base game
@@ -85,6 +86,7 @@ namespace
 		GameWindow *become;
 		GameWindow *hostToggle; ///< O60: the admin's "Watch" / "Play"
 		Int hostToggleShown;    ///< -1 none yet, 0 "Watch", 1 "Play"
+		Int becomeSeatless;     ///< O98: -1 none yet, 1 "Take a slot" (a room observer)
 		GameWindow *adminRow;   ///< O60: the admin above the table while he watches from outside the seats
 		GameWindow *adminMark;  ///< O60: the star on the admin's own seat while he plays
 		GameWindow *delay;      ///< O56 (row 43)
@@ -413,6 +415,7 @@ namespace
 		s.parent = s.chatList = s.startButton = s.backButton = s.list = s.become = s.delay = nullptr;
 		s.hostToggle = s.adminRow = s.adminMark = nullptr;
 		s.hostToggleShown = -1;
+		s.becomeSeatless = -1;
 		s.delayShown = -1;
 		s.font = nullptr;
 		s.shown = FALSE;
@@ -645,6 +648,25 @@ void LanRoomLook::update(Bool screenReady)
 		s.hostToggle->winEnable((!want || canPlay) && !TheLAN->IsStartPending());   // O62 (H5 #7): locked while a start is under way
 		s.hostToggle->winSetTooltip(textOf(want ? (canPlay ? kHostPlayTip : kHostNoSeatTip) : kHostWatchTip));
 	}
+	// TheSuperHackers @feature O98 (P5-b) A room observer in the room: "Take a slot" where a player's "Become observer" is
+	// (enabled while a seat is open), and no Accept of his own
+	if (TheLAN != nullptr && TheLAN->IsSeatlessObserver() && game != nullptr)
+	{
+		if (s.become != nullptr)
+		{
+			if (s.becomeSeatless != 1)
+			{
+				GadgetButtonSetText(s.become, textOf(kHostPlay));
+				s.becomeSeatless = 1;
+			}
+			const Bool canPlay = LanRoom::hostHasFreeSeat(game);
+			s.become->winEnable(canPlay);
+			s.become->winSetTooltip(textOf(canPlay ? kObserverPlayTip : kHostNoSeatTip));
+		}
+		if (s.startButton != nullptr) {
+			s.startButton->winHide(TRUE);
+		}
+	}
 	if (s.adminMark != nullptr && game != nullptr)
 	{
 		// on the accept light's place of the admin's seat while he plays
@@ -718,6 +740,12 @@ Bool LanRoomLook::onSystem(UnsignedInt msg, WindowMsgData mData1, WindowMsgData)
 	}
 	if (s.parent == nullptr || msg != GBM_SELECTED || s.become == nullptr || (GameWindow *)mData1 != s.become) {
 		return FALSE;
+	}
+	// O98: a room observer takes a seat: off the observer list, and a normal join from the lobby
+	if (TheLAN != nullptr && TheLAN->IsSeatlessObserver())
+	{
+		TheLAN->TakeSeatFromObserver();
+		return TRUE;
 	}
 	// leave the slot the normal way (the menu's own Back), then ask this room for an observer place from the lobby
 	LanRoom::requestBecomeObserver(roomHost());
