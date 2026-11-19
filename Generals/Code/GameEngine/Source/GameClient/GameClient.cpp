@@ -32,6 +32,7 @@
 
 #include "Common/FrameTiming.h"
 #include "Common/FrameShots.h"
+#include "Common/TestCommands.h"
 #include "GameClient/GameClient.h"
 
 // USER INCLUDES //////////////////////////////////////////////////////////////
@@ -543,6 +544,8 @@ void GameClient::update()
 
 	// TheSuperHackers @feature Raw input of -testInput goes after the real device messages, so it has the last word.
 	FrameShots::injectTestInput();
+	// TheSuperHackers @feature O96 -testCommands: scripted player orders go in at the same place (test only).
+	TestCommands::update();
 
 	if (m_intro != nullptr)
 	{

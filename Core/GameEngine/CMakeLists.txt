@@ -44,6 +44,7 @@ set(GAMEENGINE_SRC
     Include/Common/FramePacer.h
     Include/Common/FrameRateLimit.h
     Include/Common/FrameShots.h
+    Include/Common/TestCommands.h
     Include/Common/GuardLink.h
 #    Include/Common/FunctionLexicon.h
     Include/Common/GameAudio.h
@@ -621,6 +622,7 @@ set(GAMEENGINE_SRC
     Source/Common/FramePacer.cpp
     Source/Common/FrameRateLimit.cpp
     Source/Common/FrameShots.cpp
+    Source/Common/TestCommands.cpp
     Source/Common/GuardLink.cpp
 #    Source/Common/GameEngine.cpp
 #    Source/Common/GameLOD.cpp
