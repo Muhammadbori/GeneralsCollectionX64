@@ -45,6 +45,8 @@ enum ScreenEdgeScrollMode_ CPP_11(: ScreenEdgeScrollMode)
 class LookAtTranslator : public GameMessageTranslator
 {
 public:
+	/// TheSuperHackers @bugfix O97 (P5-f) A modal window came up (WindowXlat): no scroll may go on behind it
+	void stopAnyScrolling() { if (m_isScrolling) stopScrolling(); }
 	LookAtTranslator();
 	virtual ~LookAtTranslator() override;
 

@@ -2535,6 +2535,12 @@ void InGameUI::createMouseoverHint( const GameMessage *msg )
 	Bool underWindow = false;
 	if (io && TheWindowManager)
 		window = TheWindowManager->getWindowUnderCursor(io->pos.x, io->pos.y);
+	// TheSuperHackers @bugfix O97 (P5-f) A modal window (the in-game Options) covers the whole world: the menu arrow
+	if (TheWindowManager && TheWindowManager->winIsModalActive())
+	{
+		underWindow = true;
+		window = nullptr;
+	}
 
 	while (window)
 	{
@@ -2852,6 +2858,12 @@ void InGameUI::createCommandHint( const GameMessage *msg )
 	Bool underWindow = false;
 	if (io && TheWindowManager)
 		window = TheWindowManager->getWindowUnderCursor(io->pos.x, io->pos.y);
+	// TheSuperHackers @bugfix O97 (P5-f) A modal window (the in-game Options) covers the whole world: the menu arrow
+	if (TheWindowManager && TheWindowManager->winIsModalActive())
+	{
+		underWindow = true;
+		window = nullptr;
+	}
 
 
 	while (window)

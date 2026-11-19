@@ -95,6 +95,8 @@ LANAPI::LANAPI() : m_transport(nullptr)
 	for (Int k = 0; k < MAX_SLOTS; ++k) m_seatJoinedMs[k] = 0;
 	m_lastLoopMs = 0;     // O71
 	m_lobbySelectedHost = 0;   // O84
+	m_seatless = FALSE;        // O98
+	m_seatJoinHost = 0;
 	m_startSeenMs = 0;
 	m_notListedSinceMs = 0;
 	m_acceptWanted = FALSE;
@@ -156,6 +158,8 @@ void LANAPI::init()
 	for (Int k = 0; k < MAX_SLOTS; ++k) m_seatJoinedMs[k] = 0;
 	m_lastLoopMs = 0;     // O71
 	m_lobbySelectedHost = 0;   // O84
+	m_seatless = FALSE;        // O98
+	m_seatJoinHost = 0;
 	m_startSeenMs = 0;
 	m_notListedSinceMs = 0;
 	m_acceptWanted = FALSE;
@@ -400,6 +404,18 @@ void LANAPI::sendMessageOnly(LANMessage *msg, UnsignedInt ip)
 				}
 			}
 		}
+		// TheSuperHackers @feature O98 (protocol 4) The room's observers are in the room (EnterRoomAsObserver): its slot list
+		// and its players' chat reach them in a direct-connect room too (a broadcast room reaches them anyway)
+		if (msg->messageType == LANMessage::MSG_GAME_OPTIONS || msg->messageType == LANMessage::MSG_CHAT)
+		{
+			const std::vector<LanRoom::Observer> watchers = LanRoom::observersOf(m_currentGame->getHostIP());
+			for (size_t i = 0; i < watchers.size(); ++i)
+			{
+				if (watchers[i].ip != 0 && watchers[i].ip != m_localIP) {
+					m_transport->queueSend(watchers[i].ip, lobbyPort, (unsigned char *)msg, sizeof(LANMessage) /*, 0, 0 */);
+				}
+			}
+		}
 	}
 	else if (LanTest::loopbackSlot() >= 0)
 	{
@@ -543,6 +559,39 @@ void LANAPI::update()
 	{
 		OnWatchMatchLeave();
 		return;
+	}
+	// TheSuperHackers @feature O98 (P5-b) A room observer in the room: out to the lobby when LanRoom ends it (REMOVED,
+	// the room gone, the host's leaving) or the match starts (the stream starts from the lobby, as before O98)
+	if (m_seatless)
+	{
+		if (m_currentGame == nullptr || m_inLobby)
+		{
+			m_seatless = FALSE;   // the host left (handleRequestGameLeave popped the screen)
+			LanRoom::stopObserving();
+		}
+		else
+		{
+			const LanRoom::State st = LanRoom::state();
+			const Bool listed = LanRoom::observedHost() == m_currentGame->getHostIP()
+				&& (st == LanRoom::STATE_ASKED || st == LanRoom::STATE_IN_ROOM);
+			const Bool starting = LanRoom::observedHost() == m_currentGame->getHostIP()
+				&& (st == LanRoom::STATE_STARTING || st == LanRoom::STATE_PLAYING);
+			if (!listed)
+			{
+				LanTest::joinLog("observer: %s: back to the lobby", starting ? "the match starts" : "no longer on the room's list");
+				LeaveRoomAsObserver(FALSE);
+				return;
+			}
+		}
+	}
+	// O98: "Take a slot" of a room observer: the join from the lobby, once the lobby screen runs again
+	if (m_seatJoinHost != 0 && m_inLobby && m_currentGame == nullptr && m_pendingAction == ACT_NONE)
+	{
+		LANGameInfo *seatGame = LookupGameByHost(m_seatJoinHost);
+		m_seatJoinHost = 0;
+		if (seatGame != nullptr && !seatGame->isGameInProgress()) {
+			RequestGameJoin(seatGame);
+		}
 	}
 	static const UnsignedInt LANAPIUpdateDelay = 200;
 	UnsignedInt now = LanClock::now();
@@ -1078,6 +1127,11 @@ void LANAPI::RequestGameJoinDirectConnect(UnsignedInt ipaddress)
 
 void LANAPI::RequestGameLeave()
 {
+	if (m_seatless)
+	{
+		LeaveRoomAsObserver(TRUE);   // O98: an observer has no seat to leave: off the host's list, back to the lobby
+		return;
+	}
 	LANMessage msg;
 	msg.messageType = LANMessage::MSG_REQUEST_GAME_LEAVE;
 	fillInLANMessage( &msg );
@@ -1130,7 +1184,7 @@ void LANAPI::RequestGameAnnounce()
 
 void LANAPI::RequestAccept()
 {
-	if (m_inLobby || !m_currentGame)
+	if (m_inLobby || !m_currentGame || m_seatless)   // O98: an observer has no seat
 		return;
 	// O70: wanted until the host's slot list shows it (pumpConvergence), for the room as it is now
 	if (!m_currentGame->amIHost())
@@ -1152,7 +1206,7 @@ void LANAPI::RequestAccept()
 
 void LANAPI::sendAcceptOnly()
 {
-	if (m_inLobby || !m_currentGame)
+	if (m_inLobby || !m_currentGame || m_seatless)   // O98: an observer has no seat
 		return;
 
 	LANMessage msg;
@@ -1165,7 +1219,7 @@ void LANAPI::sendAcceptOnly()
 
 void LANAPI::RequestHasMap()
 {
-	if (m_inLobby || !m_currentGame)
+	if (m_inLobby || !m_currentGame || m_seatless)   // O98: an observer has no seat
 		return;
 
 	LANMessage msg;
@@ -1212,6 +1266,11 @@ void LANAPI::RequestHasMap()
 
 void LANAPI::RequestChat( UnicodeString message, ChatType format )
 {
+	if (m_seatless)
+	{
+		LanRoom::sendChat(message);   // O98: through the room's host, who shows it to the room (this computer included)
+		return;
+	}
 	LANMessage msg;
 	fillInLANMessage( &msg );
 	wcslcpy(msg.Chat.gameName, (m_currentGame) ? m_currentGame->getName().str() : L"", ARRAY_SIZE(msg.Chat.gameName));
@@ -1606,6 +1665,9 @@ void LANAPI::noteGuardPeers()
 
 void LANAPI::pumpRoomBeat(UnsignedInt now)
 {
+	if (m_seatless) {
+		return;   // O98: no seat to keep (LanRoom says "still here" every 4 s)
+	}
 	// O70: the room's keep-alive every 2 s: the host's slot list (the joiners take the host for alive by it), a joiner's
 	// HELLO (the host takes the seat for alive by it)
 	if (!m_inLobby && m_currentGame != nullptr && !m_currentGame->isGameInProgress() && LanClock::due(now, m_lastRoomBeat, 2000))
@@ -1621,6 +1683,9 @@ void LANAPI::pumpRoomBeat(UnsignedInt now)
 
 void LANAPI::keepRoomAlive()
 {
+	if (m_seatless) {
+		return;   // O98
+	}
 	// TheSuperHackers @bugfix O71 (addendum) A joiner that has its accept opens the room screen: update() does not run
 	// until that screen's init (LANbuttonPushed, set by OnGameJoin) and while the shell animates, so its first HELLO
 	// and the requests OnGameJoin queued waited for the screen. On a busy computer that took long enough for the host's
@@ -1671,7 +1736,7 @@ void LANAPI::noteHeardFrom(UnsignedInt senderIP, Int messageType)
 
 void LANAPI::noteHostView(const AsciiString &options)
 {
-	if (m_currentGame == nullptr || m_currentGame->amIHost()) {
+	if (m_currentGame == nullptr || m_currentGame->amIHost() || m_seatless) {
 		return;
 	}
 	LANGameInfo view;
@@ -1797,7 +1862,7 @@ void LANAPI::RequestGameOptions( AsciiString gameOptions, Bool isPublic, Unsigne
 {
 	DEBUG_ASSERTCRASH(gameOptions.getLength() <= m_lanMaxOptionsLength, ("Game options string is too long!"));
 
-	if (!m_currentGame || gameOptions.isEmpty())
+	if (!m_currentGame || gameOptions.isEmpty() || m_seatless)   // O98: an observer sends no options
 	{
 		return;
 	}

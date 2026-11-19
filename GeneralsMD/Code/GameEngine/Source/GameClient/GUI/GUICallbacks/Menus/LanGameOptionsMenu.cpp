@@ -817,7 +817,9 @@ void InitLanGameGadgets()
 		comboBoxPlayerTemplateID[i] = TheNameKeyGenerator->nameToKey( tmpString );
 		comboBoxPlayerTemplate[i] = TheWindowManager->winGetWindowFromId( parentLanGameOptions, comboBoxPlayerTemplateID[i] );
 		DEBUG_ASSERTCRASH(comboBoxPlayerTemplate[i], ("Could not find the comboBoxPlayerTemplate[%d]",i ));
-		PopulatePlayerTemplateComboBox(i, comboBoxPlayerTemplate, TheLAN->GetMyGame(), TRUE);
+		// TheSuperHackers @tweak O97 (P5-a) No "Observer" army: a player watches with "Become observer", the admin with
+		// "Observe" (LanRoom::hostSetObserves); the observer template stays for the game code.
+		PopulatePlayerTemplateComboBox(i, comboBoxPlayerTemplate, TheLAN->GetMyGame(), FALSE);
 
 		// add tooltips to the player template combobox and listbox
 		comboBoxPlayerTemplate[i]->winSetTooltipFunc(playerTemplateComboBoxTooltip);
@@ -1020,7 +1022,7 @@ void updateGameOptions()
 		const MapMetaData *mapData = TheMapCache->findMap( TheLAN->GetMyGame()->getMap() );
 		// TheSuperHackers @bugfix O66 The admin who watches from outside the seats has no slot, but he chose the map and
 		// has it: its name and preview as for a seated player who has it (it showed the file name and "?")
-		const Bool haveMap = localSlot != nullptr ? localSlot->hasMap() : theGame->amIHost();
+		const Bool haveMap = localSlot != nullptr ? localSlot->hasMap() : (theGame->amIHost() || TheLAN->IsSeatlessObserver());   // O98: a room observer too (mapData is null when it lacks the map)
 		if (mapData && haveMap)
 		{
 			mapDisplayName.format(L"%ls", mapData->m_displayName.str());
@@ -1287,7 +1289,7 @@ WindowMsgHandledType LanGameOptionsMenuSystem( GameWindow *window, UnsignedInt m
 								  if (wasAI || isAI)
 									  myGame->resetAccepted();
 								  if (wasAI ^ isAI)
-									  PopulatePlayerTemplateComboBox(i, comboBoxPlayerTemplate, myGame, wasAI);
+									  PopulatePlayerTemplateComboBox(i, comboBoxPlayerTemplate, myGame, FALSE);   // O97 (P5-a)
 								  if (!s_isIniting)
 								  {
 									  TheLAN->RequestGameOptions(GenerateGameOptionsString(), true);

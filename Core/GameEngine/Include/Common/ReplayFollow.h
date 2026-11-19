@@ -72,4 +72,10 @@ namespace ReplayFollow
 	/// old playback and the start of the new one the viewer must not take the replay for over (LanRoom::pollStart).
 	void setRestarting(Bool restarting);
 	Bool restarting();
+	/// TheSuperHackers @bugfix O97 (P5-e) TRUE (the start of every watch): the follower runs faster while it is more than two
+	/// seconds behind its live point, so it stays at the live point. FALSE: the viewer chose a time behind it (a seek of
+	/// the watch panel): it plays on at the chosen speed from there and only holds at the newest frame it may have. The
+	/// panel sets it; a backward seek's restart of the replay keeps it (readerStarted does not touch it).
+	void setFollowLive(Bool follow);
+	Bool followsLive();
 }

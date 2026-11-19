@@ -161,6 +161,9 @@ namespace
 	const Text kSummaryPlayers = { "GUI:LanSummaryPlayers", L"Players %d/%d   Observers %d", L"\x0418\x0433\x0440\x043E\x043A\x0438 %d/%d   \x041D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x0438 %d" };
 	const Text kSummaryMoney = { "GUI:LanSummaryMoney", L"Money $%d", L"\x0414\x0435\x043D\x044C\x0433\x0438 $%d" };
 	const Text kGameFull = { "GUI:LanGameFull", L"This game is full (%d/%d). Choose another game, or wait for a free place.", L"\x042D\x0442\x0430 \x0438\x0433\x0440\x0430 \x0437\x0430\x043F\x043E\x043B\x043D\x0435\x043D\x0430 (%d/%d). \x0412\x044B\x0431\x0435\x0440\x0438\x0442\x0435 \x0434\x0440\x0443\x0433\x0443\x044E \x0438\x0433\x0440\x0443 \x0438\x043B\x0438 \x0434\x043E\x0436\x0434\x0438\x0442\x0435\x0441\x044C \x0441\x0432\x043E\x0431\x043E\x0434\x043D\x043E\x0433\x043E \x043C\x0435\x0441\x0442\x0430." };
+	// O97 (P5-b): Join on a room with no free player place but a free observer place; and a room full of both
+	const Text kJoinAsObserver = { "GUI:LanJoinAsObserver", L"No free player place (%d/%d): you join the room as an observer (observers %d/%d).", L"\x041C\x0435\x0441\x0442 \x0434\x043B\x044F \x0438\x0433\x0440\x043E\x043A\x043E\x0432 \x043D\x0435\x0442 (%d/%d): \x0432\x044B \x0432\x0445\x043E\x0434\x0438\x0442\x0435 \x0432 \x043A\x043E\x043C\x043D\x0430\x0442\x0443 \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x0435\x043C (\x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x0438 %d/%d)." };
+	const Text kGameFullAll = { "GUI:LanGameFullAll", L"This game is full: players %d/%d, observers %d/%d. Choose another game, or wait for a free place.", L"\x042D\x0442\x0430 \x0438\x0433\x0440\x0430 \x0437\x0430\x043F\x043E\x043B\x043D\x0435\x043D\x0430: \x0438\x0433\x0440\x043E\x043A\x0438 %d/%d, \x043D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x0435\x043B\x0438 %d/%d. \x0412\x044B\x0431\x0435\x0440\x0438\x0442\x0435 \x0434\x0440\x0443\x0433\x0443\x044E \x0438\x0433\x0440\x0443 \x0438\x043B\x0438 \x0434\x043E\x0436\x0434\x0438\x0442\x0435\x0441\x044C \x0441\x0432\x043E\x0431\x043E\x0434\x043D\x043E\x0433\x043E \x043C\x0435\x0441\x0442\x0430." };
 	const Text kNoGamesPanel = { "GUI:LanNoGamesPanel", L"No open games on the network yet.", L"\x0412 \x0441\x0435\x0442\x0438 \x043F\x043E\x043A\x0430 \x043D\x0435\x0442 \x043E\x0442\x043A\x0440\x044B\x0442\x044B\x0445 \x0438\x0433\x0440." };
 	// O31
 	const Text kObserve = { "GUI:LanObserve", L"Observe", L"\x041D\x0430\x0431\x043B\x044E\x0434\x0430\x0442\x044C" };
@@ -200,6 +203,11 @@ namespace
 	const WideChar *const kDelayEnglish[8] = { L"+0", L"+10s", L"+20s", L"+30s", L"+1m", L"+1.5m", L"+2m", L"+3m" };
 	const WideChar *const kDelayRussian[8] = { L"+0", L"+10\x0441", L"+20\x0441", L"+30\x0441", L"+1\x043C", L"+1,5\x043C", L"+2\x043C", L"+3\x043C" };
 
+	/// TheSuperHackers @tweak O97 (P5-d) The caption beside the delay slider (its row is too low for the tick labels) and
+	/// its tooltip
+	const Text kDelayCaption = { "GUI:LanWatchDelayCaption", L"Delay: %s", L"\x0417\x0430\x0434\x0435\x0440\x0436\x043A\x0430: %s" };
+	const Text kDelayTip = { "GUI:LanWatchDelayTip", L"Extra delay you add on top of the host's delay for outside viewers (0 to 3 minutes).", L"\x0414\x043E\x043F\x043E\x043B\x043D\x0438\x0442\x0435\x043B\x044C\x043D\x0430\x044F \x0437\x0430\x0434\x0435\x0440\x0436\x043A\x0430, \x043A\x043E\x0442\x043E\x0440\x0443\x044E \x0432\x044B \x0434\x043E\x0431\x0430\x0432\x043B\x044F\x0435\x0442\x0435 \x043A \x0437\x0430\x0434\x0435\x0440\x0436\x043A\x0435 \x0445\x043E\x0441\x0442\x0430 \x0434\x043B\x044F \x0432\x043D\x0435\x0448\x043D\x0438\x0445 \x0437\x0440\x0438\x0442\x0435\x043B\x0435\x0439 (\x043E\x0442 0 \x0434\x043E 3 \x043C\x0438\x043D\x0443\x0442)." };
+
 	const WideChar *const kSampleLobby[] = { L"Vova", L"Alisher", L"Sardor_K", L"DESKTOP-IVQ416R", L"Timur", L"Lola", L"Bek" };
 	const Int kSampleLobbyFiles[] = { 1, 1, 1, 1, 0, 1, -1 };
 	/// O29 (item 8): the address list with -lanSample when Network.ini has none (shown only, never written)
@@ -238,6 +246,8 @@ namespace
 		GameWindow *historyPopup;
 		GameWindow *actionButton;  ///< O31: Observe / Stop observing / Watch
 		GameWindow *delaySlider;   ///< O31: the outside viewer's delay
+		GameWindow *delayCaption;  ///< O97 (P5-d): "Delay: +30s" beside it
+		Int delayCaptionStep;      ///< the step the caption shows (-1: none yet)
 		const Text *actionLabel;   ///< O31: the action button's text now
 		GameFont *font;
 		Bool shown;
@@ -987,6 +997,31 @@ namespace
 		if (r.maxPlayers <= 0 || r.players < r.maxPlayers) {
 			return FALSE;
 		}
+		// TheSuperHackers @feature O97 (P5-b) No free player place in a room that has not started, but a free observer place:
+		// Join (and a double click) makes this player one of the room's observers, as "Observe" does, instead of refusing.
+		// A running match is not joined at all (its Watch is the delayed outside view); a room full of both is refused.
+		const UnsignedInt host = r.game != nullptr ? r.game->getHostIP() : 0;
+		const Bool ownRoom = host != 0 && TheLAN != nullptr && host == TheLAN->GetLocalIP();
+		const LanRoom::State st = LanRoom::state();
+		const Bool observingThis = host != 0 && LanRoom::observedHost() == host
+			&& (st == LanRoom::STATE_ASKED || st == LanRoom::STATE_IN_ROOM);
+		const Bool observerPlace = r.observerPlaces > 0 && r.observers < r.observerPlaces;
+		const Bool canObserve = host != 0 && !r.inProgress && !ownRoom && !r.otherVersion && !LanTest::sampleData()
+			&& st != LanRoom::STATE_STARTING && st != LanRoom::STATE_PLAYING;
+		if (canObserve && (observingThis || observerPlace))
+		{
+			if (!observingThis)
+			{
+				LanRoom::startObserving(host);
+				if (s.chatList != nullptr)
+				{
+					UnicodeString t;
+					t.format(textOf(kJoinAsObserver).str(), r.players, r.maxPlayers, r.observers + 1, r.observerPlaces);
+					GadgetListBoxAddEntryText(s.chatList, t, chatSystemColor, -1, 0);
+				}
+			}
+			return TRUE;
+		}
 		if (s.chatList != nullptr)
 		{
 			// TheSuperHackers @tweak O36 Once per game and a few seconds: Join and a double click on the same full game (or
@@ -998,7 +1033,11 @@ namespace
 			if (s_lastGame != (const void *)r.game || s_lastRow != row || now - s_lastMs > 5000)
 			{
 				UnicodeString t;
-				t.format(textOf(kGameFull).str(), r.players, r.maxPlayers);
+				if (r.observerPlaces > 0 && !r.inProgress) {
+					t.format(textOf(kGameFullAll).str(), r.players, r.maxPlayers, r.observers, r.observerPlaces);   // O97
+				} else {
+					t.format(textOf(kGameFull).str(), r.players, r.maxPlayers);
+				}
 				GadgetListBoxAddEntryText(s.chatList, t, chatSystemColor, -1, 0);
 			}
 			s_lastGame = (const void *)r.game;
@@ -1154,15 +1193,10 @@ namespace
 		} else if (TheMultiplayerSettings != nullptr) {
 			money = (Int)TheMultiplayerSettings->getDefaultStartingMoney().countMoney();
 		}
-		Int observerCount = 0;
-		for (Int k = 0; k < MAX_SLOTS; ++k)
-		{
-			if (r.sample != nullptr) {
-				observerCount += r.sample->slots[k].state == 4 ? 1 : 0;
-			} else if (r.game != nullptr) {
-				observerCount += isObserverSlot(r.game->getConstSlot(k)) ? 1 : 0;
-			}
-		}
+		// TheSuperHackers @bugfix O97 (P5-c) Observers: the room's observers as the list under the seats and the games table's
+		// "Obs." column count them (the host's list plus the admin who watches); it counted only "Observer" army seats, so a
+		// room with two observers in its list said 0. Outside viewers exist only for a running match and are not in the list.
+		const Int observerCount = r.observers;
 		UnicodeString summary1, summary2;
 		summary1.format(textOf(kSummary).str(), r.players, r.maxPlayers, observerCount, money);
 		Int summaryLines = 1;
@@ -1874,7 +1908,21 @@ void LanLobbyLook::init(GameWindow *parent)
 		memset(&data, 0, sizeof(data));
 		data.minVal = 0;
 		data.maxVal = 7;
-		s.delaySlider = TheWindowManager->gogoGadgetSlider(s.parent, WIN_STATUS_ENABLED, sx(mid + 4), sy(a.y0), sx(a.x1) - sx(mid + 4),
+		// O97 (P5-d): the caption takes the widest of its texts (at most half the rest of the row), the slider the rest
+		Int widestCaption = 0;
+		for (Int i = 0; i < 8; ++i)
+		{
+			UnicodeString t;
+			t.format(textOf(kDelayCaption).str(), localizedFallback(kDelayEnglish[i], kDelayRussian[i]));
+			widestCaption = max(widestCaption, textWidth(t));
+		}
+		const Int restW = a.x1 - (mid + 4);
+		const Int captionW = min(restW / 2, (widestCaption + 8) * 800 / screen800);
+		const Int sliderX = mid + 4 + captionW;
+		const Rect captionRect = { mid + 4, a.y0, sliderX - 2, a.y1 };
+		s.delayCaption = makeLabel(captionRect, UnicodeString::TheEmptyString, kTextDim, FALSE);
+		s.delayCaptionStep = -1;
+		s.delaySlider = TheWindowManager->gogoGadgetSlider(s.parent, WIN_STATUS_ENABLED, sx(sliderX), sy(a.y0), sx(a.x1) - sx(sliderX),
 			sy(a.y1) - sy(a.y0), &inst, &data, s.font, TRUE);
 		if (s.delaySlider != nullptr)
 		{
@@ -1886,6 +1934,7 @@ void LanLobbyLook::init(GameWindow *parent)
 				labels[i] = localizedFallback(kDelayEnglish[i], kDelayRussian[i]);
 			}
 			TickSlider::setLabels(s.delaySlider, labels, 8);
+			s.delaySlider->winSetTooltip(textOf(kDelayTip));   // O97 (P5-d)
 			s.made.push_back(s.delaySlider);
 		}
 	}
@@ -1907,6 +1956,16 @@ void LanLobbyLook::update(Bool screenReady)
 	if (!screenReady) {
 		if (TheLAN != nullptr) TheLAN->SetLobbySelectedHost(0);   // O84
 		return;
+	}
+	// TheSuperHackers @feature O98 (P5-b) A room observer goes into the room: once the host's list has this computer
+	// (Observe, Join on a room with no free seat, or Become observer from a seat), the room screen, without a seat
+	if (TheLAN != nullptr && TheLAN->GetMyGame() == nullptr && !TheLAN->IsSeatlessObserver() && !LanTest::sampleData()
+		&& LanRoom::state() == LanRoom::STATE_IN_ROOM && !LanRoom::isWatcher())
+	{
+		LANGameInfo *room = TheLAN->LookupGameByHost(LanRoom::observedHost());
+		if (room != nullptr && TheLAN->EnterRoomAsObserver(room)) {
+			return;
+		}
 	}
 	// O40: "Play again" on the score screen: the room again, with the same layout (LanRoom::applyRematchLayout)
 	if (TheLAN != nullptr && TheLAN->GetMyGame() == nullptr && !LanTest::sampleData() && LanRoom::takeRematchRequest()) {
@@ -1952,6 +2011,24 @@ void LanLobbyLook::update(Bool screenReady)
 		}
 		if (s.delaySlider != nullptr) {
 			s.delaySlider->winHide(!running || busy || blocked);
+		}
+		// O97 (P5-d): the caption follows the handle, also while it is dragged (TickSlider reports the step it would take)
+		if (s.delayCaption != nullptr)
+		{
+			const Bool hidden = s.delaySlider == nullptr || !running || busy || blocked;
+			s.delayCaption->winHide(hidden);
+			if (!hidden)
+			{
+				Int step = (Int)(TickSlider::position(s.delaySlider) + 0.5f);
+				step = step < 0 ? 0 : (step > 7 ? 7 : step);
+				if (step != s.delayCaptionStep)
+				{
+					UnicodeString t;
+					t.format(textOf(kDelayCaption).str(), localizedFallback(kDelayEnglish[step], kDelayRussian[step]));
+					GadgetStaticTextSetText(s.delayCaption, t);
+					s.delayCaptionStep = step;
+				}
+			}
 		}
 	}
 	// O30: this player's own anti-cheat check failed: said once in the chat (others see the red mark)
@@ -2029,8 +2106,12 @@ void LanLobbyLook::shutdown()
 {
 	// O31: leaving the LAN screen (main menu, or into a slot) ends observing a room; following a started stream goes on.
 	// O33: a stream whose replay has not started yet is given up (it would start a replay over another screen).
-	LanRoom::stopObserving();
-	LanRoom::cancelStarting();
+	// O98: not when the lobby gives way to the room screen of a room observer (it observes on, from inside the room)
+	if (TheLAN == nullptr || !TheLAN->IsSeatlessObserver())
+	{
+		LanRoom::stopObserving();
+		LanRoom::cancelStarting();
+	}
 	teardown();
 }
 
@@ -2060,7 +2141,8 @@ void LanLobbyLook::teardown()
 	s.ownFailureSaid = FALSE;
 	s.addrBox = s.copyButton = s.connectEntry = s.historyButton = s.connectButton = nullptr;
 	s.gamesTable = s.panel = s.panelLabel = s.lobbyList = s.lobbyLabel = s.historyPopup = nullptr;
-	s.actionButton = s.delaySlider = nullptr;
+	s.actionButton = s.delaySlider = s.delayCaption = nullptr;
+	s.delayCaptionStep = -1;
 	s.actionLabel = nullptr;
 	s.font = nullptr;
 	s.shown = FALSE;
