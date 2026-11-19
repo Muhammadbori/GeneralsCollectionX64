@@ -199,10 +199,10 @@ namespace
 	// TheSuperHackers @tweak O100 (P5-g) The lobby's own watch delay (the slider after "Delay", O31/P5-d) is gone: Watch
 	// always adds +0, so an outside viewer gets only the host's viewer delay (Options: LanWatchDelay). In its place a
 	// read-only line says that delay for the selected running game, in the watch panel's words (ReplayControlBar).
-	const Text kHostDelay = { "GUI:ReplayBarHostDelay", L"Host delay: %ls", L"1730343540363A30 453E414230: %ls" };
-	const Text kDelaySeconds = { "GUI:ReplayBarSeconds", L"%d s", L"%d 41" };
-	const Text kDelayMinutes = { "GUI:ReplayBarMinutes", L"%d min", L"%d 3C383D" };
-	const Text kDelayMinSec = { "GUI:ReplayBarMinutesSeconds", L"%d min %d s", L"%d 3C383D %d 41" };
+	const Text kHostDelay = { "GUI:ReplayBarHostDelay", L"Host delay: %ls", L"\x0417\x0430\x0434\x0435\x0440\x0436\x043A\x0430 \x0445\x043E\x0441\x0442\x0430: %ls" };
+	const Text kDelaySeconds = { "GUI:ReplayBarSeconds", L"%d s", L"%d \x0441" };
+	const Text kDelayMinutes = { "GUI:ReplayBarMinutes", L"%d min", L"%d \x043C\x0438\x043D" };
+	const Text kDelayMinSec = { "GUI:ReplayBarMinutesSeconds", L"%d min %d s", L"%d \x043C\x0438\x043D %d \x0441" };
 	UnicodeString hostDelayText(Int seconds)
 	{
 		UnicodeString amount;
