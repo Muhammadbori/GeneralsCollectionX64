@@ -1854,6 +1854,10 @@ Bool LanRoom::hostSetObserves(LANGameInfo *game, Bool observe)
 		game->setSlot(seat, me);
 		game->setHostObserves(FALSE);
 	}
+	// TheSuperHackers @bugfix O97 (P5-c) The seat the admin leaves or takes counts against the map's player places: an
+	// admin who had the "Observer" army in his seat (it freed a place, O56) and then went outside the seats left one open
+	// seat too many ("Players 2/3" and a third "Open" row on a 2-player map).
+	game->balanceObserverPlaces();
 	game->resetAccepted();
 	TheLAN->RequestGameOptions(GenerateGameOptionsString(), true);
 	lanUpdateSlotList();

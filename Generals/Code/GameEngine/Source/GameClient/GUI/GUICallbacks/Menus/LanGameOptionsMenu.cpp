@@ -747,7 +747,9 @@ void InitLanGameGadgets()
 		comboBoxPlayerTemplateID[i] = TheNameKeyGenerator->nameToKey( tmpString );
 		comboBoxPlayerTemplate[i] = TheWindowManager->winGetWindowFromId( parentLanGameOptions, comboBoxPlayerTemplateID[i] );
 		DEBUG_ASSERTCRASH(comboBoxPlayerTemplate[i], ("Could not find the comboBoxPlayerTemplate[%d]",i ));
-		PopulatePlayerTemplateComboBox(i, comboBoxPlayerTemplate, TheLAN->GetMyGame(), TRUE);
+		// TheSuperHackers @tweak O97 (P5-a) No "Observer" army: a player watches with "Become observer", the admin with
+		// "Observe" (LanRoom::hostSetObserves); the observer template stays for the game code.
+		PopulatePlayerTemplateComboBox(i, comboBoxPlayerTemplate, TheLAN->GetMyGame(), FALSE);
 
 		tmpString.format("LanGameOptionsMenu.wnd:ComboBoxTeam%d", i);
 		comboBoxTeamID[i] = TheNameKeyGenerator->nameToKey( tmpString );
@@ -1186,7 +1188,7 @@ WindowMsgHandledType LanGameOptionsMenuSystem( GameWindow *window, UnsignedInt m
 								if (wasAI || isAI)
 									myGame->resetAccepted();
 								if (wasAI ^ isAI)
-									PopulatePlayerTemplateComboBox(i, comboBoxPlayerTemplate, myGame, wasAI);
+									PopulatePlayerTemplateComboBox(i, comboBoxPlayerTemplate, myGame, FALSE);   // O97 (P5-a)
 								if (!s_isIniting)
 								{
 									TheLAN->RequestGameOptions(GenerateGameOptionsString(), true);

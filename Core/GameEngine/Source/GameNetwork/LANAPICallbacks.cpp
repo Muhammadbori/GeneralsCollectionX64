@@ -465,7 +465,10 @@ void LANAPI::OnGameOptions( UnsignedInt playerIP, Int playerSlot, AsciiString op
 				}
 				else if (key == "PlayerTemplate")
 				{
-					if (val >= PLAYERTEMPLATE_MIN && val < ThePlayerTemplateStore->getPlayerTemplateCount() && val != slot->getPlayerTemplate())
+					// TheSuperHackers @tweak O97 (P5-a) The army list has no "Observer" any more: a request for it is refused (a
+					// player watches with "Become observer"); a slot that still has it may leave it.
+					if (val >= PLAYERTEMPLATE_MIN && val < ThePlayerTemplateStore->getPlayerTemplateCount() && val != slot->getPlayerTemplate()
+						&& val != PLAYERTEMPLATE_OBSERVER)
 					{
 						const Bool wasObserver = slot->getPlayerTemplate() == PLAYERTEMPLATE_OBSERVER;
 						slot->setPlayerTemplate(val);
