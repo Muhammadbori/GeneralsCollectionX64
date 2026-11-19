@@ -54,6 +54,8 @@
 #include "GameClient/GameWindowManager.h"
 #include "GameClient/WindowXlat.h"
 #include "GameClient/LookAtXlat.h"
+#include "GameClient/InGameUI.h"
+#include "GameLogic/GameLogic.h"
 #include "GameClient/Shell.h"
 #include "GameClient/Display.h"
 
@@ -174,12 +176,27 @@ WindowTranslator::~WindowTranslator()
 // under the Options window. The shell's screens are blocked already (isShellActive).
 static Bool modalBarrier()
 {
+	static Bool s_wasModal = FALSE;
 	if (TheWindowManager == nullptr || !TheWindowManager->winIsModalActive()) {
+		s_wasModal = FALSE;
 		return FALSE;
 	}
 	if (TheLookAtTranslator != nullptr) {
 		TheLookAtTranslator->stopAnyScrolling();
 	}
+	// the key-ups of keys held when it came up are kept from the match: their modes end now (as InGameUI::setInputEnabled)
+	if (!s_wasModal && TheInGameUI != nullptr)
+	{
+		TheInGameUI->setForceAttackMode(false);
+		TheInGameUI->setForceMoveMode(false);
+		TheInGameUI->setWaypointMode(false);
+		TheInGameUI->setPreferSelectionMode(false);
+		TheInGameUI->setCameraRotateLeft(false);
+		TheInGameUI->setCameraRotateRight(false);
+		TheInGameUI->setCameraZoomIn(false);
+		TheInGameUI->setCameraZoomOut(false);
+	}
+	s_wasModal = TRUE;
 	return TRUE;
 }
 
@@ -363,6 +380,15 @@ GameMessageDisposition WindowTranslator::translateGameMessage(const GameMessage 
 			if(returnCode != WIN_INPUT_USED &&
 				(key != KEY_ESC) &&
 				(TheInGameUI && (TheInGameUI->getInputEnabled() == FALSE)) )
+			{
+				returnCode = WIN_INPUT_USED;
+			}
+
+			// TheSuperHackers @bugfix O97 (P5-f) A modal window over the match (the in-game Options) keeps the keys too: what
+			// the window did not use (its fields, ESC, Enter and Tab come to it first, in winProcessKey above) does not reach
+			// the match's hotkeys (MetaEventTranslator and the rest come after this translator)
+			if (returnCode != WIN_INPUT_USED && modalBarrier()
+				&& !(TheShell && TheShell->isShellActive()) && TheGameLogic != nullptr && TheGameLogic->isInGame())
 			{
 				returnCode = WIN_INPUT_USED;
 			}
