@@ -53,6 +53,7 @@
 #include "GameClient/GameClient.h"
 #include "GameClient/GameWindowManager.h"
 #include "GameClient/WindowXlat.h"
+#include "GameClient/LookAtXlat.h"
 #include "GameClient/Shell.h"
 #include "GameClient/Display.h"
 
@@ -166,6 +167,22 @@ WindowTranslator::~WindowTranslator()
 /** Window translator that monitors raw input messages on the stream and
 	* acts on anything relevant to the windowing system */
 //=============================================================================
+// TheSuperHackers @bugfix O97 (P5-f) A modal window over a running match (the in-game Options, a message box) is a full
+// barrier: no mouse move, hover, click, drag, wheel or edge scroll reaches the game world, inside the window or outside
+// it (in a network match the game is not paused, so its input stays on). A mouse move is not sent to windows at all
+// (sendMousePosMessages), so it was never "used" and went on to the world translators: the world cursor of whatever lay
+// under the Options window. The shell's screens are blocked already (isShellActive).
+static Bool modalBarrier()
+{
+	if (TheWindowManager == nullptr || !TheWindowManager->winIsModalActive()) {
+		return FALSE;
+	}
+	if (TheLookAtTranslator != nullptr) {
+		TheLookAtTranslator->stopAnyScrolling();
+	}
+	return TRUE;
+}
+
 GameMessageDisposition WindowTranslator::translateGameMessage(const GameMessage *msg)
 {
 	GameMessageDisposition disp = KEEP_MESSAGE;
@@ -248,6 +265,9 @@ GameMessageDisposition WindowTranslator::translateGameMessage(const GameMessage 
 			if ( TheInGameUI && TheInGameUI->getInputEnabled() == FALSE )
 				returnCode = WIN_INPUT_USED;
 
+			if ( modalBarrier() )
+				returnCode = WIN_INPUT_USED;   // O97 (P5-f)
+
 			break;
 
 		}
@@ -274,6 +294,9 @@ GameMessageDisposition WindowTranslator::translateGameMessage(const GameMessage 
 			if ( TheInGameUI && TheInGameUI->getInputEnabled() == FALSE )
 				returnCode = WIN_INPUT_USED;
 
+			if ( modalBarrier() )
+				returnCode = WIN_INPUT_USED;   // O97 (P5-f)
+
 			break;
 
 		}
@@ -298,6 +321,9 @@ GameMessageDisposition WindowTranslator::translateGameMessage(const GameMessage 
 
 			if ( TheInGameUI && TheInGameUI->getInputEnabled() == FALSE )
 				returnCode = WIN_INPUT_USED;
+
+			if ( modalBarrier() )
+				returnCode = WIN_INPUT_USED;   // O97 (P5-f)
 
 			break;
 
