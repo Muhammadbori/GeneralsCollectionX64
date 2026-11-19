@@ -859,6 +859,11 @@ void LANAPI::handleChat( LANMessage *msg, UnsignedInt senderIP )
 
 void LANAPI::handleGameStart( LANMessage *msg, UnsignedInt senderIP )
 {
+	// TheSuperHackers @bugfix O101 (S48) A seatless room observer (O98) is not in the match: the room's START, start check
+	// and countdown are for the seats. It leaves to the lobby when LanRoom says the match starts (update) and watches the
+	// stream from there, as before O98; it used to run the player start (OnGameStart) and crash in the load screen.
+	if (m_seatless)
+		return;
 	if (!m_inLobby && m_currentGame && m_currentGame->getHostIP() == senderIP && !m_currentGame->isGameInProgress())
 	{
 		// TheSuperHackers @bugfix O62 (H5 #1) START names the room and the digest every player confirmed: a copy of the
@@ -928,6 +933,8 @@ void LANAPI::handleStartAck( LANMessage *msg, UnsignedInt senderIP )
 
 void LANAPI::handleStartCheck( LANMessage *msg, UnsignedInt senderIP )
 {
+	if (m_seatless)
+		return;   // O101: no seat, no READY
 	// O62 (H5 #1): the host asks whether this computer's copy of the room is the one it starts; READY only when it is
 	if (m_inLobby || m_currentGame == nullptr || m_currentGame->isGameInProgress() || m_currentGame->getHostIP() != senderIP
 		|| msg->StartCheck.magic != LANStartMagic || m_currentGame->getName().compare(msg->StartCheck.gameName) != 0) {
@@ -988,6 +995,8 @@ void LANAPI::handleStartReady( LANMessage *msg, UnsignedInt senderIP )
 
 void LANAPI::handleGameStartTimer( LANMessage *msg, UnsignedInt senderIP )
 {
+	if (m_seatless)
+		return;   // O101: the countdown is for the seats
 	if (!m_inLobby && m_currentGame && m_currentGame->getHostIP() == senderIP && !m_currentGame->isGameInProgress())
 	{
 		m_startSeenMs = LanClock::now();   // O71: the host counts down: its silence is not counted meanwhile

@@ -1270,7 +1270,9 @@ void MultiPlayerLoadScreen::init( GameInfo *game )
 	m_mapPreview = TheWindowManager->winGetWindowFromId( m_loadScreen,TheNameKeyGenerator->nameToKey( "MultiplayerLoadScreen.wnd:WinMapPreview"));
 	GameSlot *lSlot = game->getSlot(game->getLocalSlotNum());
 	const PlayerTemplate* pt;
-	if (lSlot->getPlayerTemplate() >= 0)
+	// TheSuperHackers @bugfix O101 (S48) No local slot (-1: a seatless room observer, the watching admin) has no slot
+	// object: it loads with the observer's screen instead of crashing on a null slot
+	if (lSlot != nullptr && lSlot->getPlayerTemplate() >= 0)
 		pt = ThePlayerTemplateStore->getNthPlayerTemplate(lSlot->getPlayerTemplate());
 	else
 		pt = ThePlayerTemplateStore->findPlayerTemplate( TheNameKeyGenerator->nameToKey("FactionObserver") );
@@ -1597,7 +1599,9 @@ void GameSpyLoadScreen::init( GameInfo *game )
 	DEBUG_LOG(("NumPlayers %d", TheNetwork->getNumPlayers()));
 GameSlot *lSlot = game->getSlot(game->getLocalSlotNum());
 	const PlayerTemplate* pt;
-	if (lSlot->getPlayerTemplate() >= 0)
+	// TheSuperHackers @bugfix O101 (S48) No local slot (-1: a seatless room observer, the watching admin) has no slot
+	// object: it loads with the observer's screen instead of crashing on a null slot
+	if (lSlot != nullptr && lSlot->getPlayerTemplate() >= 0)
 		pt = ThePlayerTemplateStore->getNthPlayerTemplate(lSlot->getPlayerTemplate());
 	else
 		pt = ThePlayerTemplateStore->findPlayerTemplate( TheNameKeyGenerator->nameToKey("FactionObserver") );
