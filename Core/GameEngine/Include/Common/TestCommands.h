@@ -35,4 +35,7 @@ public:
 	static const char *getSkirmishSide(); ///< nullptr without -testCommands (the -skirmish observer stays)
 	/// Call once per client update after the device messages were appended (beside FrameShots::injectTestInput).
 	static void update();
+	/// O99: call at the start of GameLogic::update (inside its m_isInUpdate latch). Runs the "spawn" lines update() held
+	/// back, so spawned objects are made in logic time like produced ones; the script goes on after them.
+	static void logicUpdate();
 };

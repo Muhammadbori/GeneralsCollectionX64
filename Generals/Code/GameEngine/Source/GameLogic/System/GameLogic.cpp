@@ -53,6 +53,7 @@
 #include "Common/Recorder.h"
 #include "Common/StateTrace.h"
 #include "Common/MismatchReport.h"
+#include "Common/TestCommands.h"
 #include "Common/StatsCollector.h"
 #include "Common/ThingFactory.h"
 #include "Common/Team.h"
@@ -3224,6 +3225,9 @@ void GameLogic::update()
 	{
 		GameLogicRandomValue(0, 1000);
 	}
+
+	// TheSuperHackers @feature O99 -testCommands (test exes only): "spawn" lines run here, in logic time
+	TestCommands::logicUpdate();
 #ifdef DO_UNIT_TIMINGS
 	unitTimings();
 #endif

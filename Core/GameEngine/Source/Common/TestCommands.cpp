@@ -60,12 +60,14 @@
 
 #include "Common/TestCommands.h"
 
+#include "Common/BuildAssistant.h"
 #include "Common/CommandLine.h"
 #include "Common/GameEngine.h"
 #include "Common/GlobalData.h"
 #include "Common/MessageStream.h"
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
+#include "Common/ProductionPrerequisite.h"
 #include "Common/SpecialPower.h"
 #include "Common/ThingFactory.h"
 #include "Common/ThingTemplate.h"
@@ -106,6 +108,9 @@ namespace
 	Bool s_started = FALSE;
 	FILE *s_log = nullptr;
 	std::vector< std::vector<ObjectID> > s_groups;
+	// O99: "spawn" lines wait for the next logic update (TestCommands::logicUpdate); the lines after them wait too.
+	std::vector<Line> s_deferred;
+	Bool s_hold = FALSE;
 
 	Real coordinate(const std::string &word, Bool isX);
 
@@ -400,6 +405,14 @@ namespace
 		}
 		else if (action == "spawn") {
 			if (argc < 4) TC_FAIL("needs <template> <player> <x> <y> [count]");
+			// O99: objects are made inside a logic update, like produced or script-made ones. Made from the client update,
+			// their drawables took the model state while the shared barrel/bone data could not be computed, and a
+			// Scorpion's first shot crashed in W3DModelDraw::handleWeaponFireFX (S46).
+			if (!TheGameLogic->isInGameLogicUpdate()) {
+				s_deferred.push_back(line);
+				s_hold = TRUE;
+				return;
+			}
 			const ThingTemplate *tt = TheThingFactory->findTemplate(AsciiString(w[1].c_str()));
 			if (tt == nullptr) TC_FAIL("no such template");
 			Player *player = findPlayer(w[2]);
@@ -506,11 +519,44 @@ namespace
 			const ThingTemplate *tt = TheThingFactory->findTemplate(AsciiString(w[2].c_str()));
 			if (tt == nullptr) TC_FAIL("no such template");
 			const Coord3D pos = groundAt(w[3], w[4]);
+			const Real angle = argc >= 5 ? (Real)atof(w[5].c_str()) : 0.0f;
+			// O99: the same checks as the build button and the placement (BuildAssistant::buildObjectNow drops the order
+			// without a word: S46's Tunnel Network and Generals Barracks never started), so the log says why.
+			Player *owner = dozer->getControllingPlayer();
+			if (!TheBuildAssistant->isPossibleToMakeUnit(dozer, tt)) {
+				std::string why = "the dozer cannot build it now";
+				if (owner != nullptr && !owner->canBuild(tt)) {
+					why = "prerequisites missing:";
+					for (Int i = 0; i < tt->getPrereqCount(); ++i) {
+						const ProductionPrerequisite *pre = tt->getNthPrereq(i);
+						if (!pre->isSatisfied(owner)) {
+							AsciiString names;
+							names.translate(pre->getRequiresList(owner));
+							why += " [";
+							why += names.str();
+							why += "]";
+						}
+					}
+				}
+				TC_FAIL(why.c_str());
+			}
+			const LegalBuildCode lbc = TheBuildAssistant->isLocationLegalToBuild(&pos, tt, angle,
+				BuildAssistant::USE_QUICK_PATHFIND | BuildAssistant::TERRAIN_RESTRICTIONS | BuildAssistant::CLEAR_PATH
+				| BuildAssistant::NO_OBJECT_OVERLAP | BuildAssistant::SHROUD_REVEALED | BuildAssistant::IGNORE_STEALTHED,
+				dozer, nullptr);
+			if (lbc != LBC_OK) {
+				static const char *const kLbc[] = { "ok", "restricted terrain", "not flat enough", "objects in the way",
+					"no clear path", "shroud", "too close to supplies", "generic failure" };
+				char why[96];
+				snprintf(why, sizeof(why), "illegal spot (%s, code %d)",
+					(Int)lbc >= 0 && (Int)lbc < (Int)(sizeof(kLbc) / sizeof(kLbc[0])) ? kLbc[lbc] : "?", (Int)lbc);
+				TC_FAIL(why);
+			}
 			selectOne(dozer);
 			GameMessage *msg = TheMessageStream->appendMessage(GameMessage::MSG_DOZER_CONSTRUCT);
 			msg->appendIntegerArgument(tt->getTemplateID());
 			msg->appendLocationArgument(pos);
-			msg->appendRealArgument(argc >= 5 ? (Real)atof(w[5].c_str()) : 0.0f);
+			msg->appendRealArgument(angle);
 			TC_OK("sent, dozer %u at %.0f,%.0f (pick the scaffold later with: pick %s <player>)", (UnsignedInt)dozer->getID(),
 				pos.x, pos.y, w[2].c_str());
 		}
@@ -651,13 +697,26 @@ void TestCommands::update()
 		logPlayers();
 	}
 	const UnsignedInt frame = TheGameLogic->getFrame();
-	while (s_next < s_lines.size() && s_lines[s_next].frame <= frame) {
+	while (!s_hold && s_next < s_lines.size() && s_lines[s_next].frame <= frame) {
 		run(s_lines[s_next++]);
 	}
-	if (s_next == s_lines.size() && s_log != nullptr) {
+	if (!s_hold && s_next == s_lines.size() && s_log != nullptr) {
 		tcLog("script finished");
 		fclose(s_log);
 		s_log = nullptr;
 		++s_next;
+	}
+}
+
+void TestCommands::logicUpdate()
+{
+	if (!s_hold) {
+		return;
+	}
+	std::vector<Line> lines;
+	lines.swap(s_deferred);
+	s_hold = FALSE;
+	for (size_t i = 0; i < lines.size(); ++i) {
+		run(lines[i]);
 	}
 }
