@@ -203,6 +203,11 @@ namespace
 	const WideChar *const kDelayEnglish[8] = { L"+0", L"+10s", L"+20s", L"+30s", L"+1m", L"+1.5m", L"+2m", L"+3m" };
 	const WideChar *const kDelayRussian[8] = { L"+0", L"+10\x0441", L"+20\x0441", L"+30\x0441", L"+1\x043C", L"+1,5\x043C", L"+2\x043C", L"+3\x043C" };
 
+	/// TheSuperHackers @tweak O97 (P5-d) The caption beside the delay slider (its row is too low for the tick labels) and
+	/// its tooltip
+	const Text kDelayCaption = { "GUI:LanWatchDelayCaption", L"Delay: %s", L"\x0417\x0430\x0434\x0435\x0440\x0436\x043A\x0430: %s" };
+	const Text kDelayTip = { "GUI:LanWatchDelayTip", L"Extra delay you add on top of the host's delay for outside viewers (0 to 3 minutes).", L"\x0414\x043E\x043F\x043E\x043B\x043D\x0438\x0442\x0435\x043B\x044C\x043D\x0430\x044F \x0437\x0430\x0434\x0435\x0440\x0436\x043A\x0430, \x043A\x043E\x0442\x043E\x0440\x0443\x044E \x0432\x044B \x0434\x043E\x0431\x0430\x0432\x043B\x044F\x0435\x0442\x0435 \x043A \x0437\x0430\x0434\x0435\x0440\x0436\x043A\x0435 \x0445\x043E\x0441\x0442\x0430 \x0434\x043B\x044F \x0432\x043D\x0435\x0448\x043D\x0438\x0445 \x0437\x0440\x0438\x0442\x0435\x043B\x0435\x0439 (\x043E\x0442 0 \x0434\x043E 3 \x043C\x0438\x043D\x0443\x0442)." };
+
 	const WideChar *const kSampleLobby[] = { L"Vova", L"Alisher", L"Sardor_K", L"DESKTOP-IVQ416R", L"Timur", L"Lola", L"Bek" };
 	const Int kSampleLobbyFiles[] = { 1, 1, 1, 1, 0, 1, -1 };
 	/// O29 (item 8): the address list with -lanSample when Network.ini has none (shown only, never written)
@@ -241,6 +246,8 @@ namespace
 		GameWindow *historyPopup;
 		GameWindow *actionButton;  ///< O31: Observe / Stop observing / Watch
 		GameWindow *delaySlider;   ///< O31: the outside viewer's delay
+		GameWindow *delayCaption;  ///< O97 (P5-d): "Delay: +30s" beside it
+		Int delayCaptionStep;      ///< the step the caption shows (-1: none yet)
 		const Text *actionLabel;   ///< O31: the action button's text now
 		GameFont *font;
 		Bool shown;
@@ -1901,7 +1908,21 @@ void LanLobbyLook::init(GameWindow *parent)
 		memset(&data, 0, sizeof(data));
 		data.minVal = 0;
 		data.maxVal = 7;
-		s.delaySlider = TheWindowManager->gogoGadgetSlider(s.parent, WIN_STATUS_ENABLED, sx(mid + 4), sy(a.y0), sx(a.x1) - sx(mid + 4),
+		// O97 (P5-d): the caption takes the widest of its texts (at most half the rest of the row), the slider the rest
+		Int widestCaption = 0;
+		for (Int i = 0; i < 8; ++i)
+		{
+			UnicodeString t;
+			t.format(textOf(kDelayCaption).str(), localizedFallback(kDelayEnglish[i], kDelayRussian[i]));
+			widestCaption = max(widestCaption, textWidth(t));
+		}
+		const Int restW = a.x1 - (mid + 4);
+		const Int captionW = min(restW / 2, (widestCaption + 8) * 800 / screen800);
+		const Int sliderX = mid + 4 + captionW;
+		const Rect captionRect = { mid + 4, a.y0, sliderX - 2, a.y1 };
+		s.delayCaption = makeLabel(captionRect, UnicodeString::TheEmptyString, kTextDim, FALSE);
+		s.delayCaptionStep = -1;
+		s.delaySlider = TheWindowManager->gogoGadgetSlider(s.parent, WIN_STATUS_ENABLED, sx(sliderX), sy(a.y0), sx(a.x1) - sx(sliderX),
 			sy(a.y1) - sy(a.y0), &inst, &data, s.font, TRUE);
 		if (s.delaySlider != nullptr)
 		{
@@ -1913,6 +1934,7 @@ void LanLobbyLook::init(GameWindow *parent)
 				labels[i] = localizedFallback(kDelayEnglish[i], kDelayRussian[i]);
 			}
 			TickSlider::setLabels(s.delaySlider, labels, 8);
+			s.delaySlider->winSetTooltip(textOf(kDelayTip));   // O97 (P5-d)
 			s.made.push_back(s.delaySlider);
 		}
 	}
@@ -1979,6 +2001,24 @@ void LanLobbyLook::update(Bool screenReady)
 		}
 		if (s.delaySlider != nullptr) {
 			s.delaySlider->winHide(!running || busy || blocked);
+		}
+		// O97 (P5-d): the caption follows the handle, also while it is dragged (TickSlider reports the step it would take)
+		if (s.delayCaption != nullptr)
+		{
+			const Bool hidden = s.delaySlider == nullptr || !running || busy || blocked;
+			s.delayCaption->winHide(hidden);
+			if (!hidden)
+			{
+				Int step = (Int)(TickSlider::position(s.delaySlider) + 0.5f);
+				step = step < 0 ? 0 : (step > 7 ? 7 : step);
+				if (step != s.delayCaptionStep)
+				{
+					UnicodeString t;
+					t.format(textOf(kDelayCaption).str(), localizedFallback(kDelayEnglish[step], kDelayRussian[step]));
+					GadgetStaticTextSetText(s.delayCaption, t);
+					s.delayCaptionStep = step;
+				}
+			}
 		}
 	}
 	// O30: this player's own anti-cheat check failed: said once in the chat (others see the red mark)
@@ -2087,7 +2127,8 @@ void LanLobbyLook::teardown()
 	s.ownFailureSaid = FALSE;
 	s.addrBox = s.copyButton = s.connectEntry = s.historyButton = s.connectButton = nullptr;
 	s.gamesTable = s.panel = s.panelLabel = s.lobbyList = s.lobbyLabel = s.historyPopup = nullptr;
-	s.actionButton = s.delaySlider = nullptr;
+	s.actionButton = s.delaySlider = s.delayCaption = nullptr;
+	s.delayCaptionStep = -1;
 	s.actionLabel = nullptr;
 	s.font = nullptr;
 	s.shown = FALSE;
