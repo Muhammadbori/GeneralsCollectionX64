@@ -31,6 +31,7 @@
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
 
 
+#include "Common/TestCommands.h"
 #include "Common/BattleHonors.h"
 #include "Common/FileSystem.h"
 #include "Common/GameEngine.h"
@@ -544,9 +545,12 @@ void StartCommandLineSkirmish()
 	if (md)
 		mapName.toLower();
 
+	// TheSuperHackers @feature O96 With -testCommands (tests) the local player plays in slot 0 at start position 1.
+	const char *testSide = TestCommands::getSkirmishSide();
 	Int aiCount = TheGlobalData->m_skirmishAICount;
-	if (md && aiCount > md->m_numPlayers)
-		aiCount = md->m_numPlayers;	// the observer needs no start position
+	const Int positions = md ? md->m_numPlayers - (testSide ? 1 : 0) : MAX_SLOTS - 1;
+	if (aiCount > positions)
+		aiCount = positions;	// the observer needs no start position
 	aiCount = clamp(1, aiCount, MAX_SLOTS - 1);
 	const Int level = clamp(0, TheGlobalData->m_skirmishAILevel, (Int)ARRAY_SIZE(levels) - 1);
 
@@ -556,7 +560,15 @@ void StartCommandLineSkirmish()
 	observer.setColor(-1);
 	observer.setStartPos(-1);
 	observer.setTeamNumber(-1);
+	if (testSide)
+	{
+		observer.setState(SLOT_PLAYER, UnicodeString(L"Test"));
+		observer.setPlayerTemplate(findPlayerTemplateIndex(testSide));
+		observer.setColor(MAX_SLOTS - 1);
+		observer.setStartPos(0);
+	}
 	TheSkirmishGameInfo->setSlot(0, observer);
+	const Int firstAiPos = testSide ? 1 : 0;
 
 	for (Int i = 0; i < aiCount; ++i)
 	{
@@ -564,7 +576,7 @@ void StartCommandLineSkirmish()
 		ai.setState(levels[level]);
 		ai.setPlayerTemplate(findPlayerTemplateIndex(factions[i % ARRAY_SIZE(factions)]));
 		ai.setColor(i);
-		ai.setStartPos(i);
+		ai.setStartPos(i + firstAiPos);
 		ai.setTeamNumber(-1);
 		TheSkirmishGameInfo->setSlot(i + 1, ai);
 	}

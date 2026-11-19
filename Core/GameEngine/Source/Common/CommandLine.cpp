@@ -32,6 +32,7 @@
 #include "Common/CRCDebug.h"
 #include "Common/FrameRateLimit.h"
 #include "Common/FrameShots.h"
+#include "Common/TestCommands.h"
 #include "Common/LocalFileSystem.h"
 #include "Common/version.h"
 #include "Common/WorkingDirectory.h"
@@ -1668,6 +1669,28 @@ Int parseUiScript(char *args[], int num)
 	return 1;
 }
 
+// TheSuperHackers @feature O96 -testCommands <file>: frame-stamped player actions sent as a player's GameMessages
+// (TestCommands.h). Test only (*uitest*.exe, kTestOnlySwitches).
+Int parseTestCommands(char *args[], int num)
+{
+	if (num > 1)
+	{
+		TestCommands::setScript(args[1]);
+		return 2;
+	}
+	return 1;
+}
+
+Int parseTestCommandsSide(char *args[], int num)
+{
+	if (num > 1)
+	{
+		TestCommands::setSkirmishSide(args[1]);
+		return 2;
+	}
+	return 1;
+}
+
 Int parseTestInput(char *args[], int num)
 {
 	if (num > 1)
@@ -2258,6 +2281,8 @@ static CommandLineParam paramsForEngineInit[] =
 	{ "-skirmishSpeed", parseSkirmishSpeed },
 	{ "-shotNoImage", parseShotNoImage },
 	{ "-testInput", parseTestInput },
+	{ "-testCommands", parseTestCommands },   // O96 (tests, *uitest*.exe only)
+	{ "-testCommandsSide", parseTestCommandsSide },   // O96 (tests, *uitest*.exe only)
 	{ "-testLogicFps", parseTestLogicFps },
 
 	// TheSuperHackers @feature xezon 03/08/2025 Force full viewport for 'Control Bar Pro' Addons like GenTool did it.
@@ -2422,7 +2447,7 @@ namespace
 	const TestOnlySwitch kTestOnlySwitches[] =
 	{
 		{ "-guardTest", 0 }, { "-lanNoGuard", 0 },
-		{ "-testPerturbFrame", 1 }, { "-testInput", 1 }, { "-testLogicFps", 1 },
+		{ "-testPerturbFrame", 1 }, { "-testInput", 1 }, { "-testCommands", 1 }, { "-testCommandsSide", 1 }, { "-testLogicFps", 1 },
 		{ "-testDefeatAtFrame", 1 }, { "-testClockOffset", 1 }, { "-audioIgnoreFocus", 0 },
 		{ "-voiceTest", 1 }, { "-voiceTestRoster", 1 }, { "-voiceTestTone", 0 }, { "-voiceTestWav", 1 },
 		{ "-voiceTestTalk", 1 }, { "-voiceTestOut", 1 }, { "-voiceTestLoss", 1 }, { "-voiceTestVolume", 1 },
