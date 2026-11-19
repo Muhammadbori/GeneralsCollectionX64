@@ -352,6 +352,9 @@ void LANAPI::TakeSeatFromObserver()
 		return;
 	}
 	m_seatJoinHost = m_currentGame->getHostIP();
+	m_seatJoinUntilMs = LanClock::now() + 10000;   // O100
+	LanTest::joinLog("observer: take a slot in the room of %d.%d.%d.%d: off the observer list, join from the lobby",
+		PRINTF_IP_AS_4_INTS(m_seatJoinHost));
 	LeaveRoomAsObserver(TRUE);
 }
 

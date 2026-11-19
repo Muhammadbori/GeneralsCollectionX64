@@ -97,6 +97,7 @@ LANAPI::LANAPI() : m_transport(nullptr)
 	m_lobbySelectedHost = 0;   // O84
 	m_seatless = FALSE;        // O98
 	m_seatJoinHost = 0;
+	m_seatJoinUntilMs = 0;     // O100
 	m_startSeenMs = 0;
 	m_notListedSinceMs = 0;
 	m_acceptWanted = FALSE;
@@ -159,7 +160,7 @@ void LANAPI::init()
 	m_lastLoopMs = 0;     // O71
 	m_lobbySelectedHost = 0;   // O84
 	m_seatless = FALSE;        // O98
-	m_seatJoinHost = 0;
+	// O100: m_seatJoinHost / m_seatJoinUntilMs stay: "Take a slot" pops back to the lobby, whose init() runs this
 	m_startSeenMs = 0;
 	m_notListedSinceMs = 0;
 	m_acceptWanted = FALSE;
@@ -585,12 +586,29 @@ void LANAPI::update()
 		}
 	}
 	// O98: "Take a slot" of a room observer: the join from the lobby, once the lobby screen runs again
+	// TheSuperHackers @bugfix O100 (S47) The join never happened: the lobby screen's init() (TheLAN->reset + init) cleared
+	// m_seatJoinHost and emptied the room list, so the room was not there to join. The pending join now survives init()
+	// and waits (up to 10 s) for the room's next announce; a full room then takes the normal join path (the lobby's
+	// refusal handling puts the player back in as an observer with its chat line, P5-b).
 	if (m_seatJoinHost != 0 && m_inLobby && m_currentGame == nullptr && m_pendingAction == ACT_NONE)
 	{
 		LANGameInfo *seatGame = LookupGameByHost(m_seatJoinHost);
-		m_seatJoinHost = 0;
-		if (seatGame != nullptr && !seatGame->isGameInProgress()) {
-			RequestGameJoin(seatGame);
+		if (seatGame != nullptr && seatGame->isHostVerified())
+		{
+			m_seatJoinHost = 0;
+			if (seatGame->isGameInProgress()) {
+				LanTest::joinLog("observer: take a slot: the match has started: not joined");
+				OnGameJoin( RET_GAME_GONE, nullptr );
+			} else {
+				LanTest::joinLog("observer: take a slot: joining the room of %d.%d.%d.%d", PRINTF_IP_AS_4_INTS(seatGame->getHostIP()));
+				RequestGameJoin(seatGame);
+			}
+		}
+		else if ((Int)(LanClock::now() - m_seatJoinUntilMs) > 0)
+		{
+			LanTest::joinLog("observer: take a slot: the room was not announced again within 10 s: not joined");
+			m_seatJoinHost = 0;
+			OnGameJoin( RET_GAME_GONE, nullptr );
 		}
 	}
 	static const UnsignedInt LANAPIUpdateDelay = 200;

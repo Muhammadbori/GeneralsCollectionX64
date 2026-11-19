@@ -576,6 +576,7 @@ protected:
 	UnsignedInt					m_lobbySelectedHost; ///< O84: SetLobbySelectedHost
 	Bool								m_seatless;          ///< O98: in a room as its observer (EnterRoomAsObserver)
 	UnsignedInt					m_seatJoinHost;      ///< O98: TakeSeatFromObserver: join this host's room once in the lobby
+	UnsignedInt					m_seatJoinUntilMs;   ///< O100: until then the lobby waits for that room's announce (init() keeps both)
 	UnsignedInt					m_startSeenMs;       ///< a joiner: the host's last start check or countdown message
 	UnsignedInt					m_notListedSinceMs;  ///< O71: a joiner: the host's lists have not had this computer since (0: they have)
 	Bool								m_acceptWanted;

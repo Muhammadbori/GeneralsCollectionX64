@@ -82,6 +82,7 @@
 #include "GameLogic/TerrainLogic.h"
 #include "GameLogic/Module/BodyModule.h"
 #include "GameLogic/Module/ContainModule.h"
+#include "GameLogic/Module/CreateModule.h"
 #include "GameLogic/Module/ProductionUpdate.h"
 #include "GameLogic/Module/SpecialPowerModule.h"
 
@@ -435,6 +436,17 @@ namespace
 				pos.z = TheTerrainLogic->getGroundHeight(pos.x, pos.y);
 				obj->setOrientation(0.0f);
 				obj->setPosition(&pos);
+				// O100: an object made complete is "built" for its create modules, as the map's objects are
+				// (GameLogic's map load calls onBuildComplete). Without it a Generals Tunnel Network never joined the
+				// network, nor did a Scud Storm or supply center start their build-complete work.
+				if (!obj->testStatus(OBJECT_STATUS_UNDER_CONSTRUCTION)) {
+					for (BehaviorModule **m = obj->getBehaviorModules(); *m; ++m) {
+						CreateModuleInterface *create = (*m)->getCreate();
+						if (create != nullptr) {
+							create->onBuildComplete();
+						}
+					}
+				}
 				if (obj->isKindOf(KINDOF_STRUCTURE)) {
 					TheAI->pathfinder()->addObjectToPathfindMap(obj);
 				}
