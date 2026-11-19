@@ -1120,6 +1120,13 @@ void ReplayControl::update()
 		}
 	}
 
+	// TheSuperHackers @tweak O97 (P5-e, router) A pause of a followed replay (key or button; not the logic's own pause at a
+	// seek's target) leaves the live point as a seek does: after Play it goes on at the chosen speed from the paused time.
+	// "Back to live" follows again (finishSeek).
+	if (inReplay && !loading && following() && !seekBusy() && TheGameLogic->isGamePaused()) {
+		ReplayFollow::setFollowLive(FALSE);
+	}
+
 	// O64 (H6 #7): a restarted replay whose logic never gets going: the seek is given up and the input is free again.
 	// O65: the clock starts when its map load has ended (a long load on a slow PC is no failure)
 	if (s_rewindTarget == kNone || !inReplay) {
