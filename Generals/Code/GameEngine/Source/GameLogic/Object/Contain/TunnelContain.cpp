@@ -112,6 +112,10 @@ void TunnelContain::removeFromContain( Object *obj, Bool exposeStealthUnits )
 //-------------------------------------------------------------------------------------------------
 void TunnelContain::removeAllContained( Bool exposeStealthUnits )
 {
+#if !RETAIL_COMPATIBLE_CRC
+	if( !m_isCurrentlyRegistered )
+		return;   // O100: a scaffold is not in the network yet (see orderAllPassengersToExit)
+#endif
 	Player *owningPlayer = getObject()->getControllingPlayer();
 
 	if(!owningPlayer->getTunnelSystem())
@@ -222,6 +226,10 @@ Bool TunnelContain::isContained( const Object *obj ) const
 //-------------------------------------------------------------------------------------------------
 Bool TunnelContain::isValidContainerFor(const Object* obj, Bool checkCapacity) const
 {
+#if !RETAIL_COMPATIBLE_CRC
+	if( !m_isCurrentlyRegistered )
+		return false;   // O100: a scaffold is not in the network yet (see orderAllPassengersToExit)
+#endif
 	Player *owningPlayer = getObject()->getControllingPlayer();
 	if( owningPlayer && owningPlayer->getTunnelSystem() )
 	{
@@ -232,6 +240,10 @@ Bool TunnelContain::isValidContainerFor(const Object* obj, Bool checkCapacity) c
 
 UnsignedInt TunnelContain::getContainCount() const
 {
+#if !RETAIL_COMPATIBLE_CRC
+	if( !m_isCurrentlyRegistered )
+		return 0;   // O100: a scaffold is not in the network yet (see orderAllPassengersToExit)
+#endif
 	Player *owningPlayer = getObject()->getControllingPlayer();
 	if( owningPlayer && owningPlayer->getTunnelSystem() )
 	{
@@ -262,6 +274,10 @@ Int TunnelContain::getContainMax() const
 
 const ContainedItemsList* TunnelContain::getContainedItemsList() const
 {
+#if !RETAIL_COMPATIBLE_CRC
+	if( !m_isCurrentlyRegistered )
+		return nullptr;   // O100: a scaffold is not in the network yet (see orderAllPassengersToExit)
+#endif
 	Player *owningPlayer = getObject()->getControllingPlayer();
 	if( owningPlayer && owningPlayer->getTunnelSystem() )
 	{
@@ -427,6 +443,14 @@ void TunnelContain::onCapture( Player *oldOwner, Player *newOwner )
 //-------------------------------------------------------------------------------------------------
 void TunnelContain::orderAllPassengersToExit( CommandSourceType commandSource )
 {
+#if !RETAIL_COMPATIBLE_CRC
+	// TheSuperHackers @bugfix O100 (S47, row 58b) A tunnel scaffold (placed by a dozer, not built yet) is not in the
+	// network (O92: it joins in onBuildComplete), but every passenger function here reads the player's whole
+	// network, so an evacuate on the scaffold let the network's units out AT the scaffold, and it showed their
+	// count. Until it is registered a tunnel holds nobody: no exit, no evacuate, no entering, count 0.
+	if( !m_isCurrentlyRegistered )
+		return;
+#endif
 	Player *owningPlayer = getObject()->getControllingPlayer();
 	if( !owningPlayer || !owningPlayer->getTunnelSystem() )
 		return;
