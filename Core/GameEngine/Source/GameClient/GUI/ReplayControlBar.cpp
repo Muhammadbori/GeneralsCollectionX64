@@ -260,6 +260,17 @@ namespace
 
 	void finishSeek()
 	{
+		// TheSuperHackers @bugfix O97 (P5-e) The follower's catch-up pace (ReplayFollow::mayRunFrame: faster while more than
+		// two seconds behind the live point) ran every seek on to the live point at 2x, after a backward seek's restart
+		// and after a forward run alike. A seek to a time behind the live point now stops following it; "back to live"
+		// (and the first catch-up of an outside viewer, row 49) follows it again.
+		if (following())
+		{
+			const UnsignedInt live = ReplayFollow::livePointFrame();
+			const Bool atLive = s_seekKind == SEEK_LIVE || s_catchUp
+				|| (live > 0 && TheGameLogic->getFrame() + kLiveSlack >= live);
+			ReplayFollow::setFollowLive(atLive);
+		}
 		const Bool pause = s_pauseAtTarget;
 		seekLog("seek end at frame %u: %s", TheGameLogic->getFrame(), pause ? "paused (as before the seek)" : "playing (as before the seek)");
 		s_seekKind = SEEK_NONE;
@@ -843,6 +854,7 @@ namespace
 		s_seekOpen = FALSE;
 		s_seekHeld = FALSE;
 		ReplayFollow::setRestarting(FALSE);
+		ReplayFollow::setFollowLive(TRUE);   // O97 (P5-e): a new watch follows its live point
 	}
 }
 

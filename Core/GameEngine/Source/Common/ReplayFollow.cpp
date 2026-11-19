@@ -59,6 +59,7 @@ namespace
 	Bool s_reading = FALSE;
 	Int s_normalFps = LOGICFRAMES_PER_SECOND;
 	Bool s_catchingUp = FALSE;
+	Bool s_followLive = TRUE;    ///< O97 (P5-e): see ReplayFollow::setFollowLive
 	LiveRecord s_last;
 	Bool s_haveLast = FALSE;
 	UnsignedInt s_lastChangeMs = 0;
@@ -423,12 +424,30 @@ Bool ReplayFollow::mayRunFrame(UnsignedInt frame)
 	// while the source is gone) it plays 10 % slower, so the reserve grows back without a stop; more than two seconds
 	// behind the reserve's point it runs faster until caught up.
 	const Int target = allowed - s_reserveFrames;
-	if (s_reserveFrames > 0 && (Int)frame > target) {
+	if (!s_followLive) {
+		setCatchUp(FALSE);   // O97 (P5-e): the viewer seeked behind the live point: no running back to it
+	} else if (s_reserveFrames > 0 && (Int)frame > target) {
 		setRate(RATE_SLOW);
 	} else {
 		setCatchUp(target - (Int)frame > 2 * LOGICFRAMES_PER_SECOND);
 	}
 	return TRUE;
+}
+
+void ReplayFollow::setFollowLive(Bool follow)
+{
+	if (s_followLive != follow)
+	{
+		s_followLive = follow;
+		if (!follow) {
+			setCatchUp(FALSE);
+		}
+	}
+}
+
+Bool ReplayFollow::followsLive()
+{
+	return s_followLive;
 }
 
 UnsignedInt ReplayFollow::livePointFrame()
