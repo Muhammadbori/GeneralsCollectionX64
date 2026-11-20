@@ -30,7 +30,6 @@
 
 #include "GameClient/GameText.h"
 #include "Common/version.h"
-#include "Common/CommandLine.h"
 
 #include "gitinfo.h"
 
@@ -357,35 +356,34 @@ UnicodeString Version::getUnicodeProductString() const
 	return str;
 }
 
-// TheSuperHackers @tweak O118 The version line of the shell and the options (both games): our name and the game's
-// version only, "Generals Collection x64 - DirectX 12 - Version 1.04" (with middle dots; the version part is the game's
-// own localized "Version:Format" text, Russian "Versiya 1.04"). The "Community Patch" title and the exe/ini hashes stay
-// in a test build (*uitest*.exe), where mismatch debugging needs them.
+// TheSuperHackers @tweak O118/O128 The version line of the shell and the options (both games, EVERY build, test exes
+// too): our name and the game's version only, "Generals Collection x64 - DirectX 12 - Version 1.04" (with middle dots;
+// the version part is the game's own localized "Version:Format" text). The "Community Patch" title and the exe/ini
+// hashes are never shown; they go to <user data>\Version.log for mismatch debugging (written once per run).
 UnicodeString Version::getUnicodeProductVersionHashString() const
 {
-	UnicodeString str;
 	UnicodeString gameVersion = getUnicodeVersion();
 
-	if (!CommandLine::isTestExe())
+	static Bool s_logged = FALSE;
+	if (!s_logged && TheGlobalData != nullptr && !TheGlobalData->getPath_UserData().isEmpty())
 	{
-		str = L"Generals Collection x64 \x00B7 DirectX 12 \x00B7 ";
-		str.concat(gameVersion);
-		return str;
+		s_logged = TRUE;
+		AsciiString path = TheGlobalData->getPath_UserData();
+		path.concat("Version.log");
+		if (FILE *fp = fopen(path.str(), "w"))
+		{
+			AsciiString product;
+			product.translate(getUnicodeProductString());
+			AsciiString version;
+			version.translate(gameVersion);
+			fprintf(fp, "product = %s\nversion = %s\nexe = %08X\nini = %08X\n", product.str(), version.str(),
+				TheGlobalData->m_exeCRC, TheGlobalData->m_iniCRC);
+			fclose(fp);
+		}
 	}
 
-	UnicodeString productString = getUnicodeProductString();
-	UnicodeString gameHash;
-	gameHash.format(L"exe:%08X ini:%08X", TheGlobalData->m_exeCRC, TheGlobalData->m_iniCRC);
-
-	if (!productString.isEmpty())
-	{
-		str.concat(productString);
-		str.concat(L" | ");
-	}
-	str.concat(gameHash);
-	str.concat(L" ");
+	UnicodeString str = L"Generals Collection x64 \x00B7 DirectX 12 \x00B7 ";
 	str.concat(gameVersion);
-
 	return str;
 }
 
