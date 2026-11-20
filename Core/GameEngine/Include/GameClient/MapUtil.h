@@ -29,6 +29,8 @@
 
 #pragma once
 
+#include <vector>
+
 #include "Common/AsciiString.h"
 #include "Common/UnicodeString.h"
 
@@ -93,15 +95,36 @@ public:
 // TheSuperHackers @performance xezon 02/11/2025 Simplifies and improves the implementation of MapCache
 // to prevent expensive reoccurring redundant map cache reads.
 
+// TheSuperHackers @feature O112 The map list's tabs: the game's own maps, the player's own maps, and the collection's
+// map packs read in place (Packs\Maps\<Pack>\<Game>\Maps, nothing copied): GenTool's ranked maps and GenPatcher's
+// packs (every other pack).
+enum MapListTab
+{
+	MAP_TAB_OFFICIAL = 0,
+	MAP_TAB_USER,
+	MAP_TAB_GENTOOL,
+	MAP_TAB_GENPATCHER,
+	MAP_TAB_COUNT
+};
+
 class MapCache : public std::map<AsciiString, MapMetaData>
 {
 	typedef std::set<AsciiString> MapNameSet;
 
 public:
+	struct PackDir
+	{
+		AsciiString pack;   ///< lowercase folder name of the pack
+		AsciiString dir;    ///< packs\maps\<pack>\<game>\maps, lowercase, no trailing separator
+		Int tab;            ///< MapListTab
+	};
+
 	MapCache()
 		: m_doCreateStandardMapCacheINI(TRUE)
 		, m_doLoadStandardMapCacheINI(TRUE)
 		, m_doLoadUserMapCacheINI(TRUE)
+		, m_packDirsFound(FALSE)
+		, m_doLoadPackCacheINI(TRUE)
 	{}
 
 	void updateCache();
@@ -115,7 +138,17 @@ public:
 	// allow us to create a set of shippable maps to be in mapcache.ini.  For use with -buildMapCache.
 	void addShippingMap(AsciiString mapName) { mapName.toLower(); m_allowedMaps.insert(mapName); }
 
+	// O112: the map packs of this game
+	const std::vector<PackDir> &getPackDirs();
+	AsciiString getPackMapDir(const AsciiString &pack) const;            ///< packs\maps\<pack>\<game>\maps
+	Bool getPackOfMap(const AsciiString &mapName, AsciiString *pack) const; ///< TRUE (and the pack) for a map in a pack folder
+	static Bool isSafePackName(const AsciiString &pack);                 ///< letters, digits, '_', '-', ' ' only
+	Int getTabOfMap(const AsciiString &mapName);                         ///< MapListTab
+	Bool isMapInTab(const AsciiString &mapName, Int tab);
+	Bool hasMapsInTab(Int tab);
+
 private:
+	void findPackDirs();
 	void prepareUnseenMaps(const AsciiString &mapDir);
 	Bool clearUnseenMaps(const AsciiString &mapDir);
 	void loadMapsFromMapCacheINI(const AsciiString &mapDir);
@@ -129,6 +162,10 @@ private:
 	Bool m_doCreateStandardMapCacheINI;
 	Bool m_doLoadStandardMapCacheINI;
 	Bool m_doLoadUserMapCacheINI;
+	std::vector<PackDir> m_packDirs;
+	MapNameSet m_packFolderNames;   ///< lowercase map folder names in the packs: the player's copies are not listed again
+	Bool m_packDirsFound;
+	Bool m_doLoadPackCacheINI;
 };
 
 extern MapCache *TheMapCache;
@@ -137,6 +174,9 @@ extern TechAndSupplyImages TheSupplyAndTechImageLocations;
 // TheSuperHackers @refactor xezon 28/11/2025 Refactors the map list population implementation
 // by breaking it into smaller pieces to make it more maintainable.
 
+/// O112: fill the listbox with the maps of one MapListTab
+Int populateMapListboxTab( GameWindow *listbox, Int tab, Bool isMultiplayer, AsciiString mapToSelect = AsciiString::TheEmptyString );
+Int populateMapListboxTabNoReset( GameWindow *listbox, Int tab, Bool isMultiplayer, AsciiString mapToSelect = AsciiString::TheEmptyString );
 Int populateMapListbox( GameWindow *listbox, Bool useSystemMaps, Bool isMultiplayer, AsciiString mapToSelect = AsciiString::TheEmptyString );		/// Read a list of maps from the run directory and fill in the listbox.  Return the selected index
 Int populateMapListboxNoReset( GameWindow *listbox, Bool useSystemMaps, Bool isMultiplayer, AsciiString mapToSelect = AsciiString::TheEmptyString );		/// Read a list of maps from the run directory and fill in the listbox.  Return the selected index
 Bool isValidMap( AsciiString mapName, Bool isMultiplayer );						/// Validate a map

@@ -44,6 +44,7 @@
 #include "GameClient/GadgetStaticText.h"
 #include "GameNetwork/LANAPICallbacks.h"
 #include "GameClient/MapUtil.h"
+#include "GameClient/MapListTabs.h"
 
 // PRIVATE DATA ///////////////////////////////////////////////////////////////////////////////////
 static NameKeyType buttonBack = NAMEKEY_INVALID;
@@ -273,10 +274,10 @@ void SkirmishMapSelectMenuInit( WindowLayout *layout, void *userData )
 	radioButtonUserMapsID = TheNameKeyGenerator->nameToKey( "SkirmishMapSelectMenu.wnd:RadioButtonUserMaps" );
 	GameWindow *radioButtonSystemMaps = TheWindowManager->winGetWindowFromId( parent, radioButtonSystemMapsID );
 	GameWindow *radioButtonUserMaps = TheWindowManager->winGetWindowFromId( parent, radioButtonUserMapsID );
-	if (usesSystemMapDir)
-		GadgetRadioSetSelection( radioButtonSystemMaps, FALSE );
-	else
-		GadgetRadioSetSelection( radioButtonUserMaps, FALSE );
+	// TheSuperHackers @feature O112 the map packs' tabs (MapListTabs.h); the window opens on the tab of the chosen map
+	MapListTabs::attach( radioButtonSystemMaps, radioButtonUserMaps );
+	const Int mapTab = MapListTabs::startTab( TheSkirmishGameInfo->getMap(), usesSystemMapDir );
+	MapListTabs::selectTab( mapTab, radioButtonSystemMaps, radioButtonUserMaps );
 
 	AsciiString tmpString;
 	for (Int i = 0; i < MAX_SLOTS; i++)
@@ -298,9 +299,15 @@ void SkirmishMapSelectMenuInit( WindowLayout *layout, void *userData )
 	{
 		if (TheMapCache)
 			TheMapCache->updateCache();
-		if (usesSystemMapDir)
+		if (mapTab == MAP_TAB_OFFICIAL)
 		{
 			populateMapListbox( mapList, TRUE, TRUE, TheSkirmishGameInfo->getMap() );
+		}
+		else if (mapTab != MAP_TAB_USER)
+		{
+			// O112: a map pack's tab: its single player maps, then its multiplayer ones (like the user's maps)
+			populateMapListboxTab( mapList, mapTab, FALSE, TheSkirmishGameInfo->getMap() );
+			populateMapListboxTabNoReset( mapList, mapTab, TRUE, TheSkirmishGameInfo->getMap() );
 		}
 		else
 		{
@@ -497,7 +504,16 @@ WindowMsgHandledType SkirmishMapSelectMenuSystem( GameWindow *window, UnsignedIn
 			GameWindow *control = (GameWindow *)mData1;
 			Int controlID = control->winGetWindowId();
 
-			if ( controlID == radioButtonSystemMapsID )
+			Int packTab = 0;
+			if ( MapListTabs::isTabButton( control, &packTab ) )
+			{
+				// O112: a map pack's tab
+				if (TheMapCache)
+					TheMapCache->updateCache();
+				populateMapListboxTab( mapList, packTab, FALSE, TheSkirmishGameInfo->getMap() );
+				populateMapListboxTabNoReset( mapList, packTab, TRUE, TheSkirmishGameInfo->getMap() );
+			}
+			else if ( controlID == radioButtonSystemMapsID )
 			{
 				if (TheMapCache)
 					TheMapCache->updateCache();

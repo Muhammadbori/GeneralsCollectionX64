@@ -32,7 +32,6 @@
 
 #include "Common/RandomValue.h"
 #include "GameClient/Shell.h"
-#include "Common/MapPacks.h"
 #include "Common/Packs.h"
 #include "GameClient/WindowLayout.h"
 #include "GameClient/GameWindowManager.h"
@@ -239,8 +238,8 @@ void Shell::update()
 	// TheSuperHackers @feature Tells the player once about chosen data packs that could not be used (Packs.h).
 	Packs::showProblemsOnce();
 
-	// TheSuperHackers @feature Offers the community maps of the map packs once per run (MapPacks.h).
-	MapPacks::update();
+	// TheSuperHackers @feature O112 The map packs are no longer offered for copying: the map lists read them in place
+	// (MapListTabs.h).
 
 }
 

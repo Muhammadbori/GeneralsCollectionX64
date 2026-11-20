@@ -324,6 +324,168 @@ AsciiString MapCache::getUserMapDir() const
 	return tmp;
 }
 
+// TheSuperHackers @feature O112 The map packs read in place ----------------------------------------------------------
+#if RTS_GENERALS
+static const char *const kPackGameFolder = "generals";
+#else
+static const char *const kPackGameFolder = "zerohour";
+#endif
+static const char *const kPackRoot = "packs\\maps\\";
+
+Bool MapCache::isSafePackName(const AsciiString &pack)
+{
+	if (pack.isEmpty() || pack.getLength() > 64)
+		return FALSE;
+	for (const char *c = pack.str(); *c != 0; ++c)
+	{
+		if (!isalnum((unsigned char)*c) && *c != '_' && *c != '-' && *c != ' ')
+			return FALSE;
+	}
+	return TRUE;
+}
+
+AsciiString MapCache::getPackMapDir(const AsciiString &pack) const
+{
+	AsciiString dir;
+	dir.format("%s%s\\%s\\maps", kPackRoot, pack.str(), kPackGameFolder);
+	dir.toLower();
+	return dir;
+}
+
+Bool MapCache::getPackOfMap(const AsciiString &mapName, AsciiString *pack) const
+{
+	if (!mapName.startsWithNoCase(kPackRoot))
+		return FALSE;
+	const char *start = mapName.str() + strlen(kPackRoot);
+	const char *end = strchr(start, '\\');
+	if (end == nullptr)
+		return FALSE;
+	AsciiString name;
+	for (const char *c = start; c < end; ++c)
+		name.concat(*c);
+	name.toLower();
+	AsciiString rest;
+	rest.format("\\%s\\maps\\", kPackGameFolder);
+	if (!isSafePackName(name) || strnicmp(end, rest.str(), rest.getLength()) != 0)
+		return FALSE;
+	if (pack != nullptr)
+		*pack = name;
+	return TRUE;
+}
+
+void MapCache::findPackDirs()
+{
+	m_packDirsFound = TRUE;
+	WIN32_FIND_DATAA found;
+	HANDLE packs = FindFirstFileA("Packs\\Maps\\*", &found);
+	if (packs == INVALID_HANDLE_VALUE)
+		return;
+	do
+	{
+		if ((found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 || found.cFileName[0] == '.')
+			continue;
+		AsciiString pack = found.cFileName;
+		pack.toLower();
+		if (!isSafePackName(pack))
+			continue;
+		PackDir pd;
+		pd.pack = pack;
+		pd.dir = getPackMapDir(pack);
+		const DWORD attr = GetFileAttributesA(pd.dir.str());
+		if (attr == INVALID_FILE_ATTRIBUTES || (attr & FILE_ATTRIBUTE_DIRECTORY) == 0)
+			continue;   // no maps of this game in the pack
+		pd.tab = (pack.compare("gentool") == 0) ? MAP_TAB_GENTOOL : MAP_TAB_GENPATCHER;
+		m_packDirs.push_back(pd);
+
+		AsciiString pattern;
+		pattern.format("%s\\*", pd.dir.str());
+		WIN32_FIND_DATAA mapFound;
+		HANDLE maps = FindFirstFileA(pattern.str(), &mapFound);
+		if (maps != INVALID_HANDLE_VALUE)
+		{
+			do
+			{
+				if ((mapFound.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 && mapFound.cFileName[0] != '.')
+				{
+					AsciiString folder = mapFound.cFileName;
+					folder.toLower();
+					m_packFolderNames.insert(folder);
+				}
+			} while (FindNextFileA(maps, &mapFound));
+			FindClose(maps);
+		}
+	} while (FindNextFileA(packs, &found));
+	FindClose(packs);
+}
+
+const std::vector<MapCache::PackDir> &MapCache::getPackDirs()
+{
+	if (!m_packDirsFound)
+		findPackDirs();
+	return m_packDirs;
+}
+
+Int MapCache::getTabOfMap(const AsciiString &mapName)
+{
+	AsciiString pack;
+	if (getPackOfMap(mapName, &pack))
+	{
+		const std::vector<PackDir> &dirs = getPackDirs();
+		for (size_t i = 0; i < dirs.size(); ++i)
+		{
+			if (dirs[i].pack.compare(pack) == 0)
+				return dirs[i].tab;
+		}
+		return MAP_TAB_GENPATCHER;
+	}
+	if (mapName.startsWithNoCase(getUserMapDir().str()))
+		return MAP_TAB_USER;
+	return MAP_TAB_OFFICIAL;
+}
+
+Bool MapCache::isMapInTab(const AsciiString &mapName, Int tab)
+{
+	switch (tab)
+	{
+	case MAP_TAB_OFFICIAL:
+		return mapName.startsWithNoCase(getMapDir().str()) && !getPackOfMap(mapName, nullptr);
+	case MAP_TAB_USER:
+	{
+		if (!mapName.startsWithNoCase(getUserMapDir().str()))
+			return FALSE;
+		// a copy of a pack map in the player's own folder (the old install box made them) is listed in its pack only
+		const char *last = strrchr(mapName.str(), '\\');
+		if (last == nullptr)
+			return TRUE;
+		const char *first = last - 1;
+		while (first > mapName.str() && *first != '\\')
+			--first;
+		if (*first != '\\')
+			return TRUE;
+		AsciiString folder;
+		for (const char *c = first + 1; c < last; ++c)
+			folder.concat(*c);
+		folder.toLower();
+		getPackDirs();
+		return m_packFolderNames.find(folder) == m_packFolderNames.end();
+	}
+	case MAP_TAB_GENTOOL:
+	case MAP_TAB_GENPATCHER:
+		return getPackOfMap(mapName, nullptr) && getTabOfMap(mapName) == tab;
+	}
+	return FALSE;
+}
+
+Bool MapCache::hasMapsInTab(Int tab)
+{
+	for (MapCache::iterator it = begin(); it != end(); ++it)
+	{
+		if (it->second.m_numPlayers >= 1 && isMapInTab(it->first, tab))
+			return TRUE;
+	}
+	return FALSE;
+}
+
 AsciiString MapCache::getMapExtension() const
 {
 	return "map";
@@ -446,6 +608,23 @@ void MapCache::updateCache()
 	{
 		writeCacheINI(userMapDir);
 		m_doLoadStandardMapCacheINI = TRUE;
+	}
+
+	// O112: the map packs, read in place; each pack folder keeps its own MapCache.ini like the user's maps folder.
+	// The folders are looked up again each time: a map received by a LAN transfer may have made a new one.
+	{
+		m_packDirs.clear();
+		m_packFolderNames.clear();
+		findPackDirs();
+		const std::vector<PackDir> &dirs = m_packDirs;
+		for (size_t i = 0; i < dirs.size(); ++i)
+		{
+			if (m_doLoadPackCacheINI)
+				loadMapsFromMapCacheINI(dirs[i].dir);
+			if (loadMapsFromDisk(dirs[i].dir, FALSE))
+				writeCacheINI(dirs[i].dir);
+		}
+		m_doLoadPackCacheINI = FALSE;
 	}
 
 	// Load standard maps from map cache last.
@@ -715,21 +894,23 @@ MapCache *TheMapCache = nullptr;
 
 Bool WouldMapTransfer( const AsciiString& mapName )
 {
-	return mapName.startsWithNoCase(TheMapCache->getUserMapDir());
+	// O112: a pack map too; a joiner without it gets it in the same pack folder (GameState's portable "Packs\" path)
+	return mapName.startsWithNoCase(TheMapCache->getUserMapDir()) || TheMapCache->getPackOfMap(mapName, nullptr);
 }
 
 //-------------------------------------------------------------------------------------------------
 typedef std::set<UnicodeString, rts::less_than_nocase<UnicodeString>/**/> MapNameList;
 typedef std::map<UnicodeString, AsciiString> MapDisplayToFileNameList;
 
-static void buildMapListForNumPlayers(MapNameList &outMapNames, MapDisplayToFileNameList &outFileNames, Int numPlayers)
+static void buildMapListForNumPlayers(MapNameList &outMapNames, MapDisplayToFileNameList &outFileNames, Int numPlayers, Int tab)
 {
 	MapCache::iterator it = TheMapCache->begin();
 
 	for (; it != TheMapCache->end(); ++it)
 	{
 		const MapMetaData &mapData = it->second;
-		if (mapData.m_numPlayers == numPlayers)
+		// O112: only this tab's maps, so the same display name in another folder does not hide this one
+		if (mapData.m_numPlayers == numPlayers && TheMapCache->isMapInTab(it->first, tab))
 		{
 			outMapNames.insert(it->second.m_displayName);
 			outFileNames[it->second.m_displayName] = it->first;
@@ -755,6 +936,7 @@ struct MapListBoxData
 		, mapToSelect()
 		, selectionIndex(0) // always select *something*
 		, isMultiplayer(false)
+		, tab(MAP_TAB_OFFICIAL)
 	{
 	}
 
@@ -772,6 +954,7 @@ struct MapListBoxData
 	AsciiString mapToSelect;
 	Int selectionIndex;
 	Bool isMultiplayer;
+	Int tab;   ///< O112: MapListTab
 };
 
 //-------------------------------------------------------------------------------------------------
@@ -781,7 +964,7 @@ static Bool addMapToMapListbox(
 	const AsciiString& mapName,
 	const MapMetaData& mapMetaData)
 {
-	const Bool mapOk = mapName.startsWithNoCase(mapDir.str()) && lbData.isMultiplayer == mapMetaData.m_isMultiplayer && !mapMetaData.m_displayName.isEmpty();
+	const Bool mapOk = TheMapCache->isMapInTab(mapName, lbData.tab) && lbData.isMultiplayer == mapMetaData.m_isMultiplayer && !mapMetaData.m_displayName.isEmpty();
 
 	if (mapOk)
 	{
@@ -904,6 +1087,20 @@ static Bool addMapCollectionToMapListbox(
 //-------------------------------------------------------------------------------------------------
 Int populateMapListboxNoReset( GameWindow *listbox, Bool useSystemMaps, Bool isMultiplayer, AsciiString mapToSelect )
 {
+	return populateMapListboxTabNoReset( listbox, useSystemMaps ? MAP_TAB_OFFICIAL : MAP_TAB_USER, isMultiplayer, mapToSelect );
+}
+
+Int populateMapListboxTab( GameWindow *listbox, Int tab, Bool isMultiplayer, AsciiString mapToSelect )
+{
+	if(!TheMapCache || !listbox)
+		return -1;
+	GadgetListBoxReset( listbox );
+	return populateMapListboxTabNoReset( listbox, tab, isMultiplayer, mapToSelect );
+}
+
+Int populateMapListboxTabNoReset( GameWindow *listbox, Int tab, Bool isMultiplayer, AsciiString mapToSelect )
+{
+	const Bool useSystemMaps = (tab == MAP_TAB_OFFICIAL);
 	if(!TheMapCache)
 		return -1;
 
@@ -916,6 +1113,7 @@ Int populateMapListboxNoReset( GameWindow *listbox, Bool useSystemMaps, Bool isM
 	lbData.numColumns = GadgetListBoxGetNumColumns( listbox );
 	lbData.mapToSelect = mapToSelect;
 	lbData.isMultiplayer = isMultiplayer;
+	lbData.tab = tab;
 
 	if (lbData.numColumns > 1)
 	{
@@ -948,7 +1146,7 @@ Int populateMapListboxNoReset( GameWindow *listbox, Bool useSystemMaps, Bool isM
 
 	for (; curNumPlayersInMap <= MAX_SLOTS; ++curNumPlayersInMap)
 	{
-		buildMapListForNumPlayers(mapNames, fileNames, curNumPlayersInMap);
+		buildMapListForNumPlayers(mapNames, fileNames, curNumPlayersInMap, tab);
 
 		const Bool ok = addMapCollectionToMapListbox(lbData, mapDir, mapNames, fileNames);
 
