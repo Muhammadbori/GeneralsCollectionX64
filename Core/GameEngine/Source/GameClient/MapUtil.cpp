@@ -363,6 +363,19 @@ AsciiString MapCache::getPackMapDir(const AsciiString &pack) const
 	return dir;
 }
 
+// O131: the pack folders stay read only; a pack's MapCache.ini lives in the user data folder,
+// <user data>\PackMaps\<pack>\MapCache.ini. Its entries keep the map names under Packs\Maps (the INI holds full names).
+// Without a user data folder (should not happen) the file stays next to the maps as before O131.
+AsciiString MapCache::getPackCacheDir(const AsciiString &pack) const
+{
+	AsciiString userData = TheGlobalData->getPath_UserData();
+	if (userData.isEmpty())
+		return getPackMapDir(pack);
+	AsciiString dir;
+	dir.format("%sPackMaps\\%s", userData.str(), pack.str());
+	return dir;
+}
+
 Bool MapCache::getPackOfMap(const AsciiString &mapName, AsciiString *pack) const
 {
 	if (!arePacksUsed() || !mapName.startsWithNoCase(kPackRoot))
@@ -504,12 +517,24 @@ AsciiString MapCache::getMapExtension() const
 	return "map";
 }
 
-void MapCache::writeCacheINI( const AsciiString &mapDir )
+void MapCache::writeCacheINI( const AsciiString &mapDir, const AsciiString &cacheDir )
 {
-	AsciiString filepath = mapDir;
+	AsciiString filepath = cacheDir;
 	filepath.concat('\\');
 
-	TheFileSystem->createDirectory(mapDir);
+	// O131: cacheDir may be <user data>\PackMaps\<pack>; createDirectory makes one level, so make the parent first
+	if (cacheDir.compare(mapDir) != 0)
+	{
+		const char *lastSep = strrchr(cacheDir.str(), '\\');
+		if (lastSep != nullptr)
+		{
+			AsciiString parent;
+			for (const char *c = cacheDir.str(); c < lastSep; ++c)
+				parent.concat(*c);
+			TheFileSystem->createDirectory(parent);
+		}
+	}
+	TheFileSystem->createDirectory(cacheDir);
 
 	filepath.concat(m_mapCacheName);
 	FILE *fp = fopen(filepath.str(), "w");
@@ -623,7 +648,7 @@ void MapCache::updateCache()
 		m_doLoadStandardMapCacheINI = TRUE;
 	}
 
-	// O112: the map packs, read in place; each pack folder keeps its own MapCache.ini like the user's maps folder.
+	// O112: the map packs, read in place; each pack keeps its own MapCache.ini (O131: in the user data folder, not in the pack folder).
 	// The folders are looked up again each time: a map received by a LAN transfer may have made a new one.
 	{
 		m_packDirs.clear();
@@ -632,10 +657,11 @@ void MapCache::updateCache()
 		const std::vector<PackDir> &dirs = m_packDirs;
 		for (size_t i = 0; i < dirs.size(); ++i)
 		{
+			const AsciiString cacheDir = getPackCacheDir(dirs[i].pack);   // O131: not in the pack folder
 			if (m_doLoadPackCacheINI)
-				loadMapsFromMapCacheINI(dirs[i].dir);
+				loadMapsFromMapCacheINI(cacheDir);
 			if (loadMapsFromDisk(dirs[i].dir, FALSE))
-				writeCacheINI(dirs[i].dir);
+				writeCacheINI(dirs[i].dir, cacheDir);
 		}
 		m_doLoadPackCacheINI = FALSE;
 	}

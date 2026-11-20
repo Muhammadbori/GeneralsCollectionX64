@@ -141,6 +141,7 @@ public:
 	// O112: the map packs of this game
 	const std::vector<PackDir> &getPackDirs();
 	AsciiString getPackMapDir(const AsciiString &pack) const;            ///< packs\maps\<pack>\<game>\maps
+	AsciiString getPackCacheDir(const AsciiString &pack) const;          ///< O131: folder of the pack's MapCache.ini (user data)
 	Bool getPackOfMap(const AsciiString &mapName, AsciiString *pack) const; ///< TRUE (and the pack) for a map in a pack folder
 	static Bool isSafePackName(const AsciiString &pack);                 ///< letters, digits, '_', '-', ' ' only
 	static Bool arePacksUsed();   ///< O112 addendum: Zero Hour only; plain Generals has no pack maps and no pack tabs
@@ -155,7 +156,8 @@ private:
 	void loadMapsFromMapCacheINI(const AsciiString &mapDir);
 	Bool loadMapsFromDisk(const AsciiString &mapDir, Bool isOfficial, Bool filterByAllowedMaps = FALSE); // returns true if we needed to (re)parse a map
 	Bool addMap(const AsciiString &mapDir, const AsciiString &fname, const AsciiString &lowerFname, FileInfo &fileInfo, Bool isOfficial); ///< returns true if it had to (re)parse the map
-	void writeCacheINI(const AsciiString &mapDir);
+	void writeCacheINI(const AsciiString &mapDir, const AsciiString &cacheDir); ///< O131: maps under mapDir, file in cacheDir
+	void writeCacheINI(const AsciiString &mapDir) { writeCacheINI(mapDir, mapDir); }
 
 	static const char *const m_mapCacheName;
 
