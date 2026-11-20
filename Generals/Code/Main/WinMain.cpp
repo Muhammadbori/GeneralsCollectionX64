@@ -856,19 +856,6 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 				TheWritableGlobalData->m_windowed = (windowed == 1);
 		}
 
-#ifdef RTS_HAS_FFMPEG
-		// TheSuperHackers @feature O108 (band 61) The EA logo over the desktop with a see-through background, before
-		// the splash picture and the game window. -nologo, every test or automatic run (DesktopIntro.h), -headless and
-		// DesktopIntro = no in Options.ini leave it out. When it played, the old EA logo movie step of Intro is left
-		// out; when it could not play (no movie file, ...), that step plays as before.
-		if (!TheGlobalData->m_headless && !DesktopIntro::isSkippedByCommandLine())
-		{
-			OptionPreferences introPref;
-			if (introPref.getDesktopIntro())
-				Intro::s_desktopIntroPlayed = DesktopIntro::play(hInstance);
-		}
-#endif
-
 
 		#ifdef RTS_DEBUG
 			// Turn on Memory heap tracking
@@ -905,6 +892,27 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
 		// save our application instance for future use
 		ApplicationHInstance = hInstance;
+
+#ifdef RTS_HAS_FFMPEG
+		// TheSuperHackers @feature O108 (band 61) The EA logo with a see-through background over the desktop.
+		// O109: the game window with the splash picture comes first, as before; the logo plays on top of it (and of the
+		// desktop around it), and the start goes on when it ends or is skipped. -nologo, every test or automatic run
+		// (DesktopIntro.h), -headless and DesktopIntro = no in Options.ini leave it out. When it played, the old EA logo
+		// movie step of Intro is left out; when it could not play (no movie file, ...), that step plays as before.
+		if (!TheGlobalData->m_headless && !DesktopIntro::isSkippedByCommandLine())
+		{
+			OptionPreferences introPref;
+			if (introPref.getDesktopIntro())
+			{
+				Intro::s_desktopIntroPlayed = DesktopIntro::play(hInstance);
+				if (Intro::s_desktopIntroPlayed && ApplicationHWnd != nullptr)
+				{
+					SetForegroundWindow(ApplicationHWnd);
+					SetFocus(ApplicationHWnd);
+				}
+			}
+		}
+#endif
 
 		if (gLoadScreenBitmap!=nullptr) {
 			::DeleteObject(gLoadScreenBitmap);

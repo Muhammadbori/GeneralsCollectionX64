@@ -17,7 +17,8 @@
 */
 
 // TheSuperHackers @feature O108 (band 61) The EA logo movie played over the Windows desktop, with a see-through
-// background, before the splash picture and the game window appear.
+// background. O109: it plays on top of the game window with the splash picture (shown first, as before) and of the
+// desktop around it; the start goes on as soon as the picture has gone (a longer sound plays on by itself).
 //
 // The movie is Data\Intro\EALogo_16x9.webm or Data\Intro\EALogo_16x10.webm next to the executable (the one closer
 // to the primary monitor's shape is tried first, the other one after it). It must carry an alpha channel (VP9 or

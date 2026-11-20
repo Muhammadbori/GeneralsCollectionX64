@@ -252,6 +252,23 @@ void audioCallback(ma_device *device, void *output, const void *, ma_uint32 fram
 }
 #endif
 
+#ifdef RTS_HAS_MINIAUDIO
+// O109: the sound may outlast the picture; it then plays on while the game starts, and this thread closes it.
+AudioClip s_clip = {};
+ma_device s_device;
+
+DWORD WINAPI soundTailThread(LPVOID)
+{
+	const DWORD until = GetTickCount() + 5000;
+	while ((size_t)s_clip.position < s_clip.frames && (LONG)(until - GetTickCount()) > 0)
+		Sleep(20);
+	ma_device_uninit(&s_device);
+	free(s_clip.samples);
+	s_clip.samples = nullptr;
+	return 0;
+}
+#endif
+
 //-------------------------------------------------------------------------------------------------
 // Window
 
@@ -276,10 +293,16 @@ LRESULT CALLBACK introWindowProc(HWND window, UINT message, WPARAM wParam, LPARA
 	return DefWindowProcW(window, message, wParam, lParam);
 }
 
+// O109: only the intro window's messages. The game window (with the splash picture) already exists; its messages
+// stay queued for the game, as they did while the engine starts.
+HWND s_window = nullptr;
+
 void pumpMessages()
 {
+	if (s_window == nullptr)
+		return;
 	MSG msg;
-	while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
+	while (PeekMessageW(&msg, s_window, 0, 0, PM_REMOVE))
 	{
 		TranslateMessage(&msg);
 		DispatchMessageW(&msg);
@@ -310,6 +333,7 @@ bool createSurface(HINSTANCE instance, Surface &s)
 		WS_POPUP, s.x, s.y, s.width, s.height, nullptr, nullptr, instance, nullptr);
 	if (s.window == nullptr)
 		return false;
+	s_window = s.window;
 
 	BITMAPINFO info = {};
 	info.bmiHeader.biSize = sizeof(info.bmiHeader);
@@ -354,15 +378,18 @@ void destroySurface(HINSTANCE instance, Surface &s)
 	if (s.bitmap != nullptr)
 		DeleteObject(s.bitmap);
 	UnregisterClassW(L"GeneralsDesktopIntro", instance);
-	pumpMessages();
+	s_window = nullptr;
 }
 
-// UpdateLayeredWindow wants premultiplied colours; swscale gives straight alpha.
-void premultiply(uint8_t *bits, size_t pixelCount)
+// UpdateLayeredWindow wants premultiplied colours; swscale gives straight alpha. Returns the highest alpha.
+unsigned premultiply(uint8_t *bits, size_t pixelCount)
 {
+	unsigned highest = 0;
 	for (size_t i = 0; i < pixelCount; ++i, bits += 4)
 	{
 		const unsigned a = bits[3];
+		if (a > highest)
+			highest = a;
 		if (a == 255)
 			continue;
 		if (a == 0)
@@ -374,6 +401,7 @@ void premultiply(uint8_t *bits, size_t pixelCount)
 		bits[1] = (uint8_t)((bits[1] * a + 127) / 255);
 		bits[2] = (uint8_t)((bits[2] * a + 127) / 255);
 	}
+	return highest;
 }
 
 //-------------------------------------------------------------------------------------------------
@@ -396,9 +424,9 @@ bool waitUntil(const LARGE_INTEGER &start, double target)
 		const double left = target - secondsSince(start);
 		if (left <= 0.0)
 			return true;
+		// short sleeps: the game window's queued messages must not wake a wait over and over
 		const DWORD ms = (DWORD)(left * 1000.0);
-		if (ms > 0)
-			MsgWaitForMultipleObjects(0, nullptr, FALSE, ms, QS_ALLINPUT);
+		Sleep(ms < 4 ? ms : 4);
 	}
 	return false;
 }
@@ -487,12 +515,15 @@ bool DesktopIntro::play(HINSTANCE instance)
 	AVPacket *packet = av_packet_alloc();
 	AVFrame *frame = av_frame_alloc();
 	Surface surface = {};
-	AudioClip clip = {};
-	clip.gain = 1.0f;
 #ifdef RTS_HAS_MINIAUDIO
-	ma_device device;
+	AudioClip &clip = s_clip;
+	ma_device &device = s_device;
 	bool deviceStarted = false;
+	bool soundHandedOff = false;
+#else
+	AudioClip clip = {};
 #endif
+	clip.gain = 1.0f;
 	timeBeginPeriod(1);
 
 	int stream = -1;
@@ -522,8 +553,12 @@ bool DesktopIntro::play(HINSTANCE instance)
 		LARGE_INTEGER start = {};
 		bool reading = true;
 		bool failed = false;
+		// O109: the movie's last part is see-through; when the picture has gone, the start goes on at once
+		bool seenPicture = false;
+		bool pictureGone = false;
+		int emptyFrames = 0;
 
-		while (!s_skip && !failed)
+		while (!s_skip && !failed && !pictureGone)
 		{
 			if (reading)
 			{
@@ -540,7 +575,7 @@ bool DesktopIntro::play(HINSTANCE instance)
 				}
 			}
 
-			while (!s_skip && !failed && avcodec_receive_frame(video, frame) >= 0)
+			while (!s_skip && !failed && !pictureGone && avcodec_receive_frame(video, frame) >= 0)
 			{
 				const int64_t pts = frame->best_effort_timestamp;
 				if (firstPts == AV_NOPTS_VALUE && pts != AV_NOPTS_VALUE)
@@ -609,8 +644,18 @@ bool DesktopIntro::play(HINSTANCE instance)
 				uint8_t *destination[4] = { surface.bits, nullptr, nullptr, nullptr };
 				const int strides[4] = { surface.width * 4, 0, 0, 0 };
 				sws_scale(scaler, frame->data, frame->linesize, 0, frame->height, destination, strides);
-				premultiply(surface.bits, (size_t)surface.width * surface.height);
+				const unsigned highest = premultiply(surface.bits, (size_t)surface.width * surface.height);
 				av_frame_unref(frame);
+				if (highest > 3)
+				{
+					seenPicture = true;
+					emptyFrames = 0;
+				}
+				else if (seenPicture && ++emptyFrames >= 2)
+				{
+					pictureGone = true;
+					break;
+				}
 
 				if (!waitUntil(start, at))
 					break;
@@ -624,7 +669,7 @@ bool DesktopIntro::play(HINSTANCE instance)
 					InterlockedExchange(&s_skip, 1);
 			}
 
-			if (!reading && !s_skip)
+			if (!reading && !s_skip && !pictureGone)
 				break; // the decoder is drained
 			pumpMessages();
 		}
@@ -642,22 +687,32 @@ bool DesktopIntro::play(HINSTANCE instance)
 					Sleep(kSkipFadeMs / steps);
 				}
 			}
-			else
+#ifdef RTS_HAS_MINIAUDIO
+			else if (deviceStarted && (size_t)clip.position < clip.frames)
 			{
-				// let the sound finish (it may be a little longer than the picture)
-				const double soundEnd = (double)clip.frames / kAudioRate;
-				InterlockedExchange(&s_skip, 0);
-				const double limit = secondsSince(start) + 1.0;
-				waitUntil(start, soundEnd < limit ? soundEnd : limit);
+				// the picture is over, the sound is not: it plays on during the start (O109)
+				HANDLE tail = CreateThread(nullptr, 0, soundTailThread, nullptr, 0, nullptr);
+				if (tail != nullptr)
+				{
+					CloseHandle(tail);
+					soundHandedOff = true;
+				}
 			}
+#endif
 		}
 	}
 
 #ifdef RTS_HAS_MINIAUDIO
-	if (deviceStarted)
-		ma_device_uninit(&device);
-#endif
+	if (!soundHandedOff)
+	{
+		if (deviceStarted)
+			ma_device_uninit(&device);
+		free(clip.samples);
+		clip.samples = nullptr;
+	}
+#else
 	free(clip.samples);
+#endif
 	destroySurface(instance, surface);
 	sws_freeContext(scaler);
 	avcodec_free_context(&video);
