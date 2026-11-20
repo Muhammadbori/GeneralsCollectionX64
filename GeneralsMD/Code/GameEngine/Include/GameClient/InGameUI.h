@@ -383,6 +383,9 @@ public:  // ********************************************************************
 	virtual void messageNoFormat( const UnicodeString& message ); ///< display a message to the user
 	virtual void messageNoFormat( const RGBColor *rgbColor, const UnicodeString& message ); ///< display a colored message to the user
 	virtual void message( UnicodeString format, ... );				  ///< display a message to the user
+	/// TheSuperHackers @bugfix O105 Take a status message off the screen now (its life counts logic frames, so a line said
+	/// while the logic waited stayed about 10 s after it ran again). Every message with exactly this text.
+	void removeMessagesWithText( const UnicodeString &text );
 	virtual void message( AsciiString stringManagerLabel, ... );///< display a message to the user
 	virtual void toggleMessages() { m_messagesOn = 1 - m_messagesOn; }	///< toggle messages on/off
 	virtual Bool isMessagesOn() { return m_messagesOn; }	///< are the display messages on

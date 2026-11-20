@@ -227,6 +227,22 @@ namespace
 		return TRUE;
 	}
 
+	UnicodeString s_waitingText;   ///< O105: the waiting / reconnecting line on screen now (empty: none)
+
+	/// O105: frames flow again: the waiting line goes at once (InGameUI's message life counts logic frames, which did not
+	/// advance while the follower held, so it stayed about 10 s into the running stream)
+	void hideWaiting()
+	{
+		if (!s_waitingText.isEmpty())
+		{
+			if (TheInGameUI != nullptr) {
+				TheInGameUI->removeMessagesWithText(s_waitingText);
+			}
+			s_waitingText.clear();
+			s_lastMessageMs = 0;
+		}
+	}
+
 	void showWaiting()
 	{
 		const UnsignedInt now = LanClock::now();
@@ -238,12 +254,18 @@ namespace
 		// source gives data
 		if (ReplayStream::mirrorReconnecting())
 		{
-			TheInGameUI->message(TheGameText->FETCH_OR_SUBSTITUTE("GUI:ReplayFollowReconnecting",
-				localizedFallback(L"Reconnecting to the stream...", L"\x041F\x0435\x0440\x0435\x043F\x043E\x0434\x043A\x043B\x044E\x0447\x0435\x043D\x0438\x0435 \x043A \x0442\x0440\x0430\x043D\x0441\x043B\x044F\x0446\x0438\x0438...")));
+			hideWaiting();
+			s_waitingText = TheGameText->FETCH_OR_SUBSTITUTE("GUI:ReplayFollowReconnecting",
+				localizedFallback(L"Reconnecting to the stream...", L"\x041F\x0435\x0440\x0435\x043F\x043E\x0434\x043A\x043B\x044E\x0447\x0435\x043D\x0438\x0435 \x043A \x0442\x0440\x0430\x043D\x0441\x043B\x044F\x0446\x0438\x0438..."));
+			TheInGameUI->message(s_waitingText);
+			s_lastMessageMs = now;
 			return;
 		}
-		TheInGameUI->message(TheGameText->FETCH_OR_SUBSTITUTE("GUI:ReplayFollowWaiting",
-			localizedFallback(L"Waiting for the game...", L"\x041E\x0436\x0438\x0434\x0430\x043D\x0438\x0435 \x0434\x0430\x043D\x043D\x044B\x0445 \x0438\x0433\x0440\x044B...")));
+		hideWaiting();
+		s_waitingText = TheGameText->FETCH_OR_SUBSTITUTE("GUI:ReplayFollowWaiting",
+			localizedFallback(L"Waiting for the game...", L"\x041E\x0436\x0438\x0434\x0430\x043D\x0438\x0435 \x0434\x0430\x043D\x043D\x044B\x0445 \x0438\x0433\x0440\x044B..."));
+		TheInGameUI->message(s_waitingText);
+		s_lastMessageMs = now;
 	}
 
 	/// O34: normal, faster (catching up) or 10 % slower (building the reserve up again)
@@ -420,6 +442,7 @@ Bool ReplayFollow::mayRunFrame(UnsignedInt frame)
 		return FALSE;
 	}
 	s_holdSinceMs = 0;
+	hideWaiting();   // O105
 	// O34: a stream viewer keeps a reserve behind the allowed frame. Inside it (after a source change used some of it, or
 	// while the source is gone) it plays 10 % slower, so the reserve grows back without a stop; more than two seconds
 	// behind the reserve's point it runs faster until caught up.

@@ -29,6 +29,7 @@
 #include "GameClient/Display.h"
 #include "GameClient/DisplayString.h"
 #include "GameClient/DisplayStringManager.h"
+#include "GameClient/GameFont.h"
 #include "GameClient/GameText.h"
 #include "GameClient/Gadget.h"
 #include "GameClient/GadgetComboBox.h"
@@ -154,6 +155,68 @@ namespace
 			// the text starts after the picture
 			textData->centered = FALSE;
 			textData->leftMargin = side + 4;
+		}
+	}
+
+	//---------------------------------------------------------------------------------------------
+	// TheSuperHackers @tweak O105 (S44) A text that does not fit its cell (the in-game list's army column, narrowed by the
+	// colour picture of the name and by its own army picture: "USA Super Weapon General" lost its last letter) is drawn
+	// in a smaller size of the same font, down to 70 % of the cell's own size; the cell keeps its width, so nothing
+	// overlaps the team column. Each call starts again from the cell's own font (kept per window).
+	std::map<GameWindow *, GameFont *> s_ownFont;
+
+	void fitTextToCell(GameWindow *text)
+	{
+		if (text == nullptr || (text->winGetStyle() & GWS_STATIC_TEXT) == 0 || TheFontLibrary == nullptr
+			|| TheDisplayStringManager == nullptr) {
+			return;
+		}
+		TextData *textData = (TextData *)text->winGetUserData();
+		if (textData == nullptr || textData->text == nullptr) {
+			return;
+		}
+		std::map<GameWindow *, GameFont *>::iterator it = s_ownFont.find(text);
+		GameFont *cur = text->winGetFont();
+		if (it == s_ownFont.end()) {
+			it = s_ownFont.insert(std::make_pair(text, cur)).first;
+		} else if (cur != nullptr && it->second != nullptr && cur != it->second
+			&& (cur->pointSize > it->second->pointSize || cur->bold != it->second->bold
+				|| cur->nameString.compareNoCase(it->second->nameString) != 0)) {
+			it->second = cur;   // another window now lives at this address: its own font
+		}
+		GameFont *own = it->second;
+		if (own == nullptr) {
+			return;
+		}
+		const UnicodeString str = textData->text->getText();
+		Int w = 0, h = 0;
+		text->winGetSize(&w, &h);
+		const Int room = w - textData->leftMargin - 2;
+		GameFont *use = own;
+		if (!str.isEmpty() && room > 0)
+		{
+			DisplayString *probe = TheDisplayStringManager->newDisplayString();
+			if (probe != nullptr)
+			{
+				probe->setText(str);
+				const Int minSize = max(6, own->pointSize * 7 / 10);
+				for (Int size = own->pointSize; size >= minSize; --size)
+				{
+					GameFont *f = (size == own->pointSize) ? own : TheFontLibrary->getFont(own->nameString, size, own->bold);
+					if (f == nullptr) {
+						continue;
+					}
+					probe->setFont(f);
+					use = f;
+					if (probe->getWidth() <= room) {
+						break;
+					}
+				}
+				TheDisplayStringManager->freeDisplayString(probe);
+			}
+		}
+		if (use != text->winGetFont()) {
+			GadgetStaticTextSetFont(text, use);
 		}
 	}
 
@@ -594,6 +657,7 @@ void PlayerTable::decorateRow(GameWindow *nameText, GameWindow *sideText, GameWi
 	setIcon(nameText, colorImage, tint, FALSE, sideText);
 	setStar(nameText, admin);   // O60
 	setIcon(sideText, armyPicture(slot->getApparentPlayerTemplate()), 0xFFFFFFFF, FALSE);
+	fitTextToCell(sideText);   // O105
 	if (teamText != nullptr)
 	{
 		const Image *pirate = slot->getTeamNumber() < 0 ? picture(PICTURE_NO_TEAM) : nullptr;
