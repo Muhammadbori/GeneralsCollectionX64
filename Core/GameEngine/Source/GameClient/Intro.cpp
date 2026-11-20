@@ -21,6 +21,7 @@
 
 #include "Common/FramePacer.h"
 #include "Common/GameLOD.h"
+#include "Common/OptionPreferences.h"
 
 #include "GameClient/Display.h"
 #include "GameClient/DisplayStringManager.h"
@@ -28,6 +29,9 @@
 #include "GameClient/GameWindowManager.h"
 #include "GameClient/GlobalLanguage.h"
 #include "GameClient/Image.h"
+#include "GameClient/LocalizedFallback.h"
+
+extern HWND ApplicationHWnd;
 
 
 Intro::DisplayEntity::~DisplayEntity()
@@ -42,7 +46,14 @@ Intro::Intro()
 	, m_allowedStateFlags(0)
 	, m_waitUntilMs(0)
 	, m_fadeValue(0.0f)
+	, m_useCredits(TRUE)
+	, m_mouseWasDown(TRUE)
 {
+	{
+		OptionPreferences pref;
+		m_useCredits = pref.getIntroCredits();
+	}
+
 	if (TheGlobalData->m_playIntro)
 	{
 		// Please be kind and do not remove the EA logo movie. This game was built by EA. It lasts just 3 seconds.
@@ -78,6 +89,10 @@ void Intro::enterNextState()
 
 void Intro::update()
 {
+	// O110: a click skips the credits screen too (ESC goes through WindowXlat as before)
+	if (m_currentState == IntroState_TheSuperHackers && m_useCredits && clickedToSkip())
+		skipCurrentIntroStage();
+
 	if (!TheDisplay->isMoviePlaying() && m_waitUntilMs < timeGetTime())
 	{
 		enterNextState();
@@ -86,7 +101,7 @@ void Intro::update()
 		{
 		case IntroState_EALogoMovie: doEALogoMovie(); break;
 		case IntroState_TheSuperHackersWait: doAsyncWait(800); break;
-		case IntroState_TheSuperHackers: doTheSuperHackers(); break;
+		case IntroState_TheSuperHackers: if (m_useCredits) doCredits(); else doTheSuperHackers(); break;
 		case IntroState_SizzleMovieWait: doAsyncWait(1000); break;
 		case IntroState_SizzleMovie: doSizzleMovie(); break;
 		case IntroState_Done: doPostIntro(); break;
@@ -244,6 +259,76 @@ void Intro::doTheSuperHackers()
 
 	doAsyncWait(3000);
 	m_fadeValue = 0.0f;
+}
+
+// TheSuperHackers @feature O110 (band 61) The credits screen in place of the old "Game improved by" screen: text
+// only, in the game's own font, Russian or English by the text language, with the same fade and ESC skip; a click
+// skips it too. Options.ini IntroCredits = no brings back the old screen. A Blender video may replace it later.
+void Intro::doCredits()
+{
+	struct CreditLine
+	{
+		const WideChar *english;
+		const WideChar *russian;
+		Int size;
+		Bool bold;
+	};
+	static const CreditLine kLines[] =
+	{
+		{ L"Game improved by", L"\x0418\x0433\x0440\x0430 \x0443\x043B\x0443\x0447\x0448\x0435\x043D\x0430", 16, FALSE },
+		{ L"THE SUPER HACKERS", L"THE SUPER HACKERS", 32, TRUE },
+		{ L"R.G. Mechanics (Russian release)", L"R.G. \x041C\x0435\x0445\x0430\x043D\x0438\x043A\x0438 (\x0440\x0443\x0441\x0441\x043A\x0430\x044F \x0432\x0435\x0440\x0441\x0438\x044F)", 18, FALSE },
+		{ L"Compared with GenTool and GenPatcher \x2014 thanks to the community", L"\x0421\x0440\x0430\x0432\x043D\x0435\x043D\x043E \x0441 GenTool \x0438 GenPatcher \x2014 \x0441\x043F\x0430\x0441\x0438\x0431\x043E \x0441\x043E\x043E\x0431\x0449\x0435\x0441\x0442\x0432\x0443", 18, FALSE },
+		{ L"Claude (Anthropic)", L"Claude (Anthropic)", 18, FALSE },
+		{ L"Blender", L"Blender", 18, FALSE },
+		{ L"Visual C++ x64", L"Visual C++ x64", 18, FALSE },
+		{ L"DirectX 12", L"DirectX 12", 18, FALSE },
+	};
+	const Int lineCount = (Int)ARRAY_SIZE(kLines);
+	static_assert(ARRAY_SIZE(kLines) <= ARRAY_SIZE(m_unicodeStrings), "m_unicodeStrings is too small");
+
+	const Real resolutionScale = GlobalLanguage::getResolutionFontSizeScale(GlobalLanguage::ResolutionFontSizeMethod_Strict);
+	const Int screenWidth = TheDisplay->getWidth();
+	const Bool russian = isRussianText();
+
+	// line heights: the title and the team name get more room, like the old screen
+	Int heights[ARRAY_SIZE(kLines)];
+	Int total = 0;
+	for (Int i = 0; i < lineCount; ++i)
+	{
+		const Real gap = (i <= 1) ? 2.0f : 1.7f;
+		heights[i] = (Int)(kLines[i].size * resolutionScale * gap);
+		total += heights[i];
+	}
+
+	m_displayEntities.resize(lineCount);
+	Int centerOffsetY = -total / 2;
+	for (Int i = 0; i < lineCount; ++i)
+	{
+		const CreditLine &line = kLines[i];
+		DisplayEntity &e = m_displayEntities[i];
+		m_unicodeStrings[i] = russian ? line.russian : line.english;
+		e.sizeX = Int(10 * resolutionScale);
+		e.sizeY = Int(line.size * resolutionScale);
+		e.displayString = TheDisplayStringManager->newDisplayString();
+		e.displayString->setText(m_unicodeStrings[i]);
+		e.displayString->setFont(TheFontLibrary->getFont("Arial", e.sizeY, line.bold));
+		e.displayString->setWordWrap(screenWidth);
+		e.centerOffsetY = centerOffsetY;
+		centerOffsetY += heights[i];
+	}
+
+	m_mouseWasDown = TRUE; // a button already held does not skip; it must go up first
+	doAsyncWait(4500);
+	m_fadeValue = 0.0f;
+}
+
+Bool Intro::clickedToSkip()
+{
+	const Bool down = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0 || (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
+	const Bool pressed = down && !m_mouseWasDown;
+	m_mouseWasDown = down;
+	return pressed && ApplicationHWnd != nullptr && GetForegroundWindow() == ApplicationHWnd;
 }
 
 void Intro::doSizzleMovie()
