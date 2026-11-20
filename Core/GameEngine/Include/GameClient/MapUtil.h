@@ -143,6 +143,7 @@ public:
 	AsciiString getPackMapDir(const AsciiString &pack) const;            ///< packs\maps\<pack>\<game>\maps
 	Bool getPackOfMap(const AsciiString &mapName, AsciiString *pack) const; ///< TRUE (and the pack) for a map in a pack folder
 	static Bool isSafePackName(const AsciiString &pack);                 ///< letters, digits, '_', '-', ' ' only
+	static Bool arePacksUsed();   ///< O112 addendum: Zero Hour only; plain Generals has no pack maps and no pack tabs
 	Int getTabOfMap(const AsciiString &mapName);                         ///< MapListTab
 	Bool isMapInTab(const AsciiString &mapName, Int tab);
 	Bool hasMapsInTab(Int tab);

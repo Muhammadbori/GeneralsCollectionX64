@@ -1005,7 +1005,7 @@ AsciiString GameState::portableMapPathToRealMapPath(const AsciiString& in) const
 		for (const char *c = start; end != nullptr && c < end; ++c)
 			pack.concat(*c);
 		pack.toLower();
-		if (end == nullptr || !MapCache::isSafePackName(pack))
+		if (end == nullptr || !MapCache::isSafePackName(pack) || !MapCache::arePacksUsed())
 		{
 			return AsciiString::TheEmptyString;
 		}

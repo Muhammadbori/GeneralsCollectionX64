@@ -332,6 +332,17 @@ static const char *const kPackGameFolder = "zerohour";
 #endif
 static const char *const kPackRoot = "packs\\maps\\";
 
+// O112 addendum (the user): the pack tabs and pack maps are Zero Hour only. Plain Generals keeps its own two tabs and
+// never reads Packs\Maps, even where a pack has a Generals folder.
+Bool MapCache::arePacksUsed()
+{
+#if RTS_GENERALS
+	return FALSE;
+#else
+	return TRUE;
+#endif
+}
+
 Bool MapCache::isSafePackName(const AsciiString &pack)
 {
 	if (pack.isEmpty() || pack.getLength() > 64)
@@ -354,7 +365,7 @@ AsciiString MapCache::getPackMapDir(const AsciiString &pack) const
 
 Bool MapCache::getPackOfMap(const AsciiString &mapName, AsciiString *pack) const
 {
-	if (!mapName.startsWithNoCase(kPackRoot))
+	if (!arePacksUsed() || !mapName.startsWithNoCase(kPackRoot))
 		return FALSE;
 	const char *start = mapName.str() + strlen(kPackRoot);
 	const char *end = strchr(start, '\\');
@@ -376,6 +387,8 @@ Bool MapCache::getPackOfMap(const AsciiString &mapName, AsciiString *pack) const
 void MapCache::findPackDirs()
 {
 	m_packDirsFound = TRUE;
+	if (!arePacksUsed())
+		return;
 	WIN32_FIND_DATAA found;
 	HANDLE packs = FindFirstFileA("Packs\\Maps\\*", &found);
 	if (packs == INVALID_HANDLE_VALUE)
