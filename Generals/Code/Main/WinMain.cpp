@@ -933,6 +933,17 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	// instance, its anti-cheat, its files) before anything else.
 	Packs::waitForRestartedParent();
 
+	// TheSuperHackers @tweak O126 Per-monitor (V2) DPI aware from the first line. The manifest (app.manifest, RTS.RC)
+	// already says so and S69's StartWindow.log shows dpi 144 on the 150 % panel; this only covers an exe copy that lost
+	// its manifest. Fails harmlessly when the manifest already set it.
+	{
+		typedef BOOL(WINAPI *SetDpiContextFunc)(HANDLE);
+		HMODULE user = GetModuleHandleA("user32.dll");
+		SetDpiContextFunc setDpiContext = user != nullptr ? (SetDpiContextFunc)(void *)GetProcAddress(user, "SetProcessDpiAwarenessContext") : nullptr;
+		if (setDpiContext != nullptr)
+			setDpiContext((HANDLE)(INT_PTR)-4);   // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+	}
+
 	try {
 
 		SetUnhandledExceptionFilter( UnHandledExceptionFilter );
