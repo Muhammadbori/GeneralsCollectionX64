@@ -1269,6 +1269,27 @@ UnicodeString GameTextManager::fetch( const Char *label, Bool *exists )
 
 	if( lookUp == nullptr )
 	{
+		// TheSuperHackers @bugfix O107 (S56) Labels that window packs use but not every language's string table has: the
+		// ControlBar Pro packs' Diplomacy.wnd (ProExiLe, ProFAS; both games) names its back button GUI:ControlBarBack,
+		// which only the English generals.csf has, so the Russian table showed "MISSING: 'GUI:ControlBarBack'". A missing
+		// label takes the text of a label every table has, with the same meaning ("BACK" in English for both).
+		static const char *const kAliases[][2] = {
+			{ "GUI:ControlBarBack", "GUI:Back" },
+		};
+		for( Int a = 0; a < (Int)(sizeof(kAliases) / sizeof(kAliases[0])); ++a )
+		{
+			if( lb.compareNoCase( kAliases[a][0] ) == 0 )
+			{
+				Bool aliasExists = FALSE;
+				UnicodeString text = fetch( kAliases[a][1], &aliasExists );
+				if( aliasExists )
+				{
+					if( exists )
+						*exists = TRUE;
+					return text;
+				}
+			}
+		}
 
 		// string not found
 		if( exists )
