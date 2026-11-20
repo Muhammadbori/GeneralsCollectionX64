@@ -110,7 +110,8 @@ bool findMovie(double monitorAspect, char *utf8Path, int utf8Count)
 
 	const wchar_t *const wide = L"Data\\Intro\\EALogo_16x9.webm";
 	const wchar_t *const tall = L"Data\\Intro\\EALogo_16x10.webm";
-	// 16:9 is 1.78 and 16:10 is 1.6: below the middle the 16:10 movie fits better (also 4:3 and 5:4)
+	// 16:9 is 1.78 and 16:10 is 1.6: below the middle (1.69) the 16:10 movie needs the least crop (also 3:2, 4:3, 5:4);
+	// above it (21:9 too) the 16:9 one
 	const wchar_t *const order[2] = { monitorAspect < 1.69 ? tall : wide, monitorAspect < 1.69 ? wide : tall };
 
 	for (int i = 0; i < 2; ++i)
@@ -572,6 +573,7 @@ bool DesktopIntro::play(HINSTANCE instance, HWND splashWindow, DWORD splashShown
 		const AVRational rate = av_guess_frame_rate(format, format->streams[stream], nullptr);
 		const double frameSeconds = (rate.num > 0 && rate.den > 0) ? av_q2d(av_inv_q(rate)) : 1.0 / 25.0;
 		int64_t firstPts = AV_NOPTS_VALUE;
+		int cropLeft = 0, cropRight = 0, cropTop = 0, cropBottom = 0;   // O117
 		int64_t frameIndex = 0;
 		LARGE_INTEGER start = {};
 		bool reading = true;
@@ -618,27 +620,35 @@ bool DesktopIntro::play(HINSTANCE instance, HWND splashWindow, DWORD splashShown
 						break;
 					}
 
-					// O116: the window covers the whole primary monitor (over the taskbar); the picture is as large as fits,
-					// centred, and whatever is left stays fully see-through (the DIB starts zeroed and is never written
-					// outside the picture's rectangle)
+					// O116: the window covers the whole primary monitor (over the taskbar).
+					// O117: the picture COVERS it too, on any shape (3:2, 4:3, 21:9, ...): it is scaled until it fills both
+					// directions and the overflow is cut off equally on both sides (a centre crop in the source frame,
+					// in even pixels for the chroma planes). The movie's own alpha stays.
 					const double scaleX = (double)monitorWidth / frame->width;
 					const double scaleY = (double)monitorHeight / frame->height;
-					const double scale = scaleX < scaleY ? scaleX : scaleY;
-					surface.videoWidth = (int)(frame->width * scale + 0.5) > 0 ? (int)(frame->width * scale + 0.5) : 1;
-					surface.videoHeight = (int)(frame->height * scale + 0.5) > 0 ? (int)(frame->height * scale + 0.5) : 1;
-					if (surface.videoWidth > monitorWidth)
-						surface.videoWidth = monitorWidth;
-					if (surface.videoHeight > monitorHeight)
-						surface.videoHeight = monitorHeight;
-					surface.videoX = (monitorWidth - surface.videoWidth) / 2;
-					surface.videoY = (monitorHeight - surface.videoHeight) / 2;
+					const double scale = scaleX > scaleY ? scaleX : scaleY;
+					int visibleWidth = (int)(monitorWidth / scale + 0.5);
+					int visibleHeight = (int)(monitorHeight / scale + 0.5);
+					if (visibleWidth > frame->width || visibleWidth < 2)
+						visibleWidth = frame->width;
+					if (visibleHeight > frame->height || visibleHeight < 2)
+						visibleHeight = frame->height;
+					cropLeft = ((frame->width - visibleWidth) / 2) & ~1;
+					cropRight = frame->width - visibleWidth - cropLeft;
+					cropTop = ((frame->height - visibleHeight) / 2) & ~1;
+					cropBottom = frame->height - visibleHeight - cropTop;
+					surface.videoWidth = monitorWidth;
+					surface.videoHeight = monitorHeight;
+					surface.videoX = 0;
+					surface.videoY = 0;
 					surface.width = monitorWidth;
 					surface.height = monitorHeight;
 					surface.x = monitor.rcMonitor.left;
 					surface.y = monitor.rcMonitor.top;
 
-					// one scaler for this frame size: the decoder's picture straight to the monitor size, bilinear
-					scaler = sws_getContext(frame->width, frame->height, (AVPixelFormat)frame->format,
+					// one scaler for this frame size: the decoder's cropped picture straight to the monitor size, bilinear
+					scaler = sws_getContext(frame->width - cropLeft - cropRight, frame->height - cropTop - cropBottom,
+						(AVPixelFormat)frame->format,
 						surface.videoWidth, surface.videoHeight, AV_PIX_FMT_BGRA, SWS_BILINEAR, nullptr, nullptr, nullptr);
 					if (scaler == nullptr || !createSurface(instance, surface))
 					{
@@ -693,6 +703,12 @@ bool DesktopIntro::play(HINSTANCE instance, HWND splashWindow, DWORD splashShown
 					continue;
 				}
 
+				// O117: the same centre crop on every frame (moves the plane pointers, nothing is copied)
+				frame->crop_left = (size_t)cropLeft;
+				frame->crop_right = (size_t)cropRight;
+				frame->crop_top = (size_t)cropTop;
+				frame->crop_bottom = (size_t)cropBottom;
+				av_frame_apply_cropping(frame, AV_FRAME_CROP_UNALIGNED);
 				uint8_t *videoBits = surface.bits + ((size_t)surface.videoY * surface.width + surface.videoX) * 4;
 				uint8_t *destination[4] = { videoBits, nullptr, nullptr, nullptr };
 				const int strides[4] = { surface.width * 4, 0, 0, 0 };
