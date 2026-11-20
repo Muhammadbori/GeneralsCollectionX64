@@ -297,6 +297,54 @@ static const char *messageToString(unsigned int message)
 // WndProc ====================================================================
 /** Window Procedure */
 //=============================================================================
+// TheSuperHackers @tweak O119/O122 The opening picture fitted to the window's client area, centred, black around it.
+// Used by WM_PAINT and, after the EA logo (gSplashRefit), again whenever the window's size or the display mode changes
+// while the engine loads (S66: full screen changes the display mode and the picture stayed small in a corner).
+static Bool gSplashRefit = false;
+
+static void paintSplashFitted(HWND hWnd, HDC dc)
+{
+	if (gLoadScreenBitmap == nullptr || dc == nullptr)
+		return;
+	BITMAP bm;
+	RECT client;
+	::GetClientRect(hWnd, &client);
+	if (::GetObject(gLoadScreenBitmap, sizeof(bm), &bm) == 0 || bm.bmWidth <= 0 || bm.bmHeight <= 0
+		|| client.right <= 0 || client.bottom <= 0)
+		return;
+	Int savContext = ::SaveDC(dc);
+	HDC tmpDC = ::CreateCompatibleDC(dc);
+	HBITMAP savBitmap = (HBITMAP)::SelectObject(tmpDC, gLoadScreenBitmap);
+	Int w = client.right;
+	Int h = (Int)((Int64)bm.bmHeight * client.right / bm.bmWidth);
+	if (h > client.bottom)
+	{
+		h = client.bottom;
+		w = (Int)((Int64)bm.bmWidth * client.bottom / bm.bmHeight);
+	}
+	const Int x = (client.right - w) / 2;
+	const Int y = (client.bottom - h) / 2;
+	::FillRect(dc, &client, (HBRUSH)::GetStockObject(BLACK_BRUSH));
+	::SetStretchBltMode(dc, HALFTONE);
+	::SetBrushOrgEx(dc, 0, 0, nullptr);
+	::StretchBlt(dc, x, y, w, h, tmpDC, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
+	::SelectObject(tmpDC, savBitmap);
+	::DeleteDC(tmpDC);
+	::RestoreDC(dc, savContext);
+}
+
+/// O122: the picture again at the new size, only while the engine has not drawn its first frame
+static void refitSplash(HWND hWnd)
+{
+	if (!gSplashRefit || gLoadScreenBitmap == nullptr)
+		return;
+	if (TheGameClient != nullptr && TheGameClient->getFrame() > 0)
+		return;
+	HDC dc = ::GetDC(hWnd);
+	paintSplashFitted(hWnd, dc);
+	::ReleaseDC(hWnd, dc);
+}
+
 LRESULT CALLBACK WndProc( HWND hWnd, UINT message,
 													WPARAM wParam, LPARAM lParam )
 {
@@ -441,6 +489,15 @@ LRESULT CALLBACK WndProc( HWND hWnd, UINT message,
 				if (TheMouse)
 					TheMouse->refreshCursorCapture();
 
+				refitSplash(hWnd);   // O122
+
+				break;
+			}
+
+			// O122: the engine's full screen changes the display mode: the picture is fitted again
+			case WM_DISPLAYCHANGE:
+			{
+				refitSplash(hWnd);
 				break;
 			}
 
@@ -636,37 +693,7 @@ LRESULT CALLBACK WndProc( HWND hWnd, UINT message,
 					::SetBkColor(dc, RGB(0,0,0));
 					::TextOut(dc, 30, 30, "Loading Command & Conquer Generals...", 37);
 #endif
-					if (gLoadScreenBitmap!=nullptr) {
-						Int savContext = ::SaveDC(dc);
-						HDC tmpDC = ::CreateCompatibleDC(dc);
-						HBITMAP savBitmap = (HBITMAP)::SelectObject(tmpDC, gLoadScreenBitmap);
-						// TheSuperHackers @tweak O119 The picture fits the window, centred, black around it: the same as
-						// before in the first 800x600 window, and full size when the window comes back at its final size
-						// after the EA logo (DesktopIntro.h)
-						BITMAP bm;
-						RECT client;
-						::GetClientRect(hWnd, &client);
-						if (::GetObject(gLoadScreenBitmap, sizeof(bm), &bm) != 0 && bm.bmWidth > 0 && bm.bmHeight > 0
-							&& client.right > 0 && client.bottom > 0)
-						{
-							Int w = client.right;
-							Int h = (Int)((Int64)bm.bmHeight * client.right / bm.bmWidth);
-							if (h > client.bottom)
-							{
-								h = client.bottom;
-								w = (Int)((Int64)bm.bmWidth * client.bottom / bm.bmHeight);
-							}
-							const Int x = (client.right - w) / 2;
-							const Int y = (client.bottom - h) / 2;
-							::FillRect(dc, &client, (HBRUSH)::GetStockObject(BLACK_BRUSH));
-							::SetStretchBltMode(dc, HALFTONE);
-							::SetBrushOrgEx(dc, 0, 0, nullptr);
-							::StretchBlt(dc, x, y, w, h, tmpDC, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
-						}
-						::SelectObject(tmpDC, savBitmap);
-						::DeleteDC(tmpDC);
-						::RestoreDC(dc, savContext);
-					}
+					paintSplashFitted(hWnd, dc);   // O119/O122
 					::EndPaint(hWnd, &paint);
 					return TRUE;
 				}
@@ -973,12 +1000,31 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 					// gDoPaint is already off). Without a Resolution in Options.ini, full screen takes the monitor's size
 					// and a window keeps its size.
 					{
-						OptionPreferences resPref;
+						// O122 (S66): the size from the same source the engine uses: -xres/-yres first (parsed only later
+						// by the engine, so read here from the raw arguments), then Options.ini, then the default
 						Int xres = 0, yres = 0;
 						Bool haveRes = FALSE;
-						OptionPreferences::const_iterator resIt = resPref.find("Resolution");
-						if (resIt != resPref.end() && sscanf(resIt->second.str(), "%d%d", &xres, &yres) == 2 && xres > 0 && yres > 0)
+						for (Int a = 1; a + 1 < __argc; ++a)
+						{
+							if (_stricmp(__argv[a], "-xres") == 0)
+								xres = atoi(__argv[a + 1]);
+							else if (_stricmp(__argv[a], "-yres") == 0)
+								yres = atoi(__argv[a + 1]);
+						}
+						haveRes = xres > 0 && yres > 0;
+						if (!haveRes)
+						{
+							OptionPreferences resPref;
+							OptionPreferences::const_iterator resIt = resPref.find("Resolution");
+							if (resIt != resPref.end() && sscanf(resIt->second.str(), "%d%d", &xres, &yres) == 2 && xres > 0 && yres > 0)
+								haveRes = TRUE;
+						}
+						if (!haveRes && TheGlobalData->m_windowed && TheGlobalData->m_xResolution > 0 && TheGlobalData->m_yResolution > 0)
+						{
+							xres = TheGlobalData->m_xResolution;
+							yres = TheGlobalData->m_yResolution;
 							haveRes = TRUE;
+						}
 						MONITORINFO mi = { sizeof(MONITORINFO) };
 						if (GetMonitorInfo(MonitorFromWindow(ApplicationHWnd, MONITOR_DEFAULTTOPRIMARY), &mi))
 						{
@@ -1005,6 +1051,7 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 							}
 						}
 					}
+					gSplashRefit = Intro::s_desktopIntroPlayed;   // O122
 					const Bool doPaint = gDoPaint;
 					gDoPaint = true;
 					ShowWindow(ApplicationHWnd, SW_SHOW);
@@ -1021,7 +1068,8 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 		}
 #endif
 
-		if (gLoadScreenBitmap!=nullptr) {
+		// O122: after the EA logo the picture stays for the re-fits while the engine loads (freed by Windows at exit)
+		if (gLoadScreenBitmap!=nullptr && !gSplashRefit) {
 			::DeleteObject(gLoadScreenBitmap);
 			gLoadScreenBitmap = nullptr;
 		}
