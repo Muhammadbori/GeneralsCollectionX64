@@ -23,12 +23,17 @@
 
 #include "GameClient/MapListTabs.h"
 
+#include <map>
+
 #include "Common/NameKeyGenerator.h"
+#include "GameClient/Color.h"
+#include "GameClient/Display.h"
 #include "GameClient/DisplayString.h"
 #include "GameClient/DisplayStringManager.h"
 #include "GameClient/Gadget.h"
 #include "GameClient/GadgetRadioButton.h"
 #include "GameClient/GameWindow.h"
+#include "GameClient/GameFont.h"
 #include "GameClient/GameWindowManager.h"
 #include "GameClient/LocalizedFallback.h"
 #include "GameClient/MapUtil.h"
@@ -93,6 +98,105 @@ namespace
 	}
 }
 
+// TheSuperHackers @tweak O125 (the user's picture) Each map tab is one plain cell: a frame and its label over the whole
+// width, without the radio button's two lit end squares; the selected tab has a soft muted fill and a lighter frame, its
+// text in the normal colour (no bright green); the others are plain. The label shrinks to fit the cell (down to 50 %).
+namespace
+{
+	GameFont *fitTabFont(DisplayString *text, GameFont *own, Int width)
+	{
+		struct Fit
+		{
+			GameFont *own;
+			Int width;
+			UnicodeString str;
+			GameFont *use;
+		};
+		static std::map<DisplayString *, Fit> s_fit;
+		if (own == nullptr || width <= 8 || TheFontLibrary == nullptr || TheDisplayStringManager == nullptr) {
+			return own;
+		}
+		const UnicodeString str = text->getText();
+		std::map<DisplayString *, Fit>::iterator it = s_fit.find(text);
+		if (it != s_fit.end() && it->second.own == own && it->second.width == width && it->second.str.compare(str) == 0) {
+			return it->second.use;
+		}
+		GameFont *use = own;
+		DisplayString *probe = TheDisplayStringManager->newDisplayString();
+		if (probe != nullptr)
+		{
+			probe->setText(str);
+			const Int minSize = max(6, own->pointSize / 2);
+			for (Int size = own->pointSize; size >= minSize; --size)
+			{
+				GameFont *f = (size == own->pointSize) ? own : TheFontLibrary->getFont(own->nameString, size, own->bold);
+				if (f == nullptr) {
+					continue;
+				}
+				probe->setFont(f);
+				use = f;
+				if (probe->getWidth() <= width - 10) {
+					break;
+				}
+			}
+			TheDisplayStringManager->freeDisplayString(probe);
+		}
+		Fit fit;
+		fit.own = own;
+		fit.width = width;
+		fit.str = str;
+		fit.use = use;
+		s_fit[text] = fit;
+		return use;
+	}
+
+	void drawPlainTab(GameWindow *window, WinInstanceData *instData)
+	{
+		if (window == nullptr || instData == nullptr || TheDisplay == nullptr) {
+			return;
+		}
+		Int x = 0, y = 0, w = 0, h = 0;
+		window->winGetScreenPosition(&x, &y);
+		window->winGetSize(&w, &h);
+		const Bool enabled = BitIsSet(window->winGetStatus(), WIN_STATUS_ENABLED);
+		const Bool selected = BitIsSet(instData->getState(), WIN_STATE_SELECTED);
+		const Bool hilited = BitIsSet(instData->getState(), WIN_STATE_HILITED);
+
+		const Color fill = selected ? GameMakeColor(60, 78, 96, 210) : GameMakeColor(0, 0, 0, 150);
+		const Color frame = selected ? GameMakeColor(165, 182, 200, 255)
+			: (hilited ? GameMakeColor(135, 145, 158, 255) : GameMakeColor(88, 96, 108, 255));
+		TheDisplay->drawFillRect(x, y, w, h, fill);
+		TheDisplay->drawOpenRect(x, y, w, h, 1.0f, frame);
+
+		DisplayString *text = instData->getTextDisplayString();
+		if (text == nullptr || text->getTextLength() == 0) {
+			return;
+		}
+		GameFont *font = fitTabFont(text, window->winGetFont(), w);
+		if (text->getFont() != font) {
+			text->setFont(font);
+		}
+		IRegion2D clip;
+		clip.lo.x = x;
+		clip.lo.y = y;
+		clip.hi.x = x + w;
+		clip.hi.y = y + h;
+		text->setClipRegion(&clip);
+		Int tw = 0, th = 0;
+		text->getSize(&tw, &th);
+		const Color textColor = enabled ? GameMakeColor(225, 228, 232, 255) : GameMakeColor(130, 130, 130, 255);
+		const Color dropColor = GameMakeColor(0, 0, 0, 255);
+		text->draw(x + (w - tw) / 2, y + (h - th) / 2, textColor, dropColor);
+	}
+
+	void plainTab(GameWindow *button)
+	{
+		if (button != nullptr) {
+			button->winSetDrawFunc(drawPlainTab);
+		}
+	}
+}
+
 // TheSuperHackers @tweak O120 (the user's picture) The four tabs overlapped one another and the frames. Now: short
 // labels ("Official" / "Unofficial" / "GenTool" / "GenPatcher", Russian "Официальные" / "Неофициальные"), equal tab
 // widths with gaps in one row from the first tab to the window's edge or the first window right of the row (the map
@@ -113,6 +217,8 @@ void MapListTabs::attach(GameWindow *systemButton, GameWindow *userButton)
 	const UnicodeString userLabel(localizedFallback(L"Unofficial", L"\x041D\x0435\x043E\x0444\x0438\x0446\x0438\x0430\x043B\x044C\x043D\x044B\x0435"));
 	GadgetRadioSetText(systemButton, officialLabel);
 	GadgetRadioSetText(userButton, userLabel);
+	plainTab(systemButton);   // O125
+	plainTab(userButton);
 
 	if (TheWindowManager->winGetWindowFromId(parent, idOf(kTabs[0])) != nullptr
 		|| TheWindowManager->winGetWindowFromId(parent, idOf(kTabs[1])) != nullptr) {
@@ -166,6 +272,7 @@ void MapListTabs::attach(GameWindow *systemButton, GameWindow *userButton)
 		button->winSetOwner(systemButton->winGetOwner());
 		labels[n] = UnicodeString(localizedFallback(kTabs[i].english, kTabs[i].russian));
 		GadgetRadioSetText(button, labels[n]);
+		plainTab(button);   // O125
 		buttons[n++] = button;
 	}
 
