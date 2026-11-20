@@ -302,8 +302,16 @@ static Bool gSplashRefit = false;
 
 static void paintSplashFitted(HWND hWnd, HDC dc)
 {
-	if (gLoadScreenBitmap == nullptr || dc == nullptr)
+	if (dc == nullptr)
 		return;
+	if (gLoadScreenBitmap == nullptr)
+	{
+		// O127: after the EA logo the window stays plain black until the engine's first frame
+		RECT client;
+		::GetClientRect(hWnd, &client);
+		::FillRect(dc, &client, (HBRUSH)::GetStockObject(BLACK_BRUSH));
+		return;
+	}
 	BITMAP bm;
 	RECT client;
 	::GetClientRect(hWnd, &client);
@@ -334,7 +342,7 @@ static void paintSplashFitted(HWND hWnd, HDC dc)
 /// O122/O124: TRUE while the picture should stand in for the game: after the EA logo, before the engine's first frame
 static Bool splashActive()
 {
-	if (!gSplashRefit || gLoadScreenBitmap == nullptr)
+	if (!gSplashRefit)
 		return false;
 	return TheGameClient == nullptr || TheGameClient->getFrame() == 0;
 }
@@ -1095,6 +1103,12 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 						}
 					}
 					gSplashRefit = Intro::s_desktopIntroPlayed;   // O122
+					// O127 (the user: "rasmsiz bo'lsin"): after the EA logo no picture, plain black at the final size
+					if (gSplashRefit && gLoadScreenBitmap != nullptr)
+					{
+						::DeleteObject(gLoadScreenBitmap);
+						gLoadScreenBitmap = nullptr;
+					}
 					const Bool doPaint = gDoPaint;
 					gDoPaint = true;
 					ShowWindow(ApplicationHWnd, SW_SHOW);
