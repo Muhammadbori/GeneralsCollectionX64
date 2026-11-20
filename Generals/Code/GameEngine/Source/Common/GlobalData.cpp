@@ -640,6 +640,14 @@ GlobalData::GlobalData()
 	m_chipSetType = 0;
 	m_headless = FALSE;
 	m_windowed = 0;
+	// TheSuperHackers @bugfix O123 (S67) Our user data folder from the start, as in Zero Hour: Generals set it only when
+	// GameData.ini was parsed, and what was written before that (Packs.log) went into the game folder. Our folder no
+	// longer depends on the INI's leaf name (O121); the INI parse below sets the same folder again.
+	if (const char *userDataDirOverride = CommandLine::getUserDataDirOverride())
+		m_userDataDir = userDataDirOverride;
+	else
+		m_userDataDir = CollectionUserData::makeOurs(AsciiString::TheEmptyString, "Command and Conquer Generals Data", "Generals");
+
 	m_xResolution = DEFAULT_DISPLAY_WIDTH;
 	m_yResolution = DEFAULT_DISPLAY_HEIGHT;
 	m_maxShellScreens = 0;

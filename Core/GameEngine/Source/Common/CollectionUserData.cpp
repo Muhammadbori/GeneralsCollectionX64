@@ -121,15 +121,20 @@ AsciiString CollectionUserData::makeOurs(const AsciiString &originalDir, const c
 		}
 	}
 
-	// O121: a short note of what was chosen, for test runs and bug reports (ours only)
+	// O121: a short note of what was chosen, for test runs and bug reports (ours only). O123 (S67): written once per
+	// run, at the first call: later calls (a GlobalData override, Generals' INI parse) found our Options.ini already
+	// imported and overwrote the note with "kept (ours exists)".
+	static Bool s_noteWritten = FALSE;
 	AsciiString notePath = ours;
 	notePath.concat("UserDataFolders.log");
-	if (FILE *fp = fopen(notePath.str(), "w"))
+	FILE *fp = s_noteWritten ? nullptr : fopen(notePath.str(), "w");
+	if (fp != nullptr)
 	{
 		fprintf(fp, "Documents = %s\n", documents.str());
 		fprintf(fp, "Ours      = %s (%s)\n", ours.str(), isFolder(ours) ? "ok" : "MISSING");
 		fprintf(fp, "Original  = %s (read only; Options.ini %s)\n", original.str(), importNote);
 		fclose(fp);
+		s_noteWritten = TRUE;
 	}
 	return ours;
 }
