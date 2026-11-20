@@ -74,6 +74,8 @@ private:
 
 	void doEALogoMovie();
 	void doTheSuperHackers();
+	void doCredits();
+	Bool clickedToSkip();
 	void doSizzleMovie();
 	void doPostIntro();
 	void doAsyncWait(UnsignedInt milliseconds);
@@ -85,7 +87,9 @@ private:
 	IntroState m_currentState;
 	UnsignedInt m_allowedStateFlags;
 	UnsignedInt m_waitUntilMs;
-	UnicodeString m_unicodeStrings[1];
+	UnicodeString m_unicodeStrings[8];
+	Bool m_useCredits;      ///< O110: the credits screen instead of the old Super Hackers screen
+	Bool m_mouseWasDown;
 	std::vector<DisplayEntity> m_displayEntities;
 	Real m_fadeValue;
 };

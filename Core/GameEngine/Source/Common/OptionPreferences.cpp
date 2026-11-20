@@ -825,6 +825,15 @@ Int OptionPreferences::getWindowed() const
 	return (stricmp(it->second.str(), "yes") == 0) ? 1 : 0;
 }
 
+// TheSuperHackers @feature O110 (band 61) IntroCredits = no brings back the old "Game improved by" screen.
+Bool OptionPreferences::getIntroCredits() const
+{
+	OptionPreferences::const_iterator it = find("IntroCredits");
+	if (it == end())
+		return TRUE;
+	return (stricmp(it->second.str(), "no") != 0);
+}
+
 // TheSuperHackers @feature O108 (band 61) DesktopIntro = no turns off the EA logo played over the desktop at start.
 Bool OptionPreferences::getDesktopIntro() const
 {
