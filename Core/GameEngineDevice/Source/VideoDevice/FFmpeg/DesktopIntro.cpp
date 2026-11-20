@@ -317,6 +317,28 @@ struct Surface
 	HGDIOBJ oldBitmap;
 	uint8_t *bits;   // top-down BGRA, premultiplied alpha
 	int x, y, width, height;
+	int videoX, videoY, videoWidth, videoHeight;   // O116: the picture's place inside the full-monitor window
+};
+
+// O116: the intro window works in real monitor pixels, also when the game itself is not DPI aware (then Windows would
+// stretch a smaller window and blur it). Per thread, only while the intro runs (Windows 10 1607 and later; else no-op).
+struct DpiAwareScope
+{
+	typedef void *(WINAPI *SetContextFunc)(void *);
+	SetContextFunc set;
+	void *old;
+	DpiAwareScope() : set(nullptr), old(nullptr)
+	{
+		HMODULE user = GetModuleHandleW(L"user32.dll");
+		set = user != nullptr ? (SetContextFunc)(void *)GetProcAddress(user, "SetThreadDpiAwarenessContext") : nullptr;
+		if (set != nullptr)
+			old = set((void *)(INT_PTR)-4);   // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+	}
+	~DpiAwareScope()
+	{
+		if (set != nullptr && old != nullptr)
+			set(old);
+	}
 };
 
 bool createSurface(HINSTANCE instance, Surface &s)
@@ -484,6 +506,7 @@ bool DesktopIntro::play(HINSTANCE instance, HWND splashWindow, DWORD splashShown
 	InterlockedExchange(&s_skip, 0);
 
 	// the primary monitor
+	DpiAwareScope dpiScope;
 	MONITORINFO monitor = {};
 	monitor.cbSize = sizeof(monitor);
 	const POINT origin = { 0, 0 };
@@ -595,17 +618,28 @@ bool DesktopIntro::play(HINSTANCE instance, HWND splashWindow, DWORD splashShown
 						break;
 					}
 
-					// as large as fits on the monitor, centred
+					// O116: the window covers the whole primary monitor (over the taskbar); the picture is as large as fits,
+					// centred, and whatever is left stays fully see-through (the DIB starts zeroed and is never written
+					// outside the picture's rectangle)
 					const double scaleX = (double)monitorWidth / frame->width;
 					const double scaleY = (double)monitorHeight / frame->height;
 					const double scale = scaleX < scaleY ? scaleX : scaleY;
-					surface.width = (int)(frame->width * scale + 0.5) > 0 ? (int)(frame->width * scale + 0.5) : 1;
-					surface.height = (int)(frame->height * scale + 0.5) > 0 ? (int)(frame->height * scale + 0.5) : 1;
-					surface.x = monitor.rcMonitor.left + (monitorWidth - surface.width) / 2;
-					surface.y = monitor.rcMonitor.top + (monitorHeight - surface.height) / 2;
+					surface.videoWidth = (int)(frame->width * scale + 0.5) > 0 ? (int)(frame->width * scale + 0.5) : 1;
+					surface.videoHeight = (int)(frame->height * scale + 0.5) > 0 ? (int)(frame->height * scale + 0.5) : 1;
+					if (surface.videoWidth > monitorWidth)
+						surface.videoWidth = monitorWidth;
+					if (surface.videoHeight > monitorHeight)
+						surface.videoHeight = monitorHeight;
+					surface.videoX = (monitorWidth - surface.videoWidth) / 2;
+					surface.videoY = (monitorHeight - surface.videoHeight) / 2;
+					surface.width = monitorWidth;
+					surface.height = monitorHeight;
+					surface.x = monitor.rcMonitor.left;
+					surface.y = monitor.rcMonitor.top;
 
+					// one scaler for this frame size: the decoder's picture straight to the monitor size, bilinear
 					scaler = sws_getContext(frame->width, frame->height, (AVPixelFormat)frame->format,
-						surface.width, surface.height, AV_PIX_FMT_BGRA, SWS_BILINEAR, nullptr, nullptr, nullptr);
+						surface.videoWidth, surface.videoHeight, AV_PIX_FMT_BGRA, SWS_BILINEAR, nullptr, nullptr, nullptr);
 					if (scaler == nullptr || !createSurface(instance, surface))
 					{
 						introLog("cannot make the window");
@@ -659,10 +693,18 @@ bool DesktopIntro::play(HINSTANCE instance, HWND splashWindow, DWORD splashShown
 					continue;
 				}
 
-				uint8_t *destination[4] = { surface.bits, nullptr, nullptr, nullptr };
+				uint8_t *videoBits = surface.bits + ((size_t)surface.videoY * surface.width + surface.videoX) * 4;
+				uint8_t *destination[4] = { videoBits, nullptr, nullptr, nullptr };
 				const int strides[4] = { surface.width * 4, 0, 0, 0 };
 				sws_scale(scaler, frame->data, frame->linesize, 0, frame->height, destination, strides);
-				const unsigned highest = premultiply(surface.bits, (size_t)surface.width * surface.height);
+				// only the picture's rows (O116: the rest of the full-monitor window stays zero)
+				unsigned highest = 0;
+				for (int row = 0; row < surface.videoHeight; ++row)
+				{
+					const unsigned h = premultiply(videoBits + (size_t)row * surface.width * 4, (size_t)surface.videoWidth);
+					if (h > highest)
+						highest = h;
+				}
 				av_frame_unref(frame);
 				if (highest > 3)
 				{
