@@ -302,8 +302,16 @@ static Bool gSplashRefit = false;
 
 static void paintSplashFitted(HWND hWnd, HDC dc)
 {
-	if (gLoadScreenBitmap == nullptr || dc == nullptr)
+	if (dc == nullptr)
 		return;
+	if (gLoadScreenBitmap == nullptr)
+	{
+		// O127: after the EA logo the window stays plain black until the engine's first frame
+		RECT client;
+		::GetClientRect(hWnd, &client);
+		::FillRect(dc, &client, (HBRUSH)::GetStockObject(BLACK_BRUSH));
+		return;
+	}
 	BITMAP bm;
 	RECT client;
 	::GetClientRect(hWnd, &client);
@@ -334,7 +342,7 @@ static void paintSplashFitted(HWND hWnd, HDC dc)
 /// O122/O124: TRUE while the picture should stand in for the game: after the EA logo, before the engine's first frame
 static Bool splashActive()
 {
-	if (!gSplashRefit || gLoadScreenBitmap == nullptr)
+	if (!gSplashRefit)
 		return false;
 	return TheGameClient == nullptr || TheGameClient->getFrame() == 0;
 }
@@ -933,6 +941,17 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 	// instance, its anti-cheat, its files) before anything else.
 	Packs::waitForRestartedParent();
 
+	// TheSuperHackers @tweak O126 Per-monitor (V2) DPI aware from the first line. The manifest (app.manifest, RTS.RC)
+	// already says so and S69's StartWindow.log shows dpi 144 on the 150 % panel; this only covers an exe copy that lost
+	// its manifest. Fails harmlessly when the manifest already set it.
+	{
+		typedef BOOL(WINAPI *SetDpiContextFunc)(HANDLE);
+		HMODULE user = GetModuleHandleA("user32.dll");
+		SetDpiContextFunc setDpiContext = user != nullptr ? (SetDpiContextFunc)(void *)GetProcAddress(user, "SetProcessDpiAwarenessContext") : nullptr;
+		if (setDpiContext != nullptr)
+			setDpiContext((HANDLE)(INT_PTR)-4);   // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+	}
+
 	try {
 
 		SetUnhandledExceptionFilter( UnHandledExceptionFilter );
@@ -1084,6 +1103,12 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 						}
 					}
 					gSplashRefit = Intro::s_desktopIntroPlayed;   // O122
+					// O127 (the user: "rasmsiz bo'lsin"): after the EA logo no picture, plain black at the final size
+					if (gSplashRefit && gLoadScreenBitmap != nullptr)
+					{
+						::DeleteObject(gLoadScreenBitmap);
+						gLoadScreenBitmap = nullptr;
+					}
 					const Bool doPaint = gDoPaint;
 					gDoPaint = true;
 					ShowWindow(ApplicationHWnd, SW_SHOW);

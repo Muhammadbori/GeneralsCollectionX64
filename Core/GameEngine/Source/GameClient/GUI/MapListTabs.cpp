@@ -169,23 +169,13 @@ namespace
 		{
 			// the lit squares' own look (the "checked box" picture or colour of the radio button), over the whole cell,
 			// dimmed
-			const Image *glow = window->winGetEnabledImage(2);
-			if (glow == nullptr) {
-				glow = window->winGetHiliteImage(0);
+			// O126 (S69): a plain colour fill; the squares' picture stretched over the cell showed darker bands at both ends
+			UnsignedByte r = 0, g = 0, b = 0, a = 0;
+			GameGetColorComponents(window->winGetEnabledColor(2), &r, &g, &b, &a);
+			if (a == 0 || (r < 40 && g < 40 && b < 40)) {
+				r = 60; g = 200; b = 60;
 			}
-			if (glow != nullptr)
-			{
-				TheDisplay->drawImage(glow, x, y, x + w, y + h, GameMakeColor(255, 255, 255, 100));
-			}
-			else
-			{
-				UnsignedByte r = 0, g = 0, b = 0, a = 0;
-				GameGetColorComponents(window->winGetEnabledColor(2), &r, &g, &b, &a);
-				if (a == 0) {
-					r = 60; g = 200; b = 60;
-				}
-				TheDisplay->drawFillRect(x, y, w, h, GameMakeColor(r, g, b, 70));
-			}
+			TheDisplay->drawFillRect(x, y, w, h, GameMakeColor(r, g, b, 70));
 		}
 		const Color frame = selected ? GameMakeColor(110, 170, 110, 255)
 			: (hilited ? GameMakeColor(135, 145, 158, 255) : GameMakeColor(88, 96, 108, 255));
