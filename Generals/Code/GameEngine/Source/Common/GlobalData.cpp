@@ -1425,6 +1425,6 @@ AsciiString GlobalData::BuildUserDataPathFromIni()
 
 	// TheSuperHackers @feature O118 Our own folder; the original one is only read (CollectionUserData.h)
 	TheWritableGlobalData->m_originalUserDataDir = myDocumentsDirectory;
-	const AsciiString ours = CollectionUserData::makeOurs(myDocumentsDirectory, "Generals");
+	const AsciiString ours = CollectionUserData::makeOurs(myDocumentsDirectory, "Command and Conquer Generals Data", "Generals");
 	return ours.isEmpty() ? myDocumentsDirectory : ours;
 }
