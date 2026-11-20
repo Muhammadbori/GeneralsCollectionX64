@@ -242,8 +242,10 @@ if(RTS_BUILD_OPTION_FFMPEG)
 
     if(FFMPEG_FOUND)
         target_sources(corei_gameenginedevice_private INTERFACE
+            Include/VideoDevice/FFmpeg/DesktopIntro.h
             Include/VideoDevice/FFmpeg/FFmpegFile.h
             Include/VideoDevice/FFmpeg/FFmpegVideoPlayer.h
+            Source/VideoDevice/FFmpeg/DesktopIntro.cpp
             Source/VideoDevice/FFmpeg/FFmpegFile.cpp
             Source/VideoDevice/FFmpeg/FFmpegVideoPlayer.cpp
         )

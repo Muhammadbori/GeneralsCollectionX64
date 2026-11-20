@@ -56,6 +56,10 @@ class Intro
 
 public:
 
+	// TheSuperHackers @feature O108 (band 61) Set by WinMain when the EA logo already played over the desktop
+	// (DesktopIntro.h); the old EALogoMovie step is then left out.
+	static Bool s_desktopIntroPlayed;
+
 	Intro();
 
 	void update();

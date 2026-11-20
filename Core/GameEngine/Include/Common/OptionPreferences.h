@@ -140,6 +140,7 @@ public:
 
 	// TheSuperHackers @feature Window, sound device, camera rotation and IP display options (plan 1, O8).
 	Int getWindowed() const;                 ///< Windowed: 1 yes, 0 no, -1 not set
+	Bool getDesktopIntro() const;            ///< DesktopIntro: the EA logo over the desktop before the game window (O108), default yes
 	AsciiString getWindowPosition() const;   ///< WindowPosition: Center (default), TopLeft, TopRight, BottomLeft, BottomRight
 	AsciiString getAudioOutputDevice() const;   ///< AudioOutputDevice: the device name (UTF-8), empty: the system default
 	Int getCameraRotateSpeedPercent() const; ///< CameraRotateSpeed: percent of the GameData value, 100 when not set
