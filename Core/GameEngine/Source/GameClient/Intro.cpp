@@ -266,23 +266,20 @@ void Intro::doTheSuperHackers()
 // skips it too. Options.ini IntroCredits = no brings back the old screen. A Blender video may replace it later.
 void Intro::doCredits()
 {
+	// O113: one size for every line (the title only a little larger), the team name no longer big
 	struct CreditLine
 	{
 		const WideChar *english;
 		const WideChar *russian;
-		Int size;
-		Bool bold;
+		Bool isTitle;
 	};
 	static const CreditLine kLines[] =
 	{
-		{ L"Game improved by", L"\x0418\x0433\x0440\x0430 \x0443\x043B\x0443\x0447\x0448\x0435\x043D\x0430", 16, FALSE },
-		{ L"THE SUPER HACKERS", L"THE SUPER HACKERS", 32, TRUE },
-		{ L"R.G. Mechanics (Russian release)", L"R.G. \x041C\x0435\x0445\x0430\x043D\x0438\x043A\x0438 (\x0440\x0443\x0441\x0441\x043A\x0430\x044F \x0432\x0435\x0440\x0441\x0438\x044F)", 18, FALSE },
-		{ L"Compared with GenTool and GenPatcher \x2014 thanks to the community", L"\x0421\x0440\x0430\x0432\x043D\x0435\x043D\x043E \x0441 GenTool \x0438 GenPatcher \x2014 \x0441\x043F\x0430\x0441\x0438\x0431\x043E \x0441\x043E\x043E\x0431\x0449\x0435\x0441\x0442\x0432\x0443", 18, FALSE },
-		{ L"Claude (Anthropic)", L"Claude (Anthropic)", 18, FALSE },
-		{ L"Blender", L"Blender", 18, FALSE },
-		{ L"Visual C++ x64", L"Visual C++ x64", 18, FALSE },
-		{ L"DirectX 12", L"DirectX 12", 18, FALSE },
+		{ L"Game improved", L"\x0418\x0433\x0440\x0430 \x0443\x043B\x0443\x0447\x0448\x0435\x043D\x0430", TRUE },
+		{ L"Built with the open work of", L"\x041F\x0440\x0438 \x0440\x0430\x0431\x043E\x0442\x0435 \x0438\x0441\x043F\x043E\x043B\x044C\x0437\x043E\x0432\x0430\x043D\x044B \x043E\x0442\x043A\x0440\x044B\x0442\x044B\x0435 \x043C\x0430\x0442\x0435\x0440\x0438\x0430\x043B\x044B", FALSE },
+		{ L"THE SUPER HACKERS, GenTool and GenPatcher \x2014 thank you!", L"THE SUPER HACKERS, GenTool \x0438 GenPatcher \x2014 \x0441\x043F\x0430\x0441\x0438\x0431\x043E!", FALSE },
+		{ L"Russian release: R.G. Mechanics", L"\x0420\x0443\x0441\x0441\x043A\x0430\x044F \x0432\x0435\x0440\x0441\x0438\x044F: R.G. \x041C\x0435\x0445\x0430\x043D\x0438\x043A\x0438", FALSE },
+		{ L"The game is fully moved to 64-bit (Visual C++ x64) and DirectX 12", L"\x0418\x0433\x0440\x0430 \x043F\x043E\x043B\x043D\x043E\x0441\x0442\x044C\x044E \x043F\x0435\x0440\x0435\x0432\x0435\x0434\x0435\x043D\x0430 \x043D\x0430 64 \x0431\x0438\x0442\x0430 (Visual C++ x64) \x0438 DirectX 12", FALSE },
 	};
 	const Int lineCount = (Int)ARRAY_SIZE(kLines);
 	static_assert(ARRAY_SIZE(kLines) <= ARRAY_SIZE(m_unicodeStrings), "m_unicodeStrings is too small");
@@ -290,14 +287,38 @@ void Intro::doCredits()
 	const Real resolutionScale = GlobalLanguage::getResolutionFontSizeScale(GlobalLanguage::ResolutionFontSizeMethod_Strict);
 	const Int screenWidth = TheDisplay->getWidth();
 	const Bool russian = isRussianText();
+	for (Int i = 0; i < lineCount; ++i)
+		m_unicodeStrings[i] = russian ? kLines[i].russian : kLines[i].english;
 
-	// line heights: the title and the team name get more room, like the old screen
+	// the size at which the longest line fits 92 % of the screen width (800x600 too), down to 60 %
+	const Int baseSize = Int(18 * resolutionScale);
+	const Int maxWidth = screenWidth * 92 / 100;
+	Int size = baseSize;
+	DisplayString *probe = TheDisplayStringManager->newDisplayString();
+	if (probe != nullptr)
+	{
+		const Int minSize = max(8, baseSize * 6 / 10);
+		for (; size > minSize; --size)
+		{
+			Bool fits = TRUE;
+			for (Int i = 0; i < lineCount && fits; ++i)
+			{
+				probe->setFont(TheFontLibrary->getFont("Arial", kLines[i].isTitle ? size + size / 8 : size, kLines[i].isTitle));
+				probe->setText(m_unicodeStrings[i]);
+				fits = probe->getWidth() <= maxWidth;
+			}
+			if (fits)
+				break;
+		}
+		TheDisplayStringManager->freeDisplayString(probe);
+	}
+
 	Int heights[ARRAY_SIZE(kLines)];
 	Int total = 0;
 	for (Int i = 0; i < lineCount; ++i)
 	{
-		const Real gap = (i <= 1) ? 2.0f : 1.7f;
-		heights[i] = (Int)(kLines[i].size * resolutionScale * gap);
+		const Int lineSize = kLines[i].isTitle ? size + size / 8 : size;
+		heights[i] = (Int)(lineSize * (i == 0 ? 2.4f : 1.8f));
 		total += heights[i];
 	}
 
@@ -305,14 +326,12 @@ void Intro::doCredits()
 	Int centerOffsetY = -total / 2;
 	for (Int i = 0; i < lineCount; ++i)
 	{
-		const CreditLine &line = kLines[i];
 		DisplayEntity &e = m_displayEntities[i];
-		m_unicodeStrings[i] = russian ? line.russian : line.english;
 		e.sizeX = Int(10 * resolutionScale);
-		e.sizeY = Int(line.size * resolutionScale);
+		e.sizeY = kLines[i].isTitle ? size + size / 8 : size;
 		e.displayString = TheDisplayStringManager->newDisplayString();
 		e.displayString->setText(m_unicodeStrings[i]);
-		e.displayString->setFont(TheFontLibrary->getFont("Arial", e.sizeY, line.bold));
+		e.displayString->setFont(TheFontLibrary->getFont("Arial", e.sizeY, kLines[i].isTitle));
 		e.displayString->setWordWrap(screenWidth);
 		e.centerOffsetY = centerOffsetY;
 		centerOffsetY += heights[i];

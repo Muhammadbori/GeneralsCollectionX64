@@ -925,11 +925,14 @@ static AsciiString getMapLeafAndDirName(const AsciiString& in)
 const char* PORTABLE_SAVE				= "Save\\";
 const char* PORTABLE_MAPS				= "Maps\\";
 const char* PORTABLE_USER_MAPS	= "UserData\\Maps\\";
+// TheSuperHackers @feature O112 A map of a map pack, read in place: Packs\\<pack>\\<map folder>\\<map>.map
+const char* PORTABLE_PACK_MAPS	= "Packs\\";
 
 // ------------------------------------------------------------------------------------------------
 AsciiString GameState::realMapPathToPortableMapPath(const AsciiString& in) const
 {
 	AsciiString prefix;
+	AsciiString pack;
 	if (in.startsWithNoCase(getSaveDirectory()))
 	{
 		prefix = PORTABLE_SAVE;
@@ -943,6 +946,14 @@ AsciiString GameState::realMapPathToPortableMapPath(const AsciiString& in) const
 	else if (in.startsWithNoCase(TheMapCache->getUserMapDir()))
 	{
 		prefix = PORTABLE_USER_MAPS;
+		prefix.concat(getMapLeafAndDirName(in));
+	}
+	else if (TheMapCache->getPackOfMap(in, &pack))
+	{
+		// O112: the pack's name travels, so the other side finds the map in its own copy of that pack
+		prefix = PORTABLE_PACK_MAPS;
+		prefix.concat(pack);
+		prefix.concat("\\");
 		prefix.concat(getMapLeafAndDirName(in));
 	}
 	else
@@ -981,6 +992,24 @@ AsciiString GameState::portableMapPathToRealMapPath(const AsciiString& in) const
 	{
 		// the map dir DOES NOT end with "\\", must add it
 		prefix = TheMapCache->getUserMapDir();
+		prefix.concat("\\");
+		containingBasePath = prefix;
+		prefix.concat(getMapLeafAndDirName(in));
+	}
+	else if (in.startsWithNoCase(PORTABLE_PACK_MAPS))
+	{
+		// O112: Packs\\<pack>\\<map folder>\\<map>.map -> packs\\maps\\<pack>\\<game>\\maps\\<map folder>\\<map>.map
+		const char *start = in.str() + strlen(PORTABLE_PACK_MAPS);
+		const char *end = strchr(start, '\\');
+		AsciiString pack;
+		for (const char *c = start; end != nullptr && c < end; ++c)
+			pack.concat(*c);
+		pack.toLower();
+		if (end == nullptr || !MapCache::isSafePackName(pack) || !MapCache::arePacksUsed())
+		{
+			return AsciiString::TheEmptyString;
+		}
+		prefix = TheMapCache->getPackMapDir(pack);
 		prefix.concat("\\");
 		containingBasePath = prefix;
 		prefix.concat(getMapLeafAndDirName(in));

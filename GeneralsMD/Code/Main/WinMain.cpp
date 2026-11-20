@@ -922,8 +922,8 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 
 #ifdef RTS_HAS_FFMPEG
 		// TheSuperHackers @feature O108 (band 61) The EA logo with a see-through background over the desktop.
-		// O109: the game window with the splash picture comes first, as before; the logo plays on top of it (and of the
-		// desktop around it), and the start goes on when it ends or is skipped. -nologo, every test or automatic run
+		// O111: the game window with the splash picture comes first, alone, for a moment; it is hidden while the logo
+		// plays over the bare desktop and shown again when the logo ends or is skipped, then the start goes on. -nologo, every test or automatic run
 		// (DesktopIntro.h), -headless and DesktopIntro = no in Options.ini leave it out. When it played, the old EA logo
 		// movie step of Intro is left out; when it could not play (no movie file, ...), that step plays as before.
 		if (!TheGlobalData->m_headless && !DesktopIntro::isSkippedByCommandLine())
@@ -931,7 +931,23 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 			OptionPreferences introPref;
 			if (introPref.getDesktopIntro())
 			{
-				Intro::s_desktopIntroPlayed = DesktopIntro::play(hInstance);
+				const DWORD splashShownAt = GetTickCount();
+				Intro::s_desktopIntroPlayed = DesktopIntro::play(hInstance, ApplicationHWnd, splashShownAt, 1500);
+				if (ApplicationHWnd != nullptr && !IsWindowVisible(ApplicationHWnd))
+				{
+					// the splash picture is not shown again after the logo: the window comes back black while the
+					// game loads (painted once even in full screen, where gDoPaint is already off)
+					if (Intro::s_desktopIntroPlayed && gLoadScreenBitmap != nullptr)
+					{
+						::DeleteObject(gLoadScreenBitmap);
+						gLoadScreenBitmap = nullptr;
+					}
+					const Bool doPaint = gDoPaint;
+					gDoPaint = true;
+					ShowWindow(ApplicationHWnd, SW_SHOW);
+					UpdateWindow(ApplicationHWnd);
+					gDoPaint = doPaint;
+				}
 				if (Intro::s_desktopIntroPlayed && ApplicationHWnd != nullptr)
 				{
 					SetForegroundWindow(ApplicationHWnd);

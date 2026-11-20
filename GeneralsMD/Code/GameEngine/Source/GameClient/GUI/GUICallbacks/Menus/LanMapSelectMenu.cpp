@@ -42,6 +42,7 @@
 #include "GameClient/GadgetRadioButton.h"
 #include "GameNetwork/LANAPICallbacks.h"
 #include "GameClient/MapUtil.h"
+#include "GameClient/MapListTabs.h"
 #include "GameNetwork/GUIUtil.h"
 
 
@@ -146,10 +147,10 @@ void LanMapSelectMenuInit( WindowLayout *layout, void *userData )
 	GameWindow *radioButtonSystemMaps = TheWindowManager->winGetWindowFromId( parent, radioButtonSystemMapsID );
 	GameWindow *radioButtonUserMaps = TheWindowManager->winGetWindowFromId( parent, radioButtonUserMapsID );
 	winMapPreview = TheWindowManager->winGetWindowFromId(parent, winMapPreviewID);
-	if (usesSystemMapDir)
-		GadgetRadioSetSelection( radioButtonSystemMaps, FALSE );
-	else
-		GadgetRadioSetSelection( radioButtonUserMaps, FALSE );
+	// TheSuperHackers @feature O112 the map packs' tabs (MapListTabs.h); the window opens on the tab of the chosen map
+	MapListTabs::attach( radioButtonSystemMaps, radioButtonUserMaps );
+	const Int mapTab = MapListTabs::startTab( TheLAN->GetMyGame()->getMap(), usesSystemMapDir );
+	MapListTabs::selectTab( mapTab, radioButtonSystemMaps, radioButtonUserMaps );
 
 	AsciiString tmpString;
 	for (Int i = 0; i < MAX_SLOTS; i++)
@@ -169,7 +170,7 @@ void LanMapSelectMenuInit( WindowLayout *layout, void *userData )
 	{
 		if (TheMapCache)
 			TheMapCache->updateCache();
-		populateMapListbox( mapList, usesSystemMapDir, TRUE, TheLAN->GetMyGame()->getMap() );
+		populateMapListboxTab( mapList, mapTab, TRUE, TheLAN->GetMyGame()->getMap() );
 	}
 }
 
@@ -318,7 +319,15 @@ WindowMsgHandledType LanMapSelectMenuSystem( GameWindow *window, UnsignedInt msg
 			GameWindow *control = (GameWindow *)mData1;
 			Int controlID = control->winGetWindowId();
 
-			if ( controlID == radioButtonSystemMapsID )
+			Int packTab = 0;
+			if ( MapListTabs::isTabButton( control, &packTab ) )
+			{
+				// O112: a map pack's tab
+				if (TheMapCache)
+					TheMapCache->updateCache();
+				populateMapListboxTab( mapList, packTab, TRUE, TheLAN->GetMyGame()->getMap() );
+			}
+			else if ( controlID == radioButtonSystemMapsID )
 			{
 				if (TheMapCache)
 					TheMapCache->updateCache();

@@ -41,7 +41,6 @@
 #include "GameClient/GameText.h"
 #include "GameClient/ReplayControlBar.h"
 #include "GameClient/DefeatedPlayer.h"
-#include "Common/MapPacks.h"
 #include "Common/ReplayStream.h"
 #include "Common/VoiceChat.h"
 #include "GameNetwork/NetLab.h"
@@ -1227,13 +1226,6 @@ Int parseGuardTest(char *args[], int num)
 	return 1;
 }
 
-// TheSuperHackers @feature -mapPacksTest: a test run (-shotFrames, -uiScript) is asked about the map packs too.
-Int parseMapPacksTest(char *args[], int num)
-{
-	MapPacks::enableInTestRuns();
-	return 1;
-}
-
 // TheSuperHackers @feature -noReplayBar: no replay control bar (the keys still work); for screenshot comparisons.
 // TheSuperHackers @feature -replaySpeed <1|2|4|8|max>: a replay plays at that speed from its first frame (test).
 Int parseReplaySpeed(char *args[], int num)
@@ -2194,7 +2186,6 @@ static CommandLineParam paramsForStartup[] =
 	{ "-followCatchUp", parseFollowCatchUp },
 	{ "-noReplayBar", parseNoReplayBar },
 	{ "-replaySpeed", parseReplaySpeed },
-	{ "-mapPacksTest", parseMapPacksTest },
 	{ "-serveReplay", parseServeReplay },
 	{ "-serveReplayMax", parseServeReplayMax },
 	{ "-serveReplayRate", parseServeReplayRate },

@@ -17,8 +17,9 @@
 */
 
 // TheSuperHackers @feature O108 (band 61) The EA logo movie played over the Windows desktop, with a see-through
-// background. O109: it plays on top of the game window with the splash picture (shown first, as before) and of the
-// desktop around it; the start goes on as soon as the picture has gone (a longer sound plays on by itself).
+// background. O111: the game window with the splash picture comes first, alone; it is hidden just before the logo
+// plays over the bare desktop, and shown again by WinMain afterwards. The start goes on as soon as the logo picture
+// has gone (a longer sound plays on by itself).
 //
 // The movie is Data\Intro\EALogo_16x9.webm or Data\Intro\EALogo_16x10.webm next to the executable (the one closer
 // to the primary monitor's shape is tried first, the other one after it). It must carry an alpha channel (VP9 or
@@ -39,5 +40,7 @@ namespace DesktopIntro
 	// it. Blocks until the movie ends or ESC, Space, Enter or a click on the picture skips it.
 	// TRUE when the movie was shown (also when it was skipped); FALSE when it could not be (no file, no alpha
 	// channel, no decoder, ...), and then nothing was shown.
-	bool play(HINSTANCE instance);
+	// splashWindow (may be null) is hidden right before the first logo frame, but not before it has been shown for
+	// splashMinMs since splashShownAt (GetTickCount). The caller shows it again when TRUE is returned.
+	bool play(HINSTANCE instance, HWND splashWindow, DWORD splashShownAt, DWORD splashMinMs);
 }

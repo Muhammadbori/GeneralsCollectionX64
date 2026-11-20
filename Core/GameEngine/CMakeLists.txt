@@ -91,7 +91,6 @@ set(GAMEENGINE_SRC
     Include/Common/OptionPreferences.h
     Include/Common/Fingerprint.h
     Include/Common/FrameTiming.h
-    Include/Common/MapPacks.h
     Include/Common/MismatchReport.h
     Include/Common/Packs.h
     Include/Common/ReplayFollow.h
@@ -214,6 +213,7 @@ set(GAMEENGINE_SRC
     Include/GameClient/ReplayControlBar.h
     Include/GameClient/VoiceChatUI.h
     Include/GameClient/LocalizedFallback.h
+    Include/GameClient/MapListTabs.h
     Include/GameClient/OptionsSections.h
     Include/GameClient/PlayerTable.h
     Include/GameClient/LookPalette.h
@@ -666,7 +666,6 @@ set(GAMEENGINE_SRC
     Source/Common/OptionPreferences.cpp
     Source/Common/Fingerprint.cpp
     Source/Common/FrameTiming.cpp
-    Source/Common/MapPacks.cpp
     Source/Common/MismatchReport.cpp
     Source/Common/Packs.cpp
     Source/Common/ReplayFollow.cpp
@@ -814,6 +813,7 @@ set(GAMEENGINE_SRC
     Source/GameClient/GUI/TickSlider.cpp
     Source/GameClient/GUI/LanLobbyLook.cpp
     Source/GameClient/GUI/LanRoomLook.cpp
+    Source/GameClient/GUI/MapListTabs.cpp
     Source/GameClient/GUI/ReplayControlBar.cpp
     Source/GameClient/GUI/VoiceChatUI.cpp
     Source/GameClient/GUI/OptionsSections.cpp

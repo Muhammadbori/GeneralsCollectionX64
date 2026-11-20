@@ -479,7 +479,7 @@ bool DesktopIntro::isSkippedByCommandLine()
 }
 
 //-------------------------------------------------------------------------------------------------
-bool DesktopIntro::play(HINSTANCE instance)
+bool DesktopIntro::play(HINSTANCE instance, HWND splashWindow, DWORD splashShownAt, DWORD splashMinMs)
 {
 	InterlockedExchange(&s_skip, 0);
 
@@ -614,7 +614,18 @@ bool DesktopIntro::play(HINSTANCE instance)
 					}
 
 #ifdef RTS_HAS_MINIAUDIO
-					if (decodeAudio(path, clip))
+					const bool haveSound = decodeAudio(path, clip);
+#endif
+					// O111: the splash picture stays alone for a moment, then goes away before the logo comes, so the
+					// logo plays over the bare desktop
+					if (splashWindow != nullptr)
+					{
+						while (GetTickCount() - splashShownAt < splashMinMs)
+							Sleep(10);
+						ShowWindow(splashWindow, SW_HIDE);
+					}
+#ifdef RTS_HAS_MINIAUDIO
+					if (haveSound)
 					{
 						ma_device_config config = ma_device_config_init(ma_device_type_playback);
 						config.playback.format = ma_format_f32;

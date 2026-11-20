@@ -123,7 +123,7 @@ void BIGFileSystem::init() {
 }
 
 void BIGFileSystem::mountMapArt() {
-	// TheSuperHackers @feature Some community maps of the map packs (MapPacks.h) use art the game does not have
+	// TheSuperHackers @feature Some community maps of the map packs (MapListTabs.h, read in place by the map lists) use art the game does not have
 	// (terrain and object textures, W3D models). make_map_packs.py puts it into Packs\Maps\<Pack>\<Game>\*.big; it is
 	// mounted here, after every other archive and without overwriting, so it only adds names (a map pack never replaces
 	// the game's own art). Art is client-only: the fingerprint (logic INI files) does not change.
