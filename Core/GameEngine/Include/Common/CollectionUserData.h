@@ -23,8 +23,10 @@
 // maps) goes to
 //   Documents\Generals Collection x64\Zero Hour\     (Zero Hour)
 //   Documents\Generals Collection x64\Generals\      (Generals)
-// From the original folder only its Maps folder is read (the player's own maps are listed with ours, MapUtil.h), and on
-// the first run its Options.ini is copied once into our folder (read only), so the player's settings carry over.
+// The original folders are not read either (the user's word, O118 addendum), with one exception: on the first run, when
+// our Options.ini does not exist yet, the original Options.ini is copied once into our folder (read only), so the
+// player's settings carry over. The player's own maps live in our folder's Maps (listed under "Unofficial maps"; a map
+// received in a LAN room is written there too).
 // -userDataDir still replaces our folder for tests (then the original folder is not used at all).
 
 #pragma once

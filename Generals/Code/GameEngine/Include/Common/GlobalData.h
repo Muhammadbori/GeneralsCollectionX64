@@ -586,7 +586,7 @@ public:
 
 	// the trailing '\' is included!
 	AsciiString getPath_UserData() const;
-	/// O118: the original game's user data folder (read only: only its Maps are listed); empty with -userDataDir
+	/// O118: the original game's user data folder (only its Options.ini is read once, on our first run); empty with -userDataDir
 	const AsciiString &getPath_OriginalUserData() const { return m_originalUserDataDir; }
 	// TheSuperHackers @feature Only for -userDataDir (CommandLine.cpp); the path must end with a backslash.
 	void setPath_UserData(const AsciiString &path) { m_userDataDir = path; }
