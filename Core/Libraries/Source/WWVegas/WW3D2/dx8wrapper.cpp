@@ -900,6 +900,12 @@ bool DX8Wrapper::Set_Render_Device(int dev, int width, int height, int bits, int
 	// if ( resize_window && windowed ) {
 	if (resize_window) {
 		Resize_And_Position_Window();
+		// TheSuperHackers @tweak O124 The game's start window repaints at its new size and mode (WinMain shows the opening
+		// picture there until the first frame); no effect once the game draws.
+		if (_Hwnd != nullptr) {
+			::InvalidateRect(_Hwnd, nullptr, FALSE);
+			::UpdateWindow(_Hwnd);
+		}
 	}
 #endif
 	return Set_DX12_Render_Device(reset_device, restore_assets);

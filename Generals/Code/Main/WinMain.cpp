@@ -331,16 +331,61 @@ static void paintSplashFitted(HWND hWnd, HDC dc)
 	::RestoreDC(dc, savContext);
 }
 
-/// O122: the picture again at the new size, only while the engine has not drawn its first frame
-static void refitSplash(HWND hWnd)
+/// O122/O124: TRUE while the picture should stand in for the game: after the EA logo, before the engine's first frame
+static Bool splashActive()
 {
 	if (!gSplashRefit || gLoadScreenBitmap == nullptr)
+		return false;
+	return TheGameClient == nullptr || TheGameClient->getFrame() == 0;
+}
+
+/// O124 (S67): what the window and the display really are at each size, mode or DPI change while the picture stands in
+/// (<user data>\StartWindow.log, at most 200 lines a run): the window and client rectangles, GetDpiForWindow, the
+/// monitor rectangle and the current display mode.
+static void logStartWindow(HWND hWnd, const char *what)
+{
+	if (!splashActive() || TheGlobalData == nullptr || TheGlobalData->getPath_UserData().isEmpty())
 		return;
-	if (TheGameClient != nullptr && TheGameClient->getFrame() > 0)
+	static Int s_lines = 0;
+	if (s_lines >= 200)
+		return;
+	AsciiString path = TheGlobalData->getPath_UserData();
+	path.concat("StartWindow.log");
+	FILE *fp = fopen(path.str(), s_lines == 0 ? "w" : "a");
+	++s_lines;
+	if (fp == nullptr)
+		return;
+	RECT wr = { 0 }, cr = { 0 };
+	::GetWindowRect(hWnd, &wr);
+	::GetClientRect(hWnd, &cr);
+	typedef UINT (WINAPI *DpiForWindowFunc)(HWND);
+	HMODULE user = ::GetModuleHandleA("user32.dll");
+	DpiForWindowFunc dpiForWindow = user != nullptr ? (DpiForWindowFunc)(void *)::GetProcAddress(user, "GetDpiForWindow") : nullptr;
+	const UINT dpi = dpiForWindow != nullptr ? dpiForWindow(hWnd) : 0;
+	MONITORINFO mi = { sizeof(MONITORINFO) };
+	::GetMonitorInfo(::MonitorFromWindow(hWnd, MONITOR_DEFAULTTOPRIMARY), &mi);
+	DEVMODEA dm;
+	memset(&dm, 0, sizeof(dm));
+	dm.dmSize = sizeof(dm);
+	::EnumDisplaySettingsA(nullptr, ENUM_CURRENT_SETTINGS, &dm);
+	fprintf(fp, "%lu %s: window %ld,%ld %ldx%ld client %ldx%ld dpi %u monitor %ld,%ld %ldx%ld mode %lux%lu\n",
+		(unsigned long)::GetTickCount(), what, wr.left, wr.top, wr.right - wr.left, wr.bottom - wr.top,
+		cr.right, cr.bottom, dpi, mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left,
+		mi.rcMonitor.bottom - mi.rcMonitor.top, (unsigned long)dm.dmPelsWidth, (unsigned long)dm.dmPelsHeight);
+	fclose(fp);
+}
+
+/// O122: the picture again at the new size, only while the engine has not drawn its first frame. O124: also logged,
+/// and the window is invalidated so a later WM_PAINT (now also handled while the picture stands in) paints it again.
+static void refitSplash(HWND hWnd, const char *what)
+{
+	logStartWindow(hWnd, what);
+	if (!splashActive())
 		return;
 	HDC dc = ::GetDC(hWnd);
 	paintSplashFitted(hWnd, dc);
 	::ReleaseDC(hWnd, dc);
+	::InvalidateRect(hWnd, nullptr, FALSE);
 }
 
 LRESULT CALLBACK WndProc( HWND hWnd, UINT message,
@@ -487,7 +532,7 @@ LRESULT CALLBACK WndProc( HWND hWnd, UINT message,
 				if (TheMouse)
 					TheMouse->refreshCursorCapture();
 
-				refitSplash(hWnd);   // O122
+				refitSplash(hWnd, "WM_SIZE");   // O122
 
 				break;
 			}
@@ -495,7 +540,21 @@ LRESULT CALLBACK WndProc( HWND hWnd, UINT message,
 			// O122: the engine's full screen changes the display mode: the picture is fitted again
 			case WM_DISPLAYCHANGE:
 			{
-				refitSplash(hWnd);
+				refitSplash(hWnd, "WM_DISPLAYCHANGE");
+				break;
+			}
+
+			// O124: a display mode change can change the monitor's DPI too
+			case 0x02E0: // WM_DPICHANGED
+			{
+				refitSplash(hWnd, "WM_DPICHANGED");
+				break;
+			}
+
+			// O124: every later move or size, whatever made it (the engine, Windows after a mode change)
+			case WM_WINDOWPOSCHANGED:
+			{
+				logStartWindow(hWnd, "WM_WINDOWPOSCHANGED");
 				break;
 			}
 
@@ -683,7 +742,7 @@ LRESULT CALLBACK WndProc( HWND hWnd, UINT message,
 
 			case WM_PAINT:
 			{
-				if (gDoPaint) {
+				if (gDoPaint || splashActive()) {   // O124
 					PAINTSTRUCT paint;
 					HDC dc = ::BeginPaint(hWnd, &paint);
 #if 0
