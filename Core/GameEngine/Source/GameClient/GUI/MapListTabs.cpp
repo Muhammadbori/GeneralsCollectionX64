@@ -98,9 +98,11 @@ namespace
 	}
 }
 
-// TheSuperHackers @tweak O125 (the user's picture) Each map tab is one plain cell: a frame and its label over the whole
-// width, without the radio button's two lit end squares; the selected tab has a soft muted fill and a lighter frame, its
-// text in the normal colour (no bright green); the others are plain. The label shrinks to fit the cell (down to 50 %).
+// TheSuperHackers @tweak O125 (the user's picture, with his correction) Each map tab is one plain cell: a frame and its
+// label over the whole width, without the radio button's two lit end squares. The selected tab keeps its green label,
+// and the squares' lit look moves onto the whole cell, dimmer than the squares were (their own picture stretched over
+// the cell at about 40 % strength, or their colour as a faint fill). The others are plain with the normal label. The
+// label shrinks to fit the cell (down to 50 %).
 namespace
 {
 	GameFont *fitTabFont(DisplayString *text, GameFont *own, Int width)
@@ -162,10 +164,31 @@ namespace
 		const Bool selected = BitIsSet(instData->getState(), WIN_STATE_SELECTED);
 		const Bool hilited = BitIsSet(instData->getState(), WIN_STATE_HILITED);
 
-		const Color fill = selected ? GameMakeColor(60, 78, 96, 210) : GameMakeColor(0, 0, 0, 150);
-		const Color frame = selected ? GameMakeColor(165, 182, 200, 255)
+		TheDisplay->drawFillRect(x, y, w, h, GameMakeColor(0, 0, 0, 150));
+		if (selected)
+		{
+			// the lit squares' own look (the "checked box" picture or colour of the radio button), over the whole cell,
+			// dimmed
+			const Image *glow = window->winGetEnabledImage(2);
+			if (glow == nullptr) {
+				glow = window->winGetHiliteImage(0);
+			}
+			if (glow != nullptr)
+			{
+				TheDisplay->drawImage(glow, x, y, x + w, y + h, GameMakeColor(255, 255, 255, 100));
+			}
+			else
+			{
+				UnsignedByte r = 0, g = 0, b = 0, a = 0;
+				GameGetColorComponents(window->winGetEnabledColor(2), &r, &g, &b, &a);
+				if (a == 0) {
+					r = 60; g = 200; b = 60;
+				}
+				TheDisplay->drawFillRect(x, y, w, h, GameMakeColor(r, g, b, 70));
+			}
+		}
+		const Color frame = selected ? GameMakeColor(110, 170, 110, 255)
 			: (hilited ? GameMakeColor(135, 145, 158, 255) : GameMakeColor(88, 96, 108, 255));
-		TheDisplay->drawFillRect(x, y, w, h, fill);
 		TheDisplay->drawOpenRect(x, y, w, h, 1.0f, frame);
 
 		DisplayString *text = instData->getTextDisplayString();
@@ -184,7 +207,14 @@ namespace
 		text->setClipRegion(&clip);
 		Int tw = 0, th = 0;
 		text->getSize(&tw, &th);
-		const Color textColor = enabled ? GameMakeColor(225, 228, 232, 255) : GameMakeColor(130, 130, 130, 255);
+		// the selected tab keeps the green label (the radio's lit text colour when it is green, else a game green)
+		Color textColor = enabled ? window->winGetEnabledTextColor() : window->winGetDisabledTextColor();
+		if (enabled && selected)
+		{
+			UnsignedByte r = 0, g = 0, b = 0, a = 0;
+			GameGetColorComponents(window->winGetHiliteTextColor(), &r, &g, &b, &a);
+			textColor = (a > 0 && g > r && g > b) ? window->winGetHiliteTextColor() : GameMakeColor(80, 230, 80, 255);
+		}
 		const Color dropColor = GameMakeColor(0, 0, 0, 255);
 		text->draw(x + (w - tw) / 2, y + (h - th) / 2, textColor, dropColor);
 	}
