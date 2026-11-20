@@ -24,6 +24,8 @@
 #include "GameClient/MapListTabs.h"
 
 #include "Common/NameKeyGenerator.h"
+#include "GameClient/DisplayString.h"
+#include "GameClient/DisplayStringManager.h"
 #include "GameClient/Gadget.h"
 #include "GameClient/GadgetRadioButton.h"
 #include "GameClient/GameWindow.h"
@@ -43,8 +45,9 @@ namespace
 
 	const TabInfo kTabs[2] =
 	{
-		{ MAP_TAB_GENTOOL, "MapListTabs:GenTool", L"GenTool maps", L"\x041A\x0430\x0440\x0442\x044B GenTool" },
-		{ MAP_TAB_GENPATCHER, "MapListTabs:GenPatcher", L"GenPatcher maps", L"\x041A\x0430\x0440\x0442\x044B GenPatcher" },
+		// O120: short labels, so four tabs fit one row
+		{ MAP_TAB_GENTOOL, "MapListTabs:GenTool", L"GenTool", L"GenTool" },
+		{ MAP_TAB_GENPATCHER, "MapListTabs:GenPatcher", L"GenPatcher", L"GenPatcher" },
 	};
 
 	NameKeyType idOf(const TabInfo &t)
@@ -71,6 +74,30 @@ namespace
 	}
 }
 
+namespace
+{
+	Int labelWidth(GameWindow *button, const UnicodeString &label)
+	{
+		if (button == nullptr || TheDisplayStringManager == nullptr) {
+			return 0;
+		}
+		DisplayString *probe = TheDisplayStringManager->newDisplayString();
+		if (probe == nullptr) {
+			return 0;
+		}
+		probe->setFont(button->winGetFont());
+		probe->setText(label);
+		const Int w = probe->getWidth();
+		TheDisplayStringManager->freeDisplayString(probe);
+		return w;
+	}
+}
+
+// TheSuperHackers @tweak O120 (the user's picture) The four tabs overlapped one another and the frames. Now: short
+// labels ("Official" / "Unofficial" / "GenTool" / "GenPatcher", Russian "Официальные" / "Неофициальные"), equal tab
+// widths with gaps in one row from the first tab to the window's edge or the first window right of the row (the map
+// preview frame); when the widest label would need less than 75 % of its font to fit, two rows of two (2x2) and the list
+// below moves down by one row. Each label shrinks to fit its own frame (W3DRadioButton.cpp). Never overlapping.
 void MapListTabs::attach(GameWindow *systemButton, GameWindow *userButton)
 {
 	if (systemButton == nullptr || userButton == nullptr || TheMapCache == nullptr || TheWindowManager == nullptr) {
@@ -80,6 +107,13 @@ void MapListTabs::attach(GameWindow *systemButton, GameWindow *userButton)
 	if (parent == nullptr || userButton->winGetParent() != parent) {
 		return;
 	}
+
+	// the game's two tabs get short labels in both games (Generals keeps only these two)
+	const UnicodeString officialLabel(localizedFallback(L"Official", L"\x041E\x0444\x0438\x0446\x0438\x0430\x043B\x044C\x043D\x044B\x0435"));
+	const UnicodeString userLabel(localizedFallback(L"Unofficial", L"\x041D\x0435\x043E\x0444\x0438\x0446\x0438\x0430\x043B\x044C\x043D\x044B\x0435"));
+	GadgetRadioSetText(systemButton, officialLabel);
+	GadgetRadioSetText(userButton, userLabel);
+
 	if (TheWindowManager->winGetWindowFromId(parent, idOf(kTabs[0])) != nullptr
 		|| TheWindowManager->winGetWindowFromId(parent, idOf(kTabs[1])) != nullptr) {
 		return;   // already there
@@ -104,66 +138,16 @@ void MapListTabs::attach(GameWindow *systemButton, GameWindow *userButton)
 	userButton->winGetSize(&uw, &uh);
 	parent->winGetSize(&pw, &ph);
 
-	// the tabs go on in the direction the game's two go: side by side, or one under the other
-	const Bool across = (uy - sy) * (uy - sy) < (ux - sx) * (ux - sx);
-	Int x[4], y[4], w = sw, h = sh;
-	if (across)
-	{
-		const Int first = min(sx, ux);
-		Int pitch = abs(ux - sx);
-		Int gap = max(2, pitch - sw);
-		// O115 (S61): the right limit is the window's edge or the first window to the right of the tab row (the map
-		// preview frame), with a gap
-		Int rightLimit = pw - 4;
-		const Int rowRight = max(sx + sw, ux + uw);
-		const Int margin = max(6, pw / 100);
-		for (GameWindow *other = parent->winGetChild(); other != nullptr; other = other->winGetNext())
-		{
-			if (other == systemButton || other == userButton) {
-				continue;
-			}
-			Int ox = 0, oy = 0, ow = 0, oh = 0;
-			other->winGetPosition(&ox, &oy);
-			other->winGetSize(&ow, &oh);
-			const Bool overlapsRow = oy < sy + sh && oy + oh > sy;
-			if (overlapsRow && ox >= rowRight && ox - margin < rightLimit) {
-				rightLimit = ox - margin;
-			}
-		}
-		if (first + (count + 1) * pitch + sw > rightLimit)
-		{
-			// not enough room: all tabs share the width from the first one to the right limit
-			const Int span = rightLimit - first;
-			w = (span - (count + 1) * gap) / (count + 2);
-			pitch = w + gap;
-			systemButton->winSetSize(w, sh);
-			userButton->winSetSize(w, uh);
-			systemButton->winSetPosition(sx <= ux ? first : first + pitch, sy);
-			userButton->winSetPosition(sx <= ux ? first + pitch : first, uy);
-		}
-		for (Int i = 0; i < 4; ++i)
-		{
-			x[i] = first + (2 + i) * pitch;
-			y[i] = sy;
-		}
-	}
-	else
-	{
-		const Int pitch = abs(uy - sy);
-		const Int last = max(sy, uy);
-		for (Int i = 0; i < 4; ++i)
-		{
-			x[i] = sx;
-			y[i] = last + (1 + i) * pitch;
-		}
-	}
+	// the buttons in tab order and their labels
+	GameWindow *buttons[4] = { systemButton, userButton, nullptr, nullptr };
+	UnicodeString labels[4] = { officialLabel, userLabel, UnicodeString::TheEmptyString, UnicodeString::TheEmptyString };
+	Int n = 2;
 
 	RadioButtonData group;
 	const RadioButtonData *from = (const RadioButtonData *)systemButton->winGetUserData();
 	group.screen = from != nullptr ? from->screen : 0;
 	group.group = from != nullptr ? from->group : 0;
 
-	Int slot = 0;
 	for (Int i = 0; i < 2; ++i)
 	{
 		if (!want[i]) {
@@ -173,15 +157,97 @@ void MapListTabs::attach(GameWindow *systemButton, GameWindow *userButton)
 		copyLook(inst, systemButton);
 		inst.m_id = (Int)idOf(kTabs[i]);
 		GameWindow *button = TheWindowManager->gogoGadgetRadioButton(parent,
-			WIN_STATUS_ENABLED | (systemButton->winGetStatus() & WIN_STATUS_IMAGE), x[slot], y[slot], w, h,
+			WIN_STATUS_ENABLED | (systemButton->winGetStatus() & WIN_STATUS_IMAGE), sx, sy, sw, sh,
 			&inst, &group, inst.m_font, FALSE);
-		++slot;
 		if (button == nullptr) {
 			continue;
 		}
 		button->winSetWindowId(inst.m_id);
 		button->winSetOwner(systemButton->winGetOwner());
-		GadgetRadioSetText(button, UnicodeString(localizedFallback(kTabs[i].english, kTabs[i].russian)));
+		labels[n] = UnicodeString(localizedFallback(kTabs[i].english, kTabs[i].russian));
+		GadgetRadioSetText(button, labels[n]);
+		buttons[n++] = button;
+	}
+
+	const Bool across = (uy - sy) * (uy - sy) < (ux - sx) * (ux - sx);
+	const Int h = sh;
+	const Int gap = max(4, pw / 100);
+	if (!across)
+	{
+		// the game's two are one under the other: the new ones go on below them
+		const Int pitch = abs(uy - sy);
+		const Int last = max(sy, uy);
+		for (Int k = 2; k < n; ++k) {
+			buttons[k]->winSetPosition(sx, last + (k - 1) * pitch);
+		}
+		return;
+	}
+
+	// the row: from the first tab to the window's edge or the first window right of the row (the preview frame)
+	const Int first = min(sx, ux);
+	Int rightLimit = pw - 4;
+	const Int rowRight = max(sx + sw, ux + uw);
+	for (GameWindow *other = parent->winGetChild(); other != nullptr; other = other->winGetNext())
+	{
+		Bool mine = FALSE;
+		for (Int k = 0; k < n; ++k) {
+			mine |= (other == buttons[k]);
+		}
+		if (mine) {
+			continue;
+		}
+		Int ox = 0, oy = 0, ow = 0, oh = 0;
+		other->winGetPosition(&ox, &oy);
+		other->winGetSize(&ow, &oh);
+		if (oy < sy + sh && oy + oh > sy && ox >= rowRight && ox - gap < rightLimit) {
+			rightLimit = ox - gap;
+		}
+	}
+	const Int span = rightLimit - first;
+
+	// one row when the widest label fits a tab at 75 % of its font or more
+	Int widest = 0;
+	for (Int k = 0; k < n; ++k) {
+		widest = max(widest, labelWidth(buttons[k], labels[k]));
+	}
+	const Int oneRowW = (span - (n - 1) * gap) / n;
+	if (oneRowW >= widest * 3 / 4 + 8 || n <= 2)
+	{
+		for (Int k = 0; k < n; ++k)
+		{
+			buttons[k]->winSetSize(oneRowW, h);
+			buttons[k]->winSetPosition(first + k * (oneRowW + gap), sy);
+		}
+		return;
+	}
+
+	// two rows of two; the list (and anything else under the row, across it) moves down by one row
+	const Int twoW = (span - gap) / 2;
+	for (Int k = 0; k < n; ++k)
+	{
+		buttons[k]->winSetSize(twoW, h);
+		buttons[k]->winSetPosition(first + (k % 2) * (twoW + gap), sy + (k / 2) * (h + gap));
+	}
+	const Int shift = h + gap;
+	for (GameWindow *other = parent->winGetChild(); other != nullptr; other = other->winGetNext())
+	{
+		Bool mine = FALSE;
+		for (Int k = 0; k < n; ++k) {
+			mine |= (other == buttons[k]);
+		}
+		if (mine) {
+			continue;
+		}
+		Int ox = 0, oy = 0, ow = 0, oh = 0;
+		other->winGetPosition(&ox, &oy);
+		other->winGetSize(&ow, &oh);
+		const Bool below = oy >= sy + h - 1 && oy < sy + h + shift + gap;
+		const Bool acrossRow = ox < rightLimit && ox + ow > first;
+		if (below && acrossRow && oh > shift + 20)
+		{
+			other->winSetPosition(ox, oy + shift);
+			other->winSetSize(ow, oh - shift);
+		}
 	}
 }
 

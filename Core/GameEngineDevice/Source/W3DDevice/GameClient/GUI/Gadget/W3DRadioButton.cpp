@@ -45,11 +45,14 @@
 
 // SYSTEM INCLUDES ////////////////////////////////////////////////////////////
 #include <stdlib.h>
+#include <map>
 
 // USER INCLUDES //////////////////////////////////////////////////////////////
 #include "GameClient/GameWindowGlobal.h"
 #include "GameClient/GameWindowManager.h"
 #include "GameClient/GadgetRadioButton.h"
+#include "GameClient/GameFont.h"
+#include "GameClient/DisplayStringManager.h"
 #include "W3DDevice/GameClient/W3DGadget.h"
 #include "W3DDevice/GameClient/W3DDisplay.h"
 
@@ -66,6 +69,53 @@
 // drawRadioButtonText ========================================================
 /** Draw the text for a RadioButton */
 //=============================================================================
+// TheSuperHackers @tweak O120 A radio button's label stays inside its frame: the window's font when it fits, else a
+// smaller one (down to 60 %); still too wide, it is clipped at the frame. Chosen once per display string.
+static GameFont *fitRadioFont( DisplayString *text, GameFont *own, Int width )
+{
+	struct Fit
+	{
+		GameFont *own;
+		Int width;
+		UnicodeString str;
+		GameFont *use;
+	};
+	static std::map<DisplayString *, Fit> s_fit;
+
+	if( own == nullptr || width <= 8 || TheFontLibrary == nullptr || TheDisplayStringManager == nullptr )
+		return own;
+	const UnicodeString str = text->getText();
+	std::map<DisplayString *, Fit>::iterator it = s_fit.find( text );
+	if( it != s_fit.end() && it->second.own == own && it->second.width == width && it->second.str.compare( str ) == 0 )
+		return it->second.use;
+
+	GameFont *use = own;
+	DisplayString *probe = TheDisplayStringManager->newDisplayString();
+	if( probe != nullptr )
+	{
+		probe->setText( str );
+		const Int minSize = max( 6, own->pointSize * 6 / 10 );
+		for( Int size = own->pointSize; size >= minSize; --size )
+		{
+			GameFont *f = (size == own->pointSize) ? own : TheFontLibrary->getFont( own->nameString, size, own->bold );
+			if( f == nullptr )
+				continue;
+			probe->setFont( f );
+			use = f;
+			if( probe->getWidth() <= width - 6 )
+				break;
+		}
+		TheDisplayStringManager->freeDisplayString( probe );
+	}
+	Fit fit;
+	fit.own = own;
+	fit.width = width;
+	fit.str = str;
+	fit.use = use;
+	s_fit[ text ] = fit;
+	return use;
+}
+
 static void drawRadioButtonText( GameWindow *window, WinInstanceData *instData )
 {
 	ICoord2D origin, size, textPos;
@@ -98,12 +148,23 @@ static void drawRadioButtonText( GameWindow *window, WinInstanceData *instData )
 		dropColor = window->winGetEnabledTextBorderColor();
 	}
 
-	// set our font to that of our parent if not the same
-	if( text->getFont() != window->winGetFont() )
-		text->setFont( window->winGetFont() );
+	// set our font to that of our parent if not the same (O120: or a smaller one, so the label fits the frame)
+	GameFont *font = fitRadioFont( text, window->winGetFont(), size.x );
+	if( text->getFont() != font )
+		text->setFont( font );
 
 	// get text size
 	text->getSize( &width, &height );
+
+	// O120: never drawn over the frame
+	{
+		IRegion2D clip;
+		clip.lo.x = origin.x;
+		clip.lo.y = origin.y;
+		clip.hi.x = origin.x + size.x;
+		clip.hi.y = origin.y + size.y;
+		text->setClipRegion( &clip );
+	}
 
 	// set the location for our text
 	textPos.x = origin.x + (size.x / 2) - (width / 2);
