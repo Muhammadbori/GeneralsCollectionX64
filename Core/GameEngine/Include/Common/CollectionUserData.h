@@ -36,7 +36,9 @@
 
 namespace CollectionUserData
 {
-	/// From the original folder (Documents\<leaf>\, ending in '\'), our folder for gameName ("Zero Hour" or "Generals"),
-	/// ending in '\'. Creates it and copies Options.ini once. Empty in, empty out.
-	AsciiString makeOurs(const AsciiString &originalDir, const char *gameName);
+	/// O121: our folder <Documents>\Generals Collection x64\<gameName>\ ("Zero Hour" or "Generals"), Documents taken from
+	/// Windows itself (SHGetKnownFolderPath). Creates it, copies the original Options.ini once (originalDir when it is a
+	/// folder under Documents, else Documents\<originalLeaf>\), and writes UserDataFolders.log there. Empty when
+	/// Windows gives no Documents folder.
+	AsciiString makeOurs(const AsciiString &originalDir, const char *originalLeaf, const char *gameName);
 }

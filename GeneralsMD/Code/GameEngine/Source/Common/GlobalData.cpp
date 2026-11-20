@@ -1437,6 +1437,6 @@ AsciiString GlobalData::BuildUserDataPathFromRegistry()
 
 	// TheSuperHackers @feature O118 Our own folder; the original one is only read (CollectionUserData.h)
 	m_originalUserDataDir = myDocumentsDirectory;
-	const AsciiString ours = CollectionUserData::makeOurs(myDocumentsDirectory, "Zero Hour");
+	const AsciiString ours = CollectionUserData::makeOurs(myDocumentsDirectory, "Command and Conquer Generals Zero Hour Data", "Zero Hour");
 	return ours.isEmpty() ? myDocumentsDirectory : ours;
 }
