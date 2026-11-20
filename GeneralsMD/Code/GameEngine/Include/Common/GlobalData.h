@@ -593,6 +593,8 @@ public:
 
 	// the trailing '\' is included!
   const AsciiString &getPath_UserData() const { return m_userDataDir; }
+  /// O118: the original game's user data folder (only its Options.ini is read once, on our first run); empty with -userDataDir
+  const AsciiString &getPath_OriginalUserData() const { return m_originalUserDataDir; }
 	// TheSuperHackers @feature Only for -userDataDir (CommandLine.cpp); the path must end with a backslash.
 	void setPath_UserData(const AsciiString &path) { m_userDataDir = path; }
 
@@ -605,6 +607,7 @@ private:
 	// this is private, since we read the info from Windows and cache it for
 	// future use. No one is allowed to change it, ever. (srj)
 	AsciiString m_userDataDir;
+	AsciiString m_originalUserDataDir;   ///< O118
 	AsciiString BuildUserDataPathFromRegistry();
 
 	static GlobalData *m_theOriginal;		///< the original global data instance (no overrides)

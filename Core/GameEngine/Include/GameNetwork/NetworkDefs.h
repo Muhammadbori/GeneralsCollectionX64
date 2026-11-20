@@ -195,6 +195,10 @@ enum PlayerLeaveCode CPP_11(: Int) {
 
 // Magic number for identifying a Generals packet.
 static constexpr const UnsignedShort GENERALS_MAGIC_NUMBER = 0xF00D;
+// TheSuperHackers @feature O118 Our own LAN: every packet of Transport (the LAN lobby, direct connect and the match)
+// carries this magic instead of GENERALS_MAGIC_NUMBER, so the original game and other builds ignore ours and ours
+// ignore theirs (Transport::isGeneralsPacket). GENERALS_MAGIC_NUMBER stays for the firewall probe (FirewallHelper).
+static constexpr const UnsignedShort COLLECTION_LAN_MAGIC_NUMBER = 0x6C78;
 
 // The number of fps history entries.
 //static constexpr const Int NETWORK_FPS_HISTORY_LENGTH = 30;
@@ -225,7 +229,9 @@ static constexpr const UnsignedShort GENERALS_MAGIC_NUMBER = 0xF00D;
 
 // The base port number used for the transport socket.  A players slot number is added to this
 // value to get their actual port number.
-static constexpr const Int NETWORK_BASE_PORT_NUMBER = 8088;
+// TheSuperHackers @feature O118 Our own LAN: the match port is 8188 (the original game: 8088), the lobby port 8186
+// (LANAPI.cpp; the original: 8086), so both games can run side by side and never even read each other's packets.
+static constexpr const Int NETWORK_BASE_PORT_NUMBER = 8188;
 
 // the singleton
 class NetworkInterface;

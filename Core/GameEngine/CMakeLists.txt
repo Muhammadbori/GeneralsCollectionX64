@@ -21,6 +21,7 @@ set(GAMEENGINE_SRC
 #    Include/Common/BorderColors.h
 #    Include/Common/BuildAssistant.h
 #    Include/Common/ClientUpdateModule.h
+    Include/Common/CollectionUserData.h
     Include/Common/CommandLine.h
     Include/Common/crc.h
     Include/Common/CRCDebug.h
@@ -612,6 +613,7 @@ set(GAMEENGINE_SRC
     Source/Common/Bezier/BezFwdIterator.cpp
     Source/Common/Bezier/BezierSegment.cpp
 #    Source/Common/BitFlags.cpp
+    Source/Common/CollectionUserData.cpp
     Source/Common/CommandLine.cpp
     Source/Common/crc.cpp
     Source/Common/CRCDebug.cpp

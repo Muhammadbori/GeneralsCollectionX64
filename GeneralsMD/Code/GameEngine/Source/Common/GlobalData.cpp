@@ -36,6 +36,7 @@
 #include "WW3D2/texturefilter.h"
 
 #include "Common/GlobalData.h"
+#include "Common/CollectionUserData.h"
 #include "Common/CommandLine.h"
 
 #define DEFINE_TERRAIN_LOD_NAMES
@@ -1434,5 +1435,8 @@ AsciiString GlobalData::BuildUserDataPathFromRegistry()
 			myDocumentsDirectory.concat('\\');
 	}
 
-	return myDocumentsDirectory;
+	// TheSuperHackers @feature O118 Our own folder; the original one is only read (CollectionUserData.h)
+	m_originalUserDataDir = myDocumentsDirectory;
+	const AsciiString ours = CollectionUserData::makeOurs(myDocumentsDirectory, "Zero Hour");
+	return ours.isEmpty() ? myDocumentsDirectory : ours;
 }
