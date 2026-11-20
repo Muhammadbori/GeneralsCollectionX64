@@ -904,6 +904,15 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 			OptionPreferences introPref;
 			if (introPref.getDesktopIntro())
 			{
+				// O115 (S61): the picture is painted now and while the logo gets ready, also in full screen where
+				// gDoPaint is already off after initializeAppWindows
+				const Bool splashDoPaint = gDoPaint;
+				gDoPaint = true;
+				if (ApplicationHWnd != nullptr)
+				{
+					InvalidateRect(ApplicationHWnd, nullptr, TRUE);
+					UpdateWindow(ApplicationHWnd);
+				}
 				const DWORD splashShownAt = GetTickCount();
 				Intro::s_desktopIntroPlayed = DesktopIntro::play(hInstance, ApplicationHWnd, splashShownAt, 1500);
 				if (ApplicationHWnd != nullptr && !IsWindowVisible(ApplicationHWnd))
@@ -921,6 +930,7 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 					UpdateWindow(ApplicationHWnd);
 					gDoPaint = doPaint;
 				}
+				gDoPaint = splashDoPaint;
 				if (Intro::s_desktopIntroPlayed && ApplicationHWnd != nullptr)
 				{
 					SetForegroundWindow(ApplicationHWnd);

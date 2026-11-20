@@ -620,8 +620,15 @@ bool DesktopIntro::play(HINSTANCE instance, HWND splashWindow, DWORD splashShown
 					// logo plays over the bare desktop
 					if (splashWindow != nullptr)
 					{
+						// O115: the splash window's paint messages are handled meanwhile, so the picture really shows
+						// (S61: without them it never appeared); its other messages stay queued for the game
 						while (GetTickCount() - splashShownAt < splashMinMs)
+						{
+							MSG msg;
+							while (PeekMessageW(&msg, splashWindow, WM_PAINT, WM_PAINT, PM_REMOVE))
+								DispatchMessageW(&msg);
 							Sleep(10);
+						}
 						ShowWindow(splashWindow, SW_HIDE);
 					}
 #ifdef RTS_HAS_MINIAUDIO
