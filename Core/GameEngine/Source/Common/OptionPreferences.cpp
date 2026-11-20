@@ -825,6 +825,15 @@ Int OptionPreferences::getWindowed() const
 	return (stricmp(it->second.str(), "yes") == 0) ? 1 : 0;
 }
 
+// TheSuperHackers @feature O108 (band 61) DesktopIntro = no turns off the EA logo played over the desktop at start.
+Bool OptionPreferences::getDesktopIntro() const
+{
+	OptionPreferences::const_iterator it = find("DesktopIntro");
+	if (it == end())
+		return TRUE;
+	return (stricmp(it->second.str(), "no") != 0);
+}
+
 AsciiString OptionPreferences::getWindowPosition() const
 {
 	OptionPreferences::const_iterator it = find("WindowPosition");

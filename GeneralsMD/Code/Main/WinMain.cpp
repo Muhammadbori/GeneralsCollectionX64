@@ -57,6 +57,10 @@
 #include "GameClient/ClientInstance.h"
 #include "GameClient/InGameUI.h"
 #include "GameClient/GameClient.h"
+#include "GameClient/Intro.h"
+#ifdef RTS_HAS_FFMPEG
+#include "VideoDevice/FFmpeg/DesktopIntro.h"
+#endif
 #include "GameLogic/GameLogic.h"  ///< @todo for demo, remove
 #include "GameClient/Mouse.h"
 #include "GameClient/IMEManager.h"
@@ -857,6 +861,19 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 			if (windowed >= 0)
 				TheWritableGlobalData->m_windowed = (windowed == 1);
 		}
+
+#ifdef RTS_HAS_FFMPEG
+		// TheSuperHackers @feature O108 (band 61) The EA logo over the desktop with a see-through background, before
+		// the splash picture and the game window. -nologo, every test or automatic run (DesktopIntro.h), -headless and
+		// DesktopIntro = no in Options.ini leave it out. When it played, the old EA logo movie step of Intro is left
+		// out; when it could not play (no movie file, ...), that step plays as before.
+		if (!TheGlobalData->m_headless && !DesktopIntro::isSkippedByCommandLine())
+		{
+			OptionPreferences introPref;
+			if (introPref.getDesktopIntro())
+				Intro::s_desktopIntroPlayed = DesktopIntro::play(hInstance);
+		}
+#endif
 
 
 		#ifdef RTS_DEBUG
