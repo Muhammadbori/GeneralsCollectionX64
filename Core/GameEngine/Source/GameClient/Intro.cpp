@@ -63,6 +63,9 @@ Intro::Intro()
 		// Please be kind and do not remove the custom logo screen when building on top of the work of The Super Hackers.
 		m_allowedStateFlags |= 1u << IntroState_TheSuperHackersWait;
 		m_allowedStateFlags |= 1u << IntroState_TheSuperHackers;
+		// O114: the author's message after the credits (IntroCredits = no leaves it out with them)
+		if (m_useCredits)
+			m_allowedStateFlags |= 1u << IntroState_AuthorMessage;
 	}
 
 	if (TheGlobalData->m_playSizzle)
@@ -90,7 +93,7 @@ void Intro::enterNextState()
 void Intro::update()
 {
 	// O110: a click skips the credits screen too (ESC goes through WindowXlat as before)
-	if (m_currentState == IntroState_TheSuperHackers && m_useCredits && clickedToSkip())
+	if ((m_currentState == IntroState_TheSuperHackers || m_currentState == IntroState_AuthorMessage) && m_useCredits && clickedToSkip())
 		skipCurrentIntroStage();
 
 	if (!TheDisplay->isMoviePlaying() && m_waitUntilMs < timeGetTime())
@@ -102,6 +105,7 @@ void Intro::update()
 		case IntroState_EALogoMovie: doEALogoMovie(); break;
 		case IntroState_TheSuperHackersWait: doAsyncWait(800); break;
 		case IntroState_TheSuperHackers: if (m_useCredits) doCredits(); else doTheSuperHackers(); break;
+		case IntroState_AuthorMessage: doAuthorMessage(); break;
 		case IntroState_SizzleMovieWait: doAsyncWait(1000); break;
 		case IntroState_SizzleMovie: doSizzleMovie(); break;
 		case IntroState_Done: doPostIntro(); break;
@@ -114,6 +118,7 @@ void Intro::draw()
 	switch (m_currentState)
 	{
 		case IntroState_TheSuperHackers: drawDisplayEntities(); break;
+		case IntroState_AuthorMessage: drawDisplayEntities(); break;
 	}
 }
 
@@ -134,6 +139,7 @@ Bool Intro::skipCurrentIntroStage()
 		break;
 
 	case IntroState_TheSuperHackers:
+	case IntroState_AuthorMessage:
 		enterNextState();
 		break;
 	}
@@ -339,6 +345,91 @@ void Intro::doCredits()
 
 	m_mouseWasDown = TRUE; // a button already held does not skip; it must go up first
 	doAsyncWait(4500);
+	m_fadeValue = 0.0f;
+}
+
+// TheSuperHackers @feature O114 A second text screen right after the credits, in the same style: one size, centred,
+// the same fade, ESC or a click skips it; about 6 s as it is longer. Long lines wrap inside 84 % of the screen width
+// (centred); the common size shrinks (down to 60 %) until the whole block fits 80 % of the screen height.
+void Intro::doAuthorMessage()
+{
+	struct MessageLine
+	{
+		const WideChar *english;
+		const WideChar *russian;
+	};
+	static const MessageLine kLines[] =
+	{
+		{ L"This game was brought back to life and modernized by one person from Uzbekistan, with the help of AI.", L"\x042D\x0442\x0443 \x0438\x0433\x0440\x0443 \x0432\x0435\x0440\x043D\x0443\x043B \x043A \x0436\x0438\x0437\x043D\x0438 \x0438 \x043E\x0431\x043D\x043E\x0432\x0438\x043B \x043E\x0434\x0438\x043D \x0447\x0435\x043B\x043E\x0432\x0435\x043A \x0438\x0437 \x0423\x0437\x0431\x0435\x043A\x0438\x0441\x0442\x0430\x043D\x0430 \x2014 \x0441 \x043F\x043E\x043C\x043E\x0449\x044C\x044E \x0438\x0441\x043A\x0443\x0441\x0441\x0442\x0432\x0435\x043D\x043D\x043E\x0433\x043E \x0438\x043D\x0442\x0435\x043B\x043B\x0435\x043A\x0442\x0430." },
+		{ L"Made at personal expense \x2014 for everyone who loves Generals.", L"\x0421\x0434\x0435\x043B\x0430\x043D\x043E \x043D\x0430 \x0441\x043E\x0431\x0441\x0442\x0432\x0435\x043D\x043D\x044B\x0435 \x0441\x0440\x0435\x0434\x0441\x0442\x0432\x0430 \x2014 \x0434\x043B\x044F \x0432\x0441\x0435\x0445, \x043A\x0442\x043E \x043B\x044E\x0431\x0438\x0442 Generals." },
+		{ L"Your enjoyment matters most. The author wishes you a great time in fierce battles!", L"\x0412\x0430\x0448\x0430 \x0440\x0430\x0434\x043E\x0441\x0442\x044C \x0432\x0430\x0436\x043D\x0435\x0435 \x0432\x0441\x0435\x0433\x043E. \x0410\x0432\x0442\x043E\x0440 \x0436\x0435\x043B\x0430\x0435\x0442 \x0432\x0430\x043C \x043F\x0440\x0438\x044F\x0442\x043D\x043E\x0439 \x0438\x0433\x0440\x044B \x0432 \x0436\x0430\x0440\x043A\x0438\x0445 \x0441\x0440\x0430\x0436\x0435\x043D\x0438\x044F\x0445!" },
+		{ L"Warning: the game is not perfect yet. Crashes and freezes cannot be fully ruled out.", L"\x041F\x0440\x0435\x0434\x0443\x043F\x0440\x0435\x0436\x0434\x0435\x043D\x0438\x0435: \x0438\x0433\x0440\x0430 \x0435\x0449\x0451 \x043D\x0435 \x0438\x0434\x0435\x0430\x043B\x044C\x043D\x0430. \x0412\x044B\x043B\x0435\x0442\x044B \x0438 \x0437\x0430\x0432\x0438\x0441\x0430\x043D\x0438\x044F \x043F\x043E\x043A\x0430 \x043D\x0435 \x0438\x0441\x043A\x043B\x044E\x0447\x0435\x043D\x044B \x043F\x043E\x043B\x043D\x043E\x0441\x0442\x044C\x044E." },
+	};
+	const Int lineCount = (Int)ARRAY_SIZE(kLines);
+	static_assert(ARRAY_SIZE(kLines) <= ARRAY_SIZE(m_unicodeStrings), "m_unicodeStrings is too small");
+
+	const Real resolutionScale = GlobalLanguage::getResolutionFontSizeScale(GlobalLanguage::ResolutionFontSizeMethod_Strict);
+	const Int screenWidth = TheDisplay->getWidth();
+	const Int screenHeight = TheDisplay->getHeight();
+	const Bool russian = isRussianText();
+	for (Int i = 0; i < lineCount; ++i)
+		m_unicodeStrings[i] = russian ? kLines[i].russian : kLines[i].english;
+
+	const Int wrapWidth = screenWidth * 84 / 100;
+	const Int maxHeight = screenHeight * 80 / 100;
+	const Int baseSize = Int(18 * resolutionScale);
+	Int size = baseSize;
+	Int heights[ARRAY_SIZE(kLines)];
+	for (Int i = 0; i < lineCount; ++i)
+		heights[i] = size * 2;
+
+	DisplayString *probe = TheDisplayStringManager->newDisplayString();
+	if (probe != nullptr)
+	{
+		const Int minSize = max(8, baseSize * 6 / 10);
+		probe->setWordWrap(wrapWidth);
+		probe->setWordWrapCentered(TRUE);
+		for (; ; --size)
+		{
+			probe->setFont(TheFontLibrary->getFont("Arial", size, FALSE));
+			Int total = 0;
+			for (Int i = 0; i < lineCount; ++i)
+			{
+				probe->setText(m_unicodeStrings[i]);
+				Int w = 0, h = 0;
+				probe->getSize(&w, &h);
+				heights[i] = h + size;   // the line (one or two rows) and a gap
+				total += heights[i];
+			}
+			if (total <= maxHeight || size <= minSize)
+				break;
+		}
+		TheDisplayStringManager->freeDisplayString(probe);
+	}
+
+	Int total = 0;
+	for (Int i = 0; i < lineCount; ++i)
+		total += heights[i];
+
+	m_displayEntities.clear();
+	m_displayEntities.resize(lineCount);
+	Int centerOffsetY = -total / 2;
+	for (Int i = 0; i < lineCount; ++i)
+	{
+		DisplayEntity &e = m_displayEntities[i];
+		e.sizeX = Int(10 * resolutionScale);
+		e.sizeY = size;
+		e.displayString = TheDisplayStringManager->newDisplayString();
+		e.displayString->setText(m_unicodeStrings[i]);
+		e.displayString->setFont(TheFontLibrary->getFont("Arial", size, FALSE));
+		e.displayString->setWordWrap(wrapWidth);
+		e.displayString->setWordWrapCentered(TRUE);
+		e.centerOffsetY = centerOffsetY;
+		centerOffsetY += heights[i];
+	}
+
+	m_mouseWasDown = TRUE; // a button already held does not skip; it must go up first
+	doAsyncWait(6000);
 	m_fadeValue = 0.0f;
 }
 

@@ -112,10 +112,28 @@ void MapListTabs::attach(GameWindow *systemButton, GameWindow *userButton)
 		const Int first = min(sx, ux);
 		Int pitch = abs(ux - sx);
 		Int gap = max(2, pitch - sw);
-		if (first + (count + 1) * pitch + sw > pw - 4)
+		// O115 (S61): the right limit is the window's edge or the first window to the right of the tab row (the map
+		// preview frame), with a gap
+		Int rightLimit = pw - 4;
+		const Int rowRight = max(sx + sw, ux + uw);
+		const Int margin = max(6, pw / 100);
+		for (GameWindow *other = parent->winGetChild(); other != nullptr; other = other->winGetNext())
 		{
-			// not enough room: all tabs share the width from the first one to the window's edge
-			const Int span = pw - 4 - first;
+			if (other == systemButton || other == userButton) {
+				continue;
+			}
+			Int ox = 0, oy = 0, ow = 0, oh = 0;
+			other->winGetPosition(&ox, &oy);
+			other->winGetSize(&ow, &oh);
+			const Bool overlapsRow = oy < sy + sh && oy + oh > sy;
+			if (overlapsRow && ox >= rowRight && ox - margin < rightLimit) {
+				rightLimit = ox - margin;
+			}
+		}
+		if (first + (count + 1) * pitch + sw > rightLimit)
+		{
+			// not enough room: all tabs share the width from the first one to the right limit
+			const Int span = rightLimit - first;
 			w = (span - (count + 1) * gap) / (count + 2);
 			pitch = w + gap;
 			systemButton->winSetSize(w, sh);

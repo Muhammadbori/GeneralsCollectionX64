@@ -31,6 +31,7 @@ class Intro
 		IntroState_EALogoMovie,
 		IntroState_TheSuperHackersWait,
 		IntroState_TheSuperHackers,
+		IntroState_AuthorMessage,   ///< O114: the second text screen after the credits
 		IntroState_SizzleMovieWait,
 		IntroState_SizzleMovie,
 		IntroState_Done,
@@ -75,6 +76,7 @@ private:
 	void doEALogoMovie();
 	void doTheSuperHackers();
 	void doCredits();
+	void doAuthorMessage();
 	Bool clickedToSkip();
 	void doSizzleMovie();
 	void doPostIntro();
