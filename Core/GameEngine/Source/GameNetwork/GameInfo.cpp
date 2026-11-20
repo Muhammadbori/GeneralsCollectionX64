@@ -773,9 +773,15 @@ UnsignedInt GameInfo::startDigest() const
 		}
 		word((UnsignedInt)slot->getState());
 		word(slot->getIP());
-		const UnicodeString name = slot->getName();
-		for (const WideChar *c = name.str(); c != nullptr && *c != 0; ++c) {
-			word((UnsignedInt)*c);
+		// TheSuperHackers @bugfix O104 (S50) Only a human player's name: an open, closed or AI slot's name is this computer's
+		// text for it (GameSlot::setState: GUI:Open, GUI:Closed, GUI:EasyAI, ...), so a player with another text language
+		// (English "Open", Russian "Otkryto") had another digest and never answered READY. The slot state above already says what it is.
+		if (slot->isHuman())
+		{
+			const UnicodeString name = slot->getName();
+			for (const WideChar *c = name.str(); c != nullptr && *c != 0; ++c) {
+				word((UnsignedInt)*c);
+			}
 		}
 		word((UnsignedInt)slot->getPlayerTemplate());
 		word((UnsignedInt)slot->getColor());
