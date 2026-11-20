@@ -94,7 +94,7 @@ static GameFont *fitRadioFont( DisplayString *text, GameFont *own, Int width )
 	if( probe != nullptr )
 	{
 		probe->setText( str );
-		const Int minSize = max( 6, own->pointSize * 6 / 10 );
+		const Int minSize = max( 6, own->pointSize / 2 );   // O122: down to 50 %
 		for( Int size = own->pointSize; size >= minSize; --size )
 		{
 			GameFont *f = (size == own->pointSize) ? own : TheFontLibrary->getFont( own->nameString, size, own->bold );
@@ -102,7 +102,7 @@ static GameFont *fitRadioFont( DisplayString *text, GameFont *own, Int width )
 				continue;
 			probe->setFont( f );
 			use = f;
-			if( probe->getWidth() <= width - 6 )
+			if( probe->getWidth() <= width - 12 )   // O122 (S66): the frame's own edges take room too
 				break;
 		}
 		TheDisplayStringManager->freeDisplayString( probe );
