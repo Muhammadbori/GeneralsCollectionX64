@@ -30,7 +30,9 @@
 #include "Common/NameKeyGenerator.h"
 #include "Common/OptionPreferences.h"
 #include "GameClient/DisplayString.h"
+#include "GameClient/Display.h"
 #include "GameClient/DisplayStringManager.h"
+#include "GameClient/GameFont.h"
 #include "GameClient/GadgetPushButton.h"
 #include "GameClient/GadgetStaticText.h"
 #include "GameClient/GameText.h"
@@ -528,6 +530,119 @@ namespace
 		return box != nullptr ? TheWindowManager->winGetWindowFromId(box, (Int)TheNameKeyGenerator->nameToKey(AsciiString(name))) : nullptr;
 	}
 
+	/// Height of str wrapped at width in font.
+	Int wrappedHeight(GameFont *font, const UnicodeString &str, Int width)
+	{
+		if (font == nullptr || TheDisplayStringManager == nullptr || width <= 0) {
+			return 0;
+		}
+		DisplayString *ds = TheDisplayStringManager->newDisplayString();
+		if (ds == nullptr) {
+			return 0;
+		}
+		ds->setFont(font);
+		ds->setWordWrap(width);
+		ds->setText(str);
+		Int w = 0, h = 0;
+		ds->getSize(&w, &h);
+		TheDisplayStringManager->freeDisplayString(ds);
+		return h;
+	}
+
+	/// TheSuperHackers @bugfix O111 (S60) The message box is the game's small MessageBox.wnd; the question's body (the
+	/// pack names, the note about the maps folder) did not fit it: its first line was cut at the top and the rest ran
+	/// out of the frame. The box now grows to the body: wider first (up to 80 % of the screen), then taller (up to
+	/// 85 %), the buttons moving down with its bottom; if it still does not fit, the body's font gets smaller (down to
+	/// 70 %). Then it is centred on the screen again. Works at every resolution, as it measures the real text.
+	void fitBodyInBox(GameWindow *box)
+	{
+		GameWindow *message = boxChild(box, "MessageBox.wnd:StaticTextMessage");
+		GameWindow *frame = message != nullptr ? message->winGetParent() : nullptr;
+		if (frame == nullptr || TheDisplay == nullptr || TheFontLibrary == nullptr) {
+			return;
+		}
+		const UnicodeString body = GadgetStaticTextGetText(message);
+		GameFont *font = message->winGetFont();
+		if (body.isEmpty() || font == nullptr) {
+			return;
+		}
+		const Int screenW = TheDisplay->getWidth();
+		const Int screenH = TheDisplay->getHeight();
+		Int fw = 0, fh = 0, mx = 0, my = 0, mw = 0, mh = 0;
+		frame->winGetSize(&fw, &fh);
+		message->winGetPosition(&mx, &my);
+		message->winGetSize(&mw, &mh);
+		const Int inner = 12;   // the static text's own margins and a little air
+
+		Int need = wrappedHeight(font, body, mw - inner) + inner;
+		if (need <= mh) {
+			return;
+		}
+
+		// wider
+		const Int maxW = screenW * 8 / 10;
+		Int addW = 0;
+		while (need > mh && fw + addW < maxW)
+		{
+			addW += max(8, fw / 10);
+			if (fw + addW > maxW) {
+				addW = maxW - fw;
+			}
+			need = wrappedHeight(font, body, mw + addW - inner) + inner;
+		}
+		// taller
+		const Int maxH = screenH * 85 / 100;
+		Int addH = max(0, need - mh);
+		if (fh + addH > maxH) {
+			addH = max(0, maxH - fh);
+		}
+		// still too tall: a smaller font
+		if (need > mh + addH)
+		{
+			const Int minSize = max(6, font->pointSize * 7 / 10);
+			for (Int size = font->pointSize - 1; size >= minSize; --size)
+			{
+				GameFont *f = TheFontLibrary->getFont(font->nameString, size, font->bold);
+				if (f == nullptr) {
+					continue;
+				}
+				font = f;
+				if (wrappedHeight(f, body, mw + addW - inner) + inner <= mh + addH) {
+					break;
+				}
+			}
+			message->winSetFont(font);
+		}
+
+		// move and size the children: everything below the body goes down, everything as wide as the frame grows
+		const Int bodyBottom = my + mh;
+		for (GameWindow *child = frame->winGetChild(); child != nullptr; child = child->winGetNext())
+		{
+			Int cx = 0, cy = 0, cw = 0, ch = 0;
+			child->winGetPosition(&cx, &cy);
+			child->winGetSize(&cw, &ch);
+			if (child == message) {
+				child->winSetSize(cw + addW, ch + addH);
+				continue;
+			}
+			if (cy >= bodyBottom) {
+				child->winSetPosition(cx, cy + addH);
+			}
+			if (cw >= fw / 2) {
+				child->winSetSize(cw + addW, ch);   // the title, wide bars
+			} else {
+				child->winSetPosition(cx + addW / 2, cy >= bodyBottom ? cy + addH : cy);
+			}
+		}
+		frame->winSetSize(fw + addW, fh + addH);
+		GameWindow *outer = frame->winGetParent();
+		Int ow = screenW, oh = screenH;
+		if (outer != nullptr) {
+			outer->winGetSize(&ow, &oh);
+		}
+		frame->winSetPosition((ow - (fw + addW)) / 2, (oh - (fh + addH)) / 2);
+	}
+
 	/// A button's text: the long one when it fits the button, else the short one.
 	void setButtonText(GameWindow *box, const char *name, const UnicodeString &longText, const UnicodeString &shortText)
 	{
@@ -640,6 +755,7 @@ namespace
 			L"They are copied into your maps folder. Your own maps are never changed or removed.",
 			L"\x041E\x043D\x0438 \x0431\x0443\x0434\x0443\x0442 \x0441\x043A\x043E\x043F\x0438\x0440\x043E\x0432\x0430\x043D\x044B \x0432 \x0432\x0430\x0448\x0443 \x043F\x0430\x043F\x043A\x0443 \x043A\x0430\x0440\x0442. \x0412\x0430\x0448\x0438 \x0441\x043E\x0431\x0441\x0442\x0432\x0435\x043D\x043D\x044B\x0435 \x043A\x0430\x0440\x0442\x044B \x043D\x0435 \x0438\x0437\x043C\x0435\x043D\x044F\x044E\x0442\x0441\x044F \x0438 \x043D\x0435 \x0443\x0434\x0430\x043B\x044F\x044E\x0442\x0441\x044F."));
 		GameWindow *box = MessageBoxYesNoCancel(title(), body, onInstall, onLater, onNever);
+		fitBodyInBox(box);   // O111
 		{
 			const UnicodeString longText[3] = { text("GUI:MapPacksInstall", L"Install", L"\x0423\x0441\x0442\x0430\x043D\x043E\x0432\x0438\x0442\x044C"),
 				text("GUI:MapPacksLater", L"Later", L"\x041F\x043E\x0437\x0436\x0435"),
