@@ -2453,6 +2453,18 @@ void InGameUI::addMessageText( const UnicodeString& formattedMessage, const RGBC
 //-------------------------------------------------------------------------------------------------
 /** Remove the message on screen at index i */
 //-------------------------------------------------------------------------------------------------
+void InGameUI::removeMessagesWithText( const UnicodeString &text )
+{
+	if( text.isEmpty() )
+		return;
+	for( Int i = 0; i < MAX_UI_MESSAGES; ++i )
+	{
+		if( m_uiMessages[ i ].displayString != nullptr && m_uiMessages[ i ].fullText.compare( text ) == 0 )
+			removeMessageAtIndex( i );
+	}
+}
+
+//-------------------------------------------------------------------------------------------------
 void InGameUI::removeMessageAtIndex( Int i )
 {
 
