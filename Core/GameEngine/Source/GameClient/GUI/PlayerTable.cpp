@@ -649,6 +649,7 @@ void PlayerTable::decorateRow(GameWindow *nameText, GameWindow *sideText, GameWi
 		setIcon(sideText, nullptr, 0xFFFFFFFF, FALSE);
 		setIcon(teamText, nullptr, 0xFFFFFFFF, FALSE);
 		setStar(nameText, admin);
+		fitTextToCell(nameText);   // O106
 		return;
 	}
 	// what this client may see: a random choice of a player who is not on its team stays random
@@ -656,6 +657,9 @@ void PlayerTable::decorateRow(GameWindow *nameText, GameWindow *sideText, GameWi
 	const Image *colorImage = colorPicture(slot->getApparentColor(), &tint);
 	setIcon(nameText, colorImage, tint, FALSE, sideText);
 	setStar(nameText, admin);   // O60
+	// TheSuperHackers @tweak O106 (S53) The player name too: an AI's name in Russian ("Standartnaya armiya", the medium
+	// AI) did not fit the Generals list at 800x600
+	fitTextToCell(nameText);
 	setIcon(sideText, armyPicture(slot->getApparentPlayerTemplate()), 0xFFFFFFFF, FALSE);
 	fitTextToCell(sideText);   // O105
 	if (teamText != nullptr)
