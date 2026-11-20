@@ -30,6 +30,7 @@
 
 #include "GameClient/GameText.h"
 #include "Common/version.h"
+#include "Common/CommandLine.h"
 
 #include "gitinfo.h"
 
@@ -356,11 +357,23 @@ UnicodeString Version::getUnicodeProductString() const
 	return str;
 }
 
+// TheSuperHackers @tweak O118 The version line of the shell and the options (both games): our name and the game's
+// version only, "Generals Collection x64 - DirectX 12 - Version 1.04" (with middle dots; the version part is the game's
+// own localized "Version:Format" text, Russian "Versiya 1.04"). The "Community Patch" title and the exe/ini hashes stay
+// in a test build (*uitest*.exe), where mismatch debugging needs them.
 UnicodeString Version::getUnicodeProductVersionHashString() const
 {
 	UnicodeString str;
-	UnicodeString productString = getUnicodeProductString();
 	UnicodeString gameVersion = getUnicodeVersion();
+
+	if (!CommandLine::isTestExe())
+	{
+		str = L"Generals Collection x64 \x00B7 DirectX 12 \x00B7 ";
+		str.concat(gameVersion);
+		return str;
+	}
+
+	UnicodeString productString = getUnicodeProductString();
 	UnicodeString gameHash;
 	gameHash.format(L"exe:%08X ini:%08X", TheGlobalData->m_exeCRC, TheGlobalData->m_iniCRC);
 

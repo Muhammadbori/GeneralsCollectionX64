@@ -586,6 +586,8 @@ public:
 
 	// the trailing '\' is included!
 	AsciiString getPath_UserData() const;
+	/// O118: the original game's user data folder (read only: only its Maps are listed); empty with -userDataDir
+	const AsciiString &getPath_OriginalUserData() const { return m_originalUserDataDir; }
 	// TheSuperHackers @feature Only for -userDataDir (CommandLine.cpp); the path must end with a backslash.
 	void setPath_UserData(const AsciiString &path) { m_userDataDir = path; }
 
@@ -598,6 +600,7 @@ private:
 	// this is private, since we read the info from Windows and cache it for
 	// future use. No one is allowed to change it, ever. (srj)
 	AsciiString m_userDataDir;
+	AsciiString m_originalUserDataDir;   ///< O118
 
 	// just the "leaf name", read from INI. private because no one is ever allowed
 	// to look at it directly; they must go thru getPath_UserData(). (srj)

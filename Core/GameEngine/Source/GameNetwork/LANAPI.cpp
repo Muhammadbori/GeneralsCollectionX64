@@ -48,7 +48,7 @@
 #include "Common/LanClock.h"   // O75
 
 
-static const UnsignedShort lobbyPort = 8086; ///< This is the UDP port used by all LANAPI communication
+static const UnsignedShort lobbyPort = 8186; ///< This is the UDP port used by all LANAPI communication (O118: ours; the original game uses 8086)
 
 AsciiString GetMessageTypeString(UnsignedInt type);
 

@@ -448,7 +448,7 @@ Bool Transport::queueSend(UnsignedInt addr, UnsignedShort port, const UnsignedBy
 			m_outBuffer[i].port = port;
 //			m_outBuffer[i].header.flags = flags;
 //			m_outBuffer[i].header.id = id;
-			m_outBuffer[i].header.magic = GENERALS_MAGIC_NUMBER;
+			m_outBuffer[i].header.magic = COLLECTION_LAN_MAGIC_NUMBER;   // O118
 
 			CRC crc;
 			crc.computeCRC( (unsigned char *)(&(m_outBuffer[i].header.magic)), m_outBuffer[i].length + sizeof(TransportMessageHeader) - sizeof(UnsignedInt) );
@@ -482,7 +482,7 @@ Bool Transport::isGeneralsPacket( TransportMessage *msg )
 	if (crc.get() != msg->header.crc)
 		return false;
 
-	if (msg->header.magic != GENERALS_MAGIC_NUMBER)
+	if (msg->header.magic != COLLECTION_LAN_MAGIC_NUMBER)   // O118: not ours (the original game, another build)
 		return false;
 
 	return true;

@@ -258,7 +258,7 @@ void LANAPI::OnGameStart()
 		// Time to initialize TheNetwork for this game.
 		TheNetwork = NetworkInterface::createNetwork();
 		TheNetwork->init();
-		TheNetwork->setLocalAddress(m_localIP, 8088);
+		TheNetwork->setLocalAddress(m_localIP, NETWORK_BASE_PORT_NUMBER);   // O118: our own match port
 		TheNetwork->initTransport();
 
 		TheNetwork->parseUserList(m_currentGame);
