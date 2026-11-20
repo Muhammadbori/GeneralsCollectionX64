@@ -638,7 +638,29 @@ LRESULT CALLBACK WndProc( HWND hWnd, UINT message,
 						Int savContext = ::SaveDC(dc);
 						HDC tmpDC = ::CreateCompatibleDC(dc);
 						HBITMAP savBitmap = (HBITMAP)::SelectObject(tmpDC, gLoadScreenBitmap);
-						::BitBlt(dc, 0, 0, DEFAULT_DISPLAY_WIDTH, DEFAULT_DISPLAY_HEIGHT, tmpDC, 0, 0, SRCCOPY);
+						// TheSuperHackers @tweak O119 The picture fits the window, centred, black around it: the same as
+						// before in the first 800x600 window, and full size when the window comes back at its final size
+						// after the EA logo (DesktopIntro.h)
+						BITMAP bm;
+						RECT client;
+						::GetClientRect(hWnd, &client);
+						if (::GetObject(gLoadScreenBitmap, sizeof(bm), &bm) != 0 && bm.bmWidth > 0 && bm.bmHeight > 0
+							&& client.right > 0 && client.bottom > 0)
+						{
+							Int w = client.right;
+							Int h = (Int)((Int64)bm.bmHeight * client.right / bm.bmWidth);
+							if (h > client.bottom)
+							{
+								h = client.bottom;
+								w = (Int)((Int64)bm.bmWidth * client.bottom / bm.bmHeight);
+							}
+							const Int x = (client.right - w) / 2;
+							const Int y = (client.bottom - h) / 2;
+							::FillRect(dc, &client, (HBRUSH)::GetStockObject(BLACK_BRUSH));
+							::SetStretchBltMode(dc, HALFTONE);
+							::SetBrushOrgEx(dc, 0, 0, nullptr);
+							::StretchBlt(dc, x, y, w, h, tmpDC, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
+						}
 						::SelectObject(tmpDC, savBitmap);
 						::DeleteDC(tmpDC);
 						::RestoreDC(dc, savContext);
@@ -917,12 +939,44 @@ Int APIENTRY WinMain( HINSTANCE hInstance, HINSTANCE hPrevInstance,
 				Intro::s_desktopIntroPlayed = DesktopIntro::play(hInstance, ApplicationHWnd, splashShownAt, 1500);
 				if (ApplicationHWnd != nullptr && !IsWindowVisible(ApplicationHWnd))
 				{
-					// the splash picture is not shown again after the logo: the window comes back black while the
-					// game loads (painted once even in full screen, where gDoPaint is already off)
-					if (Intro::s_desktopIntroPlayed && gLoadScreenBitmap != nullptr)
+					// TheSuperHackers @tweak O119 The window comes back at once at the size the engine will give it
+					// (dx8wrapper.cpp: the resolution of Options.ini; full screen at the monitor's corner, a window
+					// centred in the work area), so no small box shows in between; it shows the opening picture, fitted,
+					// black around it, until the engine draws its first frame (painted once, even in full screen, where
+					// gDoPaint is already off). Without a Resolution in Options.ini, full screen takes the monitor's size
+					// and a window keeps its size.
 					{
-						::DeleteObject(gLoadScreenBitmap);
-						gLoadScreenBitmap = nullptr;
+						OptionPreferences resPref;
+						Int xres = 0, yres = 0;
+						Bool haveRes = FALSE;
+						OptionPreferences::const_iterator resIt = resPref.find("Resolution");
+						if (resIt != resPref.end() && sscanf(resIt->second.str(), "%d%d", &xres, &yres) == 2 && xres > 0 && yres > 0)
+							haveRes = TRUE;
+						MONITORINFO mi = { sizeof(MONITORINFO) };
+						if (GetMonitorInfo(MonitorFromWindow(ApplicationHWnd, MONITOR_DEFAULTTOPRIMARY), &mi))
+						{
+							if (!TheGlobalData->m_windowed)
+							{
+								if (!haveRes)
+								{
+									xres = mi.rcMonitor.right - mi.rcMonitor.left;
+									yres = mi.rcMonitor.bottom - mi.rcMonitor.top;
+								}
+								RECT r = { 0, 0, xres, yres };
+								AdjustWindowRect(&r, (DWORD)GetWindowLong(ApplicationHWnd, GWL_STYLE), FALSE);
+								SetWindowPos(ApplicationHWnd, HWND_TOPMOST, mi.rcMonitor.left, mi.rcMonitor.top,
+									r.right - r.left, r.bottom - r.top, SWP_NOACTIVATE);
+							}
+							else if (haveRes)
+							{
+								RECT r = { 0, 0, xres, yres };
+								AdjustWindowRect(&r, (DWORD)GetWindowLong(ApplicationHWnd, GWL_STYLE), FALSE);
+								const Int w = r.right - r.left;
+								const Int h = r.bottom - r.top;
+								SetWindowPos(ApplicationHWnd, nullptr, (mi.rcWork.left + mi.rcWork.right - w) / 2,
+									(mi.rcWork.top + mi.rcWork.bottom - h) / 2, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
+							}
+						}
 					}
 					const Bool doPaint = gDoPaint;
 					gDoPaint = true;
