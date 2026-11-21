@@ -587,7 +587,7 @@ void RecorderClass::startRecording(GameDifficulty diff, GameMode originalGameMod
 	// Print out the name of the replay.
 	UnicodeString replayName;
 	replayName = TheGameText->fetch("GUI:LastReplay");
-	m_file->writeFormat(L"%s", replayName.str());
+	m_file->writeFormat(L"%ls", replayName.str());
 	m_file->writeChar(L"\0");
 
 	// Date and Time
@@ -870,7 +870,14 @@ void RecorderClass::writeArgument(GameMessageArgumentDataType type, const GameMe
 			m_file->write( &(arg.timestamp), sizeof(arg.timestamp) );
 			break;
 		case ARGUMENTDATATYPE_WIDECHAR:
+#if RTS_WIRE_CONVERT
+			{
+				const WireChar unit = (WireChar)arg.wChar;
+				m_file->write( &unit, sizeof(unit) );
+			}
+#else
 			m_file->write( &(arg.wChar), sizeof(arg.wChar) );
+#endif
 			break;
 		default:
 			DEBUG_LOG(("Unknown GameMessageArgumentDataType in RecorderClass::writeArgument"));
@@ -1331,6 +1338,20 @@ Bool RecorderClass::playbackFile(AsciiString filename)
  * Read a unicode string from the current file position. The string is assumed to be 0-terminated.
  */
 UnicodeString RecorderClass::readUnicodeString() {
+#if RTS_WIRE_CONVERT
+	// the replay holds 2-byte UTF-16 units: read them, then decode to WideChar
+	WireChar units[1024];
+	Int count = 0;
+	for (;;) {
+		const Int u = m_file->readWideChar();
+		if (u == 0xFFFF || u == 0 || count >= 1023) break;
+		units[count++] = (WireChar)u;
+	}
+	WideChar decoded[1024];
+	const size_t n = WireText::decode(decoded, 1023, units, (size_t)count);
+	decoded[n] = L'\0';
+	return UnicodeString(decoded);
+#endif
 	WideChar str[1024] = L"";
 	Int index = 0;
 
@@ -1649,8 +1670,14 @@ void RecorderClass::readArgument(GameMessageArgumentDataType type, GameMessage *
 			break;
 		}
 		case ARGUMENTDATATYPE_WIDECHAR: {
+#if RTS_WIRE_CONVERT
+			WireChar unit = 0;
+			m_file->read(&unit, sizeof(unit));
+			WideChar theid = (WideChar)unit;
+#else
 			WideChar theid;
 			m_file->read(&theid, sizeof(theid));
+#endif
 			msg->appendWideCharArgument(theid);
 #ifdef DEBUG_LOGGING
 			if (m_doingAnalysis)

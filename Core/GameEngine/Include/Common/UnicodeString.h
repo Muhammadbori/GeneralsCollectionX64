@@ -150,6 +150,14 @@ public:
 	*/
 	UnicodeString(const WideChar* s, int len);
 
+#if RTS_WIRE_CONVERT
+	/// M2: text from a packet (2-byte UTF-16 units), converted to WideChar; the source must be zero terminated
+	UnicodeString(const WireChar* s);
+	void set(const WireChar* s);
+	int compare(const WireChar* s) const;
+	UnicodeString& operator=(const WireChar* s);
+#endif
+
 	/**
 		Destructor. Not too exciting... clean up the works and such.
 	*/

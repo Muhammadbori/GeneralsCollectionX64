@@ -31,6 +31,7 @@
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
 
 #include "Common/XferCRC.h"
+#include "Common/XferWireText.h"
 #include "Common/XferDeepCRC.h"
 #include "Common/crc.h"
 #include "Common/Snapshot.h"
@@ -332,6 +333,15 @@ void XferDeepCRC::xferUnicodeString( UnicodeString *unicodeStringData )
 
 	}
 
+#if RTS_WIRE_CONVERT
+	// the CRC covers the 2-byte UTF-16 units, the same bytes on every platform
+	const XferWireText wire( *unicodeStringData );
+	Byte len = wire.count;
+	xferByte( &len );
+
+	if( len > 0 )
+		xferUser( (void *)wire.units, sizeof( WireChar ) * len );
+#else
 	// save length of string to follow
 	Byte len = unicodeStringData->getLength();
 	xferByte( &len );
@@ -339,5 +349,6 @@ void XferDeepCRC::xferUnicodeString( UnicodeString *unicodeStringData )
 	// save string data
 	if( len > 0 )
 		xferUser( (void *)unicodeStringData->str(), sizeof( WideChar ) * len );
+#endif
 
 }

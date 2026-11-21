@@ -651,11 +651,11 @@ size_t NetPacketDisconnectVoteCommandBase::copyBytes(UnsignedByte *buffer, const
 size_t NetPacketChatCommandData::getSize(const NetCommandMsg &msg)
 {
 	const CommandMsg *cmdMsg = static_cast<const CommandMsg *>(&msg);
-	const Int textLength = std::min<Int>(cmdMsg->getText().getLength(), 255);
+	const Int textLength = static_cast<Int>(network::wireTextUnits(cmdMsg->getText(), 255));
 
 	size_t size = 0;
 	size += sizeof(UnsignedByte);
-	size += textLength * sizeof(WideChar);
+	size += textLength * sizeof(WireChar);
 	size += sizeof(Int);
 	return size;
 }
@@ -663,7 +663,7 @@ size_t NetPacketChatCommandData::getSize(const NetCommandMsg &msg)
 size_t NetPacketChatCommandData::copyBytes(UnsignedByte *buffer, const NetCommandRef &ref)
 {
 	const CommandMsg *cmdMsg = static_cast<const CommandMsg *>(ref.getCommand());
-	const size_t textLength = std::min<size_t>(cmdMsg->getText().getLength(), 255);
+	const size_t textLength = network::wireTextUnits(cmdMsg->getText(), 255);
 
 	size_t size = 0;
 	size += network::writePrimitive(buffer + size, (UnsignedByte)textLength);
@@ -710,18 +710,18 @@ size_t NetPacketChatCommandBase::copyBytes(UnsignedByte *buffer, const NetComman
 size_t NetPacketDisconnectChatCommandData::getSize(const NetCommandMsg &msg)
 {
 	const CommandMsg *cmdMsg = static_cast<const CommandMsg *>(&msg);
-	const Int textLength = std::min<Int>(cmdMsg->getText().getLength(), 255);
+	const Int textLength = static_cast<Int>(network::wireTextUnits(cmdMsg->getText(), 255));
 
 	size_t size = 0;
 	size += sizeof(UnsignedByte);
-	size += textLength * sizeof(WideChar);
+	size += textLength * sizeof(WireChar);
 	return size;
 }
 
 size_t NetPacketDisconnectChatCommandData::copyBytes(UnsignedByte *buffer, const NetCommandRef &ref)
 {
 	const CommandMsg *cmdMsg = static_cast<const CommandMsg *>(ref.getCommand());
-	const Int textLength = std::min<Int>(cmdMsg->getText().getLength(), 255);
+	const Int textLength = static_cast<Int>(network::wireTextUnits(cmdMsg->getText(), 255));
 
 	size_t size = 0;
 	size += network::writePrimitive(buffer + size, (UnsignedByte)textLength);
@@ -812,7 +812,7 @@ size_t NetPacketGameCommandData::getSize(const NetCommandMsg &msg)
 			size += arg->getArgCount() * sizeof(UnsignedInt);
 			break;
 		case ARGUMENTDATATYPE_WIDECHAR:
-			size += arg->getArgCount() * sizeof(WideChar);
+			size += arg->getArgCount() * sizeof(WireChar);
 			break;
 		}
 		arg = arg->getNext();
@@ -881,7 +881,7 @@ size_t NetPacketGameCommandData::copyBytes(UnsignedByte *buffer, const NetComman
 			size += network::writePrimitive(buffer + size, arg.timestamp);
 			break;
 		case ARGUMENTDATATYPE_WIDECHAR:
-			size += network::writePrimitive(buffer + size, arg.wChar);
+			size += network::writePrimitive(buffer + size, static_cast<WireChar>(arg.wChar));
 			break;
 		}
 	}
@@ -968,7 +968,9 @@ size_t NetPacketGameCommandData::readMessage(NetCommandRef &ref, NetPacketBuf bu
 			size += network::readObject(arg.timestamp, buf.offset(size));
 			break;
 		case ARGUMENTDATATYPE_WIDECHAR:
-			size += network::readObject(arg.wChar, buf.offset(size));
+			WireChar wireChar = 0;
+			size += network::readObject(wireChar, buf.offset(size));
+			arg.wChar = static_cast<WideChar>(wireChar);
 			break;
 		}
 

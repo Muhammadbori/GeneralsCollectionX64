@@ -356,8 +356,21 @@ void DataChunkOutput::writeAsciiString( const AsciiString& theString )
 void DataChunkOutput::writeUnicodeString( UnicodeString theString )
 {
 	UnsignedShort len = theString.getLength();
+#if RTS_WIRE_CONVERT
+	// map and script files hold 2-byte UTF-16 units on every platform
+	{
+		const size_t units = WireText::encodedLength( theString.str(), (size_t)len );
+		WireChar *wire = new WireChar[units + 1];
+		WireText::encode( wire, units, theString.str(), (size_t)len );
+		len = (UnsignedShort)units;
+		::fwrite( (const char *)&len, sizeof(UnsignedShort) , 1, m_tmp_file );
+		::fwrite( wire, len*sizeof(WireChar) , 1, m_tmp_file );
+		delete[] wire;
+	}
+#else
 	::fwrite( (const char *)&len, sizeof(UnsignedShort) , 1, m_tmp_file );
 	::fwrite( theString.str(), len*sizeof(WideChar) , 1, m_tmp_file );
+#endif
 }
 
 void DataChunkOutput::writeNameKey( const NameKeyType key )
@@ -971,11 +984,22 @@ UnicodeString DataChunkInput::readUnicodeString()
 	DEBUG_ASSERTCRASH(m_chunkStack->dataLeft>=len, ("Read past end of chunk."));
 	UnicodeString theString;
 	if (len>0) {
+#if RTS_WIRE_CONVERT
+		// the file holds 2-byte UTF-16 units; the string is made of WideChar
+		WireChar *wire = new WireChar[len];
+		m_file->read( (char*)wire, len*sizeof(WireChar) );
+		decrementDataLeft( len*sizeof(WireChar) );
+		WideChar *str = theString.getBufferForRead(len);
+		const size_t n = WireText::decode( str, len, wire, len );
+		str[n] = '\000';
+		delete[] wire;
+#else
 		WideChar *str = theString.getBufferForRead(len);
 		m_file->read( (char*)str, len*sizeof(WideChar) );
 		decrementDataLeft( len*sizeof(WideChar) );
 		// add null delimiter to string.  Note that getBufferForRead allocates space for terminating null.
 		str[len] = '\000';
+#endif
 	}
 
 	return theString;

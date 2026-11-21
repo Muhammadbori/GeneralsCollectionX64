@@ -380,6 +380,13 @@ Int LocalFile::readChar()
 
 Int LocalFile::readWideChar()
 {
+#if RTS_WIRE_CONVERT
+	// files hold 2-byte UTF-16 units on every platform; one unit per call (0xFFFF: no more data, like WEOF on Windows)
+	WireChar unit = 0;
+	if (read( &unit, sizeof(unit) ) == sizeof(unit))
+		return (Int)unit;
+	return 0xFFFF;
+#endif
 	WideChar character = L'\0';
 
 	Int ret = read( &character, sizeof(character) );
@@ -439,7 +446,16 @@ Int LocalFile::writeFormat( const WideChar* format, ... )
 	Int length = vswprintf(buffer, sizeof(buffer) / sizeof(WideChar), format, args);
 	va_end(args);
 
+#if RTS_WIRE_CONVERT
+	// written as 2-byte UTF-16 units
+	if (length < 0)
+		length = 0;
+	WireChar units[sizeof(buffer) / sizeof(WideChar) * 2];
+	const size_t count = WireText::encode(units, sizeof(units) / sizeof(WireChar), buffer, (size_t)length);
+	return write( units, (Int)(count * sizeof(WireChar)) );
+#else
 	return write( buffer, length * sizeof(WideChar) );
+#endif
 }
 
 //=================================================================
@@ -461,6 +477,13 @@ Int LocalFile::writeChar( const Char* character )
 
 Int LocalFile::writeChar( const WideChar* character )
 {
+#if RTS_WIRE_CONVERT
+	const WireChar unit = (WireChar)*character;
+	if ( write( &unit, sizeof(unit) ) == sizeof(unit) ) {
+		return *character;
+	}
+	return WEOF;
+#endif
 	if ( write( character, sizeof(WideChar) ) == sizeof(WideChar) ) {
 		return *character;
 	}

@@ -97,6 +97,8 @@ void LANAPI::handleRequestLocations( LANMessage *msg, UnsignedInt senderIP )
 	player->setName(UnicodeString(msg->name));
 	player->setHost(msg->hostName);
 	player->setLogin(msg->userName);
+	player->setPlatform(msg->platform);
+	LanTest::platformLog(player->getIP(), msg->platform);
 	player->setLastHeard(LanClock::now());
 
 	addPlayer(player);
@@ -251,6 +253,8 @@ void LANAPI::handleLobbyAnnounce( LANMessage *msg, UnsignedInt senderIP )
 	player->setName(UnicodeString(msg->name));
 	player->setHost(msg->hostName);
 	player->setLogin(msg->userName);
+	player->setPlatform(msg->platform);
+	LanTest::platformLog(player->getIP(), msg->platform);
 	player->setLastHeard(LanClock::now());
 
 	addPlayer(player);
@@ -329,6 +333,12 @@ static Bool ContainsAnyReadableChars(const WideChar* playerName)
 
 	return false;
 }
+
+#if RTS_WIRE_CONVERT
+// the names in a packet are 2-byte UTF-16 units (WireChar)
+static Bool ContainsInvalidChars(const WireChar* playerName) { return ContainsInvalidChars(UnicodeString(playerName).str()); }
+static Bool ContainsAnyReadableChars(const WireChar* playerName) { return ContainsAnyReadableChars(UnicodeString(playerName).str()); }
+#endif
 
 void LANAPI::handleRequestJoin( LANMessage *msg, UnsignedInt senderIP )
 {
@@ -540,7 +550,7 @@ void LANAPI::handleRequestJoin( LANMessage *msg, UnsignedInt senderIP )
 					m_seatJoinedMs[player] = LanClock::now();   // O70: freed if the joiner is never heard from after this
 					newSlot.setSerial(msg->GameToJoin.serial);
 					m_currentGame->setSlot(player,newSlot);
-					DEBUG_LOG(("LANAPI::handleRequestJoin - added player %ls at ip 0x%08x to the game", msg->name, senderIP));
+					DEBUG_LOG(("LANAPI::handleRequestJoin - added player %ls at ip 0x%08x to the game", UnicodeString(msg->name).str(), senderIP));
 
 					OnPlayerJoin(player, UnicodeString(msg->name));
 					LanRoom::hostDropJoined(senderIP);   // O31: an observer who took a slot leaves the list
@@ -636,6 +646,7 @@ void LANAPI::handleJoinAccept( LANMessage *msg, UnsignedInt senderIP )
 					{
 						m_currentGame->getLANSlot(s)->setHost(msg->hostName);
 						m_currentGame->getLANSlot(s)->setLogin(msg->userName);
+						m_currentGame->getLANSlot(s)->setPlatform(msg->platform);
 					}
 				}
 
@@ -837,7 +848,7 @@ void LANAPI::handleChat( LANMessage *msg, UnsignedInt senderIP )
 	{
 		if (LookupGame(UnicodeString(msg->Chat.gameName)) != m_currentGame)
 		{
-			DEBUG_LOG(("Game '%ls' is not my game", msg->Chat.gameName));
+			DEBUG_LOG(("Game '%ls' is not my game", UnicodeString(msg->Chat.gameName).str()));
 			if (m_currentGame)
 			{
 				DEBUG_LOG(("Current game is '%ls'", m_currentGame->getName().str()));

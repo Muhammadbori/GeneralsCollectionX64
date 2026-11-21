@@ -120,6 +120,10 @@ struct TransportMessage
 };
 #pragma pack(pop)
 
+// TheSuperHackers @feature M2 (plan10) Wire formats: the same sizes on every platform
+static_assert(sizeof(TransportMessageHeader) == 6, "TransportMessageHeader is a wire format");
+static_assert(sizeof(CommandPacket) == 6 + numCommandsPerCommandPacket * sizeof(GameMessage), "CommandPacket: frame, count, then the commands");
+
 #if defined(RTS_DEBUG)
 #pragma pack(push, 1)
 struct DelayedTransportMessage

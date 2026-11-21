@@ -52,6 +52,8 @@ public:
 	void setLogin( AsciiString name ) { m_user.setLogin(name); }
 	void setHost( UnicodeString name ) { m_user.setHost(name); }
 	void setHost( AsciiString name ) { m_user.setHost(name); }
+	UnsignedByte getPlatform() { return m_user.getPlatform(); }
+	void setPlatform( UnsignedByte platform ) { m_user.setPlatform(platform); }
 	void setSerial( AsciiString serial ) { m_serial = serial; }
 	AsciiString getSerial() { return m_serial; }
 

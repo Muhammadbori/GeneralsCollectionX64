@@ -30,6 +30,7 @@
 // USER INCLUDES //////////////////////////////////////////////////////////////////////////////////
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
 #include "Common/XferSave.h"
+#include "Common/XferWireText.h"
 #include "Common/Snapshot.h"
 #include "Common/GameMemory.h"
 
@@ -326,6 +327,20 @@ void XferSave::xferUnicodeString( UnicodeString *unicodeStringData )
 
 	}
 
+#if RTS_WIRE_CONVERT
+	// a save file holds 2-byte UTF-16 units on every platform
+	const XferWireText wire( *unicodeStringData );
+	if( wire.tooLong )
+	{
+		DEBUG_CRASH(( "XferSave cannot save this unicode string because it's too long (in UTF-16 units)" ));
+		throw XFER_STRING_ERROR;
+	}
+	UnsignedByte len = wire.count;
+	xferUnsignedByte( &len );
+
+	if( len > 0 )
+		xferUser( (void *)wire.units, sizeof( WireChar ) * len );
+#else
 	// save length of string to follow
 	UnsignedByte len = unicodeStringData->getLength();
 	xferUnsignedByte( &len );
@@ -333,6 +348,7 @@ void XferSave::xferUnicodeString( UnicodeString *unicodeStringData )
 	// save string data
 	if( len > 0 )
 		xferUser( (void *)unicodeStringData->str(), sizeof( WideChar ) * len );
+#endif
 
 }
 

@@ -180,6 +180,40 @@ void UnicodeString::set(const UnicodeString& stringSrc)
 	validate();
 }
 
+#if RTS_WIRE_CONVERT
+// -----------------------------------------------------
+// M2: WireChar text (a packet's 2-byte UTF-16 units) to WideChar
+UnicodeString::UnicodeString(const WireChar* s) : m_data(0)
+{
+	set(s);
+}
+
+// -----------------------------------------------------
+void UnicodeString::set(const WireChar* s)
+{
+	const size_t n = s ? WireText::length(s) : 0;
+	WideChar *tmp = new WideChar[n + 1];
+	const size_t m = s ? WireText::decode(tmp, n, s, n) : 0;
+	tmp[m] = 0;
+	set(static_cast<const WideChar*>(tmp));
+	delete[] tmp;
+}
+
+// -----------------------------------------------------
+int UnicodeString::compare(const WireChar* s) const
+{
+	const UnicodeString other(s);
+	return compare(other);
+}
+
+// -----------------------------------------------------
+UnicodeString& UnicodeString::operator=(const WireChar* s)
+{
+	set(s);
+	return *this;
+}
+#endif
+
 // -----------------------------------------------------
 void UnicodeString::set(const WideChar* s)
 {

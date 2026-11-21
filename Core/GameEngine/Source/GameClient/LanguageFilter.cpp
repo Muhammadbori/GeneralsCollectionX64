@@ -158,7 +158,14 @@ Bool LanguageFilter::readWord(File *file1, WideChar *buf) {
 
 	WideChar c;
 
+#if RTS_WIRE_CONVERT
+	// the word list holds 2-byte UTF-16 units (one unit per read: a surrogate pair stays two characters here)
+	WireChar unit = 0;
+#define READ_FILTER_CHAR(file, ch) ((file)->read(&unit, sizeof(WireChar)) > 0 ? ((ch) = (WideChar)unit, sizeof(WireChar)) : 0)
+	val = (Int)READ_FILTER_CHAR(file1, c);
+#else
 	val = file1->read(&c, sizeof(WideChar));
+#endif
 	if ((val == -1) || (val == 0)) {
 		buf[index] = 0;
 		return FALSE;
@@ -167,7 +174,11 @@ Bool LanguageFilter::readWord(File *file1, WideChar *buf) {
 
 	while (buf[index] != L' ') {
 		++index;
+#if RTS_WIRE_CONVERT
+		val = (Int)READ_FILTER_CHAR(file1, c);
+#else
 		val = file1->read(&c, sizeof(WideChar));
+#endif
 		if ((val == -1) || (val == 0)) {
 			c = WEOF;
 		}

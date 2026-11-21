@@ -226,11 +226,22 @@ void XferLoad::xferUnicodeString( UnicodeString *unicodeStringData )
 
 	// read all the string data
 	const Int MAX_XFER_LOAD_STRING_BUFFER = 1024;
+#if RTS_WIRE_CONVERT
+	// the file holds 2-byte UTF-16 units; the string is made of WideChar
+	static WireChar wireBuffer[ MAX_XFER_LOAD_STRING_BUFFER ];
+	static WideChar buffer[ MAX_XFER_LOAD_STRING_BUFFER ];
+
+	if( len > 0 )
+		xferUser( wireBuffer, sizeof( WireChar ) * len );
+	const size_t decoded = WireText::decode( buffer, MAX_XFER_LOAD_STRING_BUFFER - 1, wireBuffer, len );
+	buffer[ decoded ] = 0;  // terminate
+#else
 	static WideChar buffer[ MAX_XFER_LOAD_STRING_BUFFER ];
 
 	if( len > 0 )
 		xferUser( buffer, sizeof( WideChar ) * len );
 	buffer[ len ] = 0;  // terminate
+#endif
 
 	// save into unicode string
 	unicodeStringData->set( buffer );

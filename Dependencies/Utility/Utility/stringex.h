@@ -144,6 +144,28 @@ inline size_t strlcpy(char *dst, const char *src, size_t dstsize) { return strlc
 inline size_t strlcat(char *dst, const char *src, size_t dstsize) { return strlcat_t(dst, src, dstsize); }
 #endif
 inline size_t wcslcpy(unichar *dst, const unichar *src, size_t dstsize) { return strlcpy_t(dst, src, dstsize); }
+#if RTS_WIRE_CONVERT
+// M2: a packet's text field (2-byte UTF-16 units) filled from a WideChar string; at most dstsize - 1 units, always terminated.
+// Returns the units the whole string needs (like strlcpy returns the length it tried to create).
+inline size_t wcslcpy(WireChar *dst, const unichar *src, size_t dstsize)
+{
+	const size_t srcLen = wcslen(src);
+	if (dstsize > 0)
+	{
+		const size_t written = WireText::encode(dst, dstsize - 1, src, srcLen);
+		dst[written] = 0;
+	}
+	return WireText::encodedLength(src, srcLen);
+}
+inline size_t wcslcpy(WireChar *dst, const WireChar *src, size_t dstsize) { return strlcpy_t(dst, src, dstsize); }
+// the destination must be large enough (as with wcscpy)
+inline WireChar *wcscpy(WireChar *dst, const unichar *src)
+{
+	const size_t written = WireText::encode(dst, static_cast<size_t>(-1) / 4, src, wcslen(src));
+	dst[written] = 0;
+	return dst;
+}
+#endif
 inline size_t wcslcat(unichar *dst, const unichar *src, size_t dstsize) { return strlcat_t(dst, src, dstsize); }
 
 // Templated strlmove. Prefer using this over strlcpy if dst and src overlap.

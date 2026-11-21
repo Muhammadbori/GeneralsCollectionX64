@@ -942,6 +942,34 @@ Bool GameTextManager::parseCSF( const Char *filename )
 
 		 	file->read ( &len, sizeof ( Int ) );
 
+#if RTS_WIRE_CONVERT
+			// the CSF file holds 2-byte UTF-16 units (each one bit-inverted); m_tbuffer is made of WideChar
+			WireChar wireUnits[ MAX_UITEXT_LENGTH*2 ];
+			Int wireLen = len;
+			if ( wireLen > MAX_UITEXT_LENGTH*2 - 1 )
+			{
+				wireLen = MAX_UITEXT_LENGTH*2 - 1;
+			}
+			if ( len )
+			{
+				file->read ( wireUnits, wireLen*sizeof(WireChar) );
+				if ( len > wireLen )
+				{
+					file->seek ( (len - wireLen)*sizeof(WireChar), File::CURRENT );
+				}
+			}
+
+			if ( num == 0 )
+			{
+				// only use the first string found
+				for ( Int u = 0; u < wireLen; ++u )
+				{
+					wireUnits[u] = (WireChar)~wireUnits[u];
+				}
+				const size_t decoded = WireText::decode( m_tbuffer, MAX_UITEXT_LENGTH*2 - 1, wireUnits, (size_t)wireLen );
+				m_tbuffer[decoded] = 0;
+
+#else
 			if ( len )
 			{
 				file->read ( m_tbuffer, len*sizeof(WideChar) );
@@ -963,6 +991,7 @@ Bool GameTextManager::parseCSF( const Char *filename )
 						ptr++;
 					}
 				}
+#endif
 
 				stripSpaces ( m_tbuffer );
 				m_stringInfo[listCount].text = m_tbuffer;

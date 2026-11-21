@@ -39,14 +39,37 @@ static const Int g_lanPlayerNameLength = 12; // reduced length because of game o
 //static const Int g_lanLoginNameLength = 16;
 //static const Int g_lanHostNameLength = 16;
 static const Int g_lanLoginNameLength = 1;
-static const Int g_lanHostNameLength = 1;
+// TheSuperHackers @feature M2 (plan10) The machine name (it was cut to 1 character) does not travel any more: its byte, and the
+// one next to it, carry the sender's platform in the header of every LAN message (LANMessage::platform).
+static const Int g_lanHostNameLength = 0;
 //static const Int g_lanGameNameLength = 32;
 static const Int g_lanGameNameLength = 16; // reduced length because of game option length
 static const Int g_lanGameNameReservedLength = 16; // save N wchars for ID info
 static const Int g_lanMaxChatLength = 100;
 static const Int m_lanMaxOptionsLength = MAX_LANAPI_PACKET_SIZE - ( 8 + (g_lanGameNameLength+1)*2 + 4 + (g_lanPlayerNameLength+1)*2
-																														+ (g_lanLoginNameLength+1) + (g_lanHostNameLength+1) );
+																														+ (g_lanLoginNameLength+1) + (g_lanHostNameLength+1) + 1 /* platform */ );
 static const Int g_maxSerialLength = 23; // including the trailing '\0'
+
+// TheSuperHackers @feature M2 (plan10) The platform of a LAN player: 'w' Windows, 'm' macOS, 0 not known (a message without it).
+// The lobby will show an apple for 'm' later (M6).
+enum LANPlatform : UnsignedByte
+{
+	LAN_PLATFORM_UNKNOWN = 0,
+	LAN_PLATFORM_WIN = 'w',
+	LAN_PLATFORM_MAC = 'm'
+};
+inline UnsignedByte lanLocalPlatform()
+{
+#if defined(__APPLE__)
+	return LAN_PLATFORM_MAC;
+#else
+	return LAN_PLATFORM_WIN;
+#endif
+}
+inline const char *lanPlatformName(UnsignedByte platform)
+{
+	return platform == LAN_PLATFORM_WIN ? "win" : (platform == LAN_PLATFORM_MAC ? "mac" : "unknown");
+}
 
 struct LANMessage;
 
@@ -199,9 +222,10 @@ struct LANMessage
 		MSG_START_ACK,
 	} messageType;
 
-	WideChar name[g_lanPlayerNameLength+1]; ///< My name, for convenience
+	WireChar name[g_lanPlayerNameLength+1]; ///< My name, for convenience
 	char userName[g_lanLoginNameLength+1];	///< login name, for convenience
-	char hostName[g_lanHostNameLength+1];		///< machine name, for convenience
+	char hostName[g_lanHostNameLength+1];		///< machine name (none travels: g_lanHostNameLength is 0)
+	UnsignedByte platform;                  ///< M2: the sender's platform, LANPlatform (a Windows build always sends 'w')
 
 	// No additional data is required for REQUEST_LOCATIONS, LOBBY_ANNOUNCE,
 	// REQUEST_LOBBY_LEAVE, GAME_START.
@@ -216,13 +240,13 @@ struct LANMessage
 		// GameJoined is sent with REQUEST_GAME_LEAVE
 		struct
 		{
-			WideChar gameName[g_lanGameNameLength+1];
+			WireChar gameName[g_lanGameNameLength+1];
 		} GameToLeave;
 
 		// GameInfo if sent with GAME_ANNOUNCE
 		struct
 		{
-			WideChar gameName[g_lanGameNameLength+1];
+			WireChar gameName[g_lanGameNameLength+1];
 			Bool inProgress;
 			char options[m_lanMaxOptionsLength+1];
 			Bool isDirectConnect;
@@ -232,7 +256,7 @@ struct LANMessage
 		struct
 		{
 			UnsignedInt ip;
-			WideChar playerName[g_lanPlayerNameLength+1];
+			WireChar playerName[g_lanPlayerNameLength+1];
 		} PlayerInfo;
 
 		// GameToJoin is sent with REQUEST_JOIN
@@ -242,7 +266,7 @@ struct LANMessage
 			UnsignedInt exeCRC;
 			UnsignedInt iniCRC;
 			char serial[g_maxSerialLength];
-			WideChar gameName[g_lanGameNameLength+1];   ///< O62 (H5 #2): the room asked for (the host checks it is his)
+			WireChar gameName[g_lanGameNameLength+1];   ///< O62 (H5 #2): the room asked for (the host checks it is his)
 			UnsignedInt protocolMagic;                  ///< O62: LANProtocolMagic
 			Int protocol;                               ///< O62: LANProtocolVersion
 			char build[16];                             ///< O63: LanBuildIdentity
@@ -251,7 +275,7 @@ struct LANMessage
 		// GameJoined is sent with JOIN_ACCEPT
 		struct
 		{
-			WideChar gameName[g_lanGameNameLength+1];
+			WireChar gameName[g_lanGameNameLength+1];
 			UnsignedInt gameIP;
 			UnsignedInt playerIP;
 			Int slotPosition;
@@ -263,7 +287,7 @@ struct LANMessage
 		// GameNotJoined is sent with JOIN_DENY
 		struct
 		{
-			WideChar gameName[g_lanGameNameLength+1];
+			WireChar gameName[g_lanGameNameLength+1];
 			UnsignedInt gameIP;
 			UnsignedInt playerIP;
 			LANAPIInterface::ReturnType reason;
@@ -272,14 +296,14 @@ struct LANMessage
 		// Accept is sent with SET_ACCEPT
 		struct
 		{
-			WideChar gameName[g_lanGameNameLength+1];
+			WireChar gameName[g_lanGameNameLength+1];
 			Bool isAccepted;
 		} Accept;
 
 		// Accept is sent with MAP_AVAILABILITY
 		struct
 		{
-			WideChar gameName[g_lanGameNameLength+1];
+			WireChar gameName[g_lanGameNameLength+1];
 			UnsignedInt mapCRC;	// to make sure we're talking about the same map
 			Bool hasMap;
 		} MapStatus;
@@ -287,9 +311,9 @@ struct LANMessage
 		// Chat is sent with CHAT
 		struct
 		{
-			WideChar gameName[g_lanGameNameLength+1];
+			WireChar gameName[g_lanGameNameLength+1];
 			LANAPIInterface::ChatType chatType;
-			WideChar message[g_lanMaxChatLength+1];
+			WireChar message[g_lanMaxChatLength+1];
 		} Chat;
 
 		// GameOptions is sent with GAME_OPTIONS
@@ -328,8 +352,8 @@ struct LANMessage
 			UnsignedInt ips[12];      ///< list: the observers; start: the players
 			union
 			{
-				WideChar names[12][g_lanPlayerNameLength+1];   ///< list
-				WideChar text[g_lanMaxChatLength+1];           ///< chat: one ready line
+				WireChar names[12][g_lanPlayerNameLength+1];   ///< list
+				WireChar text[g_lanMaxChatLength+1];           ///< chat: one ready line
 			} u;
 			UnsignedShort delaySeconds; ///< O33: list, start: the host's delay for outside viewers (10..180 s)
 			UnsignedShort flags;        ///< O33: list, start: bit 0 outside viewers allowed; start: bit 1 sent to a player
@@ -339,7 +363,7 @@ struct LANMessage
 		{
 			UnsignedInt magic;        ///< LANStartMagic
 			UnsignedInt digest;       ///< LanStartDigest of the sender's copy of the room
-			WideChar gameName[g_lanGameNameLength+1];
+			WireChar gameName[g_lanGameNameLength+1];
 			UnsignedInt revision;     ///< O64 (H6 #4): the revision of the host's slot list it checks
 			// TheSuperHackers @feature O89 GAME_START only (not read in START_CHECK and READY): the room observers that get the
 			// stream live (and the watching admin), frozen at Start; was the room's own KIND_START to the players, sent
@@ -361,6 +385,11 @@ struct LANMessage
 #pragma pack(pop)
 
 static_assert(sizeof(LANMessage) <= MAX_LANAPI_PACKET_SIZE, "LANMessage struct cannot be larger than the max packet size");
+// TheSuperHackers @feature M2 (plan10) LANMessage is sent as it is: one size on every platform (all text in it is WireChar, 2 bytes)
+static_assert(sizeof(WireChar) == 2, "LAN text is made of 2-byte units");
+static_assert(sizeof(LANMessage) == 471, "LANMessage is a wire format: its size must be the same on every platform");
+static_assert(offsetof(LANMessage, name) == 4, "LANMessage: messageType is a 4-byte enum, then the name");
+static_assert(offsetof(LANMessage, platform) == offsetof(LANMessage, hostName) + g_lanHostNameLength + 1, "LANMessage: platform follows the host name");
 
 // TheSuperHackers @feature O26 (row 26) What the LAN screen needs beyond the original messages.
 static const UnsignedInt LANFilesInfoMagic = 0x46494C31;   ///< "FIL1"
@@ -413,6 +442,9 @@ namespace LanTest
 	UnsignedInt loopbackIP();    ///< 0: off
 	void setSampleData(Bool on);
 	Bool sampleData();
+	/// M2 (test): with -lanLoopback, LanPlatform.log (user data) gets one line per sender address and platform: the platform
+	/// field of a LAN message that came in ("from 127.0.0.11 platform win"), and once this computer's own
+	void platformLog(UnsignedInt senderIP, UnsignedByte platform);
 	/// O45 (test): -lanTestLoss <percent>: this computer drops that share of the lobby messages it receives (a lossy
 	/// link such as a VPN), and writes LanJoin.log in its user data folder (each join request, repeat, answer and
 	/// timeout, on the joiner and on the host). -1: off.

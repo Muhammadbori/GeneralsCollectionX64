@@ -369,6 +369,46 @@ void LanTest::joinLog(const char *format, ...)
 	fclose(f);
 }
 
+void LanTest::platformLog(UnsignedInt senderIP, UnsignedByte platform)
+{
+	// M2: only in the loopback test mode; one line per (address, platform), at most 64 of them
+	static UnsignedInt s_seenIP[64];
+	static UnsignedByte s_seenPlatform[64];
+	static Int s_seen = 0;
+	if (loopbackSlot() < 0 || TheGlobalData == nullptr) {
+		return;
+	}
+	char path[_MAX_PATH];
+	snprintf(path, sizeof(path), "%sLanPlatform.log", TheGlobalData->getPath_UserData().str());
+	if (s_seen == 0)
+	{
+		FILE *f = fopen(path, "a");
+		if (f != nullptr) {
+			fprintf(f, "this computer: platform %s\n", lanPlatformName(lanLocalPlatform()));
+			fclose(f);
+		}
+		s_seen = 1;
+		s_seenIP[0] = 0;
+		s_seenPlatform[0] = 0;
+	}
+	for (Int i = 1; i < s_seen; ++i) {
+		if (s_seenIP[i] == senderIP && s_seenPlatform[i] == platform) {
+			return;
+		}
+	}
+	if (s_seen >= 64) {
+		return;
+	}
+	s_seenIP[s_seen] = senderIP;
+	s_seenPlatform[s_seen] = platform;
+	++s_seen;
+	FILE *f = fopen(path, "a");
+	if (f != nullptr) {
+		fprintf(f, "from %d.%d.%d.%d platform %s\n", PRINTF_IP_AS_4_INTS(senderIP), lanPlatformName(platform));
+		fclose(f);
+	}
+}
+
 void LANAPI::sendMessage(LANMessage *msg, UnsignedInt ip /* = 0 */)
 {
 	sendMessageOnly(msg, ip);
@@ -2165,6 +2205,7 @@ void LANAPI::fillInLANMessage( LANMessage *msg )
 	wcslcpy(msg->name, m_name.str(), ARRAY_SIZE(msg->name));
 	strlcpy(msg->userName, m_userName.str(), ARRAY_SIZE(msg->userName));
 	strlcpy(msg->hostName, m_hostName.str(), ARRAY_SIZE(msg->hostName));
+	msg->platform = lanLocalPlatform();
 }
 
 void LANAPI::RequestLobbyLeave( Bool forced )

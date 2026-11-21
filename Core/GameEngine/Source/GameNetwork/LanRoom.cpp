@@ -470,6 +470,19 @@ namespace
 		dst[i] = 0;
 	}
 
+#if RTS_WIRE_CONVERT
+	/// the same for a packet's 2-byte UTF-16 units (WireChar): decoded to WideChar, never reading past 'size' units
+	void copyFromPacket(WideChar *dst, const WireChar *src, Int size)
+	{
+		Int units = 0;
+		while (units < size - 1 && src[units] != 0) {
+			++units;
+		}
+		const size_t n = WireText::decode(dst, static_cast<size_t>(size - 1), src, static_cast<size_t>(units));
+		dst[n] = 0;
+	}
+#endif
+
 	LANGameInfo *hostedGame()
 	{
 		if (TheLAN == nullptr) {

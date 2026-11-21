@@ -117,16 +117,36 @@ inline size_t readBytes(UnsignedByte *dest, size_t destLen, NetPacketBuf src)
 	return readLen;
 }
 
+// The text of a game packet is made of 2-byte UTF-16 units (WireChar) on every platform; the counts are units.
+// Number of units of 'value' that go on the wire: all of it, but at most maxUnits (a surrogate pair is never cut).
+inline size_t wireTextUnits(const UnicodeString &value, size_t maxUnits)
+{
+#if RTS_WIRE_CONVERT
+	return WireText::fitUnits(value.str(), static_cast<size_t>(value.getLength()), maxUnits);
+#else
+	return std::min<size_t>(value.getLength(), maxUnits);
+#endif
+}
+
 inline size_t readStringWithoutNull(UnicodeString &str, size_t maxStrLen, NetPacketBuf src)
 {
-	const size_t strLen = min(maxStrLen, src.size() / sizeof(WideChar));
-	const size_t cpyLen = strLen * sizeof(WideChar);
+	const size_t strLen = min(maxStrLen, src.size() / sizeof(WireChar));
+	const size_t cpyLen = strLen * sizeof(WireChar);
 
 	if (strLen > 0)
 	{
+#if RTS_WIRE_CONVERT
+		WireChar *units = new WireChar[strLen];
+		memcpy(units, src.data(), cpyLen);
+		WideChar *strBuf = str.getBufferForRead(strLen);
+		const size_t n = WireText::decode(strBuf, strLen, units, strLen);
+		strBuf[n] = 0;
+		delete[] units;
+#else
 		WideChar *strBuf = str.getBufferForRead(strLen);
 		memcpy(strBuf, src.data(), cpyLen);
 		strBuf[strLen] = 0;
+#endif
 	}
 	return cpyLen;
 }
@@ -169,10 +189,19 @@ inline size_t writeBytes(UnsignedByte *dest, const UnsignedByte *src, size_t len
 
 inline size_t writeStringWithoutNull(UnsignedByte *dest, const UnicodeString &value, size_t maxLen)
 {
+#if RTS_WIRE_CONVERT
+	const size_t units = wireTextUnits(value, maxLen);
+	WireChar *out = new WireChar[units + 1];
+	const size_t written = WireText::encode(out, units, value.str(), static_cast<size_t>(value.getLength()));
+	memcpy(dest, out, written * sizeof(WireChar));
+	delete[] out;
+	return written * sizeof(WireChar);
+#else
 	const size_t copyLen = std::min<size_t>(value.getLength(), maxLen);
 	const size_t copyBytes = copyLen * sizeof(WideChar);
 	memcpy(dest, value.str(), copyBytes);
 	return copyBytes;
+#endif
 }
 
 inline size_t writeStringWithNull(UnsignedByte *dest, const AsciiString &value)
@@ -1233,3 +1262,101 @@ struct SmallNetPacketFrameResendRequestCommand  : public SmallNetPacketCommandTe
 
 // Restore normal struct packing
 #pragma pack(pop)
+
+// TheSuperHackers @feature M2 (plan10) The packet structs are wire formats (packed to 1 byte): the sizes are the Windows x64
+// sizes and must be the same on every compiler and platform. A changed number here is a changed protocol.
+static_assert(sizeof(NetPacketCommandTypeField) == 2, "NetPacketCommandTypeField is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketRelayField) == 2, "NetPacketRelayField is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketFrameField) == 5, "NetPacketFrameField is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketPlayerIdField) == 2, "NetPacketPlayerIdField is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketCommandIdField) == 3, "NetPacketCommandIdField is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketDataField) == 1, "NetPacketDataField is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketRepeatField) == 1, "NetPacketRepeatField is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketRepeatCommand) == 1, "NetPacketRepeatCommand is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketRepeatCommand::CommandBase) == 1, "NetPacketRepeatCommand::CommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(SmallNetPacketCommandBase) == 1, "SmallNetPacketCommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(SmallNetPacketCommandBase::CommandBase) == 15, "SmallNetPacketCommandBase::CommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketNoData) == 1, "NetPacketNoData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketAckCommandData) == 1, "NetPacketAckCommandData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketAckCommandData::FixedData) == 3, "NetPacketAckCommandData::FixedData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketAckCommandBase) == 1, "NetPacketAckCommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketAckCommandBase::CommandBase) == 5, "NetPacketAckCommandBase::CommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketFrameCommandData) == 1, "NetPacketFrameCommandData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketFrameCommandData::FixedData) == 2, "NetPacketFrameCommandData::FixedData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketFrameCommandBase) == 1, "NetPacketFrameCommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketFrameCommandBase::CommandBase) == 15, "NetPacketFrameCommandBase::CommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketPlayerLeaveCommandData) == 1, "NetPacketPlayerLeaveCommandData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketPlayerLeaveCommandData::FixedData) == 1, "NetPacketPlayerLeaveCommandData::FixedData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketPlayerLeaveCommandBase) == 1, "NetPacketPlayerLeaveCommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketPlayerLeaveCommandBase::CommandBase) == 15, "NetPacketPlayerLeaveCommandBase::CommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketRunAheadMetricsCommandData) == 1, "NetPacketRunAheadMetricsCommandData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketRunAheadMetricsCommandData::FixedData) == 6, "NetPacketRunAheadMetricsCommandData::FixedData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketRunAheadMetricsCommandBase) == 1, "NetPacketRunAheadMetricsCommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketRunAheadMetricsCommandBase::CommandBase) == 10, "NetPacketRunAheadMetricsCommandBase::CommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketRunAheadCommandData) == 1, "NetPacketRunAheadCommandData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketRunAheadCommandData::FixedData) == 3, "NetPacketRunAheadCommandData::FixedData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketRunAheadCommandBase) == 1, "NetPacketRunAheadCommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketRunAheadCommandBase::CommandBase) == 15, "NetPacketRunAheadCommandBase::CommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketDestroyPlayerCommandData) == 1, "NetPacketDestroyPlayerCommandData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketDestroyPlayerCommandData::FixedData) == 4, "NetPacketDestroyPlayerCommandData::FixedData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketDestroyPlayerCommandBase) == 1, "NetPacketDestroyPlayerCommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketDestroyPlayerCommandBase::CommandBase) == 15, "NetPacketDestroyPlayerCommandBase::CommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketKeepAliveCommandBase) == 1, "NetPacketKeepAliveCommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketKeepAliveCommandBase::CommandBase) == 7, "NetPacketKeepAliveCommandBase::CommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketDisconnectKeepAliveCommandBase) == 1, "NetPacketDisconnectKeepAliveCommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketDisconnectKeepAliveCommandBase::CommandBase) == 7, "NetPacketDisconnectKeepAliveCommandBase::CommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketDisconnectPlayerCommandData) == 1, "NetPacketDisconnectPlayerCommandData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketDisconnectPlayerCommandData::FixedData) == 5, "NetPacketDisconnectPlayerCommandData::FixedData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketDisconnectPlayerCommandBase) == 1, "NetPacketDisconnectPlayerCommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketDisconnectPlayerCommandBase::CommandBase) == 10, "NetPacketDisconnectPlayerCommandBase::CommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketRouterQueryCommandBase) == 1, "NetPacketRouterQueryCommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketRouterQueryCommandBase::CommandBase) == 7, "NetPacketRouterQueryCommandBase::CommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketRouterAckCommandBase) == 1, "NetPacketRouterAckCommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketRouterAckCommandBase::CommandBase) == 7, "NetPacketRouterAckCommandBase::CommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketDisconnectVoteCommandData) == 1, "NetPacketDisconnectVoteCommandData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketDisconnectVoteCommandData::FixedData) == 5, "NetPacketDisconnectVoteCommandData::FixedData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketDisconnectVoteCommandBase) == 1, "NetPacketDisconnectVoteCommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketDisconnectVoteCommandBase::CommandBase) == 10, "NetPacketDisconnectVoteCommandBase::CommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketChatCommandData) == 1, "NetPacketChatCommandData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketChatCommandBase) == 1, "NetPacketChatCommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketChatCommandBase::CommandBase) == 15, "NetPacketChatCommandBase::CommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketDisconnectChatCommandData) == 1, "NetPacketDisconnectChatCommandData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketDisconnectChatCommandBase) == 1, "NetPacketDisconnectChatCommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketDisconnectChatCommandBase::CommandBase) == 7, "NetPacketDisconnectChatCommandBase::CommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketGameCommandData) == 1, "NetPacketGameCommandData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketGameCommandBase) == 1, "NetPacketGameCommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketGameCommandBase::CommandBase) == 15, "NetPacketGameCommandBase::CommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketWrapperCommandData) == 1, "NetPacketWrapperCommandData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketWrapperCommandData::FixedData) == 22, "NetPacketWrapperCommandData::FixedData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketWrapperCommandBase) == 1, "NetPacketWrapperCommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketWrapperCommandBase::CommandBase) == 10, "NetPacketWrapperCommandBase::CommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketFileCommandData) == 1, "NetPacketFileCommandData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketFileCommandBase) == 1, "NetPacketFileCommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketFileCommandBase::CommandBase) == 10, "NetPacketFileCommandBase::CommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketFileAnnounceCommandData) == 1, "NetPacketFileAnnounceCommandData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketFileAnnounceCommandBase) == 1, "NetPacketFileAnnounceCommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketFileAnnounceCommandBase::CommandBase) == 10, "NetPacketFileAnnounceCommandBase::CommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketFileProgressCommandData) == 1, "NetPacketFileProgressCommandData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketFileProgressCommandData::FixedData) == 6, "NetPacketFileProgressCommandData::FixedData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketFileProgressCommandBase) == 1, "NetPacketFileProgressCommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketFileProgressCommandBase::CommandBase) == 10, "NetPacketFileProgressCommandBase::CommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketProgressCommandData) == 1, "NetPacketProgressCommandData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketProgressCommandData::FixedData) == 1, "NetPacketProgressCommandData::FixedData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketProgressCommandBase) == 1, "NetPacketProgressCommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketProgressCommandBase::CommandBase) == 7, "NetPacketProgressCommandBase::CommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketLoadCompleteCommandBase) == 1, "NetPacketLoadCompleteCommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketLoadCompleteCommandBase::CommandBase) == 10, "NetPacketLoadCompleteCommandBase::CommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketTimeOutGameStartCommandBase) == 1, "NetPacketTimeOutGameStartCommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketTimeOutGameStartCommandBase::CommandBase) == 10, "NetPacketTimeOutGameStartCommandBase::CommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketDisconnectFrameCommandData) == 1, "NetPacketDisconnectFrameCommandData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketDisconnectFrameCommandData::FixedData) == 4, "NetPacketDisconnectFrameCommandData::FixedData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketDisconnectFrameCommandBase) == 1, "NetPacketDisconnectFrameCommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketDisconnectFrameCommandBase::CommandBase) == 10, "NetPacketDisconnectFrameCommandBase::CommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketDisconnectScreenOffCommandData) == 1, "NetPacketDisconnectScreenOffCommandData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketDisconnectScreenOffCommandData::FixedData) == 4, "NetPacketDisconnectScreenOffCommandData::FixedData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketDisconnectScreenOffCommandBase) == 1, "NetPacketDisconnectScreenOffCommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketDisconnectScreenOffCommandBase::CommandBase) == 10, "NetPacketDisconnectScreenOffCommandBase::CommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketFrameResendRequestCommandData) == 1, "NetPacketFrameResendRequestCommandData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketFrameResendRequestCommandData::FixedData) == 4, "NetPacketFrameResendRequestCommandData::FixedData is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketFrameResendRequestCommandBase) == 1, "NetPacketFrameResendRequestCommandBase is a wire format: its size must be the same on every platform");
+static_assert(sizeof(NetPacketFrameResendRequestCommandBase::CommandBase) == 10, "NetPacketFrameResendRequestCommandBase::CommandBase is a wire format: its size must be the same on every platform");

@@ -30,9 +30,11 @@ inline Real deg2rad(Real rad) { return rad * (PI/180); }
 // note, this function depends on the cpu rounding mode, which we set to CHOP every frame,
 // but apparently tends to be left in unpredictable modes by various system bits of
 // code, so use this function with caution -- it might not round in the way you want.
-__forceinline long fast_float2long_round(float f)
+// M2 (plan10): the result is a 32-bit Int on every platform (it was `long`: 32 bits on Windows, 64 bits on macOS). The simulation
+// and the network never see a 64-bit value; a result outside 32 bits wraps like the Windows one.
+__forceinline Int fast_float2long_round(float f)
 {
-	long i;
+	Int i;
 
 #if defined(_MSC_VER) && _MSC_VER < 1300
 	__asm {
@@ -40,7 +42,7 @@ __forceinline long fast_float2long_round(float f)
 		fistp [i]
 	}
 #else
-	i = lroundf(f);
+	i = static_cast<Int>(lroundf(f));
 #endif
 
 	return i;

@@ -34,6 +34,7 @@
 #include "Common/Upgrade.h"
 #include "Common/GameState.h"
 #include "Common/Xfer.h"
+#include "Common/XferWireText.h"
 #include "Common/BitFlagsIO.h"
 
 
@@ -210,7 +211,12 @@ void Xfer::xferMarkerLabel( AsciiString asciiStringData )
 void Xfer::xferUnicodeString( UnicodeString *unicodeStringData )
 {
 
+#if RTS_WIRE_CONVERT
+	const XferWireText wire( *unicodeStringData );
+	xferImplementation( (void *)wire.units, sizeof( WireChar ) * wire.count );
+#else
 	xferImplementation( (void *)unicodeStringData->str(), sizeof( WideChar ) * unicodeStringData->getLength() );
+#endif
 
 }
 
