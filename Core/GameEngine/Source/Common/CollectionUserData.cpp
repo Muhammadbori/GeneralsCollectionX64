@@ -235,8 +235,9 @@ namespace
 		DWORD documentsError;  // the probe's error in Documents (0 = not probed or writable)
 		Int copiedFiles;
 		Int copyFailures;
+		const char *gameName;  // "Zero Hour" or "Generals"
 	};
-	Decision s_decision = { FALSE, AsciiString(), AsciiString(), FALSE, "", 0, 0, 0 };
+	Decision s_decision = { FALSE, AsciiString(), AsciiString(), FALSE, "", 0, 0, 0, "" };
 	Bool s_noticeDone = FALSE;
 }
 
@@ -258,6 +259,7 @@ AsciiString CollectionUserData::makeOurs(const AsciiString &originalDir, const c
 	if (!d.made)
 	{
 		d.made = TRUE;
+		d.gameName = gameName;   // a string literal of the callers
 		AsciiString docsOurs = documents;
 		docsOurs.concat(kCollection);
 		docsOurs.concat('\\');
@@ -408,10 +410,17 @@ void CollectionUserData::showFallbackNoticeOnce()
 		fclose(fp);
 	}
 
+	// The message box is narrow: short lines, and the folder as %LOCALAPPDATA% plus our part on its own line (the
+	// full path is in UserDataFolders.log). The fallback folder is always under LOCALAPPDATA (a test switch only
+	// stands in for it).
 	UnicodeString body = localizedFallback(
-		L"Windows protects the Documents folder (Controlled folder access), so the game's settings, saves and replays are kept in this folder:",
-		L"Windows \x0437\x0430\x0449\x0438\x0449\x0430\x0435\x0442 \x043F\x0430\x043F\x043A\x0443 \x00AB\x0414\x043E\x043A\x0443\x043C\x0435\x043D\x0442\x044B\x00BB (\x043A\x043E\x043D\x0442\x0440\x043E\x043B\x0438\x0440\x0443\x0435\x043C\x044B\x0439 \x0434\x043E\x0441\x0442\x0443\x043F \x043A \x043F\x0430\x043F\x043A\x0430\x043C), \x043F\x043E\x044D\x0442\x043E\x043C\x0443 \x043D\x0430\x0441\x0442\x0440\x043E\x0439\x043A\x0438, \x0441\x043E\x0445\x0440\x0430\x043D\x0435\x043D\x0438\x044F \x0438 \x043F\x043E\x0432\x0442\x043E\x0440\x044B \x0438\x0433\x0440\x044B \x0445\x0440\x0430\x043D\x044F\x0442\x0441\x044F \x0432 \x043F\x0430\x043F\x043A\x0435:");
-	body.concat(L"\n");
-	body.concat(toUnicode(s_decision.ours));
-	MessageBoxOk(UnicodeString(L"Generals Collection x64"), body, nullptr);
+		L"Windows does not let the game\nwrite to the Documents folder.\nSettings and saves are\nkept in this folder:",
+		L"Windows \x043D\x0435 \x0434\x0430\x0451\x0442 \x0438\x0433\x0440\x0435 \x043F\x0438\x0441\x0430\x0442\x044C\n"
+		L"\x0432 \x043F\x0430\x043F\x043A\x0443 \x00AB\x0414\x043E\x043A\x0443\x043C\x0435\x043D\x0442\x044B\x00BB.\n"
+		L"\x041D\x0430\x0441\x0442\x0440\x043E\x0439\x043A\x0438 \x0438 \x0441\x043E\x0445\x0440\x0430\x043D\x0435\x043D\x0438\x044F\n"
+		L"\x0445\x0440\x0430\x043D\x044F\x0442\x0441\x044F \x0432 \x043F\x0430\x043F\x043A\x0435:");
+	body.concat(L"\n%LOCALAPPDATA%\\\nGenerals Collection x64\\");
+	body.concat(toUnicode(AsciiString(s_decision.gameName)));
+	MessageBoxOk(localizedFallback(L"Settings folder",
+		L"\x041F\x0430\x043F\x043A\x0430 \x043D\x0430\x0441\x0442\x0440\x043E\x0435\x043A"), body, nullptr);
 }
