@@ -30,25 +30,23 @@
 #endif
 #include <float.h>
 
-#ifdef WW_D3D8DEFS_CHECK
-#define WW_D3D8DEFS_GUARDED(x) 1
-#else
-#define WW_D3D8DEFS_GUARDED(x) !defined(x)
-#endif
+// TheSuperHackers @build O137 Each guard below is written out as "defined(WW_D3D8DEFS_CHECK) || !defined(X)" instead of
+// a function-like macro around defined(): a defined() made by a macro is undefined behavior, and clang (clang-cl) expands
+// an already defined X inside it to "defined()", an error.
 
 // ---- d3d8types.h
 
 #if defined(_WIN32) && !defined(_WIN64)
 #pragma pack(push,4)
 #endif
-#if WW_D3D8DEFS_GUARDED(D3DCOLOR_DEFINED)
+#if defined(WW_D3D8DEFS_CHECK) || !defined(D3DCOLOR_DEFINED)
 typedef DWORD D3DCOLOR;
 #define D3DCOLOR_DEFINED
 #endif
 #define D3DCOLOR_ARGB(a,r,g,b)  ((D3DCOLOR)((((a)&0xff)<<24)|(((r)&0xff)<<16)|(((g)&0xff)<<8)|((b)&0xff)))
 #define D3DCOLOR_RGBA(r,g,b,a) D3DCOLOR_ARGB(a,r,g,b)
 #define D3DCOLOR_COLORVALUE(r,g,b,a)  D3DCOLOR_RGBA((DWORD)((r)*255.f),(DWORD)((g)*255.f),(DWORD)((b)*255.f),(DWORD)((a)*255.f))
-#if WW_D3D8DEFS_GUARDED(D3DVECTOR_DEFINED)
+#if defined(WW_D3D8DEFS_CHECK) || !defined(D3DVECTOR_DEFINED)
 typedef struct _D3DVECTOR {
     float x;
     float y;
@@ -56,7 +54,7 @@ typedef struct _D3DVECTOR {
 } D3DVECTOR;
 #define D3DVECTOR_DEFINED
 #endif
-#if WW_D3D8DEFS_GUARDED(D3DCOLORVALUE_DEFINED)
+#if defined(WW_D3D8DEFS_CHECK) || !defined(D3DCOLORVALUE_DEFINED)
 typedef struct _D3DCOLORVALUE {
     float r;
     float g;
@@ -65,7 +63,7 @@ typedef struct _D3DCOLORVALUE {
 } D3DCOLORVALUE;
 #define D3DCOLORVALUE_DEFINED
 #endif
-#if WW_D3D8DEFS_GUARDED(D3DMATRIX_DEFINED)
+#if defined(WW_D3D8DEFS_CHECK) || !defined(D3DMATRIX_DEFINED)
 typedef struct _D3DMATRIX {
     union {
         struct {
@@ -812,4 +810,3 @@ typedef struct _D3DCAPS8
 #define D3DCREATE_HARDWARE_VERTEXPROCESSING     0x00000040L
 #define D3D_OK                              S_OK
 
-#undef WW_D3D8DEFS_GUARDED

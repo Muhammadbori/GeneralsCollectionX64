@@ -135,6 +135,16 @@
             }
         },
         {
+            "name": "win64-clang",
+            "inherits": "win64",
+            "hidden": false,
+            "displayName": "Windows 64bit Release (clang-cl)",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "clang-cl",
+                "CMAKE_CXX_COMPILER": "clang-cl"
+            }
+        },
+        {
             "name": "win32-vcpkg",
             "inherits": "default-vcpkg",
             "hidden": false,

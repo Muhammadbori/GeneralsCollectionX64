@@ -53,6 +53,16 @@ if (NOT IS_VS6_BUILD)
         # (/fp:precise: no FMA contraction, no reassociation). The game logic must compute the same bits on every
         # platform (Windows x64, macOS), so the model is written down instead of left to the compiler default.
         add_compile_options(/fp:precise)
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+            # TheSuperHackers @build O137 clang-cl takes /fp:precise as -ffp-contract=on (FMA contraction allowed within
+            # an expression wherever the target has FMA). Turn it off as on the other clang builds, so that a clang-cl
+            # build computes the same bits as the MSVC build (and as the macOS build, whose CPUs always have FMA).
+            add_compile_options(/clang:-ffp-contract=off)
+            # TheSuperHackers @build O137 The game's operator new (GameMemory pools) returns blocks aligned to 8 bytes,
+            # while clang takes 16 for granted on x64 and stores to new objects with aligned SSE moves (movaps), which
+            # crash on such a block. Tell clang what operator new really guarantees. MSVC makes no such assumption.
+            add_compile_options(/clang:-fnew-alignment=8)
+        endif()
     else()
         add_compile_options(-Wsuggest-override)
         # Prevent FMA contraction (a*b+c -> fmadd) which skips intermediate
