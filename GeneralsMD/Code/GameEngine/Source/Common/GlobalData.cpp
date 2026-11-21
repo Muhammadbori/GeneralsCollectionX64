@@ -1318,6 +1318,16 @@ UnsignedInt GlobalData::generateExeCRC()
 	DEBUG_LOG(("Fake EXE CRC is 0x%8.8X", exeCRC.get()));
 
 #else
+	// TheSuperHackers @feature O136 A build made from a clean git commit is named by its logic build identity (the commit
+	// and the logic options, Version::getLogicBuildIdentity), not by the bytes of its exe, so that builds of the same
+	// commit for other platforms and compilers (macOS) meet in LAN games, the fingerprint and replays. Builds without git
+	// info or with uncommitted changes keep the exe CRC: only the same exe meets them.
+	if (const char *logicIdentity = Version::getLogicBuildIdentity())
+	{
+		exeCRC.computeCRC(logicIdentity, (Int)strlen(logicIdentity));
+		DEBUG_LOG(("Logic build identity '%s', CRC 0x%8.8X", logicIdentity, exeCRC.get()));
+	}
+	else
 	{
 		Char buffer[ _MAX_PATH ];
 		GetModuleFileName( nullptr, buffer, sizeof( buffer ) );

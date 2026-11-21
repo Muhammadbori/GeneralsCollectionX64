@@ -30,6 +30,8 @@
 
 #include "GameClient/GameText.h"
 #include "Common/version.h"
+#include "Common/GameDefines.h"
+#include "Lib/BaseDefines.h"
 
 #include "gitinfo.h"
 
@@ -70,6 +72,32 @@ void Version::setVersion(Int major, Int minor, Int buildNum,
 	m_buildLocation = location;
 	m_buildTime = buildTime;
 	m_buildDate = buildDate;
+}
+
+const char* Version::getLogicBuildIdentity()
+{
+	static AsciiString s_identity;
+	static Bool s_made = FALSE;
+	if (!s_made)
+	{
+		s_made = TRUE;
+		if (GitHaveInfo && !GitUncommittedChanges && GitSHA1[0] != 0)
+		{
+			// The options that change what the logic computes. The pointer size keeps 32-bit builds (x87 floating point)
+			// apart from the 64-bit ones; Windows x64 and the macOS builds share it.
+#if defined(RTS_DEBUG)
+			const Int debugBuild = 1;
+#else
+			const Int debugBuild = 0;
+#endif
+			s_identity.format("logic %s crc%d data%d xfer%d path%d alloc%d circle%d net%d aigroup%d detmath%d debug%d ptr%d",
+				GitSHA1, (Int)RETAIL_COMPATIBLE_CRC, (Int)RETAIL_COMPATIBLE_DATA, (Int)RETAIL_COMPATIBLE_XFER_SAVE,
+				(Int)RETAIL_COMPATIBLE_PATHFINDING, (Int)RETAIL_COMPATIBLE_PATHFINDING_ALLOCATION,
+				(Int)RETAIL_COMPATIBLE_CIRCLE_FILL_ALGORITHM, (Int)RETAIL_COMPATIBLE_NETWORKING, (Int)RETAIL_COMPATIBLE_AIGROUP,
+				(Int)USE_DETERMINISTIC_MATH, debugBuild, (Int)sizeof(void*));
+		}
+	}
+	return s_identity.isEmpty() ? nullptr : s_identity.str();
 }
 
 UnsignedInt Version::getVersionNumber() const

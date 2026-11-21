@@ -56,6 +56,11 @@ public:
 	AsciiString getAsciiBuildUser() const;          ///< Return a string with the build user
 	UnicodeString getUnicodeBuildUser() const;      ///< Return a string with the build user. Is decorated with localized string
 
+	// TheSuperHackers @feature O136 The text that names this build's game logic on every platform: the git commit and
+	// the compile options that change the logic. Null when the build has no git info or was made with uncommitted
+	// changes; the exe CRC then keeps naming the build by its own exe (GlobalData::generateExeCRC).
+	static const char* getLogicBuildIdentity();
+
 	static Int getGitCommitCount();                    ///< Returns the git commit count as a number
 	static time_t getGitCommitTime();                  ///< Returns the git head commit time as a UTC timestamp
 	static const char* getGitCommitAuthorName();       ///< Returns the git head commit author name

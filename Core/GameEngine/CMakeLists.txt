@@ -92,6 +92,7 @@ set(GAMEENGINE_SRC
     Include/Common/OptionPreferences.h
     Include/Common/Fingerprint.h
     Include/Common/FrameTiming.h
+    Include/Common/LogicCrcLog.h
     Include/Common/MismatchReport.h
     Include/Common/Packs.h
     Include/Common/ReplayFollow.h
@@ -668,6 +669,7 @@ set(GAMEENGINE_SRC
     Source/Common/OptionPreferences.cpp
     Source/Common/Fingerprint.cpp
     Source/Common/FrameTiming.cpp
+    Source/Common/LogicCrcLog.cpp
     Source/Common/MismatchReport.cpp
     Source/Common/Packs.cpp
     Source/Common/ReplayFollow.cpp

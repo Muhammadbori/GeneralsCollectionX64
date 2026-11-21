@@ -53,6 +53,7 @@
 #include "Common/Recorder.h"
 #include "Common/StateTrace.h"
 #include "Common/MismatchReport.h"
+#include "Common/LogicCrcLog.h"
 #include "Common/TestCommands.h"
 #include "Common/StatsCollector.h"
 #include "Common/ThingFactory.h"
@@ -3319,6 +3320,13 @@ void GameLogic::update()
 			messageList->appendMessage(msg);
 			DEBUG_LOG(("Appended CRC on frame %d: %8.8X", m_frame, m_CRC));
 		}
+	}
+
+	// TheSuperHackers @feature O136 -logicCrcLog (test exes): the logic CRC of every frame (LogicCrcLog.h), the one
+	// computed above when the game computes it anyway, otherwise computed here for the log only.
+	if (LogicCrcLog::enabled() && getGameMode() != GAME_SHELL && getGameMode() != GAME_NONE)
+	{
+		LogicCrcLog::frame(m_frame, (generateForSolo || generateForMP) ? m_CRC : getCRC( CRC_RECALC ));
 	}
 
 	// collect stats

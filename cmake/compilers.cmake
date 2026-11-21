@@ -49,6 +49,10 @@ if (NOT IS_VS6_BUILD)
         add_compile_options(/MP)
         # Enforce strict __cplusplus version
         add_compile_options(/Zc:__cplusplus)
+        # TheSuperHackers @build O136 Spell out the floating point model the x64 build has always used by default
+        # (/fp:precise: no FMA contraction, no reassociation). The game logic must compute the same bits on every
+        # platform (Windows x64, macOS), so the model is written down instead of left to the compiler default.
+        add_compile_options(/fp:precise)
     else()
         add_compile_options(-Wsuggest-override)
         # Prevent FMA contraction (a*b+c -> fmadd) which skips intermediate
