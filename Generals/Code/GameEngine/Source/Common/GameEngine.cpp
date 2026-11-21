@@ -114,6 +114,7 @@
 
 
 #include "Common/version.h"
+#include "GameClient/LocalizedFallback.h"
 
 
 //-------------------------------------------------------------------------------------------------
@@ -198,42 +199,21 @@ static void updateWindowTitle()
 		title.concat(str);
 	}
 
-	UnicodeString productString = TheVersion->getUnicodeProductString();
-
-	if (!productString.isEmpty())
-	{
-		if (!title.isEmpty())
-			title.concat(L" ");
-		title.concat(productString);
-	}
-
+	// TheSuperHackers @tweak O132 The window title is our name and the game's name only:
+	// "Generals Collection x64 \x00B7 <game name>" in the game's text language (Russian when the game shows Russian).
+	// No "Community Patch", commit count or hashes (O118/O128 removed them from the version line; the product string
+	// still goes to <user data>\Version.log). The Russian Zero Hour name is the one the game's own Russian text uses.
 #if RTS_GENERALS
-	UnicodeString gameTitle = TheGameText->FETCH_OR_SUBSTITUTE("GUI:Command&ConquerGenerals", L"Command and Conquer Generals");
-#elif RTS_ZEROHOUR
-	UnicodeString gameTitle = TheGameText->FETCH_OR_SUBSTITUTE("GUI:Command&ConquerGenerals", L"Command and Conquer Generals Zero Hour");
+	const WideChar *gameNameEnglish = L"Command & Conquer Generals";
+	const WideChar *gameNameRussian = L"Command & Conquer \x0413\x0435\x043D\x0435\x0440\x0430\x043B\x044B";
+#else
+	const WideChar *gameNameEnglish = L"Command & Conquer Generals Zero Hour";
+	const WideChar *gameNameRussian = L"Command & Conquer \x0413\x0435\x043D\x0435\x0440\x0430\x043B\x044B \x2013 \x0427\x0430\x0441 \x0420\x0430\x0441\x043F\x043B\x0430\x0442\x044B";
 #endif
-
-	if (!gameTitle.isEmpty())
-	{
-		UnicodeString gameTitleFinal;
-		UnicodeString gameVersion = TheVersion->getUnicodeVersion();
-
-		if (productString.isEmpty())
-		{
-			gameTitleFinal = gameTitle;
-		}
-		else
-		{
-			UnicodeString gameTitleFormat = TheGameText->FETCH_OR_SUBSTITUTE("Version:GameTitle", L"for %ls");
-			gameTitleFinal.format(gameTitleFormat.str(), gameTitle.str());
-		}
-
-		if (!title.isEmpty())
-			title.concat(L" ");
-		title.concat(gameTitleFinal.str());
+	if (!title.isEmpty())
 		title.concat(L" ");
-		title.concat(gameVersion.str());
-	}
+	title.concat(L"Generals Collection x64 \x00B7 ");
+	title.concat(isRussianText() ? gameNameRussian : gameNameEnglish);
 
 	if (!title.isEmpty())
 	{
