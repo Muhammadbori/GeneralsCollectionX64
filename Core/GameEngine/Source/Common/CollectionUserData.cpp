@@ -139,6 +139,7 @@ namespace
 	/// <base>Generals Collection x64\<gameName>\ ; makes both levels
 	AsciiString makeChain(const AsciiString &base, const char *gameName)
 	{
+		CreateDirectoryA(base.str(), nullptr);   // normally exists already (Documents, LOCALAPPDATA)
 		AsciiString collection = base;
 		collection.concat(kCollection);
 		CreateDirectoryA(collection.str(), nullptr);
