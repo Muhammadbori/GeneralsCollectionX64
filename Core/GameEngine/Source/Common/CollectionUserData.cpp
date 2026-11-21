@@ -23,16 +23,49 @@
 
 #include "Common/CollectionUserData.h"
 
+#include "Common/CommandLine.h"
+#include "GameClient/GameText.h"
+#include "GameClient/LocalizedFallback.h"
+#include "GameClient/MessageBox.h"
+#include "GameClient/Shell.h"
+#include "GameLogic/GameLogic.h"
+
 #include <shlobj.h>
 #include <knownfolders.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 namespace
 {
-	// O121 (S65): the Documents folder itself, from Windows (OneDrive or Group Policy redirection included), never
-	// derived from the original game's folder name (in S65 that gave the profile folder for Generals and nothing for
-	// Zero Hour).
-	AsciiString documentsFolder()
+	const char *const kCollection = "Generals Collection x64";
+	const char *const kMarkerName = "UseThisFolder.txt";      // O133: present = this LOCALAPPDATA folder is the one in use
+	const char *const kNoticeShownName = "FolderNoticeShown.txt"; // O133: the one-time menu notice was shown
+
+	// O133: test switches (*uitest*.exe only) that stand in for the two Windows folders, so a test can make "Documents"
+	// unwritable (a deny-write ACL) without touching the player's real folders or Windows settings.
+	const char *testFolderArg(const char *name)
+	{
+		if (!CommandLine::isTestExe()) {
+			return nullptr;
+		}
+		for (int arg = 1; arg + 1 < __argc; ++arg) {
+			if (stricmp(__argv[arg], name) == 0) {
+				return __argv[arg + 1];
+			}
+		}
+		return nullptr;
+	}
+
+	AsciiString withSlash(const AsciiString &path)
+	{
+		AsciiString out = path;
+		if (!out.isEmpty() && !out.endsWith("\\")) {
+			out.concat('\\');
+		}
+		return out;
+	}
+
+	AsciiString knownFolder(const GUID &id)
 	{
 		AsciiString out;
 		typedef HRESULT(WINAPI *KnownFolderFunc)(const GUID &rfid, DWORD flags, HANDLE token, PWSTR *path);
@@ -40,11 +73,11 @@ namespace
 		if (shell == nullptr) {
 			shell = LoadLibraryA("shell32.dll");
 		}
-		KnownFolderFunc knownFolder = shell != nullptr ? (KnownFolderFunc)(void *)GetProcAddress(shell, "SHGetKnownFolderPath") : nullptr;
-		if (knownFolder != nullptr)
+		KnownFolderFunc func = shell != nullptr ? (KnownFolderFunc)(void *)GetProcAddress(shell, "SHGetKnownFolderPath") : nullptr;
+		if (func != nullptr)
 		{
 			PWSTR path = nullptr;
-			if (SUCCEEDED(knownFolder(FOLDERID_Documents, 0, nullptr, &path)) && path != nullptr)
+			if (SUCCEEDED(func(id, 0, nullptr, &path)) && path != nullptr)
 			{
 				char buffer[MAX_PATH * 2];
 				if (WideCharToMultiByte(CP_ACP, 0, path, -1, buffer, sizeof(buffer), nullptr, nullptr) > 0) {
@@ -53,6 +86,18 @@ namespace
 				CoTaskMemFree(path);
 			}
 		}
+		return out;
+	}
+
+	// O121 (S65): the Documents folder itself, from Windows (OneDrive or Group Policy redirection included), never
+	// derived from the original game's folder name (in S65 that gave the profile folder for Generals and nothing for
+	// Zero Hour).
+	AsciiString documentsFolder()
+	{
+		if (const char *test = testFolderArg("-testDocumentsDir")) {
+			return withSlash(test);
+		}
+		AsciiString out = knownFolder(FOLDERID_Documents);
 		if (out.isEmpty())
 		{
 			char buffer[MAX_PATH + 1];
@@ -60,10 +105,23 @@ namespace
 				out = buffer;
 			}
 		}
-		if (!out.isEmpty() && !out.endsWith("\\")) {
-			out.concat('\\');
+		return withSlash(out);
+	}
+
+	// O133: %LOCALAPPDATA% (Controlled folder access does not protect it)
+	AsciiString localAppDataFolder()
+	{
+		if (const char *test = testFolderArg("-testLocalAppDataDir")) {
+			return withSlash(test);
 		}
-		return out;
+		AsciiString out = knownFolder(FOLDERID_LocalAppData);
+		if (out.isEmpty())
+		{
+			if (const char *env = getenv("LOCALAPPDATA")) {
+				out = env;
+			}
+		}
+		return withSlash(out);
 	}
 
 	Bool isFolder(const AsciiString &path)
@@ -71,6 +129,115 @@ namespace
 		const DWORD attr = GetFileAttributesA(path.str());
 		return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) != 0;
 	}
+
+	Bool isFile(const AsciiString &path)
+	{
+		const DWORD attr = GetFileAttributesA(path.str());
+		return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) == 0;
+	}
+
+	/// <base>Generals Collection x64\<gameName>\ ; makes both levels
+	AsciiString makeChain(const AsciiString &base, const char *gameName)
+	{
+		AsciiString collection = base;
+		collection.concat(kCollection);
+		CreateDirectoryA(collection.str(), nullptr);
+		AsciiString ours = collection;
+		ours.concat('\\');
+		ours.concat(gameName);
+		ours.concat('\\');
+		CreateDirectoryA(ours.str(), nullptr);
+		return ours;
+	}
+
+	/// O133: can this process really create a file here? Controlled folder access lets the folder be listed and read but
+	/// fails CreateFile/CreateDirectory with ACCESS_DENIED. The probe file deletes itself when closed.
+	Bool canWrite(const AsciiString &folder, DWORD *error)
+	{
+		*error = 0;
+		if (!isFolder(folder)) {
+			*error = GetLastError() != 0 ? GetLastError() : ERROR_PATH_NOT_FOUND;
+			return FALSE;
+		}
+		AsciiString probe;
+		probe.format("%sWriteTest_%lu.tmp", folder.str(), (unsigned long)GetCurrentProcessId());
+		HANDLE h = CreateFileA(probe.str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+			FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
+		if (h == INVALID_HANDLE_VALUE) {
+			*error = GetLastError();
+			return FALSE;
+		}
+		DWORD written = 0;
+		const Bool ok = WriteFile(h, "x", 1, &written, nullptr) && written == 1;
+		if (!ok) {
+			*error = GetLastError();
+		}
+		CloseHandle(h);
+		return ok;
+	}
+
+	/// O133: copy what the player already had in the Documents folder (read only there), never overwriting.
+	void copyTreeOnce(const AsciiString &from, const AsciiString &to, Int *files, Int *failed)
+	{
+		AsciiString pattern = from;
+		pattern.concat('*');
+		WIN32_FIND_DATAA found;
+		HANDLE h = FindFirstFileA(pattern.str(), &found);
+		if (h == INVALID_HANDLE_VALUE) {
+			return;
+		}
+		do
+		{
+			if (strcmp(found.cFileName, ".") == 0 || strcmp(found.cFileName, "..") == 0) {
+				continue;
+			}
+			AsciiString src = from;
+			src.concat(found.cFileName);
+			AsciiString dst = to;
+			dst.concat(found.cFileName);
+			if ((found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+			{
+				CreateDirectoryA(dst.str(), nullptr);
+				copyTreeOnce(withSlash(src), withSlash(dst), files, failed);
+			}
+			else if (strnicmp(found.cFileName, "WriteTest_", 10) != 0 && stricmp(found.cFileName, "UserDataFolders.log") != 0)
+			{
+				if (CopyFileA(src.str(), dst.str(), TRUE)) {
+					++*files;
+				} else if (GetLastError() != ERROR_FILE_EXISTS) {
+					++*failed;
+				}
+			}
+		} while (FindNextFileA(h, &found));
+		FindClose(h);
+	}
+
+	UnicodeString toUnicode(const AsciiString &s)
+	{
+		UnicodeString out;
+		WideChar buffer[MAX_PATH * 2];
+		if (MultiByteToWideChar(CP_ACP, 0, s.str(), -1, buffer, ARRAY_SIZE(buffer)) > 0) {
+			out = buffer;
+		} else {
+			out.translate(s);
+		}
+		return out;
+	}
+
+	// the decision, made once per run (makeOurs is called more than once per run)
+	struct Decision
+	{
+		Bool made;
+		AsciiString ours;
+		AsciiString documentsOurs;
+		Bool fallback;         // ours is the LOCALAPPDATA folder
+		const char *why;
+		DWORD documentsError;  // the probe's error in Documents (0 = not probed or writable)
+		Int copiedFiles;
+		Int copyFailures;
+	};
+	Decision s_decision = { FALSE, AsciiString(), AsciiString(), FALSE, "", 0, 0, 0 };
+	Bool s_noticeDone = FALSE;
 }
 
 AsciiString CollectionUserData::makeOurs(const AsciiString &originalDir, const char *originalLeaf, const char *gameName)
@@ -80,15 +247,73 @@ AsciiString CollectionUserData::makeOurs(const AsciiString &originalDir, const c
 		return AsciiString::TheEmptyString;
 	}
 
-	AsciiString collection = documents;
-	collection.concat("Generals Collection x64");
-	CreateDirectoryA(collection.str(), nullptr);
+	// O133: Documents, or the LOCALAPPDATA folder when Documents cannot be written (Controlled folder access).
+	// Which one wins, decided once per run:
+	//  1. a marker file in <LOCALAPPDATA>\Generals Collection x64\<game>\ -> that folder, always. Once the game has moved
+	//     there it stays there, even if Documents becomes writable again, so the two folders never mix.
+	//  2. else Documents\Generals Collection x64\<game>\ when a probe file can be created there;
+	//  3. else the LOCALAPPDATA folder: made, marked, and filled once with a copy of what the Documents folder had;
+	//  4. if that cannot be written either, Documents as before (nothing better exists).
+	Decision &d = s_decision;
+	if (!d.made)
+	{
+		d.made = TRUE;
+		AsciiString docsOurs = documents;
+		docsOurs.concat(kCollection);
+		docsOurs.concat('\\');
+		docsOurs.concat(gameName);
+		docsOurs.concat('\\');
+		d.documentsOurs = docsOurs;
 
-	AsciiString ours = collection;
-	ours.concat('\\');
-	ours.concat(gameName);
-	ours.concat('\\');
-	CreateDirectoryA(ours.str(), nullptr);
+		const AsciiString local = localAppDataFolder();
+		AsciiString localOurs;
+		if (!local.isEmpty())
+		{
+			localOurs = local;
+			localOurs.concat(kCollection);
+			localOurs.concat('\\');
+			localOurs.concat(gameName);
+			localOurs.concat('\\');
+		}
+		AsciiString marker = localOurs;
+		marker.concat(kMarkerName);
+
+		DWORD localError = 0;
+		if (!localOurs.isEmpty() && isFile(marker))
+		{
+			d.ours = localOurs;
+			d.fallback = TRUE;
+			d.why = "marker found (the game moved here earlier; Documents is not used any more)";
+		}
+		else if (canWrite(makeChain(documents, gameName), &d.documentsError))
+		{
+			d.ours = docsOurs;
+			d.why = "Documents is writable";
+		}
+		else if (!localOurs.isEmpty() && canWrite(makeChain(local, gameName), &localError))
+		{
+			d.ours = localOurs;
+			d.fallback = TRUE;
+			d.why = "Documents cannot be written (Controlled folder access?); moved here";
+			if (isFolder(docsOurs)) {
+				copyTreeOnce(docsOurs, localOurs, &d.copiedFiles, &d.copyFailures);
+			}
+			if (FILE *fp = fopen(marker.str(), "w"))
+			{
+				fprintf(fp, "This folder holds the user data of Generals Collection x64 (%s) because Windows did not let the\n", gameName);
+				fprintf(fp, "game write to %s (error %lu; Controlled folder access?).\n", docsOurs.str(), (unsigned long)d.documentsError);
+				fprintf(fp, "While this file exists the game uses this folder, even if Documents becomes writable again.\n");
+				fprintf(fp, "Delete this file to use the Documents folder again (nothing is copied back).\n");
+				fclose(fp);
+			}
+		}
+		else
+		{
+			d.ours = docsOurs;
+			d.why = "neither Documents nor LOCALAPPDATA could be written; Documents kept";
+		}
+	}
+	const AsciiString ours = d.ours;
 
 	// the original folder, for the one-time import only: the game's own computed one when it names a folder under
 	// Documents, else Documents\<originalLeaf>\ (Generals' leaf comes from its INI and may still be empty here)
@@ -133,8 +358,60 @@ AsciiString CollectionUserData::makeOurs(const AsciiString &originalDir, const c
 		fprintf(fp, "Documents = %s\n", documents.str());
 		fprintf(fp, "Ours      = %s (%s)\n", ours.str(), isFolder(ours) ? "ok" : "MISSING");
 		fprintf(fp, "Original  = %s (read only; Options.ini %s)\n", original.str(), importNote);
+		fprintf(fp, "Chosen    = %s (%s)\n", d.fallback ? "LOCALAPPDATA" : "Documents", d.why);
+		if (d.documentsError != 0) {
+			fprintf(fp, "Documents write probe failed: error %lu in %s\n", (unsigned long)d.documentsError, d.documentsOurs.str());
+		}
+		if (d.copiedFiles != 0 || d.copyFailures != 0) {
+			fprintf(fp, "Copied from Documents once: %d files (%d failed)\n", d.copiedFiles, d.copyFailures);
+		}
+		if (d.fallback) {
+			fprintf(fp, "Notice    = Windows protects the Documents folder (Controlled folder access); settings, saves and replays are kept in %s\n", ours.str());
+		}
 		fclose(fp);
 		s_noteWritten = TRUE;
 	}
 	return ours;
+}
+
+Bool CollectionUserData::usesFallback()
+{
+	return s_decision.made && s_decision.fallback;
+}
+
+void CollectionUserData::showFallbackNoticeOnce()
+{
+	if (s_noticeDone) {
+		return;
+	}
+	if (!usesFallback()) {
+		s_noticeDone = TRUE;
+		return;
+	}
+	if (TheShell == nullptr || !TheShell->isShellActive() || TheShell->getScreenCount() <= 0 || !TheShell->isAnimFinished()) {
+		return;
+	}
+	if (TheGameLogic != nullptr && TheGameLogic->isInGame() && !TheGameLogic->isInShellGame()) {
+		return;
+	}
+	s_noticeDone = TRUE;
+
+	// once per player, not per run: a file next to the marker remembers it
+	AsciiString shownPath = s_decision.ours;
+	shownPath.concat(kNoticeShownName);
+	if (isFile(shownPath)) {
+		return;
+	}
+	if (FILE *fp = fopen(shownPath.str(), "w"))
+	{
+		fprintf(fp, "The menu notice about the folder %s was shown.\n", s_decision.ours.str());
+		fclose(fp);
+	}
+
+	UnicodeString body = localizedFallback(
+		L"Windows protects the Documents folder (Controlled folder access), so the game's settings, saves and replays are kept in this folder:",
+		L"Windows \x0437\x0430\x0449\x0438\x0449\x0430\x0435\x0442 \x043F\x0430\x043F\x043A\x0443 \x00AB\x0414\x043E\x043A\x0443\x043C\x0435\x043D\x0442\x044B\x00BB (\x043A\x043E\x043D\x0442\x0440\x043E\x043B\x0438\x0440\x0443\x0435\x043C\x044B\x0439 \x0434\x043E\x0441\x0442\x0443\x043F \x043A \x043F\x0430\x043F\x043A\x0430\x043C), \x043F\x043E\x044D\x0442\x043E\x043C\x0443 \x043D\x0430\x0441\x0442\x0440\x043E\x0439\x043A\x0438, \x0441\x043E\x0445\x0440\x0430\x043D\x0435\x043D\x0438\x044F \x0438 \x043F\x043E\x0432\x0442\x043E\x0440\x044B \x0438\x0433\x0440\x044B \x0445\x0440\x0430\x043D\x044F\x0442\x0441\x044F \x0432 \x043F\x0430\x043F\x043A\x0435:");
+	body.concat(L"\n");
+	body.concat(toUnicode(s_decision.ours));
+	MessageBoxOk(UnicodeString(L"Generals Collection x64"), body, nullptr);
 }

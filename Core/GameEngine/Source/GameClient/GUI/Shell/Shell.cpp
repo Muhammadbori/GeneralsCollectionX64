@@ -33,6 +33,7 @@
 #include "Common/RandomValue.h"
 #include "GameClient/Shell.h"
 #include "Common/Packs.h"
+#include "Common/CollectionUserData.h"
 #include "GameClient/WindowLayout.h"
 #include "GameClient/GameWindowManager.h"
 #include "GameClient/GameWindowTransitions.h"
@@ -237,6 +238,9 @@ void Shell::update()
 
 	// TheSuperHackers @feature Tells the player once about chosen data packs that could not be used (Packs.h).
 	Packs::showProblemsOnce();
+
+	// TheSuperHackers @feature O133 Tells the player once that the settings are kept outside Documents (CollectionUserData.h).
+	CollectionUserData::showFallbackNoticeOnce();
 
 	// TheSuperHackers @feature O112 The map packs are no longer offered for copying: the map lists read them in place
 	// (MapListTabs.h).

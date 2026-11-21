@@ -27,6 +27,8 @@
 // our Options.ini does not exist yet, the original Options.ini is copied once into our folder (read only), so the
 // player's settings carry over. The player's own maps live in our folder's Maps (listed under "Unofficial maps"; a map
 // received in a LAN room is written there too).
+// O133: when Windows does not let the game write there (Controlled folder access), the folder is
+//   %LOCALAPPDATA%\Generals Collection x64\<Zero Hour|Generals>\   (see CollectionUserData.cpp for which one wins)
 // -userDataDir still replaces our folder for tests (then the original folder is not used at all).
 
 #pragma once
@@ -41,4 +43,12 @@ namespace CollectionUserData
 	/// folder under Documents, else Documents\<originalLeaf>\), and writes UserDataFolders.log there. Empty when
 	/// Windows gives no Documents folder.
 	AsciiString makeOurs(const AsciiString &originalDir, const char *originalLeaf, const char *gameName);
+
+	/// O133: TRUE when Documents could not be written (Controlled folder access) and the folder in use is
+	/// <LOCALAPPDATA>\Generals Collection x64\<gameName>\ (or that folder's marker file chose it).
+	Bool usesFallback();
+
+	/// O133: tells the player once (per player, remembered in that folder) where the settings are kept; call it from the
+	/// shell's update, it waits until a menu is up.
+	void showFallbackNoticeOnce();
 }
