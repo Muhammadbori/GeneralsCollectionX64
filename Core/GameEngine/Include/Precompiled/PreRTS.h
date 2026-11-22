@@ -40,6 +40,10 @@ class STLSpecialAlloc;
 // PLEASE DO NOT ABUSE WINDOWS OR IT WILL BE REMOVED ENTIRELY. :-)
 //--------------------------------------------------------------------------------- System Includes
 
+// TheSuperHackers @build O151 (headless port) The Windows SDK headers below are Windows only; macOS and Linux get the
+// portable ones and the Win32 subset of CompatLib (Dependencies/CompatLib) after the #else.
+#ifdef _WIN32
+
 // TheSuperHackers @build JohnsterID 05/01/2026 Add ATL compatibility for MinGW-w64 builds
 #if defined(__GNUC__) && defined(_WIN32)
     #include <Utility/atl_compat.h>
@@ -88,6 +92,27 @@ class STLSpecialAlloc;
 #endif
 
 #include <dinput.h>
+
+#else // !_WIN32
+
+#include <windows.h>	// CompatLib
+#include <assert.h>
+#include <ctype.h>
+#include <float.h>
+#include <Utility/fstream_adapter.h>
+#include <io.h>			// CompatLib (unistd.h)
+#include <limits.h>
+#include <math.h>
+#include <memory.h>
+#include <stdarg.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <tchar.h>		// CompatLib
+#include <time.h>
+
+#endif // _WIN32
 
 //------------------------------------------------------------------------------------ STL Includes
 // srj sez: no, include STLTypesdefs below, instead, thanks
