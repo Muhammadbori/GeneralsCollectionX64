@@ -29,6 +29,12 @@
 
 struct ID3D12Resource;
 struct tagRECT;
+#ifdef RTS_RENDERER_VULKAN
+// TheSuperHackers @feature O138 In a Vulkan build (RTS_RENDERER=vulkan) these classes are implemented by
+// Backend/Vulkan/vkresource.cpp instead of dx12resource.cpp; the GPU objects are in the structs below.
+struct VKImageData;
+struct VKBufferData;
+#endif
 
 // A 2D texture. The game reads and writes texels through Lock/Unlock in the texture's own
 // WW3DFormat, exactly as it did with Direct3D 8 surfaces. Each level has a CPU copy while it is
@@ -120,6 +126,9 @@ public:
 	// True until a render or depth target is first cleared, drawn into or uploaded to.
 	bool Needs_Initial_Clear() const { return NeedsInitialClear; }
 	void Set_Initialized() { NeedsInitialClear = false; }
+#ifdef RTS_RENDERER_VULKAN
+	VKImageData * Peek_VK_Image() const { return VKImage; }
+#endif
 
 protected:
 	DX12TextureClass();
@@ -151,6 +160,9 @@ protected:
 	unsigned DXGIFormat;
 	unsigned SRVComponentMapping;
 	bool NeedsInitialClear;
+#ifdef RTS_RENDERER_VULKAN
+	VKImageData * VKImage;
+#endif
 };
 
 // A vertex or index buffer.
@@ -198,4 +210,7 @@ protected:
 	unsigned char * Shadow;		// dynamic buffers only
 	unsigned LockOffset;
 	unsigned LockSize;
+#ifdef RTS_RENDERER_VULKAN
+	VKBufferData * VKBuffer;	// static buffers only
+#endif
 };

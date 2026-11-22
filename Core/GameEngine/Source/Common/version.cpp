@@ -410,7 +410,12 @@ UnicodeString Version::getUnicodeProductVersionHashString() const
 		}
 	}
 
+	// O138: a Vulkan build (RTS_RENDERER=vulkan) names its renderer.
+#ifdef RTS_RENDERER_VULKAN
+	UnicodeString str = L"Generals Collection x64 \x00B7 Vulkan \x00B7 ";
+#else
 	UnicodeString str = L"Generals Collection x64 \x00B7 DirectX 12 \x00B7 ";
+#endif
 	str.concat(gameVersion);
 	return str;
 }

@@ -87,3 +87,4 @@ endif()
 
 # The FFmpeg DLLs next to the executable when a prebuilt FFmpeg package is used (cmake/ffmpeg-prebuilt.cmake).
 rts_copy_ffmpeg_runtime(g_generals)
+rts_copy_renderer_runtime(g_generals)

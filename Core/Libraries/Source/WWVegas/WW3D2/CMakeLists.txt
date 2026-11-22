@@ -244,6 +244,17 @@ set(WW3D2_SRC
     ww3dtrig.h
 )
 
+# TheSuperHackers @build O138 A Vulkan build implements the renderer interface with Backend/Vulkan instead of
+# the Direct3D 12 device and resources (cmake/renderer.cmake).
+if(RTS_RENDERER STREQUAL "vulkan")
+    list(REMOVE_ITEM WW3D2_SRC Backend/DX12/dx12device.cpp Backend/DX12/dx12resource.cpp)
+    list(APPEND WW3D2_SRC
+        Backend/Vulkan/vkdevice.cpp
+        Backend/Vulkan/vkinternal.h
+        Backend/Vulkan/vkresource.cpp
+    )
+endif()
+
 add_library(corei_ww3d2 INTERFACE)
 
 target_sources(corei_ww3d2 INTERFACE ${WW3D2_SRC})
@@ -251,6 +262,11 @@ target_sources(corei_ww3d2 INTERFACE ${WW3D2_SRC})
 target_include_directories(corei_ww3d2 INTERFACE
     "${CMAKE_CURRENT_SOURCE_DIR}"
 )
+
+if(RTS_RENDERER STREQUAL "vulkan")
+    # Headers only: Vulkan and the shader compiler are loaded at run time.
+    target_include_directories(corei_ww3d2 INTERFACE ${Vulkan_INCLUDE_DIRS})
+endif()
 
 if (MSVC AND NOT IS_VS6_BUILD)
     target_link_libraries(corei_ww3d2 INTERFACE

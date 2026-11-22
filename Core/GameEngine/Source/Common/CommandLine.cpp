@@ -172,6 +172,27 @@ Int parseDX12(char *args[], int)
 	return 1;
 }
 
+// TheSuperHackers @feature O138 -vulkan: a Vulkan build (RTS_RENDERER=vulkan) always renders with Vulkan and accepts
+// it. A Direct3D 12 build cannot, so it ends with a message (exit code 6) instead of a run that looks like Vulkan.
+// The renderer of a build does not depend on -dx12, which every build accepts.
+Int parseVulkan(char *args[], int)
+{
+#ifndef RTS_RENDERER_VULKAN
+	const char *message = "This build renders with Direct3D 12.\nStart a Vulkan build of the game for -vulkan.";
+	OutputDebugStringA(message);
+	Bool unattended = FALSE;
+	for (int i = 1; i < __argc; ++i)
+	{
+		if (stricmp(__argv[i], "-shotFrames") == 0 || stricmp(__argv[i], "-headless") == 0)
+			unattended = TRUE;
+	}
+	if (!unattended)
+		MessageBoxA(nullptr, message, "Command & Conquer", MB_OK | MB_ICONERROR);
+	::ExitProcess(6);
+#endif
+	return 1;
+}
+
 // TheSuperHackers @info The Direct3D 8 renderer is being removed: its terrain and tree textures are gone, so -dx8 would
 // start a broken renderer. It ends the game with a message (exit code 5) instead. Unattended runs (-shotFrames) get no
 // dialog, only the exit code and the debug output.
@@ -2146,6 +2167,7 @@ static CommandLineParam paramsForStartup[] =
 	// TheSuperHackers @feature 2026 Direct3D 12 is the renderer. -dx12 changes nothing; -dx8 ends with a message,
 	// because the Direct3D 8 renderer is being removed.
 	{ "-dx12", parseDX12 },
+	{ "-vulkan", parseVulkan },
 	{ "-dx8", parseDX8 },
 
 	// TheSuperHackers @feature 2026 Enable the Direct3D 12 debug layer and log its messages to dx12debug.log.
