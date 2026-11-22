@@ -43,6 +43,7 @@
 #include "GameNetwork/LanRoom.h"
 #include "GameNetwork/LANAPICallbacks.h"
 #include "GameClient/InGameUI.h"
+#include "Common/CommandLine.h"
 
 #include <map>
 #include "Common/LanClock.h"   // O75
@@ -367,6 +368,41 @@ void LanTest::joinLog(const char *format, ...)
 	va_end(args);
 	fputc('\n', f);
 	fclose(f);
+}
+
+namespace
+{
+	std::map<UnsignedInt, UnsignedByte> s_platformByIP;   // O142: main thread only (the LAN update and the lobby drawing)
+}
+
+void lanNotePlatform(UnsignedInt ip, UnsignedByte platform)
+{
+	if (platform == LAN_PLATFORM_WIN || platform == LAN_PLATFORM_MAC) {
+		s_platformByIP[ip] = platform;
+	}
+}
+
+UnsignedByte lanPlatformOf(UnsignedInt ip)
+{
+	std::map<UnsignedInt, UnsignedByte>::const_iterator it = s_platformByIP.find(ip);
+	return it != s_platformByIP.end() ? it->second : (UnsignedByte)LAN_PLATFORM_UNKNOWN;
+}
+
+// O142 (M6): see LANAPI.h. Read once from the command line; only a test exe ("uitest" in its name) takes the switch.
+Bool lanTestReportsMac()
+{
+	static Int s_state = -1;
+	if (s_state < 0) {
+		s_state = 0;
+		if (CommandLine::isTestExe()) {
+			for (int arg = 1; arg < __argc; ++arg) {
+				if (stricmp(__argv[arg], "-lanTestMac") == 0) {
+					s_state = 1;
+				}
+			}
+		}
+	}
+	return s_state == 1;
 }
 
 void LanTest::platformLog(UnsignedInt senderIP, UnsignedByte platform)
@@ -720,6 +756,7 @@ void LANAPI::update()
 			LANMessage *msg = (LANMessage *)(m_transport->m_inBuffer[i].data);
 			terminateStrings(msg);   // O33 (review 7): every text field of the message ends inside the message
 			noteHeardFrom(senderIP, msg->messageType);   // O71: a seat's room message counts as heard (O73: not lobby-wide ones)
+			lanNotePlatform(senderIP, msg->platform);   // O142: for the lobby's apple mark
 			// O84 (H16): a join request to this host's room: the requester is checked in the join class (its own room,
 			// the oldest request leaves first), so a host that requires the anti-cheat can always check a stranger
 			if (msg->messageType == LANMessage::MSG_REQUEST_JOIN && !m_inLobby && m_currentGame != nullptr

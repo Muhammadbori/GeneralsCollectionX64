@@ -73,7 +73,13 @@ namespace
 		UnsignedInt bits = 0;
 	};
 
+	// O142 (M6, plan10 decision 3): there is no anti-cheat for macOS; a Mac build runs as with -lanNoGuard (LAN open,
+	// no shield, a Mac host has no anti-cheat rule). Windows hosts let Mac players in by their platform (LANAPIhandlers.cpp).
+#if defined(__APPLE__)
+	Bool s_noGuard = TRUE;
+#else
 	Bool s_noGuard = FALSE;
+#endif
 	Bool s_testMode = FALSE;
 	Bool s_started = FALSE;
 	Bool s_connected = FALSE;

@@ -442,7 +442,9 @@ void LANAPI::handleRequestJoin( LANMessage *msg, UnsignedInt senderIP )
 
 			// TheSuperHackers @feature O30 (row 15) The host's anti-cheat rule (on by default): only a player whose
 			// anti-cheat this host's anti-cheat has verified gets in; the player is checked at once for the next try.
-			if (canJoin && GuardLink::hostRequiresGuard() && GuardLink::verdictOf(senderIP) != GuardLink::VERDICT_VERIFIED)
+			// O142 (M6, plan10 decision 3): a Mac player has no anti-cheat (there is none for macOS) and is let in with
+			// the apple mark instead of a shield; the platform is what the player says, Windows players are checked as before.
+			if (canJoin && msg->platform != LAN_PLATFORM_MAC && GuardLink::hostRequiresGuard() && GuardLink::verdictOf(senderIP) != GuardLink::VERDICT_VERIFIED)
 			{
 				DEBUG_LOG(("LANAPI::handleRequestJoin - join denied: no verified anti-cheat"));
 				reply.messageType = LANMessage::MSG_JOIN_DENY;
@@ -450,6 +452,11 @@ void LANAPI::handleRequestJoin( LANMessage *msg, UnsignedInt senderIP )
 				reply.GameNotJoined.gameIP = m_localIP;
 				reply.GameNotJoined.playerIP = senderIP;
 				canJoin = false;
+				LanTest::joinLog("host: join of %d.%d.%d.%d denied: no verified anti-cheat (platform %s)", PRINTF_IP_AS_4_INTS(senderIP), lanPlatformName(msg->platform));
+			}
+			else if (canJoin && msg->platform == LAN_PLATFORM_MAC && GuardLink::hostRequiresGuard())
+			{
+				LanTest::joinLog("host: join of %d.%d.%d.%d: a Mac player, let in without anti-cheat", PRINTF_IP_AS_4_INTS(senderIP));
 			}
 
 // TheSuperHackers @tweak Disables the duplicate serial check

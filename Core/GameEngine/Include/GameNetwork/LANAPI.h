@@ -58,12 +58,19 @@ enum LANPlatform : UnsignedByte
 	LAN_PLATFORM_WIN = 'w',
 	LAN_PLATFORM_MAC = 'm'
 };
+/// O142 (M6): a test exe started with -lanTestMac reports 'm', to try the Mac player's lobby on Windows. Product exes
+/// (names without "uitest") ignore the switch, so a release build always reports its real platform.
+Bool lanTestReportsMac();
+/// O142 (M6): the platform each LAN address last sent in a message header (0 when nothing was heard from it yet), for
+/// the lobby's apple mark: the games list is rebuilt from every announce, a seat's platform is not in it.
+void lanNotePlatform(UnsignedInt ip, UnsignedByte platform);
+UnsignedByte lanPlatformOf(UnsignedInt ip);
 inline UnsignedByte lanLocalPlatform()
 {
 #if defined(__APPLE__)
 	return LAN_PLATFORM_MAC;
 #else
-	return LAN_PLATFORM_WIN;
+	return lanTestReportsMac() ? LAN_PLATFORM_MAC : LAN_PLATFORM_WIN;
 #endif
 }
 inline const char *lanPlatformName(UnsignedByte platform)

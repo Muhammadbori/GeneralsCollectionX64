@@ -472,16 +472,104 @@ namespace
 		}
 	}
 
+	/// TheSuperHackers @feature O142 (M6, plan10 decision 4) In the shield's place, a Mac player gets an apple: our own
+	/// drawing (not the Apple logo), the shield's size and its row by row style. A light grey body of two round lobes with
+	/// a dip at the top, a short stem and a green leaf.
+	enum { SHIELD_MAC = 100 };   ///< shieldOfIP of a Mac player (never a GuardLink verdict)
+	void drawAppleShape(Int x, Int y, Int size)
+	{
+		const Color body = GameMakeColor(214, 218, 224, 255);
+		const Color edge = GameMakeColor(120, 126, 134, 255);
+		const Color stem = GameMakeColor(110, 80, 50, 255);
+		const Int w = max(6, size * 3 / 4);
+		const Int cx = x + size / 2;
+		const Int top = y + size / 4;
+		const Int h = max(5, size - size / 4 - size / 12);
+		for (Int r = 0; r < h; ++r)
+		{
+			// an ellipse a little wider below the middle, with a dip in the middle of the top and the bottom
+			const Real v = (r + 0.5f) / (Real)h;
+			const Real e = (v - 0.52f) / 0.52f;
+			const Real wide = v > 0.5f ? 1.0f : 0.92f;
+			const Real half = (w / 2.0f) * wide * (Real)sqrt(max(0.0f, 1.0f - e * e));
+			Real dip = 0.0f;
+			if (v < 0.2f)
+				dip = (w / 7.0f) * (1.0f - v / 0.2f);
+			else if (v > 0.9f)
+				dip = (w / 10.0f) * ((v - 0.9f) / 0.1f);
+			const Int hw = (Int)(half + 0.5f);
+			const Int d = (Int)(dip + 0.5f);
+			if (hw <= d)
+				continue;
+			TheDisplay->drawFillRect(cx - hw, top + r, hw - d, 1, body);
+			TheDisplay->drawFillRect(cx + d, top + r, hw - d, 1, body);
+			// the outline: the outer ends of each row
+			TheDisplay->drawFillRect(cx - hw, top + r, 1, 1, edge);
+			TheDisplay->drawFillRect(cx + hw - 1, top + r, 1, 1, edge);
+		}
+		const Int stemTop = y + max(1, size / 12);
+		TheDisplay->drawLine(cx, top + 1, cx + 1, stemTop, size >= 16 ? 2.0f : 1.0f, stem);
+		TheDisplay->drawLine(cx + 1, top - size / 12, cx + size / 4, stemTop, size >= 16 ? 2.5f : 2.0f, kGreen);
+	}
+
 	void drawShield(Int x, Int y, Int size, Int verdict)
 	{
-		if (s.anticheat) {
+		if (!s.anticheat) {
+			return;
+		}
+		if (verdict == SHIELD_MAC) {
+			drawAppleShape(x, y, size);
+		} else {
 			drawShieldVerdict(x, y, size, verdict);
 		}
 	}
 
-	/// The anti-cheat verdict of a player: this player's own checks, or what this player's anti-cheat found about them.
+	/// O142: the platform a player told in its LAN messages ('w', 'm'; 0 when not known): this computer, a lobby player,
+	/// a seat of this player's game, or the host of a listed game.
+	UnsignedByte platformOfIP(UnsignedInt ip)
+	{
+		if (TheLAN == nullptr) {
+			return LAN_PLATFORM_UNKNOWN;
+		}
+		if (ip == TheLAN->GetLocalIP()) {
+			return lanLocalPlatform();
+		}
+		if (const UnsignedByte heard = lanPlatformOf(ip)) {
+			return heard;
+		}
+		if (LANAPI *lan = dynamic_cast<LANAPI *>(TheLAN)) {
+			if (LANPlayer *player = lan->LookupPlayer(ip)) {
+				if (player->getPlatform() != LAN_PLATFORM_UNKNOWN) {
+					return player->getPlatform();
+				}
+			}
+		}
+		if (LANGameInfo *game = TheLAN->GetMyGame()) {
+			for (Int i = 0; i < MAX_SLOTS; ++i) {
+				LANGameSlot *slot = game->getLANSlot(i);
+				if (slot != nullptr && slot->isHuman() && slot->getIP() == ip && slot->getPlatform() != LAN_PLATFORM_UNKNOWN) {
+					return slot->getPlatform();
+				}
+			}
+		}
+		if (LANGameInfo *game = TheLAN->LookupGameByHost(ip)) {
+			for (Int i = 0; i < MAX_SLOTS; ++i) {
+				LANGameSlot *slot = game->getLANSlot(i);
+				if (slot != nullptr && slot->isHuman() && slot->getIP() == ip && slot->getPlatform() != LAN_PLATFORM_UNKNOWN) {
+					return slot->getPlatform();
+				}
+			}
+		}
+		return LAN_PLATFORM_UNKNOWN;
+	}
+
+	/// The anti-cheat verdict of a player: this player's own checks, or what this player's anti-cheat found about them;
+	/// O142: SHIELD_MAC for a Mac player, who has no anti-cheat.
 	Int shieldOfIP(UnsignedInt ip)
 	{
+		if (platformOfIP(ip) == LAN_PLATFORM_MAC) {
+			return SHIELD_MAC;
+		}
 		if (TheLAN != nullptr && ip == TheLAN->GetLocalIP()) {
 			return GuardLink::ownVerdict();
 		}
