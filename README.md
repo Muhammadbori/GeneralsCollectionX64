@@ -1,3 +1,32 @@
+# Generals Collection x64
+
+A 64-bit port of *Command & Conquer: Generals* and *Zero Hour* with a **DirectX 12** renderer for Windows, and a
+**macOS (Apple Silicon)** port in progress. This is a fork of
+[TheSuperHackers/GeneralsGameCode](https://github.com/TheSuperHackers/GeneralsGameCode); all credit for the base code
+goes to them and to the original developers.
+
+64-битный порт *Generals* и *Zero Hour* (DirectX 12, Windows); порт для macOS (Apple Silicon) в разработке.
+
+**Status**
+
+| Platform | State |
+|---|---|
+| Windows 10/11 x64 (DirectX 12) | playable release (installer, Russian + English, LAN) |
+| Windows Vulkan renderer | in development (menus and shell map render; for the macOS port) |
+| macOS, Apple Silicon (Vulkan + MoltenVK) | in development; goal: LAN play together with the Windows x64 build |
+
+**Game data is not included.** You need your own copy of the game; this repository holds source code only.
+
+**Building (Windows):** Visual Studio 2026 with the C++ workload; from an "x64 Native Tools" prompt run `cmake --preset win64` and
+`cmake --build build/win64 --config Release`. Optional: `win64-clang` preset (needs the "C++ Clang Compiler for Windows" component),
+`-DRTS_RENDERER=vulkan` (needs the Vulkan SDK).
+
+**Bugs and requests:** use the Issues tab of this repository.
+
+License: GPL-3.0, same as the upstream project (see `LICENSE.md`).
+
+---
+
 [![GitHub Release](https://img.shields.io/github/v/release/TheSuperHackers/GeneralsGameCode?include_prereleases&sort=date&display_name=tag&style=flat&label=Release)](https://github.com/TheSuperHackers/GeneralsGameCode/releases)
 ![GitHub milestone details](https://img.shields.io/github/milestones/progress-percent/TheSuperHackers/GeneralsGameCode/3)
 ![GitHub milestone details](https://img.shields.io/github/milestones/progress-percent/TheSuperHackers/GeneralsGameCode/1)
