@@ -129,7 +129,8 @@ namespace
 	const Text kConnect = { "GUI:LanConnect", L"Connect", L"\x0412\x043E\x0439\x0442\x0438" };
 	const Text kOpenGames = { "GUI:LanOpenGames", L"OPEN GAMES", L"\x041E\x0422\x041A\x0420\x042B\x0422\x042B\x0415 \x0418\x0413\x0420\x042B" };
 	const Text kHint = { "GUI:LanMarksHint", L"tick: files match", L"\x0433\x0430\x043B\x043E\x0447\x043A\x0430: \x0444\x0430\x0439\x043B\x044B \x0441\x043E\x0432\x043F\x0430\x0434\x0430\x044E\x0442" };
-	const Text kHintShield = { "GUI:LanMarksHintShield", L"shield: anti-cheat   tick: files match", L"\x0449\x0438\x0442: \x0437\x0430\x0449\x0438\x0442\x0430 \x043E\x0442 \x0447\x0438\x0442\x043E\x0432   \x0433\x0430\x043B\x043E\x0447\x043A\x0430: \x0444\x0430\x0439\x043B\x044B \x0441\x043E\x0432\x043F\x0430\x0434\x0430\x044E\x0442" };
+	// O143: the apple of a Mac player (O142) in the legend too: "apple: player on a Mac" / "яблоко: игрок на Mac"
+	const Text kHintShield = { "GUI:LanMarksHintShield", L"shield: anti-cheat   tick: files match   apple: player on a Mac", L"\x0449\x0438\x0442: \x0437\x0430\x0449\x0438\x0442\x0430 \x043E\x0442 \x0447\x0438\x0442\x043E\x0432   \x0433\x0430\x043B\x043E\x0447\x043A\x0430: \x0444\x0430\x0439\x043B\x044B \x0441\x043E\x0432\x043F\x0430\x0434\x0430\x044E\x0442   \x044F\x0431\x043B\x043E\x043A\x043E: \x0438\x0433\x0440\x043E\x043A \x043D\x0430 Mac" };
 	const Text kColGame = { "GUI:LanColGame", L"Game", L"\x0418\x0433\x0440\x0430" };
 	const Text kColMap = { "GUI:LanColMap", L"Map", L"\x041A\x0430\x0440\x0442\x0430" };
 	const Text kColPlayers = { "GUI:LanColPlayers", L"Players", L"\x0418\x0433\x0440\x043E\x043A\x0438" };

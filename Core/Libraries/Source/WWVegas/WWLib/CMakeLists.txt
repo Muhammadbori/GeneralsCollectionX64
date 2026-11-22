@@ -159,6 +159,10 @@ if(WIN32)
         WWCOMUtil.cpp
         WWCOMUtil.h
     )
+else()
+    # TheSuperHackers @build O143 (headless port, part 2) The Windows exception handler (structured exceptions, stack
+    # walk with imagehlp, the register dump) has no macOS/Linux counterpart yet; Except.h declares it for Windows only.
+    list(REMOVE_ITEM WWLIB_SRC Except.cpp)
 endif()
 
 add_library(core_wwlib STATIC)
