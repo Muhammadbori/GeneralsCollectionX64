@@ -19,7 +19,8 @@ concurrency:
 
 jobs:
   build-unix:
-    name: Build core ${{ matrix.preset }}
+    # O146: continue-on-error makes the run green while these jobs still fail; the name says so.
+    name: Build core ${{ matrix.preset }} (porting, may fail)
     if: github.repository != 'TheSuperHackers/GeneralsGameCode'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45

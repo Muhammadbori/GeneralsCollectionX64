@@ -20,6 +20,7 @@
 
 #include <string.h>
 #include <ctype.h>
+#include <wctype.h> // towlower (O146: not reached through other headers on macOS/Linux)
 
 
 // Declaration
@@ -137,13 +138,27 @@ template<typename T> size_t strlcat_t(T *dst, const T *src, size_t dstsize)
 	return dstlen + srclen; // length tried to create
 }
 
+// TheSuperHackers @build O146 (headless port) glibc 2.38 and later have strlcpy, strlcat, wcslcpy and wcslcat (declared
+// with throw()), macOS has strlcpy and strlcat: those are used instead of the ones below.
+#if defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 38))
+	#define HAVE_STRLCPY 1
+	#define HAVE_STRLCAT 1
+	#define HAVE_WCSLCPY 1
+	#define HAVE_WCSLCAT 1
+#elif defined(__APPLE__)
+	#define HAVE_STRLCPY 1
+	#define HAVE_STRLCAT 1
+#endif
+
 #ifndef HAVE_STRLCPY
 inline size_t strlcpy(char *dst, const char *src, size_t dstsize) { return strlcpy_t(dst, src, dstsize); }
 #endif
 #ifndef HAVE_STRLCAT
 inline size_t strlcat(char *dst, const char *src, size_t dstsize) { return strlcat_t(dst, src, dstsize); }
 #endif
+#ifndef HAVE_WCSLCPY
 inline size_t wcslcpy(unichar *dst, const unichar *src, size_t dstsize) { return strlcpy_t(dst, src, dstsize); }
+#endif
 #if RTS_WIRE_CONVERT
 // M2: a packet's text field (2-byte UTF-16 units) filled from a WideChar string; at most dstsize - 1 units, always terminated.
 // Returns the units the whole string needs (like strlcpy returns the length it tried to create).
@@ -166,7 +181,9 @@ inline WireChar *wcscpy(WireChar *dst, const unichar *src)
 	return dst;
 }
 #endif
+#ifndef HAVE_WCSLCAT
 inline size_t wcslcat(unichar *dst, const unichar *src, size_t dstsize) { return strlcat_t(dst, src, dstsize); }
+#endif
 
 // Templated strlmove. Prefer using this over strlcpy if dst and src overlap.
 // Moves src into dst until dstsize minus one. Always null terminates.

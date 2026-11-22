@@ -14,6 +14,7 @@ goes to them and to the original developers.
 | Windows 10/11 x64 (DirectX 12) | playable release (installer, Russian + English, LAN) |
 | Windows Vulkan renderer | in development (menus and shell map render; for the macOS port) |
 | macOS, Apple Silicon (Vulkan + MoltenVK) | in development; goal: LAN play together with the Windows x64 build |
+| macOS / Linux arm64 CI (`Mac CI`) | the core libraries do not compile there yet: those jobs are allowed to fail ("porting, may fail"), so a green run means only the Windows build passed |
 
 **Game data is not included.** You need your own copy of the game; this repository holds source code only.
 

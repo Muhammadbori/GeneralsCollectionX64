@@ -16,6 +16,14 @@ set(PROFILE_SRC
     "profile.cpp"
 )
 
+# TheSuperHackers @build O146 (headless port) Built on Windows only for now, as the debug library it uses (see there);
+# macOS and Linux get its headers.
+if(NOT WIN32)
+    add_library(core_profile_legacy INTERFACE)
+    target_include_directories(core_profile_legacy INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/Include)
+    return()
+endif()
+
 add_library(core_profile_legacy STATIC)
 
 target_sources(core_profile_legacy PRIVATE ${PROFILE_SRC})

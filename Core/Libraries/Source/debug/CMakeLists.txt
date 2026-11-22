@@ -21,6 +21,15 @@ set(DEBUG_SRC
     "internal.h"
 )
 
+# TheSuperHackers @build O146 (headless port) The debug library is the Windows debugging framework (console, named pipes,
+# structured exceptions, imagehlp stack walk). macOS and Linux get its headers only for now; a portable implementation
+# follows when the games are linked there (M3 part 3).
+if(NOT WIN32)
+    add_library(core_debug INTERFACE)
+    target_include_directories(core_debug INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/Include)
+    return()
+endif()
+
 add_library(core_debug STATIC)
 
 target_sources(core_debug PRIVATE ${DEBUG_SRC})
