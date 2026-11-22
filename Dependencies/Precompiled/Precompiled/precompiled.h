@@ -45,4 +45,18 @@
 #define NOMINMAX // Exclude min/max macros from Windows headers
 #endif
 
+#else // !_WIN32
+
+// TheSuperHackers @build O144 (headless port) The Microsoft keywords the base headers use (debug, profile), for clang and
+// gcc on macOS and Linux. Macros, not typedefs: the code also writes "unsigned __int64".
+#ifndef __int64
+#define __int64 long long
+#endif
+#ifndef _int64
+#define _int64 long long
+#endif
+#ifndef __forceinline
+#define __forceinline __attribute__((always_inline)) inline
+#endif
+
 #endif // _WIN32

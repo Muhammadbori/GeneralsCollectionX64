@@ -29,8 +29,25 @@ for raw in open(log, errors="replace"):
 
 # GitHub keeps at most 10 error annotations per step; the first ones are the useful ones (later errors often follow
 # from them). Every error goes to the summary.
-for path, line, col, msg in errors[:10]:
+# O145: the error annotations come from as many different files as possible (one per file first), and one notice holds
+# the whole list (the job summary is not shown on the public run page), so one CI round shows every distinct error.
+picked = []
+files_seen = set()
+for e in errors:
+    if e[0] not in files_seen and len(picked) < 9:
+        picked.append(e)
+        files_seen.add(e[0])
+for e in errors:
+    if len(picked) >= 9:
+        break
+    if e not in picked:
+        picked.append(e)
+for path, line, col, msg in picked:
     print("::error file=%s,line=%s,col=%s::%s" % (path, line, col, msg.replace("%", "%25")[:500]))
+if errors:
+    listing = "%d distinct errors in %d files:%%0A" % (len(errors), len(set(e[0] for e in errors)))
+    listing += "%0A".join(("%s:%s: %s" % (p, l, m)).replace("%", "%25") for p, l, c, m in errors[:150])
+    print("::notice title=All compiler errors::%s" % listing[:60000])
 if not errors:
     # No compiler error lines (a linker or ninja failure): the first lines that name an error.
     for line in other[:10]:
