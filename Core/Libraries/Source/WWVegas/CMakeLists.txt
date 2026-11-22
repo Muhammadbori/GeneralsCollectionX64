@@ -15,7 +15,7 @@ target_include_directories(core_wwcommon INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-if(RTS_BUILD_CORE_ONLY)
+if(RTS_BUILD_CORE_ONLY OR RTS_BUILD_ENGINE_ONLY)
     add_subdirectory(WWDebug)
     add_subdirectory(WWLib)
     add_subdirectory(WWMath)

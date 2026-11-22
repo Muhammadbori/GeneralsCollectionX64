@@ -30,6 +30,10 @@ add_subdirectory(Libraries)
 
 # Base GameEngine library
 add_subdirectory(GameEngine)
+# O150 (RTS_BUILD_ENGINE_ONLY) see the top level CMakeLists.txt.
+if(RTS_BUILD_ENGINE_ONLY)
+    return()
+endif()
 
 # Platform specific GameEngine code
 add_subdirectory(GameEngineDevice)

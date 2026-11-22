@@ -70,6 +70,10 @@ else()
     set(RTS_BUILD_CORE_ONLY_DEFAULT ON)
 endif()
 option(RTS_BUILD_CORE_ONLY "Build only the portable core libraries (headless port in progress)" ${RTS_BUILD_CORE_ONLY_DEFAULT})
+# TheSuperHackers @build O150 (headless port, part 3) The next stage: the core libraries and the game logic libraries
+# of both games (Core/GameEngine, z_gameengine, g_gameengine), without the device (renderer, audio, video), the
+# executables and the tools. The WW3D2, WWAudio and WWDownload headers are seen, their libraries are not built.
+option(RTS_BUILD_ENGINE_ONLY "Build the core and game engine libraries only (headless port in progress)" OFF)
 
 # TheSuperHackers @build The games no longer use the Direct3D 8 SDK. It is fetched only for the tools that are not
 # ported to Direct3D 12 yet (RTS_BUILD_DX8_TOOLS) and the 3ds Max exporter in the extras.

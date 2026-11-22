@@ -148,27 +148,29 @@
             "name": "linux-arm64",
             "inherits": "default",
             "hidden": false,
-            "displayName": "Linux arm64 Release (headless port, core libraries)",
+            "displayName": "Linux arm64 Release (headless port, core and game engine libraries)",
             "generator": "Ninja",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
                 "CMAKE_C_COMPILER": "clang",
                 "CMAKE_CXX_COMPILER": "clang++",
-                "RTS_BUILD_CORE_ONLY": "ON"
+                "RTS_BUILD_CORE_ONLY": "OFF",
+                "RTS_BUILD_ENGINE_ONLY": "ON"
             }
         },
         {
             "name": "macos-arm64",
             "inherits": "default",
             "hidden": false,
-            "displayName": "macOS arm64 Release (headless port, core libraries)",
+            "displayName": "macOS arm64 Release (headless port, core and game engine libraries)",
             "generator": "Ninja",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
                 "CMAKE_C_COMPILER": "clang",
                 "CMAKE_CXX_COMPILER": "clang++",
                 "CMAKE_OSX_ARCHITECTURES": "arm64",
-                "RTS_BUILD_CORE_ONLY": "ON"
+                "RTS_BUILD_CORE_ONLY": "OFF",
+                "RTS_BUILD_ENGINE_ONLY": "ON"
             }
         },
         {

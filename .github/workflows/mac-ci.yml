@@ -53,7 +53,8 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          cmake --build build/${{ matrix.preset }} --target core_wwdebug core_wwlib core_wwmath -- -k 0 2>&1 | tee build.log
+          # O150: the game engine libraries of both games too (RTS_BUILD_ENGINE_ONLY); -k 0 shows every failing file.
+          cmake --build build/${{ matrix.preset }} --target core_wwdebug core_wwlib core_wwmath z_gameengine g_gameengine -- -k 0 2>&1 | tee build.log
 
       # O144: the raw job log needs a signed-in account; the errors also go to annotations and the job summary.
       - name: Report Compile Errors
@@ -70,13 +71,12 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Set Up MSVC x64
-        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
-        with:
-          arch: x64
-
-      - name: Configure
-        run: cmake --preset win64 -DRTS_BUILD_OPTION_RETAIL_COMPATIBLE_GAME=OFF -DRTS_AUDIO_BACKEND=miniaudio
-
-      - name: Build Games
-        run: cmake --build build/win64 --config Release --target z_generals g_generals
+      # O150: the Visual Studio environment from the runner's own vswhere and vcvars64.bat (ilammy/msvc-dev-cmd has no
+      # release for Node.js 24; its v1.13.0 runs on the deprecated Node.js 20).
+      - name: Configure and Build Games
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VSDIR=%%i
+          call "%VSDIR%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
+          cmake --preset win64 -DRTS_BUILD_OPTION_RETAIL_COMPATIBLE_GAME=OFF -DRTS_AUDIO_BACKEND=miniaudio || exit /b 1
+          cmake --build build/win64 --config Release --target z_generals g_generals || exit /b 1
