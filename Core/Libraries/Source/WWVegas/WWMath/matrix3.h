@@ -61,9 +61,8 @@
 #include "WWLib/always.h"
 #include "vector3.h"
 #include "WWDebug/wwdebug.h"
-#ifdef _UNIX
-#include "osdep.h"
-#endif
+// TheSuperHackers @build O147 (headless port) the old Westwood _UNIX "osdep.h" does not exist; Utility/compat.h
+// takes its place.
 
 
 class Matrix3D;

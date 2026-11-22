@@ -42,9 +42,8 @@
 #include "WW3D2/vertmaterial.h"
 #include "texture.h"
 #include "WW3D2/shader.h"
-#ifdef _UNIX
-#include "osdep.h"
-#endif
+// TheSuperHackers @build O147 (headless port) the old Westwood _UNIX "osdep.h" does not exist; Utility/compat.h
+// takes its place.
 
 class MeshModelClass;
 class MeshMatDescClass;

@@ -80,18 +80,16 @@
 
 #pragma once
 
-#ifdef _UNIX
-#include "osdep.h"
-#endif
+// TheSuperHackers @build O147 (headless port) the old Westwood _UNIX "osdep.h" does not exist; Utility/compat.h
+// takes its place.
 
 #include "WWLib/always.h"
 #include <assert.h>
 #include "vector2.h"
 #include "vector3.h"
 #include "vector4.h"
-#ifdef _UNIX
-#include "osdep.h"
-#endif
+// TheSuperHackers @build O147 (headless port) the old Westwood _UNIX "osdep.h" does not exist; Utility/compat.h
+// takes its place.
 
 
 class Matrix3x3;

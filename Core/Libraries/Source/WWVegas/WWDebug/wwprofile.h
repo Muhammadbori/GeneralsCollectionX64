@@ -39,10 +39,7 @@
 //#define ENABLE_TIME_AND_MEMORY_LOG
 #include "WWLib/wwstring.h"
 
-#ifdef _UNIX
-typedef signed long long __int64;
-typedef signed long long _int64;
-#endif
+// TheSuperHackers @build O147 (headless port) __int64 and _int64 come from Precompiled/precompiled.h on macOS/Linux.
 
 // enable profiling by default in debug mode.
 #ifdef WWDEBUG

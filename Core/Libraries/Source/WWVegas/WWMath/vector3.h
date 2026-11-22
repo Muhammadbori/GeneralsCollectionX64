@@ -68,9 +68,8 @@
 #include "WWLib/always.h"
 #include "wwmath.h"
 #include <assert.h>
-#ifdef _UNIX
-#include "osdep.h"
-#endif
+// TheSuperHackers @build O147 (headless port) the old Westwood _UNIX "osdep.h" does not exist; Utility/compat.h
+// takes its place.
 
 
 /*
