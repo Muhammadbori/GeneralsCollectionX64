@@ -39,6 +39,9 @@ concurrency:
 
 jobs:
   prepare:
+    # TheSuperHackers @build O139 Only in the upstream repository: forks (Generals Collection x64) do not run this workflow;
+    # the jobs after this one are skipped with it.
+    if: github.repository == 'TheSuperHackers/GeneralsGameCode'
     name: Prepare Build Info
     runs-on: ubuntu-latest
     outputs:

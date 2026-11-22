@@ -23,6 +23,9 @@ concurrency:
 
 jobs:
   validate-title-and-commits:
+    # TheSuperHackers @build O139 Only in the upstream repository: forks (Generals Collection x64) do not run this workflow;
+    # the jobs after this one are skipped with it.
+    if: github.repository == 'TheSuperHackers/GeneralsGameCode'
     name: Validate Title and Commits
     runs-on: ubuntu-slim
     timeout-minutes: 3
