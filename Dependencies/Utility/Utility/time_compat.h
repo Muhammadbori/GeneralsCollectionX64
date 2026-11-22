@@ -25,10 +25,17 @@ typedef int MMRESULT;
 static inline MMRESULT timeBeginPeriod(int) { return TIMERR_NOERROR; }
 static inline MMRESULT timeEndPeriod(int) { return TIMERR_NOERROR; }
 
+// TheSuperHackers @build O140 CLOCK_BOOTTIME is Linux only; macOS uses its uptime clock (as GeneralsX does).
 inline unsigned int timeGetTime()
 {
   struct timespec ts;
+#if defined(__APPLE__)
+  clock_gettime(CLOCK_UPTIME_RAW, &ts);
+#elif defined(CLOCK_BOOTTIME)
   clock_gettime(CLOCK_BOOTTIME, &ts);
+#else
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+#endif
   return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 inline unsigned int GetTickCount()

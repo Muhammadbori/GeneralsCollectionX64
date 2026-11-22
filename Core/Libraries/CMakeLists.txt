@@ -10,6 +10,12 @@ add_subdirectory(Source/profile)
 # debugging library
 add_subdirectory(Source/debug)
 
+# TheSuperHackers @build O140 (RTS_BUILD_CORE_ONLY) see the top level CMakeLists.txt.
+if(RTS_BUILD_CORE_ONLY)
+    return()
+endif()
+
+
 # crash dump library
 add_subdirectory(Source/MiniDumper)
 

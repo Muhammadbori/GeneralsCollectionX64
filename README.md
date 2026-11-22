@@ -25,6 +25,10 @@ goes to them and to the original developers.
 
 License: GPL-3.0, same as the upstream project (see `LICENSE.md`).
 
+**Credits:** the macOS / Linux compatibility layer (`Dependencies/CompatLib`) is adapted from the CompatLib of
+[GeneralsX](https://github.com/fbraz3/GeneralsX) by Felipe Braz and contributors (GPL-3.0-or-later), which builds on
+the Linux port work of fighter19. See `NOTICE.md`.
+
 ---
 
 [![GitHub Release](https://img.shields.io/github/v/release/TheSuperHackers/GeneralsGameCode?include_prereleases&sort=date&display_name=tag&style=flat&label=Release)](https://github.com/TheSuperHackers/GeneralsGameCode/releases)

@@ -20,13 +20,25 @@
 #pragma once
 #include <pthread.h>
 #include <unistd.h>
+#include <stdint.h>
 
-inline int GetCurrentThreadId()
+// TheSuperHackers @build O140 pthread_t is a pointer on macOS: the thread id is a 32-bit number from the system.
+#if defined(__APPLE__)
+inline unsigned int GetCurrentThreadId()
 {
-  return pthread_self();
+  uint64_t id = 0;
+  pthread_threadid_np(nullptr, &id);
+  return (unsigned int)id;
 }
+#else
+#include <sys/syscall.h>
+inline unsigned int GetCurrentThreadId()
+{
+  return (unsigned int)syscall(SYS_gettid);
+}
+#endif
 
-inline void Sleep(int ms)
+inline void Sleep(unsigned int ms)
 {
   usleep(ms * 1000);
 }

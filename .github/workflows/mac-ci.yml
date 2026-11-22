@@ -1,0 +1,71 @@
+# TheSuperHackers @build O140 Generals Collection x64: the macOS / Linux port builds (M3).
+# Build only, no game data: the replay CRC comparison runs on self-hosted runners (crc-selfhosted.yml).
+# The macOS and Linux jobs build the portable core libraries for now (RTS_BUILD_CORE_ONLY, headless port part 1); they
+# are allowed to fail (continue-on-error) until the port compiles there.
+name: Mac CI
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches:
+      - mac
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-unix:
+    name: Build core ${{ matrix.preset }}
+    if: github.repository != 'TheSuperHackers/GeneralsGameCode'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            preset: macos-arm64
+          - os: ubuntu-24.04-arm
+            preset: linux-arm64
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Build Tools (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build clang
+
+      - name: Install Build Tools (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build Core Libraries
+        run: cmake --build build/${{ matrix.preset }} --target core_wwdebug core_wwlib core_wwmath -- -k 0
+
+  build-windows:
+    name: Build win64 (reference)
+    if: github.repository != 'TheSuperHackers/GeneralsGameCode'
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set Up MSVC x64
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        with:
+          arch: x64
+
+      - name: Configure
+        run: cmake --preset win64 -DRTS_BUILD_OPTION_RETAIL_COMPATIBLE_GAME=OFF -DRTS_AUDIO_BACKEND=miniaudio
+
+      - name: Build Games
+        run: cmake --build build/win64 --config Release --target z_generals g_generals

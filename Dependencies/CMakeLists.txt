@@ -13,6 +13,10 @@ if (IS_VS6_BUILD)
 endif()
 
 add_subdirectory(Utility)
+# TheSuperHackers @build O140 The Win32 subset for macOS and Linux (adapted from the GeneralsX CompatLib).
+if (NOT WIN32)
+    add_subdirectory(CompatLib)
+endif()
 add_subdirectory(Bink)
 add_subdirectory(Miles)
 if (RTS_AUDIO_BACKEND STREQUAL "miniaudio")

@@ -61,6 +61,16 @@ endif()
 
 include(cmake/config.cmake)
 
+# TheSuperHackers @build O140 macOS and Linux build the portable core libraries only for now (headless port, part 1 of
+# M3): WWLib, WWMath, WWDebug and the base library, with the Win32 subset of Dependencies/CompatLib. The games and
+# tools follow in the next parts.
+if(WIN32)
+    set(RTS_BUILD_CORE_ONLY_DEFAULT OFF)
+else()
+    set(RTS_BUILD_CORE_ONLY_DEFAULT ON)
+endif()
+option(RTS_BUILD_CORE_ONLY "Build only the portable core libraries (headless port in progress)" ${RTS_BUILD_CORE_ONLY_DEFAULT})
+
 # TheSuperHackers @build The games no longer use the Direct3D 8 SDK. It is fetched only for the tools that are not
 # ported to Direct3D 12 yet (RTS_BUILD_DX8_TOOLS) and the 3ds Max exporter in the extras.
 if((RTS_BUILD_DX8_TOOLS OR RTS_BUILD_CORE_EXTRAS) AND (WIN32 OR "${CMAKE_SYSTEM}" MATCHES "Windows") AND ${CMAKE_SIZEOF_VOID_P} EQUAL 4)
@@ -98,11 +108,13 @@ add_subdirectory(resources)
 add_subdirectory(Core)
 
 # Add main build targets
-if(RTS_BUILD_ZEROHOUR)
+if(RTS_BUILD_CORE_ONLY)
+    message(STATUS "RTS_BUILD_CORE_ONLY: the portable core libraries only, no games or tools")
+elseif(RTS_BUILD_ZEROHOUR)
     add_subdirectory(GeneralsMD)
 endif()
 
-if(RTS_BUILD_GENERALS)
+if(RTS_BUILD_GENERALS AND NOT RTS_BUILD_CORE_ONLY)
     add_subdirectory(Generals)
 endif()
 

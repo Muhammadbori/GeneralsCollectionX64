@@ -37,6 +37,8 @@
 
 #pragma once
 
+// TheSuperHackers @build O140 long is 64-bit on macOS and Linux (LP64); the 32-bit types stay 32-bit there.
+#ifdef _WIN32
 typedef unsigned char	uint8;
 typedef unsigned short	uint16;
 typedef unsigned long	uint32;
@@ -46,15 +48,34 @@ typedef signed char		sint8;
 typedef signed short		sint16;
 typedef signed long		sint32;
 typedef signed int      sint;
+#else
+typedef unsigned char	uint8;
+typedef unsigned short	uint16;
+typedef unsigned int	uint32;
+typedef unsigned int    uint;
+
+typedef signed char		sint8;
+typedef signed short		sint16;
+typedef signed int		sint32;
+typedef signed int      sint;
+#endif
 
 typedef float				float32;
 typedef double				float64;
 
+#ifdef _WIN32
 typedef unsigned long   DWORD;
+#else
+typedef unsigned int    DWORD;
+#endif
 typedef unsigned short	WORD;
 typedef unsigned char   BYTE;
 typedef int             BOOL;
 typedef unsigned short	USHORT;
 typedef const char *		LPCSTR;
 typedef unsigned int    UINT;
+#ifdef _WIN32
 typedef unsigned long   ULONG;
+#else
+typedef unsigned int    ULONG;
+#endif
