@@ -57,6 +57,22 @@ typedef const void * LPCVOID;
 typedef DWORD * LPDWORD;
 typedef size_t SIZE_T;
 typedef DWORD COLORREF;
+typedef int INT;
+typedef short SHORT;
+typedef char CHAR;
+typedef unsigned char UCHAR;
+
+// O148: GUID (d3d8defs.h, D3DADAPTER_IDENTIFIER8) and MAKEFOURCC (the DXT format codes).
+typedef struct _GUID
+{
+	uint32_t Data1;
+	uint16_t Data2;
+	uint16_t Data3;
+	uint8_t Data4[8];
+} GUID;
+#ifndef MAKEFOURCC
+#define MAKEFOURCC(ch0, ch1, ch2, ch3) ((DWORD)(BYTE)(ch0) | ((DWORD)(BYTE)(ch1) << 8) | ((DWORD)(BYTE)(ch2) << 16) | ((DWORD)(BYTE)(ch3) << 24))
+#endif
 
 typedef void * HANDLE;
 typedef HANDLE HWND;
