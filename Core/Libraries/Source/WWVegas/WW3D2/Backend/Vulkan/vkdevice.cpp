@@ -42,6 +42,10 @@
 #include <windows.h>
 #include <dxc/dxcapi.h>
 
+// SPIR-V of the brightness pass, compiled from vkgamma.hlsl when the build is configured (cmake/renderer.cmake).
+#include "vkgamma_vs.h"
+#include "vkgamma_ps.h"
+
 #include <algorithm>
 #include <atomic>
 #include <map>
@@ -321,6 +325,7 @@ VkExtent2D SwapchainExtent = { 0, 0 };
 std::vector<VkImage> SwapchainImages;
 std::vector<VkSemaphore> RenderDone;	// per swap chain image
 bool SwapchainStale = false;
+bool SwapchainUnlocked = false;	// the swap chain was made for unlocked (tearing) presents
 
 VKImageData * BackBuffer = nullptr;		// offscreen back buffer
 VKImageData * DepthBuffer = nullptr;	// default depth buffer
@@ -348,6 +353,7 @@ size_t PendingUploadBytes = 0;
 std::atomic<bool> HasPendingUploads(false);
 std::vector<DX12TextureClass *> DirtyTextures;
 std::vector<VKImageData *> LiveImages;	// images not yet released, so Release_All can destroy what the game still holds
+std::vector<VKBufferData *> LiveBuffers;	// the same for static buffers
 bool UploadingDirtyTextures = false;
 
 VkDescriptorSetLayout SetLayout = VK_NULL_HANDLE;
@@ -376,6 +382,17 @@ VkRect2D CurrentScissor;
 
 VkPipeline BoundPipeline = VK_NULL_HANDLE;
 unsigned BoundStencilRef = ~0u;
+
+// Brightness (Set_Gamma_Ramp): the ramp, the pass that applies it and its images.
+unsigned short GammaRamp[3][256];
+bool GammaRampIsIdentity = true;
+bool GammaLUTDirty = true;
+bool GammaFailed = false;
+VkDescriptorSetLayout GammaSetLayout = VK_NULL_HANDLE;
+VkPipelineLayout GammaPipelineLayout = VK_NULL_HANDLE;
+VkPipeline GammaPipeline = VK_NULL_HANDLE;
+VKImageData * GammaScratch = nullptr;	// copy of the back buffer the pass reads
+VKImageData * GammaLUT = nullptr;		// 256x1 R16G16B16A16, the ramp
 
 FILE * DebugLog = nullptr;
 unsigned ValidationErrors = 0;
@@ -1068,12 +1085,49 @@ void Record_Uploads()
 		VKImageData * image = texture->Peek_VK_Image();
 		if (image && texture->Is_Render_Target())
 		{
-			if (!LoggedRenderTargetUpload)
+			// O141: render targets are tracked on the main command buffer, so their uploads are recorded there, in
+			// order with the draws; outside a frame they wait for the next one.
+			if (!Recording)
 			{
-				WWDEBUG_SAY(("Vulkan: uploads into render targets are not supported yet, upload skipped"));
+				std::lock_guard<std::mutex> lock(ResourceMutex);
+				PendingUploadBytes += upload.Data.size();
+				PendingUploads.push_back(PendingUpload());
+				PendingUploads.back().Texture = texture;
+				PendingUploads.back().Level = upload.Level;
+				PendingUploads.back().Data.swap(upload.Data);
+				HasPendingUploads = true;
+				continue;	// the reference moves with it
+			}
+			void * cpu = nullptr;
+			unsigned long long address = 0;
+			VkBuffer buffer;
+			VkDeviceSize offset;
+			if (upload.Level == 0 && !upload.Data.empty() && upload.Data.size() >= (size_t)image->Width * image->Height * 4
+				&& DX12Device::Allocate_Frame_Memory((unsigned)upload.Data.size(), &cpu, &address) && Resolve_Address(address, buffer, offset))
+			{
+				memcpy(cpu, upload.Data.data(), upload.Data.size());
+				End_Rendering();
+				// An upload replaces the whole level, which also initializes a new target.
+				texture->Set_Initialized();
+				Image_Barrier(Frames[FrameIndex].Main, image, image->Layout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+				image->Layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+				VkBufferImageCopy region;
+				memset(&region, 0, sizeof(region));
+				region.bufferOffset = offset;
+				region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+				region.imageSubresource.layerCount = 1;
+				region.imageExtent.width = image->Width;
+				region.imageExtent.height = image->Height;
+				region.imageExtent.depth = 1;
+				vkCmdCopyBufferToImage(Frames[FrameIndex].Main, buffer, image->Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+			}
+			else if (!LoggedRenderTargetUpload)
+			{
+				WWDEBUG_SAY(("Vulkan: a render target upload could not be recorded"));
 				LoggedRenderTargetUpload = true;
 			}
-			image = nullptr;
+			texture->Release_Ref();
+			continue;
 		}
 		if (image && image->InitialLayoutDone && upload.Level < image->Levels && !upload.Data.empty())
 		{
@@ -2351,7 +2405,23 @@ bool Create_Swapchain(unsigned width, unsigned height)
 	info.preTransform = (caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) ? VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR : caps.currentTransform;
 	info.compositeAlpha = (caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) ? VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR
 		: (VkCompositeAlphaFlagBitsKHR)(caps.supportedCompositeAlpha & (~caps.supportedCompositeAlpha + 1));
-	info.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+	// O141: FIFO (the display's pace) normally; while the render limit is above the refresh rate (Set_Unlocked_Present),
+	// presents may tear like the Direct3D 12 tearing presents: IMMEDIATE, else MAILBOX.
+	VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
+	if (DX12Device::Is_Unlocked_Present())
+	{
+		unsigned mode_count = 0;
+		vkGetPhysicalDeviceSurfacePresentModesKHR(Physical, Surface, &mode_count, nullptr);
+		std::vector<VkPresentModeKHR> modes(mode_count);
+		if (mode_count)
+			vkGetPhysicalDeviceSurfacePresentModesKHR(Physical, Surface, &mode_count, modes.data());
+		if (std::find(modes.begin(), modes.end(), VK_PRESENT_MODE_IMMEDIATE_KHR) != modes.end())
+			present_mode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+		else if (std::find(modes.begin(), modes.end(), VK_PRESENT_MODE_MAILBOX_KHR) != modes.end())
+			present_mode = VK_PRESENT_MODE_MAILBOX_KHR;
+	}
+	info.presentMode = present_mode;
+	SwapchainUnlocked = DX12Device::Is_Unlocked_Present();
 	info.clipped = VK_TRUE;
 	info.oldSwapchain = old;
 	VkSwapchainKHR created = VK_NULL_HANDLE;
@@ -2425,6 +2495,19 @@ void Release_All()
 		Release_Image_Now(BackBuffer);
 		Release_Image_Now(DepthBuffer);
 		Release_Image_Now(WhiteTexture);
+		Release_Image_Now(GammaScratch);
+		Release_Image_Now(GammaLUT);
+		if (GammaPipeline)
+			vkDestroyPipeline(VK, GammaPipeline, nullptr);
+		if (GammaPipelineLayout)
+			vkDestroyPipelineLayout(VK, GammaPipelineLayout, nullptr);
+		if (GammaSetLayout)
+			vkDestroyDescriptorSetLayout(VK, GammaSetLayout, nullptr);
+		GammaPipeline = VK_NULL_HANDLE;
+		GammaPipelineLayout = VK_NULL_HANDLE;
+		GammaSetLayout = VK_NULL_HANDLE;
+		GammaFailed = false;
+		GammaLUTDirty = true;
 		Process_Deferred(true);
 		// Images the game still holds (textures released after the device): their Vulkan objects go now, the
 		// VKImageData when the texture is released.
@@ -2440,6 +2523,12 @@ void Release_All()
 			image->SampleView = VK_NULL_HANDLE;
 		}
 		LiveImages.clear();
+		for (size_t i = 0; i < LiveBuffers.size(); ++i)
+		{
+			vkDestroyBuffer(VK, LiveBuffers[i]->Buffer, nullptr);
+			LiveBuffers[i]->Buffer = VK_NULL_HANDLE;
+		}
+		LiveBuffers.clear();
 		for (std::map<PSOKey, VkPipeline, PSOKeyLess>::iterator it = Pipelines.begin(); it != Pipelines.end(); ++it)
 		{
 			if (it->second)
@@ -2580,6 +2669,224 @@ void Run_One_Shot(Record record)
 	vkQueueSubmit(Queue, 1, &submit, VK_NULL_HANDLE);
 	vkQueueWaitIdle(Queue);
 	++DX12Device_Counters.FenceWaits[DX12_WAIT_FLUSH];
+}
+
+std::vector<unsigned> Spirv_Words(const unsigned char * bytes, size_t size)
+{
+	std::vector<unsigned> words(size / 4);
+	memcpy(words.data(), bytes, words.size() * 4);
+	return words;
+}
+
+bool Create_Gamma_Pipeline()
+{
+	VkDescriptorSetLayoutBinding bindings[2];
+	memset(bindings, 0, sizeof(bindings));
+	for (unsigned i = 0; i < 2; ++i)
+	{
+		bindings[i].binding = i;
+		bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+		bindings[i].descriptorCount = 1;
+		bindings[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+	}
+	VkDescriptorSetLayoutCreateInfo set = { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
+	set.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
+	set.bindingCount = 2;
+	set.pBindings = bindings;
+	if (vkCreateDescriptorSetLayout(VK, &set, nullptr, &GammaSetLayout) != VK_SUCCESS)
+		return false;
+	VkPipelineLayoutCreateInfo layout = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+	layout.setLayoutCount = 1;
+	layout.pSetLayouts = &GammaSetLayout;
+	if (vkCreatePipelineLayout(VK, &layout, nullptr, &GammaPipelineLayout) != VK_SUCCESS)
+		return false;
+
+	VkShaderModule vs = Create_Module(Spirv_Words(VkGammaVS, sizeof(VkGammaVS)));
+	VkShaderModule ps = Create_Module(Spirv_Words(VkGammaPS, sizeof(VkGammaPS)));
+	VkPipelineShaderStageCreateInfo stages[2];
+	memset(stages, 0, sizeof(stages));
+	stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+	stages[0].module = vs;
+	stages[0].pName = "VSMain";
+	stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+	stages[1].module = ps;
+	stages[1].pName = "PSMain";
+	VkPipelineVertexInputStateCreateInfo vertex_input = { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
+	VkPipelineInputAssemblyStateCreateInfo assembly = { VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
+	assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+	VkPipelineViewportStateCreateInfo viewport = { VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO };
+	viewport.viewportCount = 1;
+	viewport.scissorCount = 1;
+	VkPipelineRasterizationStateCreateInfo raster = { VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
+	raster.polygonMode = VK_POLYGON_MODE_FILL;
+	raster.cullMode = VK_CULL_MODE_NONE;
+	raster.lineWidth = 1.0f;
+	VkPipelineMultisampleStateCreateInfo multisample = { VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
+	multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+	VkPipelineDepthStencilStateCreateInfo depth = { VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
+	VkPipelineColorBlendAttachmentState blend;
+	memset(&blend, 0, sizeof(blend));
+	blend.colorWriteMask = 0xf;
+	VkPipelineColorBlendStateCreateInfo blend_state = { VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
+	blend_state.attachmentCount = 1;
+	blend_state.pAttachments = &blend;
+	VkDynamicState dynamic_states[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+	VkPipelineDynamicStateCreateInfo dynamic = { VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
+	dynamic.dynamicStateCount = 2;
+	dynamic.pDynamicStates = dynamic_states;
+	VkFormat color_format = VK_FORMAT_B8G8R8A8_UNORM;
+	VkPipelineRenderingCreateInfoKHR rendering = { VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR };
+	rendering.colorAttachmentCount = 1;
+	rendering.pColorAttachmentFormats = &color_format;
+	VkGraphicsPipelineCreateInfo info = { VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
+	info.pNext = &rendering;
+	info.stageCount = 2;
+	info.pStages = stages;
+	info.pVertexInputState = &vertex_input;
+	info.pInputAssemblyState = &assembly;
+	info.pViewportState = &viewport;
+	info.pRasterizationState = &raster;
+	info.pMultisampleState = &multisample;
+	info.pDepthStencilState = &depth;
+	info.pColorBlendState = &blend_state;
+	info.pDynamicState = &dynamic;
+	info.layout = GammaPipelineLayout;
+	const VkResult result = (vs && ps) ? vkCreateGraphicsPipelines(VK, VK_NULL_HANDLE, 1, &info, nullptr, &GammaPipeline) : VK_ERROR_UNKNOWN;
+	if (vs)
+		vkDestroyShaderModule(VK, vs, nullptr);
+	if (ps)
+		vkDestroyShaderModule(VK, ps, nullptr);
+	return result == VK_SUCCESS;
+}
+
+// The brightness pass, for a presented frame that was recorded, after everything is drawn (as Apply_Gamma_Pass of
+// dx12device.cpp): the back buffer is copied, and one triangle writes the copy through the ramp back into it. With the
+// identity ramp it does nothing. Screenshots read the back buffer, so they include the curve, as with Direct3D 12.
+void Apply_Gamma_Pass()
+{
+	if (GammaRampIsIdentity || GammaFailed || !Recording || !BackBuffer)
+	{
+		return;
+	}
+	End_Rendering();
+	VkCommandBuffer cb = Frames[FrameIndex].Main;
+	if (!GammaPipeline && !Create_Gamma_Pipeline())
+	{
+		WWDEBUG_SAY(("Vulkan: the gamma pass could not be set up; brightness is not applied"));
+		Debug_Log("frame %llu: the gamma pass could not be set up", DX12Device::Get_Frame_Number());
+		GammaFailed = true;
+		return;
+	}
+	if (GammaScratch && (GammaScratch->Width != BackBuffer->Width || GammaScratch->Height != BackBuffer->Height))
+	{
+		Release_Image_Now(GammaScratch);
+	}
+	if (!GammaScratch)
+	{
+		GammaScratch = VKDevice_Create_Image(BackBuffer->Width, BackBuffer->Height, 1, VK_FORMAT_B8G8R8A8_UNORM,
+			VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT, false);
+	}
+	if (!GammaLUT)
+	{
+		GammaLUT = VKDevice_Create_Image(256, 1, 1, VK_FORMAT_R16G16B16A16_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+			VK_IMAGE_ASPECT_COLOR_BIT, false);
+		GammaLUTDirty = true;
+	}
+	if (!GammaScratch || !GammaLUT)
+	{
+		GammaFailed = true;
+		return;
+	}
+
+	if (GammaLUTDirty)
+	{
+		void * cpu = nullptr;
+		unsigned long long address = 0;
+		VkBuffer buffer;
+		VkDeviceSize offset;
+		if (!DX12Device::Allocate_Frame_Memory(256 * 8, &cpu, &address) || !Resolve_Address(address, buffer, offset))
+		{
+			return;
+		}
+		unsigned short * texels = static_cast<unsigned short *>(cpu);
+		for (int i = 0; i < 256; ++i)
+		{
+			texels[i * 4 + 0] = GammaRamp[0][i];
+			texels[i * 4 + 1] = GammaRamp[1][i];
+			texels[i * 4 + 2] = GammaRamp[2][i];
+			texels[i * 4 + 3] = 0xffff;
+		}
+		VkBufferImageCopy region;
+		memset(&region, 0, sizeof(region));
+		region.bufferOffset = offset;
+		region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		region.imageSubresource.layerCount = 1;
+		region.imageExtent.width = 256;
+		region.imageExtent.height = 1;
+		region.imageExtent.depth = 1;
+		Image_Barrier(cb, GammaLUT, GammaLUT->Layout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+		vkCmdCopyBufferToImage(cb, buffer, GammaLUT->Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+		Image_Barrier(cb, GammaLUT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+		GammaLUT->Layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		GammaLUTDirty = false;
+	}
+
+	Image_Barrier(cb, BackBuffer, BackBuffer->Layout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+	Image_Barrier(cb, GammaScratch, GammaScratch->Layout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+	VkImageCopy copy;
+	memset(&copy, 0, sizeof(copy));
+	copy.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	copy.srcSubresource.layerCount = 1;
+	copy.dstSubresource = copy.srcSubresource;
+	copy.extent.width = BackBuffer->Width;
+	copy.extent.height = BackBuffer->Height;
+	copy.extent.depth = 1;
+	vkCmdCopyImage(cb, BackBuffer->Image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, GammaScratch->Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+	Image_Barrier(cb, GammaScratch, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	GammaScratch->Layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	Image_Barrier(cb, BackBuffer, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+	BackBuffer->Layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+	VkRenderingAttachmentInfoKHR color = { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR };
+	color.imageView = BackBuffer->View;
+	color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	color.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+	color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+	VkRenderingInfoKHR info = { VK_STRUCTURE_TYPE_RENDERING_INFO_KHR };
+	info.renderArea.extent.width = BackBuffer->Width;
+	info.renderArea.extent.height = BackBuffer->Height;
+	info.layerCount = 1;
+	info.colorAttachmentCount = 1;
+	info.pColorAttachments = &color;
+	vkCmdBeginRenderingKHR(cb, &info);
+	VkViewport viewport = { 0.0f, (float)BackBuffer->Height, (float)BackBuffer->Width, -(float)BackBuffer->Height, 0.0f, 1.0f };
+	VkRect2D scissor = { { 0, 0 }, { BackBuffer->Width, BackBuffer->Height } };
+	vkCmdSetViewport(cb, 0, 1, &viewport);
+	vkCmdSetScissor(cb, 0, 1, &scissor);
+	vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, GammaPipeline);
+	VkDescriptorImageInfo images[2];
+	images[0].sampler = VK_NULL_HANDLE;
+	images[0].imageView = GammaScratch->View;
+	images[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	images[1].sampler = VK_NULL_HANDLE;
+	images[1].imageView = GammaLUT->View;
+	images[1].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	VkWriteDescriptorSet writes[2];
+	memset(writes, 0, sizeof(writes));
+	for (unsigned i = 0; i < 2; ++i)
+	{
+		writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+		writes[i].dstBinding = i;
+		writes[i].descriptorCount = 1;
+		writes[i].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+		writes[i].pImageInfo = &images[i];
+	}
+	vkCmdPushDescriptorSetKHR(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, GammaPipelineLayout, 0, 2, writes);
+	vkCmdDraw(cb, 3, 1, 0, 0);
+	vkCmdEndRenderingKHR(cb);
+	BoundPipeline = VK_NULL_HANDLE;
 }
 
 } // namespace
@@ -2730,6 +3037,7 @@ VKBufferData * VKDevice_Create_Host_Buffer(unsigned size, void ** cpu, unsigned 
 		return nullptr;
 	}
 	buffer->TableIndex = Add_Table_Entry(buffer->Buffer);
+	LiveBuffers.push_back(buffer);
 	*cpu = buffer->Allocation.Mapped;
 	*address = Make_Address(buffer->TableIndex, 0);
 	return buffer;
@@ -2753,6 +3061,12 @@ void VKDevice_Release_Buffer(VKBufferData * buffer)
 	release.Table = buffer->TableIndex;
 	release.BufferData = buffer;
 	std::lock_guard<std::mutex> lock(ResourceMutex);
+	std::vector<VKBufferData *>::iterator live = std::find(LiveBuffers.begin(), LiveBuffers.end(), buffer);
+	if (live != LiveBuffers.end())
+	{
+		*live = LiveBuffers.back();
+		LiveBuffers.pop_back();
+	}
 	release.Serial = NextSerial;
 	DeferredReleases.push_back(release);
 }
@@ -3021,6 +3335,8 @@ void DX12Device::Submit_Frame(bool present)
 	}
 	FrameEndsWithoutPresent = 0;
 	const unsigned long long submit_start = Query_Ticks();
+	// Only a frame the game recorded gets the brightness pass, as with Direct3D 12.
+	const bool was_recording = Recording;
 	if (!Recording)
 	{
 		bool pending;
@@ -3040,6 +3356,10 @@ void DX12Device::Submit_Frame(bool present)
 	}
 	Record_Uploads();
 	End_Rendering();
+	if (present && was_recording)
+	{
+		Apply_Gamma_Pass();
+	}
 
 	FrameSlot & frame = Frames[FrameIndex];
 	VkCommandBuffer cb = frame.Main;
@@ -3053,9 +3373,13 @@ void DX12Device::Submit_Frame(bool present)
 	bool acquired = false;
 	if (present)
 	{
-		if (SwapchainStale || !Swapchain)
+		if (SwapchainStale || !Swapchain || SwapchainUnlocked != DX12Device::Is_Unlocked_Present())
 		{
+			// The old swap chain may still be presenting; vkCreateSwapchainKHR retires it (oldSwapchain).
+			vkQueueWaitIdle(Queue);
 			Create_Swapchain(Width, Height);
+			if (DX12Device::Is_Unlocked_Present())
+				++DX12Device_Counters.UnlockedPresents;
 		}
 		if (Swapchain)
 		{
@@ -3749,9 +4073,35 @@ bool DX12Device::Copy_Target_To_Texture(DX12TextureClass * dest, const tagRECT *
 	return true;
 }
 
-void DX12Device::Set_Gamma_Ramp(const unsigned short *, const unsigned short *, const unsigned short *)
+void DX12Device::Set_Gamma_Ramp(const unsigned short * red, const unsigned short * green, const unsigned short * blue)
 {
-	// TheSuperHackers @todo O138 part 2: the brightness pass.
+	// As dx12device.cpp: a ramp within one 8-bit step of the identity is no curve.
+	const unsigned short * channels[3] = { red, green, blue };
+	bool identity = true;
+	bool changed = false;
+	for (int c = 0; c < 3; ++c)
+	{
+		for (int i = 0; i < 256; ++i)
+		{
+			const unsigned short value = channels[c][i];
+			if (GammaRamp[c][i] != value)
+			{
+				changed = true;
+				GammaRamp[c][i] = value;
+			}
+			const int difference = (int)value - i * 257;
+			if (difference > 257 || difference < -257)
+			{
+				identity = false;
+			}
+		}
+	}
+	GammaRampIsIdentity = identity;
+	if (changed)
+	{
+		GammaLUTDirty = true;
+		GammaFailed = false;
+	}
 }
 
 DX12TextureClass * DX12Device::Read_Back_Buffer()

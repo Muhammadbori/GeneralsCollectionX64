@@ -265,7 +265,7 @@ target_include_directories(corei_ww3d2 INTERFACE
 
 if(RTS_RENDERER STREQUAL "vulkan")
     # Headers only: Vulkan and the shader compiler are loaded at run time.
-    target_include_directories(corei_ww3d2 INTERFACE ${Vulkan_INCLUDE_DIRS})
+    target_include_directories(corei_ww3d2 INTERFACE ${Vulkan_INCLUDE_DIRS} "${RTS_VULKAN_SHADER_DIR}")
 endif()
 
 if (MSVC AND NOT IS_VS6_BUILD)
