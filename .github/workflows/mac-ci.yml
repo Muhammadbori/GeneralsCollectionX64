@@ -28,7 +28,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          # O144: macos-14 is no longer offered ("configuration not supported"); macos-latest is an Apple Silicon image.
+          - os: macos-latest
             preset: macos-arm64
           - os: ubuntu-24.04-arm
             preset: linux-arm64
@@ -48,7 +49,16 @@ jobs:
         run: cmake --preset ${{ matrix.preset }}
 
       - name: Build Core Libraries
-        run: cmake --build build/${{ matrix.preset }} --target core_wwdebug core_wwlib core_wwmath -- -k 0
+        shell: bash
+        run: |
+          set -o pipefail
+          cmake --build build/${{ matrix.preset }} --target core_wwdebug core_wwlib core_wwmath -- -k 0 2>&1 | tee build.log
+
+      # O144: the raw job log needs a signed-in account; the errors also go to annotations and the job summary.
+      - name: Report Compile Errors
+        if: failure()
+        shell: bash
+        run: python3 scripts/ci/report_errors.py build.log
 
   build-windows:
     name: Build win64 (reference)
