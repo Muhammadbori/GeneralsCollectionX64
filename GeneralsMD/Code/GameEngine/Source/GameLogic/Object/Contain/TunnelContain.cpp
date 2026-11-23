@@ -362,18 +362,22 @@ Int TunnelContain::getContainMax() const
 	return 0;
 }
 
+// TheSuperHackers @bugfix O174 An empty list, never nullptr: the callers (PartitionManager, StealthDetectorUpdate,
+// ActiveBody, ...) use the list without a check, and an AI scan near a Tunnel Network scaffold crashed on it.
+static const ContainedItemsList s_noPassengers;
+
 const ContainedItemsList* TunnelContain::getContainedItemsList() const
 {
 #if !RETAIL_COMPATIBLE_CRC
 	if( !m_isCurrentlyRegistered )
-		return nullptr;   // O100: a scaffold is not in the network yet (see orderAllPassengersToExit)
+		return &s_noPassengers;   // O100: a scaffold is not in the network yet (see orderAllPassengersToExit)
 #endif
 	Player *owningPlayer = getObject()->getControllingPlayer();
 	if( owningPlayer && owningPlayer->getTunnelSystem() )
 	{
 		return owningPlayer->getTunnelSystem()->getContainedItemsList();
 	}
-	return nullptr;
+	return &s_noPassengers;
 }
 
 UnsignedInt TunnelContain::getFullTimeForHeal() const
