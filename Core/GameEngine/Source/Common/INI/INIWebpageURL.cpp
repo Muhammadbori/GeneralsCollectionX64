@@ -78,6 +78,24 @@ AsciiString encodeURL(AsciiString source)
 #ifndef _WIN32
 // O154: on Windows WebBrowser.cpp defines it; macOS and Linux have no browser.
 WebBrowser *TheWebBrowser = nullptr;
+
+// The URL entries' parse table and constructor, from WebBrowser.cpp (not built on macOS and Linux).
+const FieldParse WebBrowserURL::m_URLFieldParseTable[] =
+{
+	{ "URL", INI::parseAsciiString, nullptr, offsetof( WebBrowserURL, m_url ) },
+	{ nullptr, nullptr, nullptr, 0 },
+};
+
+WebBrowserURL::WebBrowserURL()
+{
+	m_next = nullptr;
+	m_tag.clear();
+	m_url.clear();
+}
+
+WebBrowserURL::~WebBrowserURL()
+{
+}
 #endif
 
 void INI::parseWebpageURLDefinition( INI* ini )

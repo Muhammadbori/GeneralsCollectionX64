@@ -31,6 +31,12 @@
 #include "Common/FramePacer.h"
 #include "Common/FrameShots.h"
 #include "Common/GameEngine.h"
+#include "Common/StackDump.h"
+
+#ifndef _WIN32
+// O162: StackDump.cpp (dbghelp) is not built on macOS and Linux; the last error dump text lives here there.
+AsciiString g_LastErrorDump;
+#endif
 #include "Common/ReplayStream.h"
 #include "Common/VoiceChat.h"
 #include "GameNetwork/NetLab.h"

@@ -17,6 +17,12 @@ target_link_libraries(z_generals PRIVATE
 )
 if(WIN32)
     target_link_libraries(z_generals PRIVATE comctl32 imm32 vfw32 winmm)
+elseif(NOT APPLE)
+    # O162 The engine and the device libraries reference each other; GNU ld scans a static library once, so they are
+    # linked repeatedly (Apple's linker and MSVC resolve this by themselves).
+    # The cycle is declared, so CMake repeats the two libraries on the link line.
+    target_link_libraries(z_gameengine PUBLIC z_gameenginedevice)
+    set_property(TARGET z_gameenginedevice APPEND PROPERTY LINK_INTERFACE_MULTIPLICITY 3)
 endif()
 
 # TODO Originally referred to build host and user, replace with git info perhaps?
