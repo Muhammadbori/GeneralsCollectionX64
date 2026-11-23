@@ -5,6 +5,9 @@ add_library(deps_compatlib STATIC
     Include/windows_compat.h
     Include/windows.h
     Source/windows_compat.cpp
+    Include/windows_compat_o154.h
+    Include/winsock_compat.h
+    Source/windows_compat_o154.cpp
 )
 target_include_directories(deps_compatlib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Include")
 if (APPLE)

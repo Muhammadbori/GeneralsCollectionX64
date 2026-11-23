@@ -43,11 +43,15 @@
 #pragma once
 
 #include "Common/SubsystemInterface.h"
+#ifdef _WIN32
 #include <atlbase.h>
 #include <windows.h>
+#endif
 #include <Common/GameMemory.h>
+#ifdef _WIN32
 #include "EABrowserDispatch/BrowserDispatch.h"
 #include "FEBDispatch.h"
+#endif
 
 class GameWindow;
 
@@ -73,6 +77,7 @@ public:
 
 
 
+#ifdef _WIN32
 class WebBrowser :
 		public FEBDispatch<WebBrowser, IBrowserDispatch, &IID_IBrowserDispatch>,
 		public SubsystemInterface
@@ -121,3 +126,20 @@ class WebBrowser :
 	};
 
 extern CComObject<WebBrowser> *TheWebBrowser;
+#else
+// O154: macOS and Linux have no embedded browser (the Windows one is an ATL COM control); TheWebBrowser stays null,
+// which every caller already handles.
+class WebBrowser : public SubsystemInterface
+{
+public:
+	virtual void init() override {}
+	virtual void reset() override {}
+	virtual void update() override {}
+	virtual Bool createBrowserWindow(const char *, GameWindow *) { return FALSE; }
+	virtual void closeBrowserWindow(GameWindow *) {}
+	WebBrowserURL *makeNewURL(AsciiString) { return nullptr; }
+	WebBrowserURL *findURL(AsciiString) { return nullptr; }
+};
+
+extern WebBrowser *TheWebBrowser;
+#endif

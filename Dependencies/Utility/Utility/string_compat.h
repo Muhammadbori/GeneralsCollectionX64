@@ -24,7 +24,8 @@ typedef const char* LPCSTR;
 typedef char* LPSTR;
 
 // String functions
-inline char *_strlwr(char *str) {
+// O154: C linkage, as the GameSpy SDK declares it (gsplatform.h).
+extern "C" inline char *_strlwr(char *str) {
   for (int i = 0; str[i] != '\0'; i++) {
     str[i] = tolower(str[i]);
   }

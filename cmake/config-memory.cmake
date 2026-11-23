@@ -93,7 +93,8 @@ else()
     endif()
 endif()
 
-if(RTS_CRASHDUMP_ENABLE)
+# O154: crash dumps use dbghelp (Windows only).
+if(RTS_CRASHDUMP_ENABLE AND WIN32)
     target_compile_definitions(core_config INTERFACE RTS_ENABLE_CRASHDUMP=1)
     if (IS_VS6_BUILD AND NOT RTS_BUILD_OPTION_VC6_FULL_DEBUG)
         message(STATUS "Crash Dumps will be significantly less useful in VC6 builds without full debug info enabled")

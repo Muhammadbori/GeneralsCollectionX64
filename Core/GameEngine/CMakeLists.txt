@@ -1241,6 +1241,11 @@ set(GAMEENGINE_SRC
 )
 
 
+# O154: the embedded web browser is a COM control (ATL), Windows only; on macOS and Linux there is no browser.
+if(NOT WIN32)
+    list(REMOVE_ITEM GAMEENGINE_SRC Source/GameNetwork/WOLBrowser/WebBrowser.cpp)
+endif()
+
 add_library(corei_gameengine_private INTERFACE)
 add_library(corei_gameengine_public INTERFACE)
 

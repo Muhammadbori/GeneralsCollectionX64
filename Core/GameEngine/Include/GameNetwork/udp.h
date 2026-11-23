@@ -45,6 +45,7 @@
 #include <sys/time.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <winsock.h> // O154: CompatLib, Winsock names for BSD sockets
 #endif
 
 #ifdef AIX

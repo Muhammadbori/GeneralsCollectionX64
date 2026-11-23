@@ -379,3 +379,6 @@ inline LSTATUS RegCloseKey(HKEY) { return ERROR_SUCCESS; }
 #define RegQueryValueEx RegQueryValueExA
 #define RegSetValueEx RegSetValueExA
 #define RegDeleteValue RegDeleteValueA
+
+// O154
+#include "windows_compat_o154.h"

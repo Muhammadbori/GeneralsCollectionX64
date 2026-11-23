@@ -75,6 +75,11 @@ AsciiString encodeURL(AsciiString source)
 //-------------------------------------------------------------------------------------------------
 /** Parse Music entry */
 //-------------------------------------------------------------------------------------------------
+#ifndef _WIN32
+// O154: on Windows WebBrowser.cpp defines it; macOS and Linux have no browser.
+WebBrowser *TheWebBrowser = nullptr;
+#endif
+
 void INI::parseWebpageURLDefinition( INI* ini )
 {
 	AsciiString tag;

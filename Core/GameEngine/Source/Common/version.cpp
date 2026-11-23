@@ -90,11 +90,17 @@ const char* Version::getLogicBuildIdentity()
 #else
 			const Int debugBuild = 0;
 #endif
+			// O154: BaseDefines.h leaves USE_DETERMINISTIC_MATH undefined when it is off (it is then 0 in #if).
+#if USE_DETERMINISTIC_MATH
+			const Int detMath = 1;
+#else
+			const Int detMath = 0;
+#endif
 			s_identity.format("logic %s crc%d data%d xfer%d path%d alloc%d circle%d net%d aigroup%d detmath%d debug%d ptr%d",
 				GitSHA1, (Int)RETAIL_COMPATIBLE_CRC, (Int)RETAIL_COMPATIBLE_DATA, (Int)RETAIL_COMPATIBLE_XFER_SAVE,
 				(Int)RETAIL_COMPATIBLE_PATHFINDING, (Int)RETAIL_COMPATIBLE_PATHFINDING_ALLOCATION,
 				(Int)RETAIL_COMPATIBLE_CIRCLE_FILL_ALGORITHM, (Int)RETAIL_COMPATIBLE_NETWORKING, (Int)RETAIL_COMPATIBLE_AIGROUP,
-				(Int)USE_DETERMINISTIC_MATH, debugBuild, (Int)sizeof(void*));
+				detMath, debugBuild, (Int)sizeof(void*));
 		}
 	}
 	return s_identity.isEmpty() ? nullptr : s_identity.str();

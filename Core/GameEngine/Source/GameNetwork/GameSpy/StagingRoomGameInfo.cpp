@@ -66,6 +66,8 @@ GameSpyGameSlot::GameSpyGameSlot()
 	m_pingStr.clear();
 }
 
+// O154: the connection table comes from the Windows SNMP MIB-II library (inetmib1.dll); not on macOS and Linux.
+#ifdef _WIN32
 // Helper Functions ----------------------------------------
 /*
 ** Function definitions for the MIB-II entry points.
@@ -432,6 +434,13 @@ Bool GetLocalChatConnectionAddress(AsciiString serverName, UnsignedShort serverP
 	FreeLibrary(mib_ii_dll);
 	return(found);
 }
+
+#else
+Bool GetLocalChatConnectionAddress(AsciiString, UnsignedShort, UnsignedInt&)
+{
+	return false;
+}
+#endif
 
 // GameSpyGameSlot ----------------------------------------
 

@@ -364,14 +364,14 @@ Bool Transport::doRecv()
 		}
 
 		// Something there; stick it somewhere
-//		DEBUG_LOG(("Saw %d bytes from %d:%d", len, ntohl(from.sin_addr.S_un.S_addr), ntohs(from.sin_port)));
+//		DEBUG_LOG(("Saw %d bytes from %d:%d", len, ntohl(from.sin_addr.s_addr), ntohs(from.sin_port)));
 		m_incomingPackets[m_statisticsSlot]++;
 		m_incomingBytes[m_statisticsSlot] += len;
 		NetLab::countReceived(len);   // TheSuperHackers @feature NetLab measurement (a counter only)
 
 		// TheSuperHackers @feature NetLab's network simulator (test only): delay, jitter, loss, reorder, bandwidth.
 		// Inactive (and so without effect) unless a NetLab match set it up.
-		incomingMessage.addr = ntohl(from.sin_addr.S_un.S_addr);
+		incomingMessage.addr = ntohl(from.sin_addr.s_addr);
 		incomingMessage.port = ntohs(from.sin_port);
 		if (NetLab::simTake(incomingMessage))
 			continue;
@@ -392,7 +392,7 @@ Bool Transport::doRecv()
 						(Int)(TheGlobalData->m_latencyAmplitude * sin(now * TheGlobalData->m_latencyPeriod)) +
 						GameClientRandomValue(-TheGlobalData->m_latencyNoise, TheGlobalData->m_latencyNoise);
 					m_delayedInBuffer[bufferIndex].message.length = incomingMessage.length;
-					m_delayedInBuffer[bufferIndex].message.addr = ntohl(from.sin_addr.S_un.S_addr);
+					m_delayedInBuffer[bufferIndex].message.addr = ntohl(from.sin_addr.s_addr);
 					m_delayedInBuffer[bufferIndex].message.port = ntohs(from.sin_port);
 					memcpy(&m_delayedInBuffer[bufferIndex].message, buf, len);
 					++bufferIndex;
@@ -410,7 +410,7 @@ Bool Transport::doRecv()
 			{
 				// Empty slot; use it
 				m_inBuffer[bufferIndex].length = incomingMessage.length;
-				m_inBuffer[bufferIndex].addr = ntohl(from.sin_addr.S_un.S_addr);
+				m_inBuffer[bufferIndex].addr = ntohl(from.sin_addr.s_addr);
 				m_inBuffer[bufferIndex].port = ntohs(from.sin_port);
 				memcpy(&m_inBuffer[bufferIndex], buf, len);
 				++bufferIndex;

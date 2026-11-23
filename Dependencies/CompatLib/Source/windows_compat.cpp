@@ -573,3 +573,30 @@ BOOL SetCurrentDirectoryA(const char * path)
 {
 	return path && chdir(path) == 0;
 }
+
+// O154: file position and size of a CreateFileA handle.
+DWORD SetFilePointer(HANDLE file, LONG distance, LONG * distance_high, DWORD method)
+{
+	CompatHandle * h = static_cast<CompatHandle *>(file);
+	if (!h || file == INVALID_HANDLE_VALUE || h->Kind != HANDLE_FILE)
+		return INVALID_SET_FILE_POINTER;
+	off_t offset = distance_high ? (off_t)(((uint64_t)(uint32_t)*distance_high << 32) | (uint32_t)distance) : (off_t)distance;
+	int whence = method == FILE_END ? SEEK_END : (method == FILE_CURRENT ? SEEK_CUR : SEEK_SET);
+	off_t result = lseek(h->File, offset, whence);
+	if (result < 0)
+		return INVALID_SET_FILE_POINTER;
+	if (distance_high)
+		*distance_high = (LONG)((uint64_t)result >> 32);
+	return (DWORD)result;
+}
+
+DWORD GetFileSize(HANDLE file, DWORD * size_high)
+{
+	CompatHandle * h = static_cast<CompatHandle *>(file);
+	struct stat info;
+	if (!h || file == INVALID_HANDLE_VALUE || h->Kind != HANDLE_FILE || fstat(h->File, &info) != 0)
+		return (DWORD)-1;
+	if (size_high)
+		*size_high = (DWORD)((uint64_t)info.st_size >> 32);
+	return (DWORD)info.st_size;
+}
