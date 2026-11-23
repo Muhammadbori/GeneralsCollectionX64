@@ -75,6 +75,7 @@ jobs:
           note() { # title, file
             local text
             text=$(tail -c 3000 "$2" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            [ -n "$text" ] || text="(no output)" # O164: an empty notice is dropped by GitHub
             echo "::notice title=$1::$text"
           }
           backtrace() { # exe, args...
