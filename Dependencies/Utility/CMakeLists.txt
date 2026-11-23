@@ -14,6 +14,8 @@ set(UTILITY_SRC
     Utility/interlocked_adapter.h
     Utility/interlocked_x86asm.inl
     Utility/intrin_compat.h
+    Utility/io_compat.h
+    Utility/math_compat.h
     Utility/iostream_adapter.h
     Utility/lazy_static.h
     Utility/mem_compat.h

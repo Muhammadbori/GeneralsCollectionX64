@@ -36,3 +36,13 @@ inline char *_strlwr(char *str) {
 #define strnicmp strncasecmp
 #define strcmpi strcasecmp
 
+
+// TheSuperHackers @build O152 (headless port) More of the Microsoft C runtime names the game engine uses.
+#include <stdio.h>
+#include <string.h>
+#include <strings.h>
+#define _stricmp strcasecmp
+#define _strnicmp strncasecmp
+#define _strdup strdup
+#define _snprintf snprintf
+#define _vsnprintf vsnprintf

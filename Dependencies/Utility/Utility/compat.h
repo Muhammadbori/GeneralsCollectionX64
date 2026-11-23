@@ -70,6 +70,8 @@
 #include "wchar_compat.h"
 #include "time_compat.h"
 #include "thread_compat.h"
+#include "io_compat.h"   // O152
+#include "math_compat.h" // O152
 
 #endif
 

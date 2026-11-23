@@ -32,3 +32,9 @@ typedef WCHAR* LPWSTR;
 #define MultiByteToWideChar(cp, flags, mbstr, cb, wcstr, cch) mbstowcs(wcstr, mbstr, cch)
 #define WideCharToMultiByte(cp, flags, wcstr, cch, mbstr, cb, defchar, used) wcstombs(mbstr, wcstr, cb)
 
+
+// TheSuperHackers @build O152 (headless port)
+#include <wchar.h>
+#include <stdlib.h>
+#define _wcsnicmp wcsncasecmp
+#define _wtoi(s) ((int)wcstol((s), nullptr, 10))
