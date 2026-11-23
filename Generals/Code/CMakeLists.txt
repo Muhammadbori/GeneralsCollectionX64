@@ -41,6 +41,6 @@ add_subdirectory(GameEngineDevice)
 # Contains the main game exe target.
 add_subdirectory(Main)
 
-if (RTS_BUILD_GENERALS_TOOLS OR RTS_BUILD_GENERALS_EXTRAS)
+if ((RTS_BUILD_GENERALS_TOOLS OR RTS_BUILD_GENERALS_EXTRAS) AND NOT RTS_BUILD_HEADLESS) # O158
     add_subdirectory(Tools)
 endif()

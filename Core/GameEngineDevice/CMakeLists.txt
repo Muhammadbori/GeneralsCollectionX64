@@ -214,6 +214,19 @@ if(NOT IS_VS6_BUILD)
     )
 endif()
 
+# O158 The Windows input (DirectInput, the window messages) and file system are not built on macOS and Linux (the
+# headless games use StdDevice and have no keyboard or mouse).
+if(NOT WIN32)
+    list(REMOVE_ITEM GAMEENGINEDEVICE_SRC
+        Source/Win32Device/Common/Win32LocalFile.cpp
+        Source/Win32Device/Common/Win32LocalFileSystem.cpp
+        Source/Win32Device/Common/Win32OSDisplay.cpp
+        Source/Win32Device/GameClient/Win32DIKeyboard.cpp
+        Source/Win32Device/GameClient/Win32Mouse.cpp
+    )
+    list(APPEND GAMEENGINEDEVICE_SRC Source/StdDevice/Common/StdOSDisplay.cpp)
+endif()
+
 add_library(corei_gameenginedevice_private INTERFACE)
 add_library(corei_gameenginedevice_public INTERFACE)
 

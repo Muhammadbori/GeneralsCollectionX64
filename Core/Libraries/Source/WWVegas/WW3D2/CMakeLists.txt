@@ -255,6 +255,15 @@ if(RTS_RENDERER STREQUAL "vulkan")
     )
 endif()
 
+# O158 The null renderer (headless builds of macOS and Linux): no GPU device or resources.
+if(RTS_RENDERER STREQUAL "null")
+    list(REMOVE_ITEM WW3D2_SRC Backend/DX12/dx12device.cpp Backend/DX12/dx12resource.cpp)
+    list(APPEND WW3D2_SRC
+        Backend/Null/nulldevice.cpp
+        Backend/Null/nullresource.cpp
+    )
+endif()
+
 add_library(corei_ww3d2 INTERFACE)
 
 target_sources(corei_ww3d2 INTERFACE ${WW3D2_SRC})

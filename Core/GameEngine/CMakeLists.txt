@@ -1276,8 +1276,8 @@ target_link_libraries(corei_gameengine_public INTERFACE
     core_browserdispatch
     core_minidumper
     #core_wwvegas
-    dinput8
-    dxguid
+    $<$<PLATFORM_ID:Windows>:dinput8>
+    $<$<PLATFORM_ID:Windows>:dxguid>
     deps_dbghelp
     gamespy::gamespy
     stlport

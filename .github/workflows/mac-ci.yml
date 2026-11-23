@@ -1,6 +1,6 @@
 # TheSuperHackers @build O140 Generals Collection x64: the macOS / Linux port builds (M3).
 # Build only, no game data: the replay CRC comparison runs on self-hosted runners (crc-selfhosted.yml).
-# The macOS and Linux jobs build the portable core libraries for now (RTS_BUILD_CORE_ONLY, headless port part 1); they
+# The macOS and Linux jobs build the headless games (RTS_BUILD_HEADLESS, O158) and run a smoke test without data; they
 # are allowed to fail (continue-on-error) until the port compiles there.
 name: Mac CI
 
@@ -20,7 +20,7 @@ concurrency:
 jobs:
   build-unix:
     # O146: continue-on-error makes the run green while these jobs still fail; the name says so.
-    name: Build core ${{ matrix.preset }} (porting, may fail)
+    name: Build headless ${{ matrix.preset }} (porting, may fail)
     if: github.repository != 'TheSuperHackers/GeneralsGameCode'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
@@ -49,12 +49,34 @@ jobs:
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
 
-      - name: Build Core Libraries
+      - name: Build Headless Games
         shell: bash
         run: |
           set -o pipefail
-          # O150: the game engine libraries of both games too (RTS_BUILD_ENGINE_ONLY); -k 0 shows every failing file.
-          cmake --build build/${{ matrix.preset }} --target core_wwdebug core_wwlib core_wwmath z_gameengine g_gameengine -- -k 0 2>&1 | tee build.log
+          # O158: the headless games (RTS_BUILD_HEADLESS: libraries, device layer with the null renderer, executables);
+          # -k 0 shows every failing file.
+          cmake --build build/${{ matrix.preset }} --target z_generals g_generals -- -k 0 2>&1 | tee build.log
+
+      # O158: a smoke test without game data. -help must print the usage and exit 0; a start without data must end
+      # by itself (no crash signal, no hang). Both exit codes go to the job summary.
+      - name: Smoke Test
+        shell: bash
+        run: |
+          set -u
+          summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+          echo "### Smoke test (no game data)" >> "$summary"
+          status=0
+          for exe in $(find build/${{ matrix.preset }} -type f \( -name 'generalszh*' -o -name 'generalsv*' \) -perm -u+x); do
+            ./"$exe" -help > help.txt 2>&1; help=$?
+            echo "- \`$exe -help\`: exit $help" >> "$summary"
+            head -3 help.txt
+            mkdir -p smoke && ( cd smoke && perl -e 'alarm shift; exec @ARGV' 120 "../$exe" -headless > ../start.txt 2>&1 ); start=$?
+            echo "- \`$exe -headless\` without data: exit $start" >> "$summary"
+            tail -5 start.txt
+            echo "::notice title=Smoke test $(basename "$exe")::-help exit $help; -headless without data exit $start"
+            if [ $help -ne 0 ] || [ $start -ge 124 ]; then status=1; fi
+          done
+          exit $status
 
       # O144: the raw job log needs a signed-in account; the errors also go to annotations and the job summary.
       - name: Report Compile Errors

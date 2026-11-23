@@ -108,6 +108,7 @@ void Win32GameEngine::update()
 	// O61 (row 48): a backward seek restarts the replay here, outside the client's update
 	ReplayControl::pollRewind();
 
+#ifdef _WIN32 // O158: macOS and Linux have no window (headless)
 	extern HWND ApplicationHWnd;
 	if (ApplicationHWnd && ::IsIconic(ApplicationHWnd)) {
 		while (ApplicationHWnd && ::IsIconic(ApplicationHWnd)) {
@@ -137,6 +138,7 @@ void Win32GameEngine::update()
 		TheAudio->setVolume(TheAudio->getVolume( aa ), aa );
 
 	}
+#endif
 
 	// allow windows to perform regular windows maintenance stuff like msgs
 	serviceWindowsOS();
@@ -151,6 +153,7 @@ void Win32GameEngine::update()
 //-------------------------------------------------------------------------------------------------
 void Win32GameEngine::serviceWindowsOS()
 {
+#ifdef _WIN32
 	MSG msg;
   Int returnValue;
 
@@ -183,6 +186,7 @@ void Win32GameEngine::serviceWindowsOS()
 		TheMessageTime = 0;
 
 	}
+#endif
 
 }
 

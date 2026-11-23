@@ -38,11 +38,17 @@
 #include "GameLogic/GameLogic.h"
 #include "GameNetwork/NetworkInterface.h"
 #include "MilesAudioDevice/MilesAudioManager.h"
+#ifdef _WIN32
 #include "Win32Device/Common/Win32LocalFileSystem.h"
+#else
+#include "StdDevice/Common/StdLocalFileSystem.h" // O158: macOS and Linux
+#endif
 #include "W3DDevice/Common/W3DModuleFactory.h"
 #include "W3DDevice/GameLogic/W3DGameLogic.h"
 #include "W3DDevice/GameClient/W3DGameClient.h"
+#ifdef _WIN32
 #include "W3DDevice/GameClient/W3DWebBrowser.h"
+#endif
 #include "W3DDevice/Common/W3DFunctionLexicon.h"
 #include "W3DDevice/Common/W3DRadar.h"
 #include "W3DDevice/Common/W3DThingFactory.h"
@@ -92,7 +98,12 @@ inline GameClient *Win32GameEngine::createGameClient() { return NEW W3DGameClien
 inline ModuleFactory *Win32GameEngine::createModuleFactory() { return NEW W3DModuleFactory; }
 inline ThingFactory *Win32GameEngine::createThingFactory() { return NEW W3DThingFactory; }
 inline FunctionLexicon *Win32GameEngine::createFunctionLexicon() { return NEW W3DFunctionLexicon; }
+#ifdef _WIN32
 inline LocalFileSystem *Win32GameEngine::createLocalFileSystem() { return NEW Win32LocalFileSystem; }
+#else
+// O158: the C++17 file system (StdDevice) on macOS and Linux.
+inline LocalFileSystem *Win32GameEngine::createLocalFileSystem() { return NEW StdLocalFileSystem; }
+#endif
 inline ArchiveFileSystem *Win32GameEngine::createArchiveFileSystem() { return NEW BIGFileSystem; }
 inline ParticleSystemManager* Win32GameEngine::createParticleSystemManager(Bool dummy)
 {
@@ -108,7 +119,11 @@ inline Radar *Win32GameEngine::createRadar(Bool dummy)
 		return NEW RadarDummy;
 	return NEW W3DRadar;
 }
+#ifdef _WIN32
 inline WebBrowser *Win32GameEngine::createWebBrowser() { return NEW CComObject<W3DWebBrowser>; }
+#else
+inline WebBrowser *Win32GameEngine::createWebBrowser() { return nullptr; } // O158: no browser on macOS and Linux
+#endif
 inline AudioManager *Win32GameEngine::createAudioManager(Bool dummy)
 {
 	if (dummy)

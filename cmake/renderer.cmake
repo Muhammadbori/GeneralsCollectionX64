@@ -4,8 +4,15 @@
 #                        (through MoltenVK) and for comparing the two renderers on Windows. Needs the Vulkan SDK
 #                        (VULKAN_SDK) for the headers and the DirectX Shader Compiler (dxcompiler), which is copied
 #                        next to the executable. Vulkan itself is loaded at run time.
-set(RTS_RENDERER "dx12" CACHE STRING "Renderer: dx12 or vulkan")
-set_property(CACHE RTS_RENDERER PROPERTY STRINGS dx12 vulkan)
+#   RTS_RENDERER=null    O158: no renderer (Backend/Null), for the headless builds of macOS and Linux (-headless makes
+#                        no device), and the default there.
+if(WIN32)
+    set(RTS_RENDERER_DEFAULT "dx12")
+else()
+    set(RTS_RENDERER_DEFAULT "null")
+endif()
+set(RTS_RENDERER "${RTS_RENDERER_DEFAULT}" CACHE STRING "Renderer: dx12, vulkan or null")
+set_property(CACHE RTS_RENDERER PROPERTY STRINGS dx12 vulkan null)
 set(RTS_RENDERER_RUNTIME_FILES "")
 
 if(RTS_RENDERER STREQUAL "vulkan")
@@ -53,8 +60,11 @@ if(RTS_RENDERER STREQUAL "vulkan")
         endif()
     endforeach()
     message(STATUS "Renderer: Vulkan (headers ${Vulkan_INCLUDE_DIRS}, shaders compiled with ${RTS_DXC_EXECUTABLE})")
+elseif(RTS_RENDERER STREQUAL "null")
+    add_compile_definitions(RTS_RENDERER_NULL=1)
+    message(STATUS "Renderer: none (headless build)")
 elseif(NOT RTS_RENDERER STREQUAL "dx12")
-    message(FATAL_ERROR "RTS_RENDERER must be dx12 or vulkan, not ${RTS_RENDERER}")
+    message(FATAL_ERROR "RTS_RENDERER must be dx12, vulkan or null, not ${RTS_RENDERER}")
 endif()
 
 # Copies the files the renderer needs at run time next to the target's executable after each build.

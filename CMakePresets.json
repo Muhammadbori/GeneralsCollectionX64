@@ -148,21 +148,27 @@
             "name": "linux-arm64",
             "inherits": "default",
             "hidden": false,
-            "displayName": "Linux arm64 Release (headless port, core and game engine libraries)",
+            "displayName": "Linux arm64 Release (headless games)",
             "generator": "Ninja",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
                 "CMAKE_C_COMPILER": "clang",
                 "CMAKE_CXX_COMPILER": "clang++",
                 "RTS_BUILD_CORE_ONLY": "OFF",
-                "RTS_BUILD_ENGINE_ONLY": "ON"
+                "RTS_BUILD_ENGINE_ONLY": "OFF",
+                "RTS_BUILD_HEADLESS": "ON",
+                "RTS_RENDERER": "null",
+                "RTS_BUILD_CORE_TOOLS": "OFF",
+                "RTS_BUILD_ZEROHOUR_TOOLS": "OFF",
+                "RTS_BUILD_GENERALS_TOOLS": "OFF",
+                "RTS_BUILD_OPTION_FFMPEG": "OFF"
             }
         },
         {
             "name": "macos-arm64",
             "inherits": "default",
             "hidden": false,
-            "displayName": "macOS arm64 Release (headless port, core and game engine libraries)",
+            "displayName": "macOS arm64 Release (headless games)",
             "generator": "Ninja",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
@@ -170,7 +176,13 @@
                 "CMAKE_CXX_COMPILER": "clang++",
                 "CMAKE_OSX_ARCHITECTURES": "arm64",
                 "RTS_BUILD_CORE_ONLY": "OFF",
-                "RTS_BUILD_ENGINE_ONLY": "ON"
+                "RTS_BUILD_ENGINE_ONLY": "OFF",
+                "RTS_BUILD_HEADLESS": "ON",
+                "RTS_RENDERER": "null",
+                "RTS_BUILD_CORE_TOOLS": "OFF",
+                "RTS_BUILD_ZEROHOUR_TOOLS": "OFF",
+                "RTS_BUILD_GENERALS_TOOLS": "OFF",
+                "RTS_BUILD_OPTION_FFMPEG": "OFF"
             }
         },
         {

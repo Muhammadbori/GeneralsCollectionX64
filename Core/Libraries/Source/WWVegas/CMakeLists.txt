@@ -3,8 +3,8 @@ add_library(core_wwcommon INTERFACE)
 
 target_link_libraries(core_wwcommon INTERFACE
     # TheSuperHackers @build DirectInput (the keyboard) from the Windows SDK, not from the Direct3D 8 SDK.
-    dinput8
-    dxguid
+    $<$<PLATFORM_ID:Windows>:dinput8>
+    $<$<PLATFORM_ID:Windows>:dxguid>
     deps_dbghelp
     deps_miles
     deps_usp10

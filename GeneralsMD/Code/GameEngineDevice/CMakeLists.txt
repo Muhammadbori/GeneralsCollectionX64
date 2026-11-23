@@ -186,6 +186,11 @@ set(GAMEENGINEDEVICE_SRC
 #    Source/Win32Device/GameClient/Win32Mouse.cpp
 )
 
+# O158 The embedded browser (ATL) is Windows only.
+if(NOT WIN32)
+    list(REMOVE_ITEM GAMEENGINEDEVICE_SRC Source/W3DDevice/GameClient/W3DWebBrowser.cpp)
+endif()
+
 add_library(z_gameenginedevice STATIC)
 
 target_sources(z_gameenginedevice PRIVATE ${GAMEENGINEDEVICE_SRC})

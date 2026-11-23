@@ -51,7 +51,28 @@ if errors:
     for index, part in enumerate(parts):
         head = "%d distinct errors in %d files, part %d of %d:%%0A" % (len(errors), len(set(e[0] for e in errors)), index + 1, len(parts))
         print("::notice title=Compiler errors %d/%d::%s" % (index + 1, len(parts), head + "%0A".join(part)))
-if not errors:
+# O158: undefined symbols of the link (GNU ld / lld "undefined reference to `X'" or "undefined symbol: X", Apple ld
+# "  "X", referenced from:"), demangled by the linkers already; one list, in notices of 35 lines.
+undefined = []
+useen = set()
+upatterns = [re.compile(r"undefined reference to [`'](?P<sym>.+?)'"), re.compile(r"undefined symbol: (?P<sym>.+)$"),
+             re.compile(r'^\s+"(?P<sym>.+)", referenced from:')]
+for raw in open(log, errors="replace"):
+    for up in upatterns:
+        um = up.search(raw.rstrip("\n"))
+        if um:
+            sym = um.group("sym").strip()
+            if sym not in useen:
+                useen.add(sym)
+                undefined.append(sym)
+            break
+if undefined:
+    urows = [s[:200].replace("%", "%25") for s in undefined[:350]]
+    uparts = [urows[i:i + 35] for i in range(0, len(urows), 35)]
+    for index, part in enumerate(uparts):
+        head = "%d undefined symbols, part %d of %d:%%0A" % (len(undefined), index + 1, len(uparts))
+        print("::notice title=Undefined symbols %d/%d::%s" % (index + 1, len(uparts), head + "%0A".join(part)))
+if not errors and not undefined:
     # No compiler error lines (a linker or ninja failure): the first lines that name an error.
     for line in other[:10]:
         print("::error::%s" % line.replace("%", "%25"))
