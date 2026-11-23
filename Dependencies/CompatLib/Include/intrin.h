@@ -3,3 +3,4 @@
 #pragma once
 #include <string.h>
 inline void __cpuid(int regs[4], int) { memset(regs, 0, 4 * sizeof(int)); }
+#define _ReturnAddress() __builtin_return_address(0)

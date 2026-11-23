@@ -61,6 +61,47 @@
 #include "GameClient/Color.h"
 #include "Common/NameKeyGenerator.h"
 
+#ifndef _WIN32
+// TheSuperHackers @build O155 (headless port) macOS and Linux have no Windows input method editor (IMM32): the manager
+// is there, is never enabled and never composes; text input goes through the normal key messages.
+IMEManagerInterface *TheIMEManager = nullptr;
+
+class IMEManager : public IMEManagerInterface
+{
+public:
+	virtual void init() override {}
+	virtual void reset() override {}
+	virtual void update() override {}
+	virtual void attach( GameWindow *window ) override { m_window = window; }
+	virtual void detach() override { m_window = nullptr; }
+	virtual void enable() override {}
+	virtual void disable() override {}
+	virtual Bool isEnabled() override { return FALSE; }
+	virtual Bool isAttachedTo( GameWindow *window ) override { return m_window == window; }
+	virtual GameWindow* getWindow() override { return m_window; }
+	virtual Bool isComposing() override { return FALSE; }
+	virtual void getCompositionString( UnicodeString &string ) override { string.clear(); }
+	virtual Int getCompositionCursorPosition() override { return 0; }
+	virtual Int getIndexBase() override { return 1; }
+	virtual Int getCandidateCount() override { return 0; }
+	virtual const UnicodeString* getCandidate( Int ) override { return nullptr; }
+	virtual Int getSelectedCandidateIndex() override { return 0; }
+	virtual Int getCandidatePageSize() override { return 0; }
+	virtual Int getCandidatePageStart() override { return 0; }
+	virtual Bool serviceIMEMessage( void *, UnsignedInt, Int, Int ) override { return FALSE; }
+	virtual Int result() override { return 0; }
+
+private:
+	GameWindow *m_window = nullptr;
+};
+
+IMEManagerInterface *CreateIMEManagerInterface()
+{
+	return NEW IMEManager;
+}
+
+#else // _WIN32
+
 
 //----------------------------------------------------------------------------
 //         Externals
@@ -1605,3 +1646,5 @@ void IMEManager::updateStatusWindow()
 
 }
 
+
+#endif // _WIN32

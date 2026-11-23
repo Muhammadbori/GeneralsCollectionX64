@@ -297,3 +297,119 @@ inline LONG CompareFileTime(const FILETIME * a, const FILETIME * b)
 #endif
 typedef uintptr_t ULONG_PTR;
 typedef uint64_t ULONGLONG;
+
+// ---- O155 ----
+#include <errno.h>
+#include <stdio.h>
+#include <unistd.h>
+
+// Interlocked operations for any integer width (LONG is 32 bits here, long is 64): the GCC/Clang atomic builtins,
+// sequentially consistent like the Windows functions. Utility/interlocked_adapter.h keeps its exact 'long' forms.
+template <typename T> inline T InterlockedIncrement(volatile T * value) { return __atomic_add_fetch(value, 1, __ATOMIC_SEQ_CST); }
+template <typename T> inline T InterlockedDecrement(volatile T * value) { return __atomic_sub_fetch(value, 1, __ATOMIC_SEQ_CST); }
+template <typename T, typename V> inline T InterlockedExchange(volatile T * target, V value) { return __atomic_exchange_n(target, (T)value, __ATOMIC_SEQ_CST); }
+template <typename T, typename V> inline T InterlockedExchangeAdd(volatile T * target, V value) { return __atomic_fetch_add(target, (T)value, __ATOMIC_SEQ_CST); }
+template <typename T, typename V, typename C> inline T InterlockedCompareExchange(volatile T * target, V exchange, C comparand)
+{
+	T expected = (T)comparand;
+	__atomic_compare_exchange_n(target, &expected, (T)exchange, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+	return expected;
+}
+
+// The process heap: malloc.
+#define HEAP_ZERO_MEMORY 0x00000008
+inline HANDLE GetProcessHeap(void) { return (HANDLE)(intptr_t)1; }
+inline void * HeapAlloc(HANDLE, DWORD flags, SIZE_T bytes) { return (flags & HEAP_ZERO_MEMORY) ? calloc(1, bytes ? bytes : 1) : malloc(bytes ? bytes : 1); }
+inline void * HeapReAlloc(HANDLE, DWORD, void * memory, SIZE_T bytes) { return realloc(memory, bytes ? bytes : 1); }
+inline BOOL HeapFree(HANDLE, DWORD, void * memory) { free(memory); return TRUE; }
+
+// System information (diagnostic reports and thread counts): sysconf.
+typedef struct _SYSTEM_INFO
+{
+	WORD wProcessorArchitecture;
+	WORD wReserved;
+	DWORD dwPageSize;
+	void * lpMinimumApplicationAddress;
+	void * lpMaximumApplicationAddress;
+	uintptr_t dwActiveProcessorMask;
+	DWORD dwNumberOfProcessors;
+	DWORD dwProcessorType;
+	DWORD dwAllocationGranularity;
+	WORD wProcessorLevel;
+	WORD wProcessorRevision;
+} SYSTEM_INFO;
+inline void GetSystemInfo(SYSTEM_INFO * info)
+{
+	memset(info, 0, sizeof(*info));
+	long cpus = sysconf(_SC_NPROCESSORS_ONLN);
+	long page = sysconf(_SC_PAGESIZE);
+	info->dwNumberOfProcessors = cpus > 0 ? (DWORD)cpus : 1;
+	info->dwPageSize = page > 0 ? (DWORD)page : 4096;
+	info->dwAllocationGranularity = info->dwPageSize;
+}
+#define GetNativeSystemInfo GetSystemInfo
+
+typedef struct _MEMORYSTATUSEX
+{
+	DWORD dwLength;
+	DWORD dwMemoryLoad;
+	uint64_t ullTotalPhys;
+	uint64_t ullAvailPhys;
+	uint64_t ullTotalPageFile;
+	uint64_t ullAvailPageFile;
+	uint64_t ullTotalVirtual;
+	uint64_t ullAvailVirtual;
+	uint64_t ullAvailExtendedVirtual;
+} MEMORYSTATUSEX;
+inline BOOL GlobalMemoryStatusEx(MEMORYSTATUSEX * status)
+{
+	DWORD length = status->dwLength;
+	memset(status, 0, sizeof(*status));
+	status->dwLength = length;
+	long pages = sysconf(_SC_PHYS_PAGES);
+	long page = sysconf(_SC_PAGESIZE);
+	if (pages > 0 && page > 0)
+		status->ullTotalPhys = (uint64_t)pages * (uint64_t)page;
+	return TRUE;
+}
+
+typedef struct _OSVERSIONINFOW
+{
+	DWORD dwOSVersionInfoSize;
+	DWORD dwMajorVersion;
+	DWORD dwMinorVersion;
+	DWORD dwBuildNumber;
+	DWORD dwPlatformId;
+	wchar_t szCSDVersion[128];
+} OSVERSIONINFOW;
+
+inline BOOL GetFileSizeEx(HANDLE file, LARGE_INTEGER * size)
+{
+	DWORD high = 0;
+	DWORD low = GetFileSize(file, &high);
+	if (low == (DWORD)-1 && GetLastError() != 0)
+		return FALSE;
+	size->QuadPart = (int64_t)(((uint64_t)high << 32) | low);
+	return TRUE;
+}
+
+// Windows and message boxes of a headless game: none (the message box text goes to stderr, as MessageBoxA's does).
+#define SW_SHOWNORMAL 1
+#define SW_MINIMIZE 6
+#define SW_RESTORE 9
+inline BOOL ShowWindow(HWND, int) { return FALSE; }
+inline BOOL SetWindowTextA(HWND, const char *) { return FALSE; }
+inline BOOL SetWindowTextW(HWND, const wchar_t *) { return FALSE; }
+#define SetWindowText SetWindowTextA
+inline int MessageBoxW(HWND, const wchar_t * text, const wchar_t * caption, UINT)
+{
+	fprintf(stderr, "%ls: %ls\n", caption ? caption : L"", text ? text : L"");
+	return 1; // IDOK
+}
+
+// No other programs (WorldBuilder) are started on these platforms.
+#define _P_WAIT 0
+#define _P_NOWAIT 1
+inline intptr_t _spawnl(int, const char *, const char *, ...) { errno = ENOENT; return -1; }
+
+#include "shlobj.h"
