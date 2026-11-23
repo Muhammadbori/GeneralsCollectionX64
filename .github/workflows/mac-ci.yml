@@ -58,22 +58,51 @@ jobs:
           cmake --build build/${{ matrix.preset }} --target z_generals g_generals -- -k 0 2>&1 | tee build.log
 
       # O158: a smoke test without game data. -help must print the usage and exit 0; a start without data must end
-      # by itself (no crash signal, no hang). Both exit codes go to the job summary.
+      # by itself (no crash signal, no hang). O163: the step goes on after a failing run (the default shell is
+      # bash -e), and a crash is run again under the debugger (gdb / lldb) for a backtrace. Exit codes, the last lines
+      # of the output and the backtrace go to notices (the raw log needs a signed-in account).
+      - name: Install Debugger (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y gdb
+
       - name: Smoke Test
         shell: bash
         run: |
-          set -u
+          set +e
           summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
           echo "### Smoke test (no game data)" >> "$summary"
           status=0
+          note() { # title, file
+            local text
+            text=$(tail -c 3000 "$2" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::notice title=$1::$text"
+          }
+          backtrace() { # exe, args...
+            local exe="$1"; shift
+            if [ "$RUNNER_OS" = "Linux" ]; then
+              gdb -batch -ex run -ex bt -ex quit --args "$exe" "$@" > bt.txt 2>&1
+            else
+              lldb --batch -o run -o "bt 40" -o quit -- "$exe" "$@" > bt.txt 2>&1
+            fi
+            grep -v '^\[\|^Reading\|^warning: ' bt.txt | tail -60 > bt_short.txt
+          }
           for exe in $(find build/${{ matrix.preset }} -type f \( -name 'generalszh*' -o -name 'generalsv*' \) -perm -u+x); do
+            name=$(basename "$exe")
             ./"$exe" -help > help.txt 2>&1; help=$?
-            echo "- \`$exe -help\`: exit $help" >> "$summary"
-            head -3 help.txt
-            mkdir -p smoke && ( cd smoke && perl -e 'alarm shift; exec @ARGV' 120 "../$exe" -headless > ../start.txt 2>&1 ); start=$?
-            echo "- \`$exe -headless\` without data: exit $start" >> "$summary"
-            tail -5 start.txt
-            echo "::notice title=Smoke test $(basename "$exe")::-help exit $help; -headless without data exit $start"
+            echo "- \`$name -help\`: exit $help" >> "$summary"
+            note "$name -help exit $help" help.txt
+            if [ $help -ne 0 ]; then
+              backtrace "./$exe" -help
+              note "$name -help backtrace" bt_short.txt
+            fi
+            mkdir -p smoke
+            ( cd smoke && perl -e 'alarm shift; exec @ARGV' 120 "../$exe" -headless > ../start.txt 2>&1 ); start=$?
+            echo "- \`$name -headless\` without data: exit $start" >> "$summary"
+            note "$name -headless exit $start" start.txt
+            if [ $start -ge 128 ] && [ $start -ne 142 ]; then
+              ( cd smoke && backtrace "../$exe" -headless )
+              note "$name -headless backtrace" smoke/bt_short.txt
+            fi
             if [ $help -ne 0 ] || [ $start -ge 124 ]; then status=1; fi
           done
           exit $status
