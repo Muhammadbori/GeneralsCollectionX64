@@ -52,6 +52,22 @@ namespace
 
 	thread_local DWORD LastError = 0;
 
+	// O156: the Win32 error code for a failed file call, so callers that compare codes see the Windows ones.
+	DWORD Error_From_Errno(int error)
+	{
+		switch (error)
+		{
+			case ENOENT: return ERROR_FILE_NOT_FOUND;
+			case ENOTDIR: return ERROR_PATH_NOT_FOUND;
+			case EACCES: case EPERM: case EROFS: return ERROR_ACCESS_DENIED;
+			case EEXIST: return ERROR_FILE_EXISTS;
+			case ENOSPC: return ERROR_DISK_FULL;
+			case EMFILE: case ENFILE: return ERROR_TOO_MANY_OPEN_FILES;
+			case ENAMETOOLONG: return ERROR_FILENAME_EXCED_RANGE;
+			default: return ERROR_GEN_FAILURE;
+		}
+	}
+
 	CompatHandle * New_Handle(int kind)
 	{
 		CompatHandle * handle = new CompatHandle;
@@ -453,7 +469,7 @@ DWORD FormatMessageA(DWORD, const void *, DWORD message_id, DWORD, char * buffer
 	return (DWORD)strlen(buffer);
 }
 
-HANDLE CreateFileA(const char * name, DWORD access, DWORD, void *, DWORD disposition, DWORD, HANDLE)
+HANDLE CreateFileA(const char * name, DWORD access, DWORD, void *, DWORD disposition, DWORD attributes, HANDLE)
 {
 	int flags = 0;
 	if ((access & GENERIC_READ) && (access & GENERIC_WRITE))
@@ -473,9 +489,12 @@ HANDLE CreateFileA(const char * name, DWORD access, DWORD, void *, DWORD disposi
 	const int file = open(name, flags, 0644);
 	if (file < 0)
 	{
-		LastError = (DWORD)errno;
+		LastError = Error_From_Errno(errno);
 		return INVALID_HANDLE_VALUE;
 	}
+	// O156: the name goes now; the open file stays until it is closed, as with FILE_FLAG_DELETE_ON_CLOSE.
+	if (attributes & FILE_FLAG_DELETE_ON_CLOSE)
+		unlink(name);
 	CompatHandle * handle = New_Handle(HANDLE_FILE);
 	handle->File = file;
 	return handle;
@@ -539,7 +558,7 @@ BOOL CreateDirectoryA(const char * path, void *)
 {
 	if (mkdir(path, 0755) == 0)
 		return TRUE;
-	LastError = errno == EEXIST ? ERROR_ALREADY_EXISTS : (DWORD)errno;
+	LastError = errno == EEXIST ? ERROR_ALREADY_EXISTS : Error_From_Errno(errno);
 	return FALSE;
 }
 

@@ -413,3 +413,49 @@ inline int MessageBoxW(HWND, const wchar_t * text, const wchar_t * caption, UINT
 inline intptr_t _spawnl(int, const char *, const char *, ...) { errno = ENOENT; return -1; }
 
 #include "shlobj.h"
+
+// ---- O156 ----
+#ifndef ERROR_PATH_NOT_FOUND
+#define ERROR_PATH_NOT_FOUND 3
+#endif
+#define ERROR_TOO_MANY_OPEN_FILES 4
+#define ERROR_GEN_FAILURE 31
+#define ERROR_FILE_EXISTS 80
+#define ERROR_DISK_FULL 112
+#define ERROR_FILENAME_EXCED_RANGE 206
+#define FILE_ATTRIBUTE_READONLY 0x00000001
+#define FILE_ATTRIBUTE_HIDDEN 0x00000002
+#define FILE_ATTRIBUTE_TEMPORARY 0x00000100
+#ifndef FILE_FLAG_DELETE_ON_CLOSE
+#define FILE_FLAG_DELETE_ON_CLOSE 0x04000000
+#endif
+#ifndef FILE_FLAG_SEQUENTIAL_SCAN
+#define FILE_FLAG_SEQUENTIAL_SCAN 0x08000000
+#endif
+
+// Slim reader/writer locks (exclusive use only in the game): a pthread mutex. SRWLOCK_INIT is a static initialiser.
+#include <pthread.h>
+typedef struct _SRWLOCK { pthread_mutex_t Mutex; } SRWLOCK;
+#define SRWLOCK_INIT { PTHREAD_MUTEX_INITIALIZER }
+inline void InitializeSRWLock(SRWLOCK * lock) { pthread_mutex_init(&lock->Mutex, nullptr); }
+inline void AcquireSRWLockExclusive(SRWLOCK * lock) { pthread_mutex_lock(&lock->Mutex); }
+inline void ReleaseSRWLockExclusive(SRWLOCK * lock) { pthread_mutex_unlock(&lock->Mutex); }
+inline BOOLEAN TryAcquireSRWLockExclusive(SRWLOCK * lock) { return pthread_mutex_trylock(&lock->Mutex) == 0; }
+
+// Thread placement hint: the scheduler decides on these platforms.
+inline DWORD SetThreadIdealProcessor(HANDLE, DWORD) { return 0; }
+
+// More virtual key codes (VoiceChat push-to-talk keys).
+#define VK_XBUTTON1 0x05
+#define VK_XBUTTON2 0x06
+#define VK_LSHIFT 0xA0
+#define VK_RSHIFT 0xA1
+#define VK_LCONTROL 0xA2
+#define VK_RCONTROL 0xA3
+#define VK_LMENU 0xA4
+#define VK_RMENU 0xA5
+#define VK_OEM_3 0xC0
+#define VK_F1 0x70
+#define VK_F2 0x71
+#define VK_F3 0x72
+#define VK_F4 0x73

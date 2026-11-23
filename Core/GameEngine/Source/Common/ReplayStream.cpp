@@ -1199,7 +1199,9 @@ namespace
 		fd_set w, e;
 		FD_ZERO(&w); FD_SET(s, &w);
 		FD_ZERO(&e); FD_SET(s, &e);
-		timeval tv = { (long)(timeoutMs / 1000), (long)((timeoutMs % 1000) * 1000) };
+		timeval tv; // O156: fields assigned one by one (tv_usec is an int on macOS)
+		tv.tv_sec = (long)(timeoutMs / 1000);
+		tv.tv_usec = (long)((timeoutMs % 1000) * 1000);
 		if (select(0, nullptr, &w, &e, &tv) <= 0 || FD_ISSET(s, &e))
 		{
 			closesocket(s);
