@@ -1026,7 +1026,7 @@ unsigned long MyIPAddress( int sockfd )
 		i = sizeof( sin );
 		getsockname( sockfd, (struct sockaddr *)&sin, &i );
 
-		ip = sin.sin_addr.S_un.S_addr;
+		ip = sin.sin_addr.s_addr; // O161: the portable name (Winsock's S_un.S_addr is the same field)
 	}
 	else
 	{

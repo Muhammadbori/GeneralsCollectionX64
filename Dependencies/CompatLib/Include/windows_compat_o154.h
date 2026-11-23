@@ -559,3 +559,31 @@ inline BOOL AdjustWindowRect(RECT *, DWORD, BOOL) { return FALSE; }
 #define SWP_NOACTIVATE 0x0010
 #define SWP_SHOWWINDOW 0x0040
 inline BOOL SetWindowPos(HWND, HWND, int, int, int, int, UINT) { return FALSE; }
+
+// ---- O161 ----
+// (a * b) / c with a 64-bit product, rounded half away from zero; -1 when c is 0 (as kernel32's MulDiv).
+inline int MulDiv(int a, int b, int c)
+{
+	if (c == 0) return -1;
+	long long p = (long long)a * (long long)b;
+	long long q = p / c;
+	long long rem = p % c;
+	if (2 * (rem < 0 ? -rem : rem) >= (c < 0 ? -(long long)c : (long long)c))
+		q += ((p < 0) != (c < 0)) ? -1 : 1;
+	return (int)q;
+}
+// The C runtime's path splitting: drive (always empty here), folder (with its last separator), name, extension.
+inline void _splitpath(const char * path, char * drive, char * dir, char * fname, char * ext)
+{
+	if (drive) drive[0] = 0;
+	if (!path) { if (dir) dir[0] = 0; if (fname) fname[0] = 0; if (ext) ext[0] = 0; return; }
+	const char * slash = nullptr;
+	for (const char * s = path; *s; ++s) if (*s == '/' || *s == '\\') slash = s;
+	const char * name = slash ? slash + 1 : path;
+	const char * dot = nullptr;
+	for (const char * s = name; *s; ++s) if (*s == '.') dot = s;
+	if (dir) { size_t n = (size_t)(name - path); memcpy(dir, path, n); dir[n] = 0; }
+	const char * name_end = dot ? dot : name + strlen(name);
+	if (fname) { size_t n = (size_t)(name_end - name); memcpy(fname, name, n); fname[n] = 0; }
+	if (ext) { if (dot) strcpy(ext, dot); else ext[0] = 0; }
+}

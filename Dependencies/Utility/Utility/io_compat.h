@@ -44,6 +44,8 @@
 #define _O_TEXT 0
 #define _S_IREAD S_IRUSR
 #define _S_IFDIR S_IFDIR
+// O161
+inline int _chmod(const char * path, int mode) { return chmod(path, (mode_t)mode); }
 #define _S_IFREG S_IFREG
 #define _S_IFMT S_IFMT
 #define _S_IWRITE S_IWUSR
