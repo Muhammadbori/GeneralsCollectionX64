@@ -459,3 +459,63 @@ inline DWORD SetThreadIdealProcessor(HANDLE, DWORD) { return 0; }
 #define VK_F2 0x71
 #define VK_F3 0x72
 #define VK_F4 0x73
+
+// ---- O159 ----
+#include <ctype.h>
+#include <string.h>
+// The Win32 string calls (kernel32 lstr*), as functions so that ::lstrcpy works.
+inline char * lstrcpy(char * dst, const char * src) { return strcpy(dst, src); }
+inline char * lstrcat(char * dst, const char * src) { return strcat(dst, src); }
+inline int lstrlen(const char * s) { return s ? (int)strlen(s) : 0; }
+inline int lstrcmp(const char * a, const char * b) { return strcmp(a, b); }
+inline int lstrcmpi(const char * a, const char * b) { return strcasecmp(a, b); }
+inline char * lstrcpyn(char * dst, const char * src, int count)
+{
+	if (count <= 0) return dst;
+	int i = 0;
+	for (; i < count - 1 && src[i]; ++i) dst[i] = src[i];
+	dst[i] = 0;
+	return dst;
+}
+#define lstrcpyA lstrcpy
+#define lstrcatA lstrcat
+#define lstrlenA lstrlen
+#define lstrcmpiA lstrcmpi
+#define lstrcpynA lstrcpyn
+#ifndef ZeroMemory
+#define ZeroMemory(dst, len) memset((dst), 0, (len))
+#define FillMemory(dst, len, fill) memset((dst), (fill), (len))
+#define CopyMemory(dst, src, len) memcpy((dst), (src), (len))
+#define MoveMemory(dst, src, len) memmove((dst), (src), (len))
+#endif
+typedef intptr_t INT_PTR;
+typedef uintptr_t UINT_PTR;
+typedef intptr_t LONG_PTR;
+typedef void * LPDISPATCH;
+typedef struct tagSIZE { LONG cx; LONG cy; } SIZE;
+
+// A headless game has no window, cursor or error dialogs.
+inline BOOL IsIconic(HWND) { return FALSE; }
+inline BOOL IsWindowVisible(HWND) { return FALSE; }
+inline HCURSOR SetCursor(HCURSOR) { return nullptr; }
+inline BOOL GetCursorPos(POINT * point) { if (point) { point->x = 0; point->y = 0; } return FALSE; }
+inline BOOL ScreenToClient(HWND, POINT *) { return FALSE; }
+inline BOOL ClientToScreen(HWND, POINT *) { return FALSE; }
+#define SEM_FAILCRITICALERRORS 0x0001
+#define SEM_NOGPFAULTERRORBOX 0x0002
+#define SEM_NOOPENFILEERRORBOX 0x8000
+inline UINT SetErrorMode(UINT) { return 0; }
+#define VK_PRIOR 0x21
+#define VK_NEXT 0x22
+#define VK_END 0x23
+#define VK_HOME 0x24
+#define VK_INSERT 0x2D
+#define VK_F5 0x74
+#define VK_F6 0x75
+#define VK_F7 0x76
+#define VK_F8 0x77
+#define VK_F9 0x78
+#define VK_F10 0x79
+#define VK_F11 0x7A
+#define VK_F12 0x7B
+#define VK_NUMPAD0 0x60

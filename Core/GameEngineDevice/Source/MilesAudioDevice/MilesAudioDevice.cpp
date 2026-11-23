@@ -36,7 +36,9 @@
 #include "MilesLoader.h"
 #include "mss/mss.h"
 
+#ifdef _WIN32
 #include <dsound.h>
+#endif
 
 namespace
 {
@@ -225,9 +227,10 @@ UnsignedInt MilesAudioDevice::openProvider(UnsignedInt requested, UnsignedInt fa
 {
 	UnsignedInt providerNdx = requested;
 
+#ifdef _WIN32 // O159: DirectSound's speaker configuration (the default speakers elsewhere)
+	Bool useDolby = FALSE;
 	LPDIRECTSOUND lpDirectSoundInfo;
 	AIL_get_DirectSound_info( nullptr, (void**)&lpDirectSoundInfo, nullptr );
-	Bool useDolby = FALSE;
 	if( lpDirectSoundInfo )
 	{
 		DWORD speakerConfig;
@@ -265,6 +268,9 @@ UnsignedInt MilesAudioDevice::openProvider(UnsignedInt requested, UnsignedInt fa
 				break;
 		}
 	}
+#else
+	Bool useDolby = FALSE;
+#endif
 
 	Bool success = FALSE;
 	if( useDolby )

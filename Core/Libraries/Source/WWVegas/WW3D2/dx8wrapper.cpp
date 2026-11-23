@@ -80,7 +80,9 @@
 #include "dx8caps.h"
 #include "formconv.h"
 #include "WWLib/bound.h"
+#ifdef _WIN32
 #include "DbgHelpGuard.h"
+#endif
 #include "WW3D2/Backend/DX12/dx12device.h"
 #include "WW3D2/Backend/DX12/dx12resource.h"
 #include <Utility/bit_adapter.h>
@@ -281,7 +283,9 @@ bool DX8Wrapper::Init(void * hwnd, bool lite)
 	if (!lite) {
 		WWDEBUG_SAY(("Create Direct3D12 device"));
 		{
+#ifdef _WIN32
 			DbgHelpGuard dbgHelpGuard;
+#endif
 			if (!DX12Device::Init(hwnd)) {
 				WWDEBUG_SAY(("Direct3D12 initialization failed"));
 				Shutdown();

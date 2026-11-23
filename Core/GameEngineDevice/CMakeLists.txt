@@ -223,6 +223,7 @@ if(NOT WIN32)
         Source/Win32Device/Common/Win32OSDisplay.cpp
         Source/Win32Device/GameClient/Win32DIKeyboard.cpp
         Source/Win32Device/GameClient/Win32Mouse.cpp
+        Source/W3DDevice/GameClient/W3DMouse.cpp
     )
     list(APPEND GAMEENGINEDEVICE_SRC Source/StdDevice/Common/StdOSDisplay.cpp)
 endif()

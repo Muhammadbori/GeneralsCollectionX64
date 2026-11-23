@@ -1434,6 +1434,9 @@ FontCharsClass::Blit_Char (WCHAR ch, uint16 *dest_ptr, int dest_stride, int x, i
 const FontCharsClassCharDataStruct *
 FontCharsClass::Store_GDI_Char (WCHAR ch)
 {
+#ifndef _WIN32 // O159: no GDI on macOS and Linux (the headless game draws no text)
+	return nullptr;
+#else
 	const int width = GlyphBitmapWidth;
 	const int height = GlyphBitmapHeight;
 
@@ -1565,6 +1568,7 @@ FontCharsClass::Store_GDI_Char (WCHAR ch)
 	//	Return the index of the entry we just added
 	//
 	return char_data;
+#endif
 }
 
 
@@ -1622,6 +1626,9 @@ FontCharsClass::Update_Current_Buffer (int char_width)
 bool
 FontCharsClass::Create_GDI_Font (const char *font_name)
 {
+#ifndef _WIN32 // O159: no GDI on macOS and Linux (the headless game draws no text)
+	return false;
+#else
 	HDC screen_dc = ::GetDC ((HWND)WW3D::Get_Window());
 
 	const char *fontToUseForGenerals = "Arial";
@@ -1749,6 +1756,7 @@ FontCharsClass::Create_GDI_Font (const char *font_name)
 	::SetTextColor (MemDC, RGB (255, 255, 255));
 
 	return GDIFont != nullptr && GDIBitmap != nullptr;
+#endif
 }
 
 
@@ -1760,6 +1768,9 @@ FontCharsClass::Create_GDI_Font (const char *font_name)
 void
 FontCharsClass::Free_GDI_Font ()
 {
+#ifndef _WIN32 // O159: no GDI on macOS and Linux (the headless game draws no text)
+	return;
+#else
 	//
 	//	Select the old font back into the DC and delete
 	// our font object
@@ -1787,6 +1798,7 @@ FontCharsClass::Free_GDI_Font ()
 		::DeleteDC( MemDC );
 		MemDC = nullptr;
 	}
+#endif
 }
 
 

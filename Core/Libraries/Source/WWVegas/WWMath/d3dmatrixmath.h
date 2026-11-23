@@ -31,7 +31,12 @@
 #pragma once
 
 #include "WWLib/d3d8defs.h"
+#if defined(_M_IX86) || defined(_M_X64) || defined(__i386__) || defined(__x86_64__)
+#define RTS_D3DMATH_SSE 1
 #include <xmmintrin.h>
+#else
+#define RTS_D3DMATH_SSE 0 // O159: arm64 (macOS, Linux): Inverse in plain floats
+#endif
 #include <math.h>
 
 namespace D3DMatrixMath
@@ -127,6 +132,7 @@ inline D3DMATRIX* Rotation_Z(D3DMATRIX* out, float angle)
 
 // Inverse by cofactors with SSE (the sse2_D3DXMatrixInverse instruction sequence). Writes *determinant when
 // determinant is not null. Returns null, and leaves out unchanged, when the determinant is zero or NaN.
+#if RTS_D3DMATH_SSE
 inline D3DMATRIX* Inverse(D3DMATRIX* out, float* determinant, const D3DMATRIX* m)
 {
 	__m128 xmm0 = _mm_setr_ps(m->m[0][2], m->m[0][3], m->m[1][2], m->m[1][3]);
@@ -296,6 +302,44 @@ inline D3DMATRIX* Inverse(D3DMATRIX* out, float* determinant, const D3DMATRIX* m
 	_mm_storeu_ps(&out->m[3][0], xmm5);
 	return out;
 }
+#else
+// O159: the same inverse by cofactors without SSE (rendering only: the shader manager's view matrices). The
+// reciprocal is exact here, not the SSE estimate, so the last bit may differ from the x86 build.
+inline D3DMATRIX* Inverse(D3DMATRIX* out, float* determinant, const D3DMATRIX* m)
+{
+	const float* a = &m->m[0][0];
+	float inv[16];
+	inv[0] = a[5]*a[10]*a[15] - a[5]*a[11]*a[14] - a[9]*a[6]*a[15] + a[9]*a[7]*a[14] + a[13]*a[6]*a[11] - a[13]*a[7]*a[10];
+	inv[4] = -a[4]*a[10]*a[15] + a[4]*a[11]*a[14] + a[8]*a[6]*a[15] - a[8]*a[7]*a[14] - a[12]*a[6]*a[11] + a[12]*a[7]*a[10];
+	inv[8] = a[4]*a[9]*a[15] - a[4]*a[11]*a[13] - a[8]*a[5]*a[15] + a[8]*a[7]*a[13] + a[12]*a[5]*a[11] - a[12]*a[7]*a[9];
+	inv[12] = -a[4]*a[9]*a[14] + a[4]*a[10]*a[13] + a[8]*a[5]*a[14] - a[8]*a[6]*a[13] - a[12]*a[5]*a[10] + a[12]*a[6]*a[9];
+	inv[1] = -a[1]*a[10]*a[15] + a[1]*a[11]*a[14] + a[9]*a[2]*a[15] - a[9]*a[3]*a[14] - a[13]*a[2]*a[11] + a[13]*a[3]*a[10];
+	inv[5] = a[0]*a[10]*a[15] - a[0]*a[11]*a[14] - a[8]*a[2]*a[15] + a[8]*a[3]*a[14] + a[12]*a[2]*a[11] - a[12]*a[3]*a[10];
+	inv[9] = -a[0]*a[9]*a[15] + a[0]*a[11]*a[13] + a[8]*a[1]*a[15] - a[8]*a[3]*a[13] - a[12]*a[1]*a[11] + a[12]*a[3]*a[9];
+	inv[13] = a[0]*a[9]*a[14] - a[0]*a[10]*a[13] - a[8]*a[1]*a[14] + a[8]*a[2]*a[13] + a[12]*a[1]*a[10] - a[12]*a[2]*a[9];
+	inv[2] = a[1]*a[6]*a[15] - a[1]*a[7]*a[14] - a[5]*a[2]*a[15] + a[5]*a[3]*a[14] + a[13]*a[2]*a[7] - a[13]*a[3]*a[6];
+	inv[6] = -a[0]*a[6]*a[15] + a[0]*a[7]*a[14] + a[4]*a[2]*a[15] - a[4]*a[3]*a[14] - a[12]*a[2]*a[7] + a[12]*a[3]*a[6];
+	inv[10] = a[0]*a[5]*a[15] - a[0]*a[7]*a[13] - a[4]*a[1]*a[15] + a[4]*a[3]*a[13] + a[12]*a[1]*a[7] - a[12]*a[3]*a[5];
+	inv[14] = -a[0]*a[5]*a[14] + a[0]*a[6]*a[13] + a[4]*a[1]*a[14] - a[4]*a[2]*a[13] - a[12]*a[1]*a[6] + a[12]*a[2]*a[5];
+	inv[3] = -a[1]*a[6]*a[11] + a[1]*a[7]*a[10] + a[5]*a[2]*a[11] - a[5]*a[3]*a[10] - a[9]*a[2]*a[7] + a[9]*a[3]*a[6];
+	inv[7] = a[0]*a[6]*a[11] - a[0]*a[7]*a[10] - a[4]*a[2]*a[11] + a[4]*a[3]*a[10] + a[8]*a[2]*a[7] - a[8]*a[3]*a[6];
+	inv[11] = -a[0]*a[5]*a[11] + a[0]*a[7]*a[9] + a[4]*a[1]*a[11] - a[4]*a[3]*a[9] - a[8]*a[1]*a[7] + a[8]*a[3]*a[5];
+	inv[15] = a[0]*a[5]*a[10] - a[0]*a[6]*a[9] - a[4]*a[1]*a[10] + a[4]*a[2]*a[9] + a[8]*a[1]*a[6] - a[8]*a[2]*a[5];
+	const float det = a[0]*inv[0] + a[1]*inv[4] + a[2]*inv[8] + a[3]*inv[12];
+	if (determinant) {
+		*determinant = det;
+	}
+	if (det == 0.0f || det != det) {
+		return nullptr;
+	}
+	const float r = 1.0f / det;
+	float* o = &out->m[0][0];
+	for (int i = 0; i < 16; ++i) {
+		o[i] = inv[i] * r;
+	}
+	return out;
+}
+#endif
 
 } // namespace D3DMatrixMath
 

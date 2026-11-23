@@ -95,7 +95,9 @@ struct PlayingAudio
 		return m_status == PS_Playing || m_rerequestOnNextUpdate;
 	}
 
+#ifdef _WIN32 // O159: the CompatLib Interlocked functions take any width (LONG is 32 bits, long 64 on macOS and Linux)
 	static_assert(sizeof(m_status) == sizeof(long), "Must be size of long, because it is used with Interlocked functions");
+#endif
 };
 
 struct ProviderInfo

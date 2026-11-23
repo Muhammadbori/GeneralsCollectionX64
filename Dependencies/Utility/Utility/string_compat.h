@@ -32,7 +32,16 @@ extern "C" inline char *_strlwr(char *str) {
   return str;
 }
 
+// O159: C linkage too (gsplatform.h declares it).
+extern "C" inline char *_strupr(char *str) {
+  for (int i = 0; str[i] != '\0'; i++) {
+    str[i] = toupper(str[i]);
+  }
+  return str;
+}
+
 #define strlwr _strlwr
+#define strupr _strupr
 #define stricmp strcasecmp
 #define strnicmp strncasecmp
 #define strcmpi strcasecmp

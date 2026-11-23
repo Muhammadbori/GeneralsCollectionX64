@@ -264,6 +264,11 @@ if(RTS_RENDERER STREQUAL "null")
     )
 endif()
 
+# O159 The embedded browser (COM) and the AVI frame grabber (Video for Windows) are Windows only.
+if(NOT WIN32)
+    list(REMOVE_ITEM WW3D2_SRC dx8webbrowser.cpp FramGrab.cpp)
+endif()
+
 add_library(corei_ww3d2 INTERFACE)
 
 target_sources(corei_ww3d2 INTERFACE ${WW3D2_SRC})

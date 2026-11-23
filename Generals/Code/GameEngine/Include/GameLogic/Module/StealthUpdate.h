@@ -29,6 +29,8 @@
 
 #pragma once
 
+#include <climits> // O159: UINT_MAX (from <windows.h> on Windows)
+
 // INCLUDES ///////////////////////////////////////////////////////////////////////////////////////
 #include "GameLogic/Module/UpdateModule.h"
 

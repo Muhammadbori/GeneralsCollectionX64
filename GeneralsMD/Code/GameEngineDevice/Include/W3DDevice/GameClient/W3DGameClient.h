@@ -49,10 +49,12 @@
 #ifdef RTS_HAS_FFMPEG
 #include "VideoDevice/FFmpeg/FFmpegVideoPlayer.h"
 #endif
+#ifdef _WIN32
 #include "Win32Device/GameClient/Win32DIKeyboard.h"
 #include "Win32Device/GameClient/Win32DIMouse.h"
 #include "Win32Device/GameClient/Win32Mouse.h"
 #include "W3DDevice/GameClient/W3DMouse.h"
+#endif
 #include "W3DDevice/GameClient/W3DSnow.h"
 
 class ThingTemplate;
@@ -126,6 +128,7 @@ protected:
 
 };
 
+#ifdef _WIN32
 inline Keyboard *W3DGameClient::createKeyboard() { return NEW DirectInputKeyboard; }
 inline Mouse *W3DGameClient::createMouse()
 {
@@ -134,3 +137,8 @@ inline Mouse *W3DGameClient::createMouse()
 	TheWin32Mouse = mouse;   ///< global cheat for the WndProc()
 	return mouse;
 }
+#else
+// O159: macOS and Linux have no keyboard or mouse device (the headless game uses MouseDummy).
+inline Keyboard *W3DGameClient::createKeyboard() { return nullptr; }
+inline Mouse *W3DGameClient::createMouse() { return nullptr; }
+#endif
