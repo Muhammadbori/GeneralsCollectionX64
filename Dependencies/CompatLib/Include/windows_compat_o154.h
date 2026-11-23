@@ -519,3 +519,43 @@ inline UINT SetErrorMode(UINT) { return 0; }
 #define VK_F11 0x7A
 #define VK_F12 0x7B
 #define VK_NUMPAD0 0x60
+
+// ---- O160 ----
+// HRESULT construction (WWDownload's error codes).
+#ifndef MAKE_HRESULT
+#define SEVERITY_SUCCESS 0
+#define SEVERITY_ERROR 1
+#define FACILITY_ITF 4
+#define MAKE_HRESULT(sev, fac, code) ((HRESULT)(((unsigned long)(sev) << 31) | ((unsigned long)(fac) << 16) | ((unsigned long)(code))))
+#endif
+// Display modes and window placement of a headless game: no display, no window (the calls fail).
+#define DM_BITSPERPEL 0x00040000L
+#define DM_PELSWIDTH 0x00080000L
+#define DM_PELSHEIGHT 0x00100000L
+#define DM_DISPLAYFREQUENCY 0x00400000L
+#define CDS_FULLSCREEN 0x00000004
+#define CDS_TEST 0x00000002
+#define DISP_CHANGE_SUCCESSFUL 0
+#define DISP_CHANGE_FAILED (-1)
+inline LONG ChangeDisplaySettingsExA(const char *, DEVMODEA *, HWND, DWORD, void *) { return DISP_CHANGE_FAILED; }
+inline LONG ChangeDisplaySettingsA(DEVMODEA *, DWORD) { return DISP_CHANGE_FAILED; }
+#define ChangeDisplaySettingsEx ChangeDisplaySettingsExA
+#define ChangeDisplaySettings ChangeDisplaySettingsA
+#define GWL_STYLE (-16)
+#define GWL_EXSTYLE (-20)
+inline LONG GetWindowLongA(HWND, int) { return 0; }
+inline LONG SetWindowLongA(HWND, int, LONG) { return 0; }
+#define GetWindowLong GetWindowLongA
+#define SetWindowLong SetWindowLongA
+inline BOOL GetClientRect(HWND, RECT * rect) { if (rect) { rect->left = rect->top = rect->right = rect->bottom = 0; } return FALSE; }
+inline BOOL GetWindowRect(HWND, RECT * rect) { if (rect) { rect->left = rect->top = rect->right = rect->bottom = 0; } return FALSE; }
+inline BOOL AdjustWindowRect(RECT *, DWORD, BOOL) { return FALSE; }
+#define HWND_TOP ((HWND)0)
+#define HWND_TOPMOST ((HWND)(intptr_t)-1)
+#define HWND_NOTOPMOST ((HWND)(intptr_t)-2)
+#define SWP_NOSIZE 0x0001
+#define SWP_NOMOVE 0x0002
+#define SWP_NOZORDER 0x0004
+#define SWP_NOACTIVATE 0x0010
+#define SWP_SHOWWINDOW 0x0040
+inline BOOL SetWindowPos(HWND, HWND, int, int, int, int, UINT) { return FALSE; }

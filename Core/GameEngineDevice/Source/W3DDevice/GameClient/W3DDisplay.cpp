@@ -35,6 +35,7 @@ static void drawFramerateBar();
 
 // SYSTEM INCLUDES ////////////////////////////////////////////////////////////
 #include <numeric>
+#include "GameClient/Keyboard.h" // O160: TheKeyboard (from the DirectInput keyboard header before)
 #include <algorithm>
 #include <functional>
 #include <stdlib.h>

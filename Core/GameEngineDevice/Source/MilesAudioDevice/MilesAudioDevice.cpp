@@ -90,7 +90,9 @@ namespace
 		return ((File*) file_handle)->read(buffer, bytes);
 	}
 
+#ifdef _WIN32 // O160: the Miles structures have 64-bit longs on macOS and Linux, where only the dummy audio manager runs
 	static_assert(sizeof(AILSOUNDINFO) <= sizeof(((AudioSampleInfo *)nullptr)->deviceData), "AILSOUNDINFO must fit into AudioSampleInfo::deviceData");
+#endif
 
 	// The game's speaker numbers and the Miles 3D speaker constants have always had the same values: the manager
 	// used to store the Miles constant and the game's number in the same variable.

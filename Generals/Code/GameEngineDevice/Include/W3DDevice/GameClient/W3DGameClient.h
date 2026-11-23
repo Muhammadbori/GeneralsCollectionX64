@@ -57,6 +57,7 @@
 #endif
 
 class ThingTemplate;
+class Win32Mouse;
 
 extern Win32Mouse *TheWin32Mouse;
 

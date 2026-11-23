@@ -58,6 +58,7 @@
 #include "W3DDevice/GameClient/W3DSnow.h"
 
 class ThingTemplate;
+class Win32Mouse;
 
 extern Win32Mouse *TheWin32Mouse;
 
