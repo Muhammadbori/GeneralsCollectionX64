@@ -555,3 +555,21 @@ BOOL DeleteFileA(const char * path)
 {
 	return unlink(path) == 0;
 }
+
+// O153
+DWORD GetCurrentDirectoryA(DWORD size, char * buffer)
+{
+	if (!buffer || size == 0)
+		return 0;
+	if (!getcwd(buffer, size))
+	{
+		buffer[0] = '\0';
+		return 0;
+	}
+	return (DWORD)strlen(buffer);
+}
+
+BOOL SetCurrentDirectoryA(const char * path)
+{
+	return path && chdir(path) == 0;
+}

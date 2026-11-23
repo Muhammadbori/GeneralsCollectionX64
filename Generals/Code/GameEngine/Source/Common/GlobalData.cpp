@@ -1395,6 +1395,8 @@ AsciiString GlobalData::BuildUserDataPathFromIni()
 		return AsciiString(userDataDirOverride);
 	}
 
+	AsciiString myDocumentsDirectory;
+#ifdef _WIN32
 #if defined(_MSC_VER) && (_MSC_VER < 1300)
 	// VC6 lacks FOLDERID_Documents and KF_FLAG_DEFAULT
 	const GUID FOLDERID_Documents = { 0xFDD39AD0, 0x238F, 0x46AF, 0xAD, 0xB4, 0x6C, 0x85, 0x48, 0x03, 0x69, 0xC7 };
@@ -1403,7 +1405,6 @@ AsciiString GlobalData::BuildUserDataPathFromIni()
 
 	typedef HRESULT(WINAPI* PFN_SHGetKnownFolderPath)(const GUID& rfid, DWORD dwFlags, HANDLE hToken, PWSTR* ppszPath);
 
-	AsciiString myDocumentsDirectory;
 	HMODULE shell32module = GetModuleHandleA("shell32.dll");
 	PFN_SHGetKnownFolderPath pSHGetKnownFolderPath = nullptr;
 
@@ -1429,6 +1430,13 @@ AsciiString GlobalData::BuildUserDataPathFromIni()
 			myDocumentsDirectory = temp;
 		}
 	}
+#else
+	// TheSuperHackers @build O153 (headless port) macOS and Linux: the Documents folder in the home folder.
+	if (const char *home = getenv("HOME")) {
+		myDocumentsDirectory = home;
+		myDocumentsDirectory.concat("/Documents");
+	}
+#endif
 
 	if (!myDocumentsDirectory.isEmpty()) {
 		// Now build the full path string

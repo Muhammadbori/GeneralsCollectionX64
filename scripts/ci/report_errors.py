@@ -45,9 +45,12 @@ for e in errors:
 for path, line, col, msg in picked:
     print("::error file=%s,line=%s,col=%s::%s" % (path, line, col, msg.replace("%", "%25")[:500]))
 if errors:
-    listing = "%d distinct errors in %d files:%%0A" % (len(errors), len(set(e[0] for e in errors)))
-    listing += "%0A".join(("%s:%s: %s" % (p, l, m)).replace("%", "%25") for p, l, c, m in errors[:150])
-    print("::notice title=All compiler errors::%s" % listing[:60000])
+    # O153: GitHub shows about 40 lines of one notice, so the list goes out in parts of 35 lines (up to 8 notices).
+    rows = [("%s:%s: %s" % (p, l, m[:160])).replace("%", "%25") for p, l, c, m in errors[:280]]
+    parts = [rows[i:i + 35] for i in range(0, len(rows), 35)]
+    for index, part in enumerate(parts):
+        head = "%d distinct errors in %d files, part %d of %d:%%0A" % (len(errors), len(set(e[0] for e in errors)), index + 1, len(parts))
+        print("::notice title=Compiler errors %d/%d::%s" % (index + 1, len(parts), head + "%0A".join(part)))
 if not errors:
     # No compiler error lines (a linker or ninja failure): the first lines that name an error.
     for line in other[:10]:

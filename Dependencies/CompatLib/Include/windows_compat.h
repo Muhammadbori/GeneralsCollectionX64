@@ -323,3 +323,59 @@ DWORD GetFileAttributesA(const char * path);
 #define GetFileAttributes GetFileAttributesA
 BOOL DeleteFileA(const char * path);
 #define DeleteFile DeleteFileA
+
+// ---- O153 (headless port): more of the Win32 API the game engine uses ----
+
+typedef wchar_t * PWSTR;
+typedef wchar_t * LPWSTR;
+typedef const wchar_t * LPCWSTR;
+// Exception records: only passed around by pointer (StackDump.h); there are no structured exceptions here.
+typedef struct _CONTEXT CONTEXT;
+typedef struct _EXCEPTION_POINTERS EXCEPTION_POINTERS;
+
+inline UINT GetDoubleClickTime(void) { return 500; }	// the Windows default
+inline HMODULE GetModuleHandleA(const char *) { return nullptr; }
+#define GetModuleHandle GetModuleHandleA
+
+#ifndef __max
+#define __max(a, b) (((a) > (b)) ? (a) : (b))
+#endif
+#ifndef __min
+#define __min(a, b) (((a) < (b)) ? (a) : (b))
+#endif
+
+DWORD GetCurrentDirectoryA(DWORD size, char * buffer);
+BOOL SetCurrentDirectoryA(const char * path);
+#define GetCurrentDirectory GetCurrentDirectoryA
+#define SetCurrentDirectory SetCurrentDirectoryA
+
+// The registry: there is none on macOS and Linux. Every key fails to open, so the game takes its defaults (as on a
+// Windows machine without the keys). Nothing here touches the game logic.
+typedef LONG LSTATUS;
+#define HKEY_CLASSES_ROOT ((HKEY)(uintptr_t)0x80000000u)
+#define HKEY_CURRENT_USER ((HKEY)(uintptr_t)0x80000001u)
+#define HKEY_LOCAL_MACHINE ((HKEY)(uintptr_t)0x80000002u)
+#define KEY_READ 0x20019
+#define KEY_WRITE 0x20006
+#define KEY_ALL_ACCESS 0xF003F
+#define KEY_QUERY_VALUE 0x0001
+#define KEY_SET_VALUE 0x0002
+#define REG_NONE 0
+#define REG_SZ 1
+#define REG_BINARY 3
+#define REG_DWORD 4
+#define REG_OPTION_NON_VOLATILE 0
+#define ERROR_FILE_NOT_FOUND 2
+#define ERROR_ACCESS_DENIED 5
+#define ERROR_MORE_DATA 234
+inline LSTATUS RegOpenKeyExA(HKEY, const char *, DWORD, DWORD, HKEY * result) { if (result) *result = nullptr; return ERROR_FILE_NOT_FOUND; }
+inline LSTATUS RegCreateKeyExA(HKEY, const char *, DWORD, char *, DWORD, DWORD, void *, HKEY * result, DWORD *) { if (result) *result = nullptr; return ERROR_ACCESS_DENIED; }
+inline LSTATUS RegQueryValueExA(HKEY, const char *, DWORD *, DWORD *, BYTE *, DWORD *) { return ERROR_FILE_NOT_FOUND; }
+inline LSTATUS RegSetValueExA(HKEY, const char *, DWORD, DWORD, const BYTE *, DWORD) { return ERROR_ACCESS_DENIED; }
+inline LSTATUS RegDeleteValueA(HKEY, const char *) { return ERROR_FILE_NOT_FOUND; }
+inline LSTATUS RegCloseKey(HKEY) { return ERROR_SUCCESS; }
+#define RegOpenKeyEx RegOpenKeyExA
+#define RegCreateKeyEx RegCreateKeyExA
+#define RegQueryValueEx RegQueryValueExA
+#define RegSetValueEx RegSetValueExA
+#define RegDeleteValue RegDeleteValueA

@@ -1131,6 +1131,11 @@ set(GAMEENGINE_SRC
 )
 
 
+# TheSuperHackers @build O153 (headless port) the stack dump writer uses dbghelp (Windows).
+if(NOT WIN32)
+    list(REMOVE_ITEM GAMEENGINE_SRC Source/Common/System/StackDump.cpp)
+endif()
+
 add_library(z_gameengine STATIC)
 
 target_sources(z_gameengine PRIVATE ${GAMEENGINE_SRC})
