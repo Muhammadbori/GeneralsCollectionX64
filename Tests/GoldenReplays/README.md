@@ -2,27 +2,26 @@
 
 Replays recorded with this project's Windows x64 build, played by the replay CRC gate of the macOS port
 (`.github/workflows/crc-selfhosted.yml`, `scripts/ci/play_golden.py`): every platform must compute the same logic CRC on
-every frame (`-logicCrcLog`). Only `.rep` files are here; no game data, maps or CRC logs.
+every frame (`-logicCrcLog`). Here are the `.rep` files and, in `crc/windows-x64`, the per-frame CRC logs of the
+Windows x64 build for them (O165: the reference the Mac runner is compared with; numbers only). No game data or maps.
 
 | game | replay | frames | note |
 |---|---|---|---|
 | GeneralsMD | zh_river.rep | 6000 | skirmish, 2 AI |
 | GeneralsMD | mp_lan.rep | 3506 | LAN match |
 | Generals | g_short.rep, g_short_o136.rep | 1500 | skirmish |
-| Generals | g_desert.rep | 1602 | stops with "CRC Mismatch in Frame 1600" on every platform (a known wall clock issue); compared up to there |
+| Generals | g_desert.rep | 1602 | stops with "CRC Mismatch in Frame 1600" on every platform (a known wall clock issue## Setting up the self-hosted runner
 
-Two more ZH replays (zh_desert, zh_desert_o136, 9000 frames, about 1.5 MB each) are kept outside the repository.
+O165: there is one runner, an Apple Silicon Mac with the label `generals-macos`; there is no Windows runner. Its logs
+are compared with `crc/windows-x64`. The step-by-step guide (in Uzbek) is `dx12-notes/plan10-boburbek-mac-runner.md`
+of the project notes. In short:
 
-## Setting up a self-hosted runner
+1. Copy the game folder (Generals Collection x64 without the exe and dll files: `Big`, `Data`, `Packs`,
+   `Archives_*.txt`, `Collection_manifest.txt`, `langdata.dat`; about 4.2 GB) to the Mac's own disk.
+2. Add the runner (Settings > Actions > Runners > New self-hosted runner > macOS ARM64) with `--labels generals-macos`,
+   in its own macOS user account.
+3. In the runner's `.env`: `RTS_GAME_DIR_ZEROHOUR` and `RTS_GAME_DIR_GENERALS`, both the game folder.
+4. Start "Replay CRC (self-hosted)" by hand in the Actions tab. It runs only by hand and only in the owner's repository.
 
-The game data stays on the runner machine and is never uploaded.
-
-1. Install Generals and Zero Hour on the machine.
-2. Add the runner in the repository settings (Settings > Actions > Runners > New self-hosted runner), with the label
-   `generals-windows` (Windows x64) or `generals-macos` (Apple Silicon Mac).
-3. Give the runner these environment variables (its `.env` file next to the runner):
-   - `RTS_GAME_DIR_ZEROHOUR`: the Zero Hour game folder;
-   - `RTS_GAME_DIR_GENERALS`: the Generals game folder;
-   - Windows only: `VS_VCVARS64`: the path of `vcvars64.bat` of Visual Studio.
-4. Run the runner as its own user account with access to these folders only.
-5. Start "Replay CRC (self-hosted)" by hand in the Actions tab. It never runs on pull requests.
+When the replays or the Windows build change, make the reference logs again with `scripts/ci/play_golden.py` and the
+Windows x64 build (`--out Tests/GoldenReplays/crc/windows-x64`; keep only the `*.crc.log` files).

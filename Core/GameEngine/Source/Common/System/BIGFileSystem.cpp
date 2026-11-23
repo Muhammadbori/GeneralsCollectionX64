@@ -28,6 +28,8 @@
 
 #include "PreRTS.h"
 
+#include "Common/PathSeparator.h" // O165
+
 #include "Common/BIGFileSystem.h"
 
 #include "Common/CommandLine.h"
@@ -134,7 +136,7 @@ void BIGFileSystem::mountMapArt() {
 #endif
 	char exePath[_MAX_PATH] = { 0 };
 	GetModuleFileNameA(nullptr, exePath, ARRAY_SIZE(exePath));
-	if (char *slash = strrchr(exePath, '\\')) {
+	if (char *slash = lastPathSeparator(exePath)) {
 		slash[1] = '\0';
 	}
 	AsciiString packsRoot(exePath);
@@ -348,7 +350,7 @@ Bool BIGFileSystem::loadArchiveFilesFromList(const Char *listFile) {
 
 	// Archive paths are relative to the folder of the list file.
 	AsciiString listDir = listFile;
-	const Char *lastSeparator = listDir.reverseFind('\\');
+	const Char *lastSeparator = lastPathSeparator(listDir.str());
 	if (lastSeparator != nullptr) {
 		listDir.truncateTo(lastSeparator - listDir.str() + 1);
 	} else {
@@ -365,7 +367,7 @@ Bool BIGFileSystem::loadArchiveFilesFromList(const Char *listFile) {
 		}
 
 		AsciiString path;
-		const Bool absolute = entry.getLength() > 1 && (entry.getCharAt(1) == ':' || entry.getCharAt(0) == '\\');
+		const Bool absolute = entry.getLength() > 1 && (entry.getCharAt(1) == ':' || entry.getCharAt(0) == '\\' || entry.getCharAt(0) == '/');
 		if (!absolute) {
 			path = listDir;
 		}

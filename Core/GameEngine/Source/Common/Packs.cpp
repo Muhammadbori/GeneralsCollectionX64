@@ -20,6 +20,8 @@
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
 
+#include "Common/PathSeparator.h" // O165
+
 #include "Common/Packs.h"
 
 #include "Common/CommandLine.h"
@@ -109,7 +111,7 @@ namespace
 		if (len == 0 || len >= ARRAY_SIZE(path)) {
 			return;
 		}
-		char *sep = strrchr(path, '\\');
+		char *sep = lastPathSeparator(path);
 		if (sep != nullptr) {
 			sep[1] = '\0';
 		}
@@ -885,7 +887,7 @@ void Packs::previewArchives(Kind kind, const Pack *pack, std::vector<AsciiString
 		return;
 	}
 	AsciiString listDir = listFile;
-	if (const char *slash = listDir.reverseFind('\\')) {
+	if (const char *slash = lastPathSeparator(listDir.str())) {
 		listDir.truncateTo(slash - listDir.str() + 1);
 	} else {
 		listDir.clear();

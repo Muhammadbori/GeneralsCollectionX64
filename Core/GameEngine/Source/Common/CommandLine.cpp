@@ -25,6 +25,8 @@
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
 
+#include "Common/PathSeparator.h" // O165
+
 #include "Common/ArchiveFileSystem.h"
 #include "Common/CommandLine.h"
 #include "Common/ReplayFollow.h"
@@ -120,7 +122,7 @@ static void ConvertShortMapPathToLongMapPath(AsciiString &mapName)
 	{
 		AsciiString lastDir = actualpath;
 		lastDir.removeLastChar(); // the trailing separator
-		const char *lastSeparator = lastDir.reverseFind('\\');
+		const char *lastSeparator = lastPathSeparator(lastDir.str());
 		const char *lastComponent = lastSeparator ? lastSeparator + 1 : lastDir.str();
 		if (stricmp(lastComponent, token.str()) == 0)
 		{
@@ -252,7 +254,11 @@ static bool setUserDataDirOverride(const char *path)
 	}
 	if (full[length - 1] != '\\' && full[length - 1] != '/')
 	{
+#ifdef _WIN32
 		strlcat(full, "\\", ARRAY_SIZE(full));
+#else
+		strlcat(full, "/", ARRAY_SIZE(full)); // O165: the separator of macOS and Linux paths
+#endif
 	}
 	createDirectoryPath(full);
 	strlcpy(s_userDataDirOverride, full, ARRAY_SIZE(s_userDataDirOverride));
@@ -292,7 +298,7 @@ const char * CommandLine::getArchiveListFile()
 		const DWORD len = GetModuleFileName(nullptr, exePath, ARRAY_SIZE(exePath));
 		if (len > 0 && len < ARRAY_SIZE(exePath))
 		{
-			char *lastSeparator = strrchr(exePath, '\\');
+			char *lastSeparator = lastPathSeparator(exePath);
 			if (lastSeparator != nullptr)
 			{
 				lastSeparator[1] = '\0';
@@ -358,7 +364,7 @@ bool CommandLine::isTestExe()
 		s_state = 0;
 		if (n > 0 && n < ARRAY_SIZE(path))
 		{
-			const char *name = strrchr(path, '\\');
+			const char *name = lastPathSeparator(path);
 			name = name != nullptr ? name + 1 : path;
 			char lower[_MAX_PATH];
 			strlcpy(lower, name, ARRAY_SIZE(lower));

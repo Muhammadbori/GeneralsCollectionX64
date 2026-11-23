@@ -20,6 +20,8 @@
 
 #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
 
+#include "Common/PathSeparator.h" // O165
+
 #include "GameClient/VoicePreview.h"
 
 #include "Common/AudioEventInfo.h"
@@ -229,7 +231,7 @@ namespace
 			if (n == 0 || n >= ARRAY_SIZE(exe)) {
 				return UnicodeString::TheEmptyString;
 			}
-			char *slash = strrchr(exe, '\\');
+			char *slash = lastPathSeparator(exe);
 			if (slash != nullptr) {
 				slash[1] = '\0';
 			}
